@@ -1,0 +1,364 @@
+"""
+WebRTC 信令处理器。
+
+职责边界：
+- 管理 WebRTC 对等连接
+- 处理 SDP offer/answer 交换
+- 处理 ICE 候选交换
+- 管理连接生命周期
+"""
+
+import asyncio
+import logging
+import uuid
+from typing import Any, Callable, Dict, Optional
+
+from fastapi import WebSocket, WebSocketDisconnect
+
+from .logging_config import logger
+from .config import settings
+# 临时使用简单测试视频源，因为 GStreamer 插件缺失
+from .simple_video_track import SimpleTestVideoSourceFactory
+# from .video_track import GStreamerVideoSourceFactory
+
+
+class WebRTCPeerConnection:
+    """
+    WebRTC 对等连接管理器。
+
+    每个客户端连接对应一个对等连接实例。
+    """
+
+    def __init__(self, client_id: str, websocket: WebSocket):
+        """
+        初始化对等连接。
+
+        Args:
+            client_id: 客户端唯一标识
+            websocket: WebSocket 连接
+        """
+        self.client_id = client_id
+        self.websocket = websocket
+        self.pc: Optional[Any] = None  # RTCPeerConnection (延迟导入)
+        self.video_track: Optional[Any] = None  # MediaStreamTrack
+        self._ice_candidates: list[dict] = []
+        self._remote_sdp: Optional[str] = None
+        self._connected = False
+        self._created_at = asyncio.get_event_loop().time()
+
+    async def initialize(self) -> None:
+        """初始化 WebRTC 对等连接。"""
+        try:
+            from aiortc import RTCPeerConnection, MediaStreamTrack
+            from av import VideoFrame
+
+            self.pc = RTCPeerConnection()
+
+            # ICE 服务器配置
+            for server in settings.WEBRTC_ICE_SERVERS:
+                self.pc.addIceServer(server)
+
+            @self.pc.on("connectionstatechange")
+            async def on_connectionstatechange():
+                """连接状态变化回调。"""
+                if self.pc is None:
+                    return
+                logger.info(
+                    f"WebRTC 连接状态变化: {self.client_id} -> "
+                    f"{self.pc.connectionState}"
+                )
+
+                if self.pc.connectionState == "connected":
+                    self._connected = True
+                    logger.info(f"WebRTC 连接已建立: {self.client_id}")
+                elif self.pc.connectionState in ("failed", "disconnected", "closed"):
+                    self._connected = False
+                    logger.warning(
+                        f"WebRTC 连接断开: {self.client_id} -> "
+                        f"{self.pc.connectionState}"
+                    )
+
+            @self.pc.on("icecandidate")
+            def on_ice_candidate(candidate):
+                """ICE 候选回调。"""
+                if candidate:
+                    self._ice_candidates.append({
+                        "candidate": candidate.candidate,
+                        "sdpMid": candidate.sdpMid,
+                        "sdpMLineIndex": candidate.sdpMLineIndex,
+                    })
+
+            # 创建并添加视频轨道
+            video_track = SimpleTestVideoSourceFactory.create_track()
+            self.video_track = video_track
+            await video_track.start()
+            self.pc.addTrack(video_track)
+
+            logger.info(f"WebRTC 对等连接已初始化: {self.client_id}")
+
+        except ImportError as e:
+            logger.error(f"导入 aiortc 失败: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"初始化 WebRTC 对等连接失败: {e}")
+            raise
+
+    async def set_remote_description(self, sdp_type: str, sdp: str) -> None:
+        """
+        设置远程描述。
+
+        Args:
+            sdp_type: SDP 类型（offer/answer）
+            sdp: SDP 内容
+        """
+        if not self.pc:
+            raise RuntimeError("对等连接未初始化")
+
+        from aiortc import RTCSessionDescription
+
+        description = RTCSessionDescription(sdp=sdp, type=sdp_type)
+        await self.pc.setRemoteDescription(description)
+        self._remote_sdp = sdp
+        logger.info(f"已设置远程描述: {self.client_id} ({sdp_type})")
+
+    async def create_answer(self) -> str:
+        """
+        创建 SDP answer。
+
+        Returns:
+            SDP 内容
+        """
+        if not self.pc:
+            raise RuntimeError("对等连接未初始化")
+
+        answer = await self.pc.createAnswer()
+        await self.pc.setLocalDescription(answer)
+        logger.info(f"已创建 SDP answer: {self.client_id}")
+        return self.pc.localDescription.sdp
+
+    async def get_ice_candidates(self) -> list[dict]:
+        """
+        获取待发送的 ICE 候选。
+
+        Returns:
+            ICE 候选列表
+        """
+        candidates = self._ice_candidates.copy()
+        self._ice_candidates.clear()
+        return candidates
+
+    async def add_ice_candidate(self, candidate_dict: dict) -> None:
+        """
+        添加 ICE 候选。
+
+        Args:
+            candidate_dict: ICE 候选字典
+        """
+        if not self.pc:
+            raise RuntimeError("对等连接未初始化")
+
+        from aiortc import RTCIceCandidate
+        import re
+
+        # 解析 candidate 字符串
+        # 格式: "candidate:..." 字符串，包含所有信息
+        candidate_str = candidate_dict.get("candidate", "")
+
+        # 简单解析 candidate 字符串
+        # 示例: "candidate:1 1 UDP 2122260223 192.168.1.100 54321 typ host"
+        parts = candidate_str.split()
+        if len(parts) < 8:
+            logger.warning(f"无法解析 ICE 候选: {candidate_str}")
+            return
+
+        try:
+            # 解析关键字段
+            foundation = parts[0].split(':')[1] if ':' in parts[0] else parts[0]
+            component = int(parts[1])
+            protocol = parts[2]
+            priority = int(parts[3])
+            ip = parts[4]
+            port = int(parts[5])
+
+            # 查找 type
+            candidate_type = "host"
+            for i, part in enumerate(parts):
+                if part == "typ" and i + 1 < len(parts):
+                    candidate_type = parts[i + 1]
+                    break
+
+            candidate = RTCIceCandidate(
+                component=component,
+                foundation=foundation,
+                ip=ip,
+                port=port,
+                priority=priority,
+                protocol=protocol,
+                type=candidate_type,
+                sdpMid=candidate_dict.get("sdpMid"),
+                sdpMLineIndex=candidate_dict.get("sdpMLineIndex"),
+            )
+
+            await self.pc.addIceCandidate(candidate)
+            logger.debug(f"已添加 ICE 候选: {self.client_id}")
+
+        except Exception as e:
+            logger.error(f"解析或添加 ICE 候选失败: {e}, candidate: {candidate_str}")
+            # 不抛出异常，允许连接继续
+
+    async def close(self) -> None:
+        """关闭对等连接。"""
+        if self.video_track:
+            self.video_track.stop()  # 同步调用
+            self.video_track = None
+        if self.pc:
+            await self.pc.close()
+            self.pc = None
+        self._connected = False
+        logger.info(f"WebRTC 对等连接已关闭: {self.client_id}")
+
+    @property
+    def is_connected(self) -> bool:
+        """是否已连接。"""
+        return self._connected and self.pc is not None
+
+    @property
+    def age_seconds(self) -> float:
+        """连接年龄（秒）。"""
+        return asyncio.get_event_loop().time() - self._created_at
+
+
+class WebRTCSignalingHandler:
+    """
+    WebRTC 信令处理器。
+
+    管理 WebSocket 连接和 WebRTC 信令流程。
+    """
+
+    def __init__(self):
+        """初始化信令处理器。"""
+        self._connections: Dict[str, WebRTCPeerConnection] = {}
+        self._lock = asyncio.Lock()
+
+    async def handle_connection(self, websocket: WebSocket) -> None:
+        """
+        处理 WebSocket 连接。
+
+        Args:
+            websocket: WebSocket 连接
+        """
+        client_id = str(uuid.uuid4())
+        logger.info(f"WebRTC 客户端连接: {client_id}")
+
+        try:
+            await websocket.accept()
+
+            # 创建对等连接
+            peer_connection = WebRTCPeerConnection(client_id, websocket)
+            await peer_connection.initialize()
+
+            async with self._lock:
+                self._connections[client_id] = peer_connection
+
+            # 发送欢迎消息
+            await websocket.send_json({
+                "msg_type": "welcome",
+                "client_id": client_id,
+            })
+
+            # 消息循环
+            while True:
+                try:
+                    data = await websocket.receive_json()
+                    await self._handle_message(peer_connection, data)
+                except WebSocketDisconnect:
+                    logger.info(f"WebSocket 客户端断开: {client_id}")
+                    break
+                except Exception as e:
+                    logger.error(f"处理消息失败 ({client_id}): {e}")
+                    await websocket.send_json({
+                        "msg_type": "error",
+                        "error": str(e),
+                    })
+
+        except Exception as e:
+            logger.error(f"WebRTC 连接处理失败 ({client_id}): {e}")
+        finally:
+            # 清理连接
+            await peer_connection.close()
+            async with self._lock:
+                self._connections.pop(client_id, None)
+            logger.info(f"WebRTC 客户端已清理: {client_id}")
+
+    async def _handle_message(
+        self,
+        peer_connection: WebRTCPeerConnection,
+        data: dict,
+    ) -> None:
+        """
+        处理信令消息。
+
+        Args:
+            peer_connection: 对等连接实例
+            data: 消息数据
+        """
+        msg_type = data.get("msg_type")
+        payload = data.get("payload", {})
+
+        if msg_type == "offer":
+            # 处理 SDP offer
+            sdp = payload.get("sdp")
+            if not sdp:
+                raise ValueError("缺少 SDP offer")
+
+            await peer_connection.set_remote_description("offer", sdp)
+            answer_sdp = await peer_connection.create_answer()
+
+            await peer_connection.websocket.send_json({
+                "msg_type": "answer",
+                "payload": {
+                    "sdp": answer_sdp,
+                    "type": "answer",
+                },
+            })
+
+            # 发送 ICE 候选
+            candidates = await peer_connection.get_ice_candidates()
+            if candidates:
+                await peer_connection.websocket.send_json({
+                    "msg_type": "ice_candidates",
+                    "payload": {
+                        "candidates": candidates,
+                    },
+                })
+
+        elif msg_type == "ice_candidate":
+            # 处理 ICE 候选
+            await peer_connection.add_ice_candidate(payload)
+
+        else:
+            logger.warning(f"未知消息类型: {msg_type}")
+
+    async def broadcast_status(self) -> None:
+        """广播视频流状态。"""
+        # TODO: 实现状态广播
+        pass
+
+    async def cleanup_stale_connections(self, timeout: float = 300) -> None:
+        """
+        清理过期连接。
+
+        Args:
+            timeout: 超时时间（秒）
+        """
+        async with self._lock:
+            stale_clients = [
+                client_id
+                for client_id, pc in self._connections.items()
+                if pc.age_seconds > timeout and not pc.is_connected
+            ]
+
+            for client_id in stale_clients:
+                logger.info(f"清理过期连接: {client_id}")
+                await self._connections[client_id].close()
+                del self._connections[client_id]

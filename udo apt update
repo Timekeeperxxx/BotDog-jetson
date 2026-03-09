@@ -1,0 +1,674 @@
+[33mPlugin Details[0m:
+  [94mName                     [0m[0mlibav[0m
+  [94mDescription              [0m[0mAll libav codecs and formats (system install)[0m
+  [94mFilename                 [0m[0m/usr/lib/x86_64-linux-gnu/gstreamer-1.0/libgstlibav.so[0m
+  [94mVersion                  [0m[0m1.20.3[0m
+  [94mLicense                  [0m[0mLGPL[0m
+  [94mSource module            [0m[0mgst-libav[0m
+  [94mSource release date      [0m[0m2022-06-15[0m
+  [94mBinary package           [0m[0mGStreamer libav Plugins (Ubuntu)[0m
+  [94mOrigin URL               [0m[0mhttps://launchpad.net/distros/ubuntu/+source/gst-libav1.0[0m
+
+  [32mavdec_4xm[0m: [0mlibav 4X Movie decoder[0m
+  [32mavdec_8bps[0m: [0mlibav QuickTime 8BPS video decoder[0m
+  [32mavdec_8svx_exp[0m: [0mlibav 8SVX exponential decoder[0m
+  [32mavdec_8svx_fib[0m: [0mlibav 8SVX fibonacci decoder[0m
+  [32mavdec_aac[0m: [0mlibav AAC (Advanced Audio Coding) decoder[0m
+  [32mavdec_aac_fixed[0m: [0mlibav AAC (Advanced Audio Coding) decoder[0m
+  [32mavdec_aac_latm[0m: [0mlibav AAC LATM (Advanced Audio Coding LATM syntax) decoder[0m
+  [32mavdec_aasc[0m: [0mlibav Autodesk RLE decoder[0m
+  [32mavdec_ac3[0m: [0mlibav ATSC A/52A (AC-3) decoder[0m
+  [32mavdec_ac3_fixed[0m: [0mlibav ATSC A/52A (AC-3) decoder[0m
+  [32mavdec_acelp_kelvin[0m: [0mlibav Sipro ACELP.KELVIN decoder[0m
+  [32mavdec_adpcm_4xm[0m: [0mlibav ADPCM 4X Movie decoder[0m
+  [32mavdec_adpcm_adx[0m: [0mlibav SEGA CRI ADX ADPCM decoder[0m
+  [32mavdec_adpcm_afc[0m: [0mlibav ADPCM Nintendo Gamecube AFC decoder[0m
+  [32mavdec_adpcm_agm[0m: [0mlibav ADPCM AmuseGraphics Movie decoder[0m
+  [32mavdec_adpcm_aica[0m: [0mlibav ADPCM Yamaha AICA decoder[0m
+  [32mavdec_adpcm_argo[0m: [0mlibav ADPCM Argonaut Games decoder[0m
+  [32mavdec_adpcm_ct[0m: [0mlibav ADPCM Creative Technology decoder[0m
+  [32mavdec_adpcm_dtk[0m: [0mlibav ADPCM Nintendo Gamecube DTK decoder[0m
+  [32mavdec_adpcm_ea[0m: [0mlibav ADPCM Electronic Arts decoder[0m
+  [32mavdec_adpcm_ea_maxis_xa[0m: [0mlibav ADPCM Electronic Arts Maxis CDROM XA decoder[0m
+  [32mavdec_adpcm_ea_r1[0m: [0mlibav ADPCM Electronic Arts R1 decoder[0m
+  [32mavdec_adpcm_ea_r2[0m: [0mlibav ADPCM Electronic Arts R2 decoder[0m
+  [32mavdec_adpcm_ea_r3[0m: [0mlibav ADPCM Electronic Arts R3 decoder[0m
+  [32mavdec_adpcm_ea_xas[0m: [0mlibav ADPCM Electronic Arts XAS decoder[0m
+  [32mavdec_adpcm_ima_alp[0m: [0mlibav ADPCM IMA High Voltage Software ALP decoder[0m
+  [32mavdec_adpcm_ima_amv[0m: [0mlibav ADPCM IMA AMV decoder[0m
+  [32mavdec_adpcm_ima_apc[0m: [0mlibav ADPCM IMA CRYO APC decoder[0m
+  [32mavdec_adpcm_ima_apm[0m: [0mlibav ADPCM IMA Ubisoft APM decoder[0m
+  [32mavdec_adpcm_ima_cunning[0m: [0mlibav ADPCM IMA Cunning Developments decoder[0m
+  [32mavdec_adpcm_ima_dat4[0m: [0mlibav ADPCM IMA Eurocom DAT4 decoder[0m
+  [32mavdec_adpcm_ima_dk3[0m: [0mlibav ADPCM IMA Duck DK3 decoder[0m
+  [32mavdec_adpcm_ima_dk4[0m: [0mlibav ADPCM IMA Duck DK4 decoder[0m
+  [32mavdec_adpcm_ima_ea_eacs[0m: [0mlibav ADPCM IMA Electronic Arts EACS decoder[0m
+  [32mavdec_adpcm_ima_ea_sead[0m: [0mlibav ADPCM IMA Electronic Arts SEAD decoder[0m
+  [32mavdec_adpcm_ima_iss[0m: [0mlibav ADPCM IMA Funcom ISS decoder[0m
+  [32mavdec_adpcm_ima_moflex[0m: [0mlibav ADPCM IMA MobiClip MOFLEX decoder[0m
+  [32mavdec_adpcm_ima_mtf[0m: [0mlibav ADPCM IMA Capcom's MT Framework decoder[0m
+  [32mavdec_adpcm_ima_oki[0m: [0mlibav ADPCM IMA Dialogic OKI decoder[0m
+  [32mavdec_adpcm_ima_qt[0m: [0mlibav ADPCM IMA QuickTime decoder[0m
+  [32mavdec_adpcm_ima_rad[0m: [0mlibav ADPCM IMA Radical decoder[0m
+  [32mavdec_adpcm_ima_smjpeg[0m: [0mlibav ADPCM IMA Loki SDL MJPEG decoder[0m
+  [32mavdec_adpcm_ima_ssi[0m: [0mlibav ADPCM IMA Simon & Schuster Interactive decoder[0m
+  [32mavdec_adpcm_ima_wav[0m: [0mlibav ADPCM IMA WAV decoder[0m
+  [32mavdec_adpcm_ima_ws[0m: [0mlibav ADPCM IMA Westwood decoder[0m
+  [32mavdec_adpcm_ms[0m: [0mlibav ADPCM Microsoft decoder[0m
+  [32mavdec_adpcm_mtaf[0m: [0mlibav ADPCM MTAF decoder[0m
+  [32mavdec_adpcm_psx[0m: [0mlibav ADPCM Playstation decoder[0m
+  [32mavdec_adpcm_sbpro_2[0m: [0mlibav ADPCM Sound Blaster Pro 2-bit decoder[0m
+  [32mavdec_adpcm_sbpro_3[0m: [0mlibav ADPCM Sound Blaster Pro 2.6-bit decoder[0m
+  [32mavdec_adpcm_sbpro_4[0m: [0mlibav ADPCM Sound Blaster Pro 4-bit decoder[0m
+  [32mavdec_adpcm_swf[0m: [0mlibav ADPCM Shockwave Flash decoder[0m
+  [32mavdec_adpcm_thp[0m: [0mlibav ADPCM Nintendo THP decoder[0m
+  [32mavdec_adpcm_thp_le[0m: [0mlibav ADPCM Nintendo THP (little-endian) decoder[0m
+  [32mavdec_adpcm_vima[0m: [0mlibav LucasArts VIMA audio decoder[0m
+  [32mavdec_adpcm_xa[0m: [0mlibav ADPCM CDROM XA decoder[0m
+  [32mavdec_adpcm_yamaha[0m: [0mlibav ADPCM Yamaha decoder[0m
+  [32mavdec_adpcm_zork[0m: [0mlibav ADPCM Zork decoder[0m
+  [32mavdec_agm[0m: [0mlibav Amuse Graphics Movie decoder[0m
+  [32mavdec_aic[0m: [0mlibav Apple Intermediate Codec decoder[0m
+  [32mavdec_alac[0m: [0mlibav ALAC (Apple Lossless Audio Codec) decoder[0m
+  [32mavdec_alias_pix[0m: [0mlibav Alias/Wavefront PIX image decoder[0m
+  [32mavdec_als[0m: [0mlibav MPEG-4 Audio Lossless Coding (ALS) decoder[0m
+  [32mavdec_amrnb[0m: [0mlibav AMR-NB (Adaptive Multi-Rate NarrowBand) decoder[0m
+  [32mavdec_amrwb[0m: [0mlibav AMR-WB (Adaptive Multi-Rate WideBand) decoder[0m
+  [32mavdec_amv[0m: [0mlibav AMV Video decoder[0m
+  [32mavdec_anm[0m: [0mlibav Deluxe Paint Animation decoder[0m
+  [32mavdec_ansi[0m: [0mlibav ASCII/ANSI art decoder[0m
+  [32mavdec_ape[0m: [0mlibav Monkey's Audio decoder[0m
+  [32mavdec_apng[0m: [0mlibav APNG (Animated Portable Network Graphics) image decoder[0m
+  [32mavdec_aptx[0m: [0mlibav aptX (Audio Processing Technology for Bluetooth) decoder[0m
+  [32mavdec_aptx_hd[0m: [0mlibav aptX HD (Audio Processing Technology for Bluetooth) decoder[0m
+  [32mavdec_arbc[0m: [0mlibav Gryphon's Anim Compressor decoder[0m
+  [32mavdec_argo[0m: [0mlibav Argonaut Games Video decoder[0m
+  [32mavdec_asv1[0m: [0mlibav ASUS V1 decoder[0m
+  [32mavdec_asv2[0m: [0mlibav ASUS V2 decoder[0m
+  [32mavdec_atrac1[0m: [0mlibav ATRAC1 (Adaptive TRansform Acoustic Coding) decoder[0m
+  [32mavdec_atrac3[0m: [0mlibav ATRAC3 (Adaptive TRansform Acoustic Coding 3) decoder[0m
+  [32mavdec_atrac3al[0m: [0mlibav ATRAC3 AL (Adaptive TRansform Acoustic Coding 3 Advanced Lossless) decoder[0m
+  [32mavdec_atrac3plus[0m: [0mlibav ATRAC3+ (Adaptive TRansform Acoustic Coding 3+) decoder[0m
+  [32mavdec_atrac3plusal[0m: [0mlibav ATRAC3+ AL (Adaptive TRansform Acoustic Coding 3+ Advanced Lossless) decoder[0m
+  [32mavdec_atrac9[0m: [0mlibav ATRAC9 (Adaptive TRansform Acoustic Coding 9) decoder[0m
+  [32mavdec_aura[0m: [0mlibav Auravision AURA decoder[0m
+  [32mavdec_aura2[0m: [0mlibav Auravision Aura 2 decoder[0m
+  [32mavdec_av1[0m: [0mlibav Alliance for Open Media AV1 decoder[0m
+  [32mavdec_avrn[0m: [0mlibav Avid AVI Codec decoder[0m
+  [32mavdec_avrp[0m: [0mlibav Avid 1:1 10-bit RGB Packer decoder[0m
+  [32mavdec_avs[0m: [0mlibav AVS (Audio Video Standard) video decoder[0m
+  [32mavdec_avui[0m: [0mlibav Avid Meridien Uncompressed decoder[0m
+  [32mavdec_bethsoftvid[0m: [0mlibav Bethesda VID video decoder[0m
+  [32mavdec_bfi[0m: [0mlibav Brute Force & Ignorance decoder[0m
+  [32mavdec_binkaudio_dct[0m: [0mlibav Bink Audio (DCT) decoder[0m
+  [32mavdec_binkaudio_rdft[0m: [0mlibav Bink Audio (RDFT) decoder[0m
+  [32mavdec_binkvideo[0m: [0mlibav Bink video decoder[0m
+  [32mavdec_bintext[0m: [0mlibav Binary text decoder[0m
+  [32mavdec_bitpacked[0m: [0mlibav Bitpacked decoder[0m
+  [32mavdec_bmp[0m: [0mlibav BMP (Windows and OS/2 bitmap) decoder[0m
+  [32mavdec_bmv_audio[0m: [0mlibav Discworld II BMV audio decoder[0m
+  [32mavdec_bmv_video[0m: [0mlibav Discworld II BMV video decoder[0m
+  [32mavdec_brender_pix[0m: [0mlibav BRender PIX image decoder[0m
+  [32mavdec_c93[0m: [0mlibav Interplay C93 decoder[0m
+  [32mavdec_camstudio[0m: [0mlibav CamStudio decoder[0m
+  [32mavdec_camtasia[0m: [0mlibav TechSmith Screen Capture Codec decoder[0m
+  [32mavdec_cavs[0m: [0mlibav Chinese AVS (Audio Video Standard) (AVS1-P2, JiZhun profile) decoder[0m
+  [32mavdec_cdtoons[0m: [0mlibav CDToons video decoder[0m
+  [32mavdec_cdxl[0m: [0mlibav Commodore CDXL video decoder[0m
+  [32mavdec_cfhd[0m: [0mlibav GoPro CineForm HD decoder[0m
+  [32mavdec_cinepak[0m: [0mlibav Cinepak decoder[0m
+  [32mavdec_clearvideo[0m: [0mlibav Iterated Systems ClearVideo decoder[0m
+  [32mavdec_cljr[0m: [0mlibav Cirrus Logic AccuPak decoder[0m
+  [32mavdec_cllc[0m: [0mlibav Canopus Lossless Codec decoder[0m
+  [32mavdec_comfortnoise[0m: [0mlibav RFC 3389 comfort noise generator decoder[0m
+  [32mavdec_cook[0m: [0mlibav Cook / Cooker / Gecko (RealAudio G2) decoder[0m
+  [32mavdec_cpia[0m: [0mlibav CPiA video format decoder[0m
+  [32mavdec_cri[0m: [0mlibav Cintel RAW decoder[0m
+  [32mavdec_cyuv[0m: [0mlibav Creative YUV (CYUV) decoder[0m
+  [32mavdec_dca[0m: [0mlibav DCA (DTS Coherent Acoustics) decoder[0m
+  [32mavdec_dds[0m: [0mlibav DirectDraw Surface image decoder decoder[0m
+  [32mavdec_derf_dpcm[0m: [0mlibav DPCM Xilam DERF decoder[0m
+  [32mavdec_dfa[0m: [0mlibav Chronomaster DFA decoder[0m
+  [32mavdec_dirac[0m: [0mlibav BBC Dirac VC-2 decoder[0m
+  [32mavdec_dnxhd[0m: [0mlibav VC3/DNxHD decoder[0m
+  [32mavdec_dolby_e[0m: [0mlibav Dolby E decoder[0m
+  [32mavdec_dpx[0m: [0mlibav DPX (Digital Picture Exchange) image decoder[0m
+  [32mavdec_dsd_lsbf[0m: [0mlibav DSD (Direct Stream Digital), least significant bit first decoder[0m
+  [32mavdec_dsd_lsbf_planar[0m: [0mlibav DSD (Direct Stream Digital), least significant bit first, planar decoder[0m
+  [32mavdec_dsd_msbf[0m: [0mlibav DSD (Direct Stream Digital), most significant bit first decoder[0m
+  [32mavdec_dsd_msbf_planar[0m: [0mlibav DSD (Direct Stream Digital), most significant bit first, planar decoder[0m
+  [32mavdec_dsicinaudio[0m: [0mlibav Delphine Software International CIN audio decoder[0m
+  [32mavdec_dsicinvideo[0m: [0mlibav Delphine Software International CIN video decoder[0m
+  [32mavdec_dss_sp[0m: [0mlibav Digital Speech Standard - Standard Play mode (DSS SP) decoder[0m
+  [32mavdec_dst[0m: [0mlibav DST (Digital Stream Transfer) decoder[0m
+  [32mavdec_dvaudio[0m: [0mlibav Ulead DV Audio decoder[0m
+  [32mavdec_dvvideo[0m: [0mlibav DV (Digital Video) decoder[0m
+  [32mavdec_dxa[0m: [0mlibav Feeble Files/ScummVM DXA decoder[0m
+  [32mavdec_dxtory[0m: [0mlibav Dxtory decoder[0m
+  [32mavdec_dxv[0m: [0mlibav Resolume DXV decoder[0m
+  [32mavdec_eac3[0m: [0mlibav ATSC A/52B (AC-3, E-AC-3) decoder[0m
+  [32mavdec_eacmv[0m: [0mlibav Electronic Arts CMV video decoder[0m
+  [32mavdec_eamad[0m: [0mlibav Electronic Arts Madcow Video decoder[0m
+  [32mavdec_eatgq[0m: [0mlibav Electronic Arts TGQ video decoder[0m
+  [32mavdec_eatgv[0m: [0mlibav Electronic Arts TGV video decoder[0m
+  [32mavdec_eatqi[0m: [0mlibav Electronic Arts TQI Video decoder[0m
+  [32mavdec_escape124[0m: [0mlibav Escape 124 decoder[0m
+  [32mavdec_escape130[0m: [0mlibav Escape 130 decoder[0m
+  [32mavdec_evrc[0m: [0mlibav EVRC (Enhanced Variable Rate Codec) decoder[0m
+  [32mavdec_exr[0m: [0mlibav OpenEXR image decoder[0m
+  [32mavdec_fastaudio[0m: [0mlibav MobiClip FastAudio decoder[0m
+  [32mavdec_ffv1[0m: [0mlibav FFmpeg video codec #1 decoder[0m
+  [32mavdec_ffvhuff[0m: [0mlibav Huffyuv FFmpeg variant decoder[0m
+  [32mavdec_fic[0m: [0mlibav Mirillis FIC decoder[0m
+  [32mavdec_fits[0m: [0mlibav Flexible Image Transport System decoder[0m
+  [32mavdec_flac[0m: [0mlibav FLAC (Free Lossless Audio Codec) decoder[0m
+  [32mavdec_flashsv[0m: [0mlibav Flash Screen Video v1 decoder[0m
+  [32mavdec_flashsv2[0m: [0mlibav Flash Screen Video v2 decoder[0m
+  [32mavdec_flic[0m: [0mlibav Autodesk Animator Flic video decoder[0m
+  [32mavdec_flv[0m: [0mlibav FLV / Sorenson Spark / Sorenson H.263 (Flash Video) decoder[0m
+  [32mavdec_fmvc[0m: [0mlibav FM Screen Capture Codec decoder[0m
+  [32mavdec_fraps[0m: [0mlibav Fraps decoder[0m
+  [32mavdec_frwu[0m: [0mlibav Forward Uncompressed decoder[0m
+  [32mavdec_g2m[0m: [0mlibav Go2Meeting decoder[0m
+  [32mavdec_g722[0m: [0mlibav G.722 ADPCM decoder[0m
+  [32mavdec_g723_1[0m: [0mlibav G.723.1 decoder[0m
+  [32mavdec_g726[0m: [0mlibav G.726 ADPCM decoder[0m
+  [32mavdec_g726le[0m: [0mlibav G.726 ADPCM little-endian decoder[0m
+  [32mavdec_g729[0m: [0mlibav G.729 decoder[0m
+  [32mavdec_gdv[0m: [0mlibav Gremlin Digital Video decoder[0m
+  [32mavdec_gif[0m: [0mlibav GIF (Graphics Interchange Format) decoder[0m
+  [32mavdec_gremlin_dpcm[0m: [0mlibav DPCM Gremlin decoder[0m
+  [32mavdec_gsm[0m: [0mlibav GSM decoder[0m
+  [32mavdec_gsm_ms[0m: [0mlibav GSM Microsoft variant decoder[0m
+  [32mavdec_h261[0m: [0mlibav H.261 decoder[0m
+  [32mavdec_h263[0m: [0mlibav H.263 / H.263-1996, H.263+ / H.263-1998 / H.263 version 2 decoder[0m
+  [32mavdec_h263i[0m: [0mlibav Intel H.263 decoder[0m
+  [32mavdec_h263p[0m: [0mlibav H.263 / H.263-1996, H.263+ / H.263-1998 / H.263 version 2 decoder[0m
+  [32mavdec_h264[0m: [0mlibav H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 decoder[0m
+  [32mavdec_h265[0m: [0mlibav HEVC (High Efficiency Video Coding) decoder[0m
+  [32mavdec_hap[0m: [0mlibav Vidvox Hap decoder[0m
+  [32mavdec_hca[0m: [0mlibav CRI HCA decoder[0m
+  [32mavdec_hcom[0m: [0mlibav HCOM Audio decoder[0m
+  [32mavdec_hnm4video[0m: [0mlibav HNM 4 video decoder[0m
+  [32mavdec_hq_hqa[0m: [0mlibav Canopus HQ/HQA decoder[0m
+  [32mavdec_hqx[0m: [0mlibav Canopus HQX decoder[0m
+  [32mavdec_huffyuv[0m: [0mlibav Huffyuv / HuffYUV decoder[0m
+  [32mavdec_hymt[0m: [0mlibav HuffYUV MT decoder[0m
+  [32mavdec_iac[0m: [0mlibav IAC (Indeo Audio Coder) decoder[0m
+  [32mavdec_idcinvideo[0m: [0mlibav id Quake II CIN video decoder[0m
+  [32mavdec_idf[0m: [0mlibav iCEDraw text decoder[0m
+  [32mavdec_iff[0m: [0mlibav IFF ACBM/ANIM/DEEP/ILBM/PBM/RGB8/RGBN decoder[0m
+  [32mavdec_ilbc[0m: [0mlibav iLBC (Internet Low Bitrate Codec) decoder[0m
+  [32mavdec_imc[0m: [0mlibav IMC (Intel Music Coder) decoder[0m
+  [32mavdec_imm4[0m: [0mlibav Infinity IMM4 decoder[0m
+  [32mavdec_imm5[0m: [0mlibav Infinity IMM5 decoder[0m
+  [32mavdec_indeo2[0m: [0mlibav Intel Indeo 2 decoder[0m
+  [32mavdec_indeo3[0m: [0mlibav Intel Indeo 3 decoder[0m
+  [32mavdec_indeo4[0m: [0mlibav Intel Indeo Video Interactive 4 decoder[0m
+  [32mavdec_indeo5[0m: [0mlibav Intel Indeo Video Interactive 5 decoder[0m
+  [32mavdec_interplay_dpcm[0m: [0mlibav DPCM Interplay decoder[0m
+  [32mavdec_interplayacm[0m: [0mlibav Interplay ACM decoder[0m
+  [32mavdec_interplayvideo[0m: [0mlibav Interplay MVE video decoder[0m
+  [32mavdec_ipu[0m: [0mlibav IPU Video decoder[0m
+  [32mavdec_jpeg2000[0m: [0mlibav JPEG 2000 decoder[0m
+  [32mavdec_jpegls[0m: [0mlibav JPEG-LS decoder[0m
+  [32mavdec_jv[0m: [0mlibav Bitmap Brothers JV video decoder[0m
+  [32mavdec_kgv1[0m: [0mlibav Kega Game Video decoder[0m
+  [32mavdec_kmvc[0m: [0mlibav Karl Morton's video codec decoder[0m
+  [32mavdec_lagarith[0m: [0mlibav Lagarith lossless decoder[0m
+  [32mavdec_loco[0m: [0mlibav LOCO decoder[0m
+  [32mavdec_lscr[0m: [0mlibav LEAD Screen Capture decoder[0m
+  [32mavdec_m101[0m: [0mlibav Matrox Uncompressed SD decoder[0m
+  [32mavdec_mace3[0m: [0mlibav MACE (Macintosh Audio Compression/Expansion) 3:1 decoder[0m
+  [32mavdec_mace6[0m: [0mlibav MACE (Macintosh Audio Compression/Expansion) 6:1 decoder[0m
+  [32mavdec_magicyuv[0m: [0mlibav MagicYUV video decoder[0m
+  [32mavdec_mdec[0m: [0mlibav Sony PlayStation MDEC (Motion DECoder) decoder[0m
+  [32mavdec_metasound[0m: [0mlibav Voxware MetaSound decoder[0m
+  [32mavdec_mimic[0m: [0mlibav Mimic decoder[0m
+  [32mavdec_mjpeg[0m: [0mlibav MJPEG (Motion JPEG) decoder[0m
+  [32mavdec_mjpegb[0m: [0mlibav Apple MJPEG-B decoder[0m
+  [32mavdec_mlp[0m: [0mlibav MLP (Meridian Lossless Packing) decoder[0m
+  [32mavdec_mmvideo[0m: [0mlibav American Laser Games MM Video decoder[0m
+  [32mavdec_mobiclip[0m: [0mlibav MobiClip Video decoder[0m
+  [32mavdec_motionpixels[0m: [0mlibav Motion Pixels video decoder[0m
+  [32mavdec_mp1float[0m: [0mlibav MP1 (MPEG audio layer 1) decoder[0m
+  [32mavdec_mp2float[0m: [0mlibav MP2 (MPEG audio layer 2) decoder[0m
+  [32mavdec_mp3[0m: [0mlibav MP3 (MPEG audio layer 3) decoder[0m
+  [32mavdec_mp3adu[0m: [0mlibav ADU (Application Data Unit) MP3 (MPEG audio layer 3) decoder[0m
+  [32mavdec_mp3adufloat[0m: [0mlibav ADU (Application Data Unit) MP3 (MPEG audio layer 3) decoder[0m
+  [32mavdec_mp3float[0m: [0mlibav MP3 (MPEG audio layer 3) decoder[0m
+  [32mavdec_mp3on4[0m: [0mlibav MP3onMP4 decoder[0m
+  [32mavdec_mp3on4float[0m: [0mlibav MP3onMP4 decoder[0m
+  [32mavdec_mpc7[0m: [0mlibav Musepack SV7 decoder[0m
+  [32mavdec_mpc8[0m: [0mlibav Musepack SV8 decoder[0m
+  [32mavdec_mpeg2video[0m: [0mlibav MPEG-2 video decoder[0m
+  [32mavdec_mpeg4[0m: [0mlibav MPEG-4 part 2 decoder[0m
+  [32mavdec_mpegvideo[0m: [0mlibav MPEG-1 video decoder[0m
+  [32mavdec_msa1[0m: [0mlibav MS ATC Screen decoder[0m
+  [32mavdec_mscc[0m: [0mlibav Mandsoft Screen Capture Codec decoder[0m
+  [32mavdec_msmpeg4[0m: [0mlibav MPEG-4 part 2 Microsoft variant version 3 decoder[0m
+  [32mavdec_msmpeg4v1[0m: [0mlibav MPEG-4 part 2 Microsoft variant version 1 decoder[0m
+  [32mavdec_msmpeg4v2[0m: [0mlibav MPEG-4 part 2 Microsoft variant version 2 decoder[0m
+  [32mavdec_msp2[0m: [0mlibav Microsoft Paint (MSP) version 2 decoder[0m
+  [32mavdec_msrle[0m: [0mlibav Microsoft RLE decoder[0m
+  [32mavdec_mss1[0m: [0mlibav MS Screen 1 decoder[0m
+  [32mavdec_mss2[0m: [0mlibav MS Windows Media Video V9 Screen decoder[0m
+  [32mavdec_msvideo1[0m: [0mlibav Microsoft Video 1 decoder[0m
+  [32mavdec_mszh[0m: [0mlibav LCL (LossLess Codec Library) MSZH decoder[0m
+  [32mavdec_mts2[0m: [0mlibav MS Expression Encoder Screen decoder[0m
+  [32mavdec_mv30[0m: [0mlibav MidiVid 3.0 decoder[0m
+  [32mavdec_mvc1[0m: [0mlibav Silicon Graphics Motion Video Compressor 1 decoder[0m
+  [32mavdec_mvc2[0m: [0mlibav Silicon Graphics Motion Video Compressor 2 decoder[0m
+  [32mavdec_mvdv[0m: [0mlibav MidiVid VQ decoder[0m
+  [32mavdec_mvha[0m: [0mlibav MidiVid Archive Codec decoder[0m
+  [32mavdec_mwsc[0m: [0mlibav MatchWare Screen Capture Codec decoder[0m
+  [32mavdec_mxpeg[0m: [0mlibav Mobotix MxPEG video decoder[0m
+  [32mavdec_nellymoser[0m: [0mlibav Nellymoser Asao decoder[0m
+  [32mavdec_notchlc[0m: [0mlibav NotchLC decoder[0m
+  [32mavdec_nuv[0m: [0mlibav NuppelVideo/RTJPEG decoder[0m
+  [32mavdec_on2avc[0m: [0mlibav On2 Audio for Video Codec decoder[0m
+  [32mavdec_opus[0m: [0mlibav Opus decoder[0m
+  [32mavdec_paf_audio[0m: [0mlibav Amazing Studio Packed Animation File Audio decoder[0m
+  [32mavdec_paf_video[0m: [0mlibav Amazing Studio Packed Animation File Video decoder[0m
+  [32mavdec_pam[0m: [0mlibav PAM (Portable AnyMap) image decoder[0m
+  [32mavdec_pbm[0m: [0mlibav PBM (Portable BitMap) image decoder[0m
+  [32mavdec_pcm_lxf[0m: [0mlibav PCM signed 20-bit little-endian planar decoder[0m
+  [32mavdec_pcm_sga[0m: [0mlibav PCM SGA decoder[0m
+  [32mavdec_pcm_vidc[0m: [0mlibav PCM Archimedes VIDC decoder[0m
+  [32mavdec_pcx[0m: [0mlibav PC Paintbrush PCX image decoder[0m
+  [32mavdec_pfm[0m: [0mlibav PFM (Portable FloatMap) image decoder[0m
+  [32mavdec_pgm[0m: [0mlibav PGM (Portable GrayMap) image decoder[0m
+  [32mavdec_pgmyuv[0m: [0mlibav PGMYUV (Portable GrayMap YUV) image decoder[0m
+  [32mavdec_pgx[0m: [0mlibav PGX (JPEG2000 Test Format) decoder[0m
+  [32mavdec_photocd[0m: [0mlibav Kodak Photo CD decoder[0m
+  [32mavdec_pictor[0m: [0mlibav Pictor/PC Paint decoder[0m
+  [32mavdec_pixlet[0m: [0mlibav Apple Pixlet decoder[0m
+  [32mavdec_png[0m: [0mlibav PNG (Portable Network Graphics) image decoder[0m
+  [32mavdec_ppm[0m: [0mlibav PPM (Portable PixelMap) image decoder[0m
+  [32mavdec_prores[0m: [0mlibav Apple ProRes (iCodec Pro) decoder[0m
+  [32mavdec_prosumer[0m: [0mlibav Brooktree ProSumer Video decoder[0m
+  [32mavdec_psd[0m: [0mlibav Photoshop PSD file decoder[0m
+  [32mavdec_ptx[0m: [0mlibav V.Flash PTX image decoder[0m
+  [32mavdec_qcelp[0m: [0mlibav QCELP / PureVoice decoder[0m
+  [32mavdec_qdm2[0m: [0mlibav QDesign Music Codec 2 decoder[0m
+  [32mavdec_qdmc[0m: [0mlibav QDesign Music Codec 1 decoder[0m
+  [32mavdec_qdraw[0m: [0mlibav Apple QuickDraw decoder[0m
+  [32mavdec_qpeg[0m: [0mlibav Q-team QPEG decoder[0m
+  [32mavdec_qtrle[0m: [0mlibav QuickTime Animation (RLE) video decoder[0m
+  [32mavdec_r10k[0m: [0mlibav AJA Kona 10-bit RGB Codec decoder[0m
+  [32mavdec_ralf[0m: [0mlibav RealAudio Lossless decoder[0m
+  [32mavdec_rasc[0m: [0mlibav RemotelyAnywhere Screen Capture decoder[0m
+  [32mavdec_real_144[0m: [0mlibav RealAudio 1.0 (14.4K) decoder[0m
+  [32mavdec_real_288[0m: [0mlibav RealAudio 2.0 (28.8K) decoder[0m
+  [32mavdec_rl2[0m: [0mlibav RL2 video decoder[0m
+  [32mavdec_roq_dpcm[0m: [0mlibav DPCM id RoQ decoder[0m
+  [32mavdec_roqvideo[0m: [0mlibav id RoQ video decoder[0m
+  [32mavdec_rpza[0m: [0mlibav QuickTime video (RPZA) decoder[0m
+  [32mavdec_rscc[0m: [0mlibav innoHeim/Rsupport Screen Capture Codec decoder[0m
+  [32mavdec_rv10[0m: [0mlibav RealVideo 1.0 decoder[0m
+  [32mavdec_rv20[0m: [0mlibav RealVideo 2.0 decoder[0m
+  [32mavdec_rv30[0m: [0mlibav RealVideo 3.0 decoder[0m
+  [32mavdec_rv40[0m: [0mlibav RealVideo 4.0 decoder[0m
+  [32mavdec_s302m[0m: [0mlibav SMPTE 302M decoder[0m
+  [32mavdec_sanm[0m: [0mlibav LucasArts SANM/Smush video decoder[0m
+  [32mavdec_sbc[0m: [0mlibav SBC (low-complexity subband codec) decoder[0m
+  [32mavdec_scpr[0m: [0mlibav ScreenPressor decoder[0m
+  [32mavdec_screenpresso[0m: [0mlibav Screenpresso decoder[0m
+  [32mavdec_sdx2_dpcm[0m: [0mlibav DPCM Squareroot-Delta-Exact decoder[0m
+  [32mavdec_sga[0m: [0mlibav Digital Pictures SGA Video decoder[0m
+  [32mavdec_sgi[0m: [0mlibav SGI image decoder[0m
+  [32mavdec_sgirle[0m: [0mlibav Silicon Graphics RLE 8-bit video decoder[0m
+  [32mavdec_sheervideo[0m: [0mlibav BitJazz SheerVideo decoder[0m
+  [32mavdec_shorten[0m: [0mlibav Shorten decoder[0m
+  [32mavdec_simbiosis_imx[0m: [0mlibav Simbiosis Interactive IMX Video decoder[0m
+  [32mavdec_sipr[0m: [0mlibav RealAudio SIPR / ACELP.NET decoder[0m
+  [32mavdec_siren[0m: [0mlibav Siren decoder[0m
+  [32mavdec_smackaud[0m: [0mlibav Smacker audio decoder[0m
+  [32mavdec_smackvid[0m: [0mlibav Smacker video decoder[0m
+  [32mavdec_smc[0m: [0mlibav QuickTime Graphics (SMC) decoder[0m
+  [32mavdec_smvjpeg[0m: [0mlibav SMV JPEG decoder[0m
+  [32mavdec_snow[0m: [0mlibav Snow decoder[0m
+  [32mavdec_sol_dpcm[0m: [0mlibav DPCM Sol decoder[0m
+  [32mavdec_sonic[0m: [0mlibav Sonic decoder[0m
+  [32mavdec_sp5x[0m: [0mlibav Sunplus JPEG (SP5X) decoder[0m
+  [32mavdec_speedhq[0m: [0mlibav NewTek SpeedHQ decoder[0m
+  [32mavdec_srgc[0m: [0mlibav Screen Recorder Gold Codec decoder[0m
+  [32mavdec_sunrast[0m: [0mlibav Sun Rasterfile image decoder[0m
+  [32mavdec_svq1[0m: [0mlibav Sorenson Vector Quantizer 1 / Sorenson Video 1 / SVQ1 decoder[0m
+  [32mavdec_svq3[0m: [0mlibav Sorenson Vector Quantizer 3 / Sorenson Video 3 / SVQ3 decoder[0m
+  [32mavdec_tak[0m: [0mlibav TAK (Tom's lossless Audio Kompressor) decoder[0m
+  [32mavdec_targa[0m: [0mlibav Truevision Targa image decoder[0m
+  [32mavdec_targa_y216[0m: [0mlibav Pinnacle TARGA CineWave YUV16 decoder[0m
+  [32mavdec_tdsc[0m: [0mlibav TDSC decoder[0m
+  [32mavdec_thp[0m: [0mlibav Nintendo Gamecube THP video decoder[0m
+  [32mavdec_tiertexseqvideo[0m: [0mlibav Tiertex Limited SEQ video decoder[0m
+  [32mavdec_tiff[0m: [0mlibav TIFF image decoder[0m
+  [32mavdec_tmv[0m: [0mlibav 8088flex TMV decoder[0m
+  [32mavdec_truehd[0m: [0mlibav TrueHD decoder[0m
+  [32mavdec_truemotion1[0m: [0mlibav Duck TrueMotion 1.0 decoder[0m
+  [32mavdec_truemotion2[0m: [0mlibav Duck TrueMotion 2.0 decoder[0m
+  [32mavdec_truemotion2rt[0m: [0mlibav Duck TrueMotion 2.0 Real Time decoder[0m
+  [32mavdec_truespeech[0m: [0mlibav DSP Group TrueSpeech decoder[0m
+  [32mavdec_tscc2[0m: [0mlibav TechSmith Screen Codec 2 decoder[0m
+  [32mavdec_tta[0m: [0mlibav TTA (True Audio) decoder[0m
+  [32mavdec_twinvq[0m: [0mlibav VQF TwinVQ decoder[0m
+  [32mavdec_txd[0m: [0mlibav Renderware TXD (TeXture Dictionary) image decoder[0m
+  [32mavdec_ultimotion[0m: [0mlibav IBM UltiMotion decoder[0m
+  [32mavdec_utvideo[0m: [0mlibav Ut Video decoder[0m
+  [32mavdec_vb[0m: [0mlibav Beam Software VB decoder[0m
+  [32mavdec_vble[0m: [0mlibav VBLE Lossless Codec decoder[0m
+  [32mavdec_vc1[0m: [0mlibav SMPTE VC-1 decoder[0m
+  [32mavdec_vc1image[0m: [0mlibav Windows Media Video 9 Image v2 decoder[0m
+  [32mavdec_vcr1[0m: [0mlibav ATI VCR1 decoder[0m
+  [32mavdec_vmdaudio[0m: [0mlibav Sierra VMD audio decoder[0m
+  [32mavdec_vmdvideo[0m: [0mlibav Sierra VMD video decoder[0m
+  [32mavdec_vmnc[0m: [0mlibav VMware Screen Codec / VMware Video decoder[0m
+  [32mavdec_vp3[0m: [0mlibav On2 VP3 decoder[0m
+  [32mavdec_vp4[0m: [0mlibav On2 VP4 decoder[0m
+  [32mavdec_vp5[0m: [0mlibav On2 VP5 decoder[0m
+  [32mavdec_vp6[0m: [0mlibav On2 VP6 decoder[0m
+  [32mavdec_vp6a[0m: [0mlibav On2 VP6 (Flash version, with alpha channel) decoder[0m
+  [32mavdec_vp6f[0m: [0mlibav On2 VP6 (Flash version) decoder[0m
+  [32mavdec_vp7[0m: [0mlibav On2 VP7 decoder[0m
+  [32mavdec_vp8[0m: [0mlibav On2 VP8 decoder[0m
+  [32mavdec_vp9[0m: [0mlibav Google VP9 decoder[0m
+  [32mavdec_vqavideo[0m: [0mlibav Westwood Studios VQA (Vector Quantized Animation) video decoder[0m
+  [32mavdec_wavesynth[0m: [0mlibav Wave synthesis pseudo-codec decoder[0m
+  [32mavdec_wcmv[0m: [0mlibav WinCAM Motion Video decoder[0m
+  [32mavdec_webp[0m: [0mlibav WebP image decoder[0m
+  [32mavdec_wmalossless[0m: [0mlibav Windows Media Audio Lossless decoder[0m
+  [32mavdec_wmapro[0m: [0mlibav Windows Media Audio 9 Professional decoder[0m
+  [32mavdec_wmav1[0m: [0mlibav Windows Media Audio 1 decoder[0m
+  [32mavdec_wmav2[0m: [0mlibav Windows Media Audio 2 decoder[0m
+  [32mavdec_wmavoice[0m: [0mlibav Windows Media Audio Voice decoder[0m
+  [32mavdec_wmv1[0m: [0mlibav Windows Media Video 7 decoder[0m
+  [32mavdec_wmv2[0m: [0mlibav Windows Media Video 8 decoder[0m
+  [32mavdec_wmv3[0m: [0mlibav Windows Media Video 9 decoder[0m
+  [32mavdec_wmv3image[0m: [0mlibav Windows Media Video 9 Image decoder[0m
+  [32mavdec_wnv1[0m: [0mlibav Winnov WNV1 decoder[0m
+  [32mavdec_ws_snd1[0m: [0mlibav Westwood Audio (SND1) decoder[0m
+  [32mavdec_xan_dpcm[0m: [0mlibav DPCM Xan decoder[0m
+  [32mavdec_xan_wc3[0m: [0mlibav Wing Commander III / Xan decoder[0m
+  [32mavdec_xan_wc4[0m: [0mlibav Wing Commander IV / Xxan decoder[0m
+  [32mavdec_xbin[0m: [0mlibav eXtended BINary text decoder[0m
+  [32mavdec_xbm[0m: [0mlibav XBM (X BitMap) image decoder[0m
+  [32mavdec_xface[0m: [0mlibav X-face image decoder[0m
+  [32mavdec_xl[0m: [0mlibav Miro VideoXL decoder[0m
+  [32mavdec_xma1[0m: [0mlibav Xbox Media Audio 1 decoder[0m
+  [32mavdec_xma2[0m: [0mlibav Xbox Media Audio 2 decoder[0m
+  [32mavdec_xpm[0m: [0mlibav XPM (X PixMap) image decoder[0m
+  [32mavdec_xwd[0m: [0mlibav XWD (X Window Dump) image decoder[0m
+  [32mavdec_ylc[0m: [0mlibav YUY2 Lossless Codec decoder[0m
+  [32mavdec_yop[0m: [0mlibav Psygnosis YOP Video decoder[0m
+  [32mavdec_zerocodec[0m: [0mlibav ZeroCodec Lossless Video decoder[0m
+  [32mavdec_zmbv[0m: [0mlibav Zip Motion Blocks Video decoder[0m
+  [32mavdeinterlace[0m: [0mlibav Deinterlace element[0m
+  [32mavdemux_4xm[0m: [0mlibav 4X Technologies demuxer[0m
+  [32mavdemux_aiff[0m: [0mlibav Audio IFF demuxer[0m
+  [32mavdemux_ape[0m: [0mlibav Monkey's Audio demuxer[0m
+  [32mavdemux_avs[0m: [0mlibav Argonaut Games Creature Shock demuxer[0m
+  [32mavdemux_bfstm[0m: [0mlibav BFSTM (Binary Cafe Stream) demuxer[0m
+  [32mavdemux_brstm[0m: [0mlibav BRSTM (Binary Revolution Stream) demuxer[0m
+  [32mavdemux_daud[0m: [0mlibav D-Cinema audio demuxer[0m
+  [32mavdemux_dsf[0m: [0mlibav DSD Stream File (DSF) demuxer[0m
+  [32mavdemux_ea[0m: [0mlibav Electronic Arts Multimedia demuxer[0m
+  [32mavdemux_film_cpk[0m: [0mlibav Sega FILM / CPK demuxer[0m
+  [32mavdemux_gif[0m: [0mlibav CompuServe Graphics Interchange Format (GIF) demuxer[0m
+  [32mavdemux_gxf[0m: [0mlibav GXF (General eXchange Format) demuxer[0m
+  [32mavdemux_idcin[0m: [0mlibav id Cinematic demuxer[0m
+  [32mavdemux_iff[0m: [0mlibav IFF (Interchange File Format) demuxer[0m
+  [32mavdemux_ipmovie[0m: [0mlibav Interplay MVE demuxer[0m
+  [32mavdemux_ivf[0m: [0mlibav On2 IVF demuxer[0m
+  [32mavdemux_mm[0m: [0mlibav American Laser Games MM demuxer[0m
+  [32mavdemux_mmf[0m: [0mlibav Yamaha SMAF demuxer[0m
+  [32mavdemux_mpc[0m: [0mlibav Musepack demuxer[0m
+  [32mavdemux_mpc8[0m: [0mlibav Musepack SV8 demuxer[0m
+  [32mavdemux_mxf[0m: [0mlibav MXF (Material eXchange Format) demuxer[0m
+  [32mavdemux_nsv[0m: [0mlibav Nullsoft Streaming Video demuxer[0m
+  [32mavdemux_nut[0m: [0mlibav NUT demuxer[0m
+  [32mavdemux_nuv[0m: [0mlibav NuppelVideo demuxer[0m
+  [32mavdemux_psxstr[0m: [0mlibav Sony Playstation STR demuxer[0m
+  [32mavdemux_pva[0m: [0mlibav TechnoTrend PVA demuxer[0m
+  [32mavdemux_smk[0m: [0mlibav Smacker demuxer[0m
+  [32mavdemux_sol[0m: [0mlibav Sierra SOL demuxer[0m
+  [32mavdemux_tta[0m: [0mlibav TTA (True Audio) demuxer[0m
+  [32mavdemux_vmd[0m: [0mlibav Sierra VMD demuxer[0m
+  [32mavdemux_voc[0m: [0mlibav Creative Voice demuxer[0m
+  [32mavdemux_wc3movie[0m: [0mlibav Wing Commander III movie demuxer[0m
+  [32mavdemux_wsaud[0m: [0mlibav Westwood Studios audio demuxer[0m
+  [32mavdemux_wsvqa[0m: [0mlibav Westwood Studios VQA demuxer[0m
+  [32mavdemux_xwma[0m: [0mlibav Microsoft xWMA demuxer[0m
+  [32mavdemux_yuv4mpegpipe[0m: [0mlibav YUV4MPEG pipe demuxer[0m
+  [32mavenc_a64multi[0m: [0mlibav Multicolor charset for Commodore 64 encoder[0m
+  [32mavenc_a64multi5[0m: [0mlibav Multicolor charset for Commodore 64, extended with 5th color (colram) encoder[0m
+  [32mavenc_aac[0m: [0mlibav AAC (Advanced Audio Coding) encoder[0m
+  [32mavenc_ac3[0m: [0mlibav ATSC A/52A (AC-3) encoder[0m
+  [32mavenc_ac3_fixed[0m: [0mlibav ATSC A/52A (AC-3) encoder[0m
+  [32mavenc_adpcm_adx[0m: [0mlibav SEGA CRI ADX ADPCM encoder[0m
+  [32mavenc_adpcm_argo[0m: [0mlibav ADPCM Argonaut Games encoder[0m
+  [32mavenc_adpcm_ima_alp[0m: [0mlibav ADPCM IMA High Voltage Software ALP encoder[0m
+  [32mavenc_adpcm_ima_amv[0m: [0mlibav ADPCM IMA AMV encoder[0m
+  [32mavenc_adpcm_ima_apm[0m: [0mlibav ADPCM IMA Ubisoft APM encoder[0m
+  [32mavenc_adpcm_ima_qt[0m: [0mlibav ADPCM IMA QuickTime encoder[0m
+  [32mavenc_adpcm_ima_ssi[0m: [0mlibav ADPCM IMA Simon & Schuster Interactive encoder[0m
+  [32mavenc_adpcm_ima_wav[0m: [0mlibav ADPCM IMA WAV encoder[0m
+  [32mavenc_adpcm_ms[0m: [0mlibav ADPCM Microsoft encoder[0m
+  [32mavenc_adpcm_swf[0m: [0mlibav ADPCM Shockwave Flash encoder[0m
+  [32mavenc_adpcm_yamaha[0m: [0mlibav ADPCM Yamaha encoder[0m
+  [32mavenc_alac[0m: [0mlibav ALAC (Apple Lossless Audio Codec) encoder[0m
+  [32mavenc_alias_pix[0m: [0mlibav Alias/Wavefront PIX image encoder[0m
+  [32mavenc_amv[0m: [0mlibav AMV Video encoder[0m
+  [32mavenc_apng[0m: [0mlibav APNG (Animated Portable Network Graphics) image encoder[0m
+  [32mavenc_aptx[0m: [0mlibav aptX (Audio Processing Technology for Bluetooth) encoder[0m
+  [32mavenc_aptx_hd[0m: [0mlibav aptX HD (Audio Processing Technology for Bluetooth) encoder[0m
+  [32mavenc_asv1[0m: [0mlibav ASUS V1 encoder[0m
+  [32mavenc_asv2[0m: [0mlibav ASUS V2 encoder[0m
+  [32mavenc_avrp[0m: [0mlibav Avid 1:1 10-bit RGB Packer encoder[0m
+  [32mavenc_avui[0m: [0mlibav Avid Meridien Uncompressed encoder[0m
+  [32mavenc_bmp[0m: [0mlibav BMP (Windows and OS/2 bitmap) encoder[0m
+  [32mavenc_cfhd[0m: [0mlibav GoPro CineForm HD encoder[0m
+  [32mavenc_cinepak[0m: [0mlibav Cinepak encoder[0m
+  [32mavenc_cljr[0m: [0mlibav Cirrus Logic AccuPak encoder[0m
+  [32mavenc_comfortnoise[0m: [0mlibav RFC 3389 comfort noise generator encoder[0m
+  [32mavenc_dca[0m: [0mlibav DCA (DTS Coherent Acoustics) encoder[0m
+  [32mavenc_dnxhd[0m: [0mlibav VC3/DNxHD encoder[0m
+  [32mavenc_dpx[0m: [0mlibav DPX (Digital Picture Exchange) image encoder[0m
+  [32mavenc_dvvideo[0m: [0mlibav DV (Digital Video) encoder[0m
+  [32mavenc_eac3[0m: [0mlibav ATSC A/52 E-AC-3 encoder[0m
+  [32mavenc_exr[0m: [0mlibav OpenEXR image encoder[0m
+  [32mavenc_ffv1[0m: [0mlibav FFmpeg video codec #1 encoder[0m
+  [32mavenc_ffvhuff[0m: [0mlibav Huffyuv FFmpeg variant encoder[0m
+  [32mavenc_fits[0m: [0mlibav Flexible Image Transport System encoder[0m
+  [32mavenc_flashsv[0m: [0mlibav Flash Screen Video encoder[0m
+  [32mavenc_flashsv2[0m: [0mlibav Flash Screen Video Version 2 encoder[0m
+  [32mavenc_flv[0m: [0mlibav FLV / Sorenson Spark / Sorenson H.263 (Flash Video) encoder[0m
+  [32mavenc_g722[0m: [0mlibav G.722 ADPCM encoder[0m
+  [32mavenc_g723_1[0m: [0mlibav G.723.1 encoder[0m
+  [32mavenc_g726[0m: [0mlibav G.726 ADPCM encoder[0m
+  [32mavenc_g726le[0m: [0mlibav G.726 little endian ADPCM ("right-justified") encoder[0m
+  [32mavenc_h261[0m: [0mlibav H.261 encoder[0m
+  [32mavenc_h263[0m: [0mlibav H.263 / H.263-1996 encoder[0m
+  [32mavenc_h263p[0m: [0mlibav H.263+ / H.263-1998 / H.263 version 2 encoder[0m
+  [32mavenc_h264_omx[0m: [0mlibav OpenMAX IL H.264 video encoder encoder[0m
+  [32mavenc_hap[0m: [0mlibav Vidvox Hap encoder[0m
+  [32mavenc_huffyuv[0m: [0mlibav Huffyuv / HuffYUV encoder[0m
+  [32mavenc_jpeg2000[0m: [0mlibav JPEG 2000 encoder[0m
+  [32mavenc_jpegls[0m: [0mlibav JPEG-LS encoder[0m
+  [32mavenc_ljpeg[0m: [0mlibav Lossless JPEG encoder[0m
+  [32mavenc_magicyuv[0m: [0mlibav MagicYUV video encoder[0m
+  [32mavenc_mjpeg[0m: [0mlibav MJPEG (Motion JPEG) encoder[0m
+  [32mavenc_mlp[0m: [0mlibav MLP (Meridian Lossless Packing) encoder[0m
+  [32mavenc_mp2[0m: [0mlibav MP2 (MPEG audio layer 2) encoder[0m
+  [32mavenc_mp2fixed[0m: [0mlibav MP2 fixed point (MPEG audio layer 2) encoder[0m
+  [32mavenc_mpeg1video[0m: [0mlibav MPEG-1 video encoder[0m
+  [32mavenc_mpeg2video[0m: [0mlibav MPEG-2 video encoder[0m
+  [32mavenc_mpeg4[0m: [0mlibav MPEG-4 part 2 encoder[0m
+  [32mavenc_mpeg4_omx[0m: [0mlibav OpenMAX IL MPEG-4 video encoder encoder[0m
+  [32mavenc_msmpeg4[0m: [0mlibav MPEG-4 part 2 Microsoft variant version 3 encoder[0m
+  [32mavenc_msmpeg4v2[0m: [0mlibav MPEG-4 part 2 Microsoft variant version 2 encoder[0m
+  [32mavenc_msvideo1[0m: [0mlibav Microsoft Video-1 encoder[0m
+  [32mavenc_nellymoser[0m: [0mlibav Nellymoser Asao encoder[0m
+  [32mavenc_opus[0m: [0mlibav Opus encoder[0m
+  [32mavenc_pam[0m: [0mlibav PAM (Portable AnyMap) image encoder[0m
+  [32mavenc_pbm[0m: [0mlibav PBM (Portable BitMap) image encoder[0m
+  [32mavenc_pcm_vidc[0m: [0mlibav PCM Archimedes VIDC encoder[0m
+  [32mavenc_pcx[0m: [0mlibav PC Paintbrush PCX image encoder[0m
+  [32mavenc_pfm[0m: [0mlibav PFM (Portable FloatMap) image encoder[0m
+  [32mavenc_pgm[0m: [0mlibav PGM (Portable GrayMap) image encoder[0m
+  [32mavenc_pgmyuv[0m: [0mlibav PGMYUV (Portable GrayMap YUV) image encoder[0m
+  [32mavenc_png[0m: [0mlibav PNG (Portable Network Graphics) image encoder[0m
+  [32mavenc_ppm[0m: [0mlibav PPM (Portable PixelMap) image encoder[0m
+  [32mavenc_prores[0m: [0mlibav Apple ProRes encoder[0m
+  [32mavenc_prores_aw[0m: [0mlibav Apple ProRes encoder[0m
+  [32mavenc_prores_ks[0m: [0mlibav Apple ProRes (iCodec Pro) encoder[0m
+  [32mavenc_qtrle[0m: [0mlibav QuickTime Animation (RLE) video encoder[0m
+  [32mavenc_r10k[0m: [0mlibav AJA Kona 10-bit RGB Codec encoder[0m
+  [32mavenc_real_144[0m: [0mlibav RealAudio 1.0 (14.4K) encoder[0m
+  [32mavenc_roq_dpcm[0m: [0mlibav id RoQ DPCM encoder[0m
+  [32mavenc_roqvideo[0m: [0mlibav id RoQ video encoder[0m
+  [32mavenc_rpza[0m: [0mlibav QuickTime video (RPZA) encoder[0m
+  [32mavenc_rv10[0m: [0mlibav RealVideo 1.0 encoder[0m
+  [32mavenc_rv20[0m: [0mlibav RealVideo 2.0 encoder[0m
+  [32mavenc_s302m[0m: [0mlibav SMPTE 302M encoder[0m
+  [32mavenc_sbc[0m: [0mlibav SBC (low-complexity subband codec) encoder[0m
+  [32mavenc_sgi[0m: [0mlibav SGI image encoder[0m
+  [32mavenc_snow[0m: [0mlibav Snow encoder[0m
+  [32mavenc_sonic[0m: [0mlibav Sonic encoder[0m
+  [32mavenc_sonicls[0m: [0mlibav Sonic lossless encoder[0m
+  [32mavenc_speedhq[0m: [0mlibav NewTek SpeedHQ encoder[0m
+  [32mavenc_sunrast[0m: [0mlibav Sun Rasterfile image encoder[0m
+  [32mavenc_svq1[0m: [0mlibav Sorenson Vector Quantizer 1 / Sorenson Video 1 / SVQ1 encoder[0m
+  [32mavenc_targa[0m: [0mlibav Truevision Targa image encoder[0m
+  [32mavenc_tiff[0m: [0mlibav TIFF image encoder[0m
+  [32mavenc_truehd[0m: [0mlibav TrueHD encoder[0m
+  [32mavenc_tta[0m: [0mlibav TTA (True Audio) encoder[0m
+  [32mavenc_utvideo[0m: [0mlibav Ut Video encoder[0m
+  [32mavenc_vc2[0m: [0mlibav SMPTE VC-2 encoder[0m
+  [32mavenc_wavpack[0m: [0mlibav WavPack encoder[0m
+  [32mavenc_wmav1[0m: [0mlibav Windows Media Audio 1 encoder[0m
+  [32mavenc_wmav2[0m: [0mlibav Windows Media Audio 2 encoder[0m
+  [32mavenc_wmv1[0m: [0mlibav Windows Media Video 7 encoder[0m
+  [32mavenc_wmv2[0m: [0mlibav Windows Media Video 8 encoder[0m
+  [32mavenc_xbm[0m: [0mlibav XBM (X BitMap) image encoder[0m
+  [32mavenc_xface[0m: [0mlibav X-face image encoder[0m
+  [32mavenc_xwd[0m: [0mlibav XWD (X Window Dump) image encoder[0m
+  [32mavenc_zmbv[0m: [0mlibav Zip Motion Blocks Video encoder[0m
+  [32mavmux_3g2[0m: [0mlibav 3GP2 (3GPP2 file format) muxer[0m
+  [32mavmux_3gp[0m: [0mlibav 3GP (3GPP file format) muxer (not recommended, use gppmux instead)[0m
+  [32mavmux_a64[0m: [0mlibav a64 - video for Commodore 64 muxer[0m
+  [32mavmux_adts[0m: [0mlibav ADTS AAC (Advanced Audio Coding) muxer (not recommended, use aacparse instead)[0m
+  [32mavmux_adx[0m: [0mlibav CRI ADX muxer[0m
+  [32mavmux_aiff[0m: [0mlibav Audio IFF muxer (not recommended, use aiffmux instead)[0m
+  [32mavmux_alp[0m: [0mlibav LEGO Racers ALP muxer[0m
+  [32mavmux_amr[0m: [0mlibav 3GPP AMR muxer[0m
+  [32mavmux_amv[0m: [0mlibav AMV muxer[0m
+  [32mavmux_apm[0m: [0mlibav Ubisoft Rayman 2 APM muxer[0m
+  [32mavmux_apng[0m: [0mlibav Animated Portable Network Graphics muxer[0m
+  [32mavmux_argo_asf[0m: [0mlibav Argonaut Games ASF muxer[0m
+  [32mavmux_asf[0m: [0mlibav ASF (Advanced / Active Streaming Format) muxer (not recommended, use asfmux instead)[0m
+  [32mavmux_asf_stream[0m: [0mlibav ASF (Advanced / Active Streaming Format) muxer (not recommended, use asfmux instead)[0m
+  [32mavmux_ast[0m: [0mlibav AST (Audio Stream) muxer[0m
+  [32mavmux_au[0m: [0mlibav Sun AU muxer[0m
+  [32mavmux_avi[0m: [0mlibav AVI (Audio Video Interleaved) muxer (not recommended, use avimux instead)[0m
+  [32mavmux_avm2[0m: [0mlibav SWF (ShockWave Flash) (AVM2) muxer[0m
+  [32mavmux_bit[0m: [0mlibav G.729 BIT file format muxer[0m
+  [32mavmux_caf[0m: [0mlibav Apple CAF (Core Audio Format) muxer[0m
+  [32mavmux_chromaprint[0m: [0mlibav Chromaprint muxer[0m
+  [32mavmux_codec2[0m: [0mlibav codec2 .c2 muxer muxer[0m
+  [32mavmux_dash[0m: [0mlibav DASH Muxer muxer[0m
+  [32mavmux_daud[0m: [0mlibav D-Cinema audio muxer[0m
+  [32mavmux_dv[0m: [0mlibav DV (Digital Video) muxer[0m
+  [32mavmux_dvd[0m: [0mlibav MPEG-2 PS (DVD VOB) muxer[0m
+  [32mavmux_f4v[0m: [0mlibav F4V Adobe Flash Video muxer[0m
+  [32mavmux_film_cpk[0m: [0mlibav Sega FILM / CPK muxer[0m
+  [32mavmux_filmstrip[0m: [0mlibav Adobe Filmstrip muxer[0m
+  [32mavmux_fits[0m: [0mlibav Flexible Image Transport System muxer[0m
+  [32mavmux_flv[0m: [0mlibav FLV (Flash Video) muxer (not recommended, use flvmux instead)[0m
+  [32mavmux_gxf[0m: [0mlibav GXF (General eXchange Format) muxer[0m
+  [32mavmux_hash[0m: [0mlibav Hash testing muxer[0m
+  [32mavmux_hds[0m: [0mlibav HDS Muxer muxer[0m
+  [32mavmux_hls[0m: [0mlibav Apple HTTP Live Streaming muxer[0m
+  [32mavmux_ico[0m: [0mlibav Microsoft Windows ICO muxer[0m
+  [32mavmux_ilbc[0m: [0mlibav iLBC storage muxer[0m
+  [32mavmux_ipod[0m: [0mlibav iPod H.264 MP4 (MPEG-4 Part 14) muxer[0m
+  [32mavmux_ircam[0m: [0mlibav Berkeley/IRCAM/CARL Sound Format muxer[0m
+  [32mavmux_ismv[0m: [0mlibav ISMV/ISMA (Smooth Streaming) muxer[0m
+  [32mavmux_ivf[0m: [0mlibav On2 IVF muxer[0m
+  [32mavmux_kvag[0m: [0mlibav Simon & Schuster Interactive VAG muxer[0m
+  [32mavmux_latm[0m: [0mlibav LOAS/LATM muxer[0m
+  [32mavmux_matroska[0m: [0mlibav Matroska muxer (not recommended, use matroskamux instead)[0m
+  [32mavmux_md5[0m: [0mlibav MD5 testing muxer[0m
+  [32mavmux_mkvtimestamp_v2[0m: [0mlibav extract pts as timecode v2 format, as defined by mkvtoolnix muxer[0m
+  [32mavmux_mmf[0m: [0mlibav Yamaha SMAF muxer[0m
+  [32mavmux_mov[0m: [0mlibav QuickTime / MOV muxer (not recommended, use qtmux instead)[0m
+  [32mavmux_mp2[0m: [0mlibav MP2 (MPEG audio layer 2) formatter (not recommended, use id3v2mux instead)[0m
+  [32mavmux_mp3[0m: [0mlibav MP3 (MPEG audio layer 3) formatter (not recommended, use id3v2mux instead)[0m
+  [32mavmux_mp4[0m: [0mlibav MP4 (MPEG-4 Part 14) muxer (not recommended, use mp4mux instead)[0m
+  [32mavmux_mpeg[0m: [0mlibav MPEG-1 Systems / MPEG program stream muxer[0m
+  [32mavmux_mpegts[0m: [0mlibav MPEG-TS (MPEG-2 Transport Stream) muxer (not recommended, use mpegtsmux instead)[0m
+  [32mavmux_mpjpeg[0m: [0mlibav MIME multipart JPEG muxer (not recommended, use multipartmux instead)[0m
+  [32mavmux_mxf[0m: [0mlibav MXF (Material eXchange Format) muxer (not recommended, use mxfmux instead)[0m
+  [32mavmux_mxf_d10[0m: [0mlibav MXF (Material eXchange Format) D-10 Mapping muxer[0m
+  [32mavmux_mxf_opatom[0m: [0mlibav MXF (Material eXchange Format) Operational Pattern Atom muxer[0m
+  [32mavmux_nut[0m: [0mlibav NUT muxer[0m
+  [32mavmux_oga[0m: [0mlibav Ogg Audio muxer[0m
+  [32mavmux_ogg[0m: [0mlibav Ogg muxer (not recommended, use oggmux instead)[0m
+  [32mavmux_ogv[0m: [0mlibav Ogg Video muxer[0m
+  [32mavmux_oma[0m: [0mlibav Sony OpenMG audio muxer[0m
+  [32mavmux_opus[0m: [0mlibav Ogg Opus muxer[0m
+  [32mavmux_psp[0m: [0mlibav PSP MP4 (MPEG-4 Part 14) muxer[0m
+  [32mavmux_rm[0m: [0mlibav RealMedia muxer[0m
+  [32mavmux_rso[0m: [0mlibav Lego Mindstorms RSO muxer[0m
+  [32mavmux_rtsp[0m: [0mlibav RTSP output muxer[0m
+  [32mavmux_sap[0m: [0mlibav SAP output muxer[0m
+  [32mavmux_singlejpeg[0m: [0mlibav JPEG single image muxer[0m
+  [32mavmux_smjpeg[0m: [0mlibav Loki SDL MJPEG muxer[0m
+  [32mavmux_smoothstreaming[0m: [0mlibav Smooth Streaming Muxer muxer[0m
+  [32mavmux_sox[0m: [0mlibav SoX native muxer[0m
+  [32mavmux_spdif[0m: [0mlibav IEC 61937 (used on S/PDIF - IEC958) muxer[0m
+  [32mavmux_spx[0m: [0mlibav Ogg Speex muxer[0m
+  [32mavmux_streamhash[0m: [0mlibav Per-stream hash testing muxer[0m
+  [32mavmux_svcd[0m: [0mlibav MPEG-2 PS (SVCD) muxer[0m
+  [32mavmux_swf[0m: [0mlibav SWF (ShockWave Flash) muxer[0m
+  [32mavmux_tta[0m: [0mlibav TTA (True Audio) muxer[0m
+  [32mavmux_uncodedframecrc[0m: [0mlibav uncoded framecrc testing muxer[0m
+  [32mavmux_vc1test[0m: [0mlibav VC-1 test bitstream muxer[0m
+  [32mavmux_vcd[0m: [0mlibav MPEG-1 Systems / MPEG program stream (VCD) muxer[0m
+  [32mavmux_vidc[0m: [0mlibav PCM Archimedes VIDC muxer[0m
+  [32mavmux_vob[0m: [0mlibav MPEG-2 PS (VOB) muxer[0m
+  [32mavmux_voc[0m: [0mlibav Creative Voice muxer[0m
+  [32mavmux_w64[0m: [0mlibav Sony Wave64 muxer[0m
+  [32mavmux_wav[0m: [0mlibav WAV / WAVE (Waveform Audio) muxer (not recommended, use wavenc instead)[0m
+  [32mavmux_webp[0m: [0mlibav WebP muxer[0m
+  [32mavmux_wtv[0m: [0mlibav Windows Television (WTV) muxer[0m
+  [32mavmux_yuv4mpegpipe[0m: [0mlibav YUV4MPEG pipe muxer (not recommended, use y4menc instead)[0m
+  [32mavtype_4xm[0m: [0mno extensions[0m
+  [32mavtype_avs[0m: [0mno extensions[0m
+  [32mavtype_bfstm[0m: [0mbfstm[0m, [0mbcstm[0m
+  [32mavtype_brstm[0m: [0mbrstm[0m
+  [32mavtype_daud[0m: [0m302[0m, [0mdaud[0m
+  [32mavtype_dsf[0m: [0mno extensions[0m
+  [32mavtype_ea[0m: [0mno extensions[0m
+  [32mavtype_film_cpk[0m: [0mno extensions[0m
+  [32mavtype_gxf[0m: [0mno extensions[0m
+  [32mavtype_idcin[0m: [0mno extensions[0m
+  [32mavtype_iff[0m: [0mno extensions[0m
+  [32mavtype_ipmovie[0m: [0mno extensions[0m
+  [32mavtype_mm[0m: [0mno extensions[0m
+  [32mavtype_mmf[0m: [0mno extensions[0m
+  [32mavtype_nsv[0m: [0mno extensions[0m
+  [32mavtype_nut[0m: [0mnut[0m
+  [32mavtype_psxstr[0m: [0mno extensions[0m
+  [32mavtype_smk[0m: [0mno extensions[0m
+  [32mavtype_sol[0m: [0mno extensions[0m
+  [32mavtype_vmd[0m: [0mno extensions[0m
+  [32mavtype_wc3movie[0m: [0mno extensions[0m
+  [32mavtype_wsaud[0m: [0mno extensions[0m
+  [32mavtype_wsvqa[0m: [0mno extensions[0m
+  [32mavtype_xwma[0m: [0mno extensions[0m
+  [32mavtype_yuv4mpegpipe[0m: [0my4m[0m
+
+  [33m658 features[0m:
+  [95m+--[0m [94m633 elements[0m
+  [95m+--[0m [94m25 typefinders[0m
+

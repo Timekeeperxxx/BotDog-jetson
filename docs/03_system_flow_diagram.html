@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系统全局流程图 v1.0</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #020617;
+            color: #f8fafc;
+            font-family: 'Inter', "Microsoft YaHei", sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow-y: auto;
+            overflow-x: auto;
+        }
+        .header {
+            padding: 1.5rem 2.5rem;
+            background: rgba(15, 23, 42, 0.98);
+            border: none; 
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            backdrop-filter: blur(15px);    
+        }
+        .mermaid-container {
+            width: 100%;
+            padding: 0; 
+            margin: 0;
+            display: flex;
+            justify-content: center;
+        }
+        .mermaid {
+            width: 100%;
+            background: #0f172a;
+            padding: 3rem 0; /* 增加上下留白，提升呼吸感 */
+            border: none; 
+        }
+        .mermaid svg {
+            width: 100% !important;
+            height: auto !important;
+            display: block;
+            margin: 0 auto;
+        }
+        .ai-manifest {
+            width: 100%;
+            margin: 0;
+            padding: 3rem 2.5rem;
+            background: #111827;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            font-family: 'JetBrains Mono', monospace;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="header">
+        <h1 class="text-3xl font-black tracking-widest flex items-center gap-4 text-blue-400">
+            <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+            系统全局流程图 v1.0
+        </h1>
+        <p class="text-slate-400 text-lg mt-2 font-medium">设计原则：扩大层级间距，消除标签重叠，实现高扫视率逻辑闭环</p>
+    </header>
+
+    <div class="mermaid-container">
+        <div class="mermaid">
+        flowchart TD
+            %% ================= 样式定义 (保持粗边框逻辑) =================
+            classDef frontend fill:#082f49,stroke:#0ea5e9,stroke-width:3px,color:#fff;
+            classDef backend fill:#0f172a,stroke:#3b82f6,stroke-width:3px,color:#fff;
+            classDef link fill:#4c1d95,stroke:#a855f7,stroke-width:3px,color:#fff;
+            classDef edge fill:#111827,stroke:#2dd4bf,stroke-width:3px,color:#fff;
+            classDef db fill:#064e3b,stroke:#10b981,stroke-width:3px,color:#fff;
+            
+            %% ================= 区域划分 (保持层级架构) =================
+            
+            subgraph EDGE_LAYER ["边缘机载层 Edge-Computing"]
+                direction TB
+                Cam["多模态相机-自适应码流采集"]:::edge
+                Sensors["传感器阵列-遥测数据采集"]:::edge
+                FC["核心飞控系统-运动指令解算"]:::edge
+                Motors["执行机构-驱动电机集群"]:::edge
+            end
+
+            subgraph LINK_LAYER ["传输链路层 Data-Link"]
+                direction LR
+                TX["机载数字发射机 TX"]:::link
+                Radio["无线宽带射频通道 RF"]:::link
+                RX["地面数字接收机 RX"]:::link
+                TX -. "微波物理链路传输" .- Radio -. "微波物理链路传输" .- RX
+            end
+
+            subgraph BACKEND_LAYER ["逻辑中枢层 Backend-Middleware"]
+                direction TB
+                GStreamer["流媒体管道 GStreamer-Pipeline"]:::backend
+                AI_Engine["异常分析引擎 ONNX-Inference"]:::backend
+                Gateway["协议网关 FastAPI-MAVLink"]:::backend
+                DB["数据仓储 SQLite-Filesystem"]:::db
+            end
+
+            subgraph UI_LAYER ["交互控制层 GCS-UI"]
+                direction TB
+                Player["视频播放组件 WebRTC-Player"]:::frontend
+                Dash["状态遥测仪表 React-Dashboard"]:::frontend
+                User["系统操作人员 System-Operator"]:::frontend
+            end
+
+            %% ================= 核心路径 (保持逻辑编码) =================
+
+            Cam -- "01 视频流推送 Stream-Push" --> TX
+            RX -- "02 数据中转 UDP-Relay" --> GStreamer
+            GStreamer -- "03 信令握手 RTC-Offer" --> Player
+            GStreamer -- "04 实时帧捕获 Frame-Capture" --> AI_Engine
+            AI_Engine -- "05 告警事件触发 Alarm-Trigger" --> DB
+            DB -- "06 UI状态通知 UI-Notify" --> Dash
+
+            Sensors -- "07 导航采样 Nav-Sampling" --> FC
+            FC -- "08 报文封包 Packing" --> TX
+            RX -- "09 协议解析 Serial-Convert" --> Gateway
+            Gateway -- "10 WS遥测广播 WS-Broadcast" --> Dash
+
+            User -- "11 控制指令输入 Control-Input" --> Gateway
+            Gateway -- "12 指令编码 Cmd-Encode" --> RX
+            TX -- "13 指令透传 Serial-Bypass" --> FC
+            FC == "14 动力驱动 Power-Drive" ===> Motors
+
+            %% 视觉解耦布局
+            Player ~~~ Dash
+            Cam ~~~ Sensors
+
+            %% 显式分区边框
+            style EDGE_LAYER fill:#0f172a,stroke:#2dd4bf,stroke-width:2px
+            style LINK_LAYER fill:#0f172a,stroke:#a855f7,stroke-width:2px
+            style BACKEND_LAYER fill:#0f172a,stroke:#3b82f6,stroke-width:2px
+            style UI_LAYER fill:#0f172a,stroke:#0ea5e9,stroke-width:2px
+        </div>
+    </div>
+
+    <div class="ai-manifest">
+        <h2 class="text-blue-400 text-2xl mb-6 font-black border-b border-blue-900 pb-4">AI 核心逻辑指引 (LLM Implementation Guide)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-12 text-base text-slate-400 leading-relaxed">
+            <div class="bg-slate-900/50 p-6 rounded-xl border border-white/5">
+                <p class="text-white text-lg mb-4 font-bold flex items-center gap-2 text-emerald-400">
+                    <span class="w-2 h-6 bg-emerald-500 rounded"></span> 核心业务流逻辑:
+                </p>
+                <ul class="list-disc list-inside space-y-3">
+                    <li>视频闭环：从机载端原始采集到前端 WebRTC 呈现，全链路延迟控制为软件调优核心。</li>
+                    <li>指令闭环：采用 MAVLink 2.0 协议包，实现地对空指令的原子化执行与校验。</li>
+                    <li>AI 识别流：属于旁路异步逻辑，检测到异常后触发截帧入库，不阻塞实时视频主路。</li>
+                </ul>
+            </div>
+            <div class="bg-slate-900/50 p-6 rounded-xl border border-white/5">
+                <p class="text-white text-lg mb-4 font-bold flex items-center gap-2 text-blue-400">
+                    <span class="w-2 h-6 bg-blue-500 rounded"></span> 软件工程化建议:
+                </p>
+                <ul class="list-disc list-inside space-y-3">
+                    <li>后端：重点关注 FastAPI 的 WebSocket 性能，建议对高频遥测数据进行二进制压缩传输。</li>
+                    <li>机载端：ONNX 推理应利用硬件加速核心（NVIDIA TensorRT），降低 CPU 占用率。</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            mermaid.initialize({
+                startOnLoad: true,
+                theme: 'dark',
+                securityLevel: 'loose',
+                flowchart: {
+                    useMaxWidth: false, /* 允许画布根据内容真实宽度撑开 */
+                    htmlLabels: true,
+                    curve: 'basis',
+                    nodeSpacing: 120,    /* 扩充节点横向间距 */
+                    rankSpacing: 150,    /* 扩充层级纵向间距，解决文字重叠 */
+                    padding: 50
+                },
+                themeVariables: {
+                    primaryColor: '#0f172a',
+                    primaryTextColor: '#f8fafc',
+                    primaryBorderColor: '#334155',
+                    lineColor: '#94a3b8',
+                    fontFamily: 'Inter, JetBrains Mono, "Microsoft YaHei"',
+                    fontSize: '28px' 
+                }
+            });
+        });
+    </script>
+</body>
+</html>

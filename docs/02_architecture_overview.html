@@ -1,0 +1,207 @@
+<!-- 巡检系统软件全链路架构 v1.0 -->
+
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>巡检系统全链路软件架构</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root { --bg-main: #020617; }
+        body {
+            background-color: var(--bg-main);
+            color: #f1f5f9;
+            font-family: 'Inter', sans-serif;
+            margin: 0; padding: 0;
+            overflow: hidden; 
+            width: 100vw; height: 100vh;
+            display: flex; flex-direction: column;
+        }
+        .header-title { padding: 1.5rem 2rem; z-index: 100; flex-shrink: 0; }
+        .mermaid-container {
+            flex-grow: 1; 
+            width: 100vw; 
+            height: 100%;
+            display: flex; 
+            align-items: center; 
+            justify-content: center;
+            padding: 0 1rem 4rem 1rem;
+        }
+        .mermaid {
+            width: 98vw;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        /* 核心视觉控制：通过 CSS 外部接管 SVG 渲染，实现线条极粗化 */
+        .mermaid svg {
+            filter: drop-shadow(0 20px 50px rgba(0,0,0,0.9));
+            width: 100% !important; 
+            height: auto !important;
+            max-height: 85vh !important;
+            object-fit: contain;
+        }
+        /* 强制拉粗所有数据链路 */
+        .mermaid .edgePath path {
+            stroke-width: 8px !important;
+        }
+        /* 虚线样式增强 */
+        .mermaid .edgePath[style*="stroke-dasharray"] path {
+            stroke-dasharray: 12, 8 !important;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header-title">
+        <h1 class="text-3xl font-black text-white bg-slate-900/95 px-8 py-4 rounded-2xl backdrop-blur-xl border border-slate-700 shadow-2xl inline-flex items-center gap-4">
+            <svg class="w-8 h-8 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+            巡检系统软件全链路架构 (底层重构绝对安全版)
+        </h1>
+    </div>
+
+    <div class="mermaid-container">
+        <div class="mermaid">
+        flowchart LR
+            %% ================= 样式定义 (极致高清加粗版) =================
+            classDef hw fill:#4c1d95,stroke:#a855f7,stroke-width:4px,color:#fff;
+            classDef backend fill:#0f172a,stroke:#3b82f6,stroke-width:4px,color:#fff;
+            classDef frontend fill:#082f49,stroke:#0ea5e9,stroke-width:4px,color:#fff;
+            classDef storage fill:#064e3b,stroke:#10b981,stroke-width:4px,color:#fff;
+            classDef dog fill:#111827,stroke:#2dd4bf,stroke-width:4px,color:#fff;
+            classDef motor fill:#991b1b,stroke:#ef4444,stroke-width:4px,color:#fff;
+
+            %% ================= 模块构建 =================
+            subgraph Console ["🔌 控制台硬件"]
+                Joy["🎮 无线手柄\n(蓝牙/射频)"]:::hw
+                RX["📡 数字图传接收端\n(LAN输出 UDP 流)"]:::hw
+            end
+
+            subgraph BE ["⚙️ 后端服务 (Backend Stack)"]
+                direction TB
+                MAV["🔌 MAVLink 引擎\n(PyMAVLink)"]:::backend
+                Stream["🎥 流媒体中转\n(GStreamer)"]:::backend
+                WS["🌐 WebSocket 总线\n(JSON Data Hub)"]:::backend
+            end
+                
+            subgraph UI ["🎨 交互终端 (Dashboard)"]
+                direction TB
+                Dash["📊 状态遥测面板\n(React / Vue)"]:::frontend
+                Player["📺 视频渲染容器\n(WebRTC / Canvas)"]:::frontend
+            end
+
+            subgraph Data ["📁 存储中心"]
+                Log[("💾 巡检日志\n(SQLite)")]:::storage
+                Snapshots[("📸 抓拍数据库\n(JPG/PNG 异常记录)")]:::storage
+            end
+
+            subgraph RoboDog ["🤖 机器狗物理本体"]
+                direction TB
+                TX["📡 数字图传机载端\n(数传图传聚合)"]:::dog
+                FC["🧠 运动控制器\n(ArduPilot/PX4)"]:::dog
+                Cam["📷 高清相机\n(4K H.264编码)"]:::dog
+                IR["🔥 红外测温模块\n(扩展接口组件)"]:::dog
+                Motors["🦵 伺服电机执行器\n(CAN/PWM 驱动)"]:::motor
+            end
+
+            %% ================= 逻辑连线 (绝对安全原生语法) =================
+            
+            %% 控制链路 (虚线代表无线信号)
+            Joy -.->|① 无线手柄信号| MAV
+            MAV -->|② MAVLink 封装指令| RX
+            RX -.->|③ 宽带数字射频链路| TX
+            TX <-->|④ UART 串口透传| FC
+            FC ==>|⑤ 底层物理驱动| Motors
+
+            %% 视觉与反馈链路
+            Cam -->|视频源数据| TX
+            IR -.->|多模态温感数据| TX
+            RX -->|⑥ 机器狗遥测报文| MAV
+            RX -->|⑦ RTSP/UDP 视频流| Stream
+            
+            %% 业务逻辑对接
+            MAV -->|结构化数据落地| Log
+            Stream -->|⑨ 异常目标抓拍落盘| Snapshots
+            MAV <-->|实时双向透传| WS
+            WS <-->|数据驱动 UI| Dash
+            Stream ==>|⑧ WebRTC 极速推流| Player
+
+            %% ================= 容器样式 =================
+            style Console fill:none,stroke:#a855f7,stroke-width:4px,stroke-dasharray: 10 5
+            style BE fill:#1e293b60,stroke:#3b82f6,stroke-width:4px
+            style UI fill:none,stroke:#0ea5e9,stroke-width:4px,stroke-dasharray: 10 5
+            style Data fill:none,stroke:#10b981,stroke-width:4px
+            style RoboDog fill:none,stroke:#2dd4bf,stroke-width:4px
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            mermaid.initialize({
+                startOnLoad: true,
+                theme: 'dark',
+                securityLevel: 'loose',
+                flowchart: {
+                    useMaxWidth: true, 
+                    htmlLabels: true,
+                    curve: 'basis',
+                    nodeSpacing: 100,    
+                    rankSpacing: 160,   
+                    padding: 30
+                },
+                themeVariables: {
+                    primaryColor: '#1e293b',
+                    edgeColor: '#94a3b8',
+                    fontFamily: 'Inter, JetBrains Mono',
+                    fontSize: '32px' /* 严格执行 32px 顶级字号 */
+                }
+            });
+        });
+    </script>
+</body>
+</html>
+
+
+
+<!-- 痛难点：
+1. 痛点一：视频流的“端到端绝对延迟”攻坚
+逻辑隐患：架构图中的第 ⑦ 步（UDP 码流到 GStreamer）和第 ⑧ 步（渲染到前端屏幕），如果处理不好，软件层会无故增加 200-500 毫秒的延迟，这对操作机器狗是致命的。
+
+开发难点：
+
+切忌使用 Canvas 逐帧重绘：在浏览器里用 Canvas 画 H.264 解码后的图片，极易造成 CPU 暴涨和掉帧。
+
+破局方案：强烈建议后端必须使用 WebRTC 技术。GStreamer 收到码流后，直接通过 WebRTC 协议将 RTP 视频包打给前端的 <video> 标签，利用浏览器的硬件解码加速。只要这一步走通，端到端延迟可以控制在 100-150ms 以内。
+
+2. 痛点二：手柄控制指令的“平滑度与频率灾难”
+逻辑隐患：架构图第 ① 步，手柄摇杆的底层轮询频率极高（可能达到 500Hz 以上）。
+
+开发难点：
+
+如果把手柄微小的抖动全都转换为 MAVLink 报文发出去，不仅会瞬间塞满无线链路的带宽，还会导致底层的 ArduPilot 飞控处理不过来，表现为机器狗“抽搐”。
+
+破局方案：后端的手柄映射器（JoyMap）必须实现 节流阀（Throttle/防抖） 和 死区（Deadzone） 过滤。限制 MAVLink 控制指令的下发频率（比如锁定在 20Hz~50Hz），并加入摇杆指数曲线（Expo），让机器狗起步柔和，不易翻车。
+
+3. 痛点三：弱网环境下的 GStreamer 管道崩溃问题
+逻辑隐患：由于无线层用的是 UDP 协议（无重传），在弱网环境下必然会出现“缺帧”或“坏包”。
+
+开发难点：
+
+很多时候，GStreamer 遇到连续的坏包会直接导致整个视频解析管道（Pipeline）卡死甚至崩溃，前端画面就一直卡在最后一帧。
+
+破局方案：在后端的视频中转服务中，必须加入看门狗（Watchdog）机制。一旦检测到流媒体数据中断超过 2 秒，后端要能够自动重启 GStreamer 管道，前端也要有明显的“视频重连中”提示，绝不能让操作员看着卡死的假画面继续盲开机器狗。
+
+4. 痛点四：多进程/多线程的资源抢占
+逻辑隐患：后端既要处理高频的 WebSocket，又要处理 MAVLink 编解码，还要跑流媒体。
+
+开发难点：
+
+如果用 Python 开发后端，由于 GIL（全局解释器锁）的存在，如果在同一个进程里做这些事，视频转码的压力会阻塞控制指令的下发，导致“画面越卡，狗越不受控制”。
+
+破局方案：后端架构必须微服务化或多进程化。比如：Node.js / Go 专门负责 WebSocket 和流媒体信令；Python (PyMAVLink) 作为独立进程专职和无线网卡通信；两者之间通过 Redis 或进程间通信（IPC）交换数据。 -->
