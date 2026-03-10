@@ -67,14 +67,15 @@ class GStreamerVideoTrack(MediaStreamTrack):
         print(f"解码器: decodebin (自动选择)")
         print(f"内部输出: TCP 127.0.0.1:{self.tcp_port} (避免 stdout 死锁)")
         print(f"分辨率: {self.width}x{self.height} @ {self.framerate} FPS")
+        print(f"网络延迟: 100ms (抗撕裂优化)")
         print(f"{'='*80}\n")
 
-        # RTSP -> decodebin -> TCP 环回（优化抗撕裂版本）
+        # RTSP -> decodebin -> TCP 环回（优化抗撕裂版本 - 100ms 低延迟）
         # 关键优化：
-        # 1. latency=200：增加 200ms 缓冲，容错网络抖动
+        # 1. latency=100：100ms 缓冲，平衡延迟和画质（可调 50-200）
         # 2. drop-on-latency=true：超时帧直接丢弃，不输出撕裂画面
-        # 3. 使用 rtpjitterbuffer 承担延迟控制（rtspsrc 不支持 max-lateness）
-        pipeline = f'gst-launch-1.0 -q -e rtspsrc location={self.rtsp_url} latency=200 drop-on-latency=true ! rtpjitterbuffer latency=200 do-lost=true ! decodebin ! videoconvert ! video/x-raw,format=I420,width={self.width},height={self.height},framerate={self.framerate}/1 ! tcpserversink host=127.0.0.1 port={self.tcp_port} sync=false'
+        # 3. rtpjitterbuffer latency=100：RTP 层防抖动缓冲
+        pipeline = f'gst-launch-1.0 -q -e rtspsrc location={self.rtsp_url} latency=100 drop-on-latency=true ! rtpjitterbuffer latency=100 do-lost=true ! decodebin ! videoconvert ! video/x-raw,format=I420,width={self.width},height={self.height},framerate={self.framerate}/1 ! tcpserversink host=127.0.0.1 port={self.tcp_port} sync=false'
 
         print(f"GStreamer Pipeline:\n{pipeline}\n")
 
