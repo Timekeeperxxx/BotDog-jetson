@@ -168,10 +168,12 @@ class WebRTCPeerConnection:
         else:
             logger.warning(f"ICE 收集超时: {self.client_id}, 当前 {len(self._ice_candidates)} 个候选")
 
-        # 修改 SDP：强制使用 H.264 baseline profile
+        # 修改 SDP：强制使用 H.264 baseline profile + 提升码率
         sdp = self.pc.localDescription.sdp
         sdp = self._force_h264_baseline(sdp)
+        sdp = self._boost_video_bitrate(sdp)
         logger.info(f"✅ 已强制 SDP 使用 H.264 baseline profile")
+        logger.info(f"✅ 已提升视频码率至高质量（{settings.VIDEO_BITRATE//1000000}Mbps）")
 
         return sdp
 
@@ -196,6 +198,44 @@ class WebRTCPeerConnection:
                 # 确保使用 baseline profile
                 line = line.replace('profile-level-id=4d001f', 'profile-level-id=42e01f')  # high -> baseline
                 line = line.replace('profile-level-id=64001f', 'profile-level-id=42e01f')  # high444 -> baseline
+
+            modified_lines.append(line)
+
+        return '\n'.join(modified_lines)
+
+    def _boost_video_bitrate(self, sdp: str) -> str:
+        """
+        提升 SDP 中的视频码率设置，改善快速转动时的画质
+
+        Args:
+            sdp: 原始 SDP
+
+        Returns:
+            修改后的 SDP（高码率配置）
+        """
+        lines = sdp.split('\n')
+        modified_lines = []
+
+        # 目标码率：从配置读取（默认 8Mbps）
+        target_bitrate = settings.VIDEO_BITRATE  # 8,000,000 bps
+
+        for line in lines:
+            # 提升视频码率（b=AS:带宽）
+            if 'm=video' in line:
+                modified_lines.append(line)
+                # 在 m=video 后添加带宽行
+                modified_lines.append(f'b=AS:{target_bitrate // 1000}')  # AS 单位是 kbps
+                continue
+
+            # 修改现有带宽设置
+            if line.startswith('b=AS:') and 'video' in sdp[max(0, sdp.index(line)-500):sdp.index(line)]:
+                # 提升视频带宽
+                line = f'b=AS:{target_bitrate // 1000}'
+
+            # 修改传输码率（TIAS）
+            if 'TIAS' in line:
+                # TIAS 是实际应用层码率
+                line = line.replace(r'TIAS:[0-9]+', f'TIAS:{target_bitrate}')
 
             modified_lines.append(line)
 

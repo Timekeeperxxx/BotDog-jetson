@@ -69,9 +69,12 @@ class GStreamerVideoTrack(MediaStreamTrack):
         print(f"分辨率: {self.width}x{self.height} @ {self.framerate} FPS")
         print(f"{'='*80}\n")
 
-        # RTSP -> decodebin -> TCP 环回（严格使用 f-string，避免语法错误）
-        # 修复：在 decodebin 后添加 ! videoconvert ! video/x-raw,format=I420
-        pipeline = f'gst-launch-1.0 -q -e rtspsrc location={self.rtsp_url} latency=0 ! decodebin ! videoconvert ! video/x-raw,format=I420,width={self.width},height={self.height},framerate={self.framerate}/1 ! tcpserversink host=127.0.0.1 port={self.tcp_port} sync=false'
+        # RTSP -> decodebin -> TCP 环回（优化抗撕裂版本）
+        # 关键优化：
+        # 1. latency=200：增加 200ms 缓冲，容错网络抖动
+        # 2. drop-on-latency=true：超时帧直接丢弃，不输出撕裂画面
+        # 3. 使用 rtpjitterbuffer 承担延迟控制（rtspsrc 不支持 max-lateness）
+        pipeline = f'gst-launch-1.0 -q -e rtspsrc location={self.rtsp_url} latency=200 drop-on-latency=true ! rtpjitterbuffer latency=200 do-lost=true ! decodebin ! videoconvert ! video/x-raw,format=I420,width={self.width},height={self.height},framerate={self.framerate}/1 ! tcpserversink host=127.0.0.1 port={self.tcp_port} sync=false'
 
         print(f"GStreamer Pipeline:\n{pipeline}\n")
 
