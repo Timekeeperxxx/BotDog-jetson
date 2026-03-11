@@ -10,10 +10,7 @@ WebRTC 信令处理器。
 
 import asyncio
 import logging
-<<<<<<< HEAD
-=======
 import re
->>>>>>> 3f5cc87 (feat: H.264 compressed streaming architecture)
 import uuid
 from typing import Any, Callable, Dict, Optional
 
@@ -172,20 +169,12 @@ class WebRTCPeerConnection:
         else:
             logger.warning(f"ICE 收集超时: {self.client_id}, 当前 {len(self._ice_candidates)} 个候选")
 
-<<<<<<< HEAD
-        # 修改 SDP：强制使用 H.264 baseline profile + 提升码率
-        sdp = self.pc.localDescription.sdp
-        sdp = self._force_h264_baseline(sdp)
-        sdp = self._boost_video_bitrate(sdp)
-        logger.info(f"✅ 已强制 SDP 使用 H.264 baseline profile")
-=======
         # 修改 SDP：强制使用 H.264 baseline profile + 仅保留 H.264 + 提升码率
         sdp = self.pc.localDescription.sdp
         sdp = self._force_h264_baseline(sdp)
         sdp = self._force_h264_only(sdp)
         sdp = self._boost_video_bitrate(sdp)
         logger.info("✅ 已强制 SDP 仅使用 H.264 baseline profile")
->>>>>>> 3f5cc87 (feat: H.264 compressed streaming architecture)
         logger.info(f"✅ 已提升视频码率至高质量（{settings.VIDEO_BITRATE//1000000}Mbps）")
 
         return sdp
@@ -206,23 +195,13 @@ class WebRTCPeerConnection:
         for line in lines:
             # 修改 H.264 profile-level-id 为 42e01f (baseline profile)
             if 'profile-level-id' in line and 'H264' in sdp:
-<<<<<<< HEAD
-                # 替换为 baseline profile (42e01f)
-                line = line.replace('profile-level-id=[0-9a-f]{6}', 'profile-level-id=42e01f')
-                # 确保使用 baseline profile
-                line = line.replace('profile-level-id=4d001f', 'profile-level-id=42e01f')  # high -> baseline
-                line = line.replace('profile-level-id=64001f', 'profile-level-id=42e01f')  # high444 -> baseline
-=======
                 # 使用正则替换所有 profile-level-id=xxxxxx 格式
                 line = re.sub(r'profile-level-id=[0-9a-f]{6}', 'profile-level-id=42e01f', line)
->>>>>>> 3f5cc87 (feat: H.264 compressed streaming architecture)
 
             modified_lines.append(line)
 
         return '\n'.join(modified_lines)
 
-<<<<<<< HEAD
-=======
     def _force_h264_only(self, sdp: str) -> str:
         """
         修改 SDP，仅保留 H.264，禁用 VP8/VP9 等软解码器。
@@ -292,10 +271,9 @@ class WebRTCPeerConnection:
             modified_lines.append(line)
 
         result = '\n'.join(modified_lines)
-        logger.info(f"✅ SDP 已强制为 H.264 only")
+        logger.info("✅ SDP 已强制为 H.264 only")
         return result
 
->>>>>>> 3f5cc87 (feat: H.264 compressed streaming architecture)
     def _boost_video_bitrate(self, sdp: str) -> str:
         """
         提升 SDP 中的视频码率设置，改善快速转动时的画质
