@@ -19,8 +19,8 @@ import { EmergencyStopButton } from "./components/EmergencyStopButton";
 import { VideoPlayer } from "./components/VideoPlayer";
 
 // 立即检查环境变量（应用启动时）
-console.log('🚀 [App] 应用启动');
-console.log('🔧 [App] 环境变量 VITE_API_BASE_URL:', import.meta.env.VITE_API_BASE_URL);
+// console.log('🚀 [App] 应用启动');
+// console.log('🔧 [App] 环境变量 VITE_API_BASE_URL:', import.meta.env.VITE_API_BASE_URL);
 
 /**
  * 主应用组件
