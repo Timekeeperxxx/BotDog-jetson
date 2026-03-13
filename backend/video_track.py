@@ -3,7 +3,7 @@
 UDP H264 RTP 视频轨道（Windows，无 gi）。
 
 职责边界：
-- 从 UDP 5000 接收 H264 RTP
+- 从 UDP VIDEO_UDP_PORT 接收 H264 RTP
 - 解码为 VideoFrame 提供给 aiortc
 """
 
@@ -28,7 +28,7 @@ class GStreamerVideoTrack(MediaStreamTrack):
 
     def __init__(
         self,
-        udp_port: int = 5000,
+        udp_port: int,
         width: int = 1920,
         height: int = 1080,
         framerate: int = 30,
@@ -140,7 +140,7 @@ class GStreamerVideoSourceFactory:
     @classmethod
     def create_track(
         cls,
-        udp_port: int = 5000,
+        udp_port: int,
         width: int = 1920,
         height: int = 1080,
         framerate: int = 30,

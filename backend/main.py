@@ -89,7 +89,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     setup_logging()
     logger.info("BotDog backend starting up (lifespan)...")
-    logger.info("Video backend mode: %s", settings.VIDEO_BACKEND_MODE)
+    logger.info("Video backend mode: {}", settings.VIDEO_BACKEND_MODE)
     await init_db()
     logger.info("Database initialized.")
 

@@ -86,7 +86,7 @@ class WebRTCPeerConnection:
             # 创建并添加 UDP RTP 视频轨道
             width, height = map(int, settings.VIDEO_RESOLUTION.split('x'))
             self.video_track = GStreamerVideoSourceFactory.create_track(
-                udp_port=5000,
+                udp_port=settings.VIDEO_UDP_PORT,
                 width=width,
                 height=height,
                 framerate=settings.VIDEO_FRAMERATE,

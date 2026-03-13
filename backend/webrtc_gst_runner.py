@@ -37,6 +37,7 @@ class WebRTCClient:
         self._webrtcbin: Optional[Gst.Element] = None
         self._loop: Optional[GLib.MainLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
+        self._async_loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _build_pipeline_h264(self) -> str:
         decoder = "qsvh265dec" if self.use_qsv else "avdec_h265"
@@ -60,8 +61,14 @@ class WebRTCClient:
     def start_pipeline(self) -> None:
         # 1. 极简管线：只保留核心转码部分
         # 暂时去掉所有可能导致崩溃的复杂属性（如 bundle-policy）
-        decoder = "qsvh265dec"
-        encoder = "qsvh264enc bitrate=8000 rate-control=cbr gop-size=30 b-frames=0"
+        decoder = "qsvh265dec" if self.use_qsv else "avdec_h265"
+        encoder = (
+            "qsvh264enc bitrate=8000 rate-control=cbr gop-size=30 b-frames=0"
+            if self.use_qsv
+            else "x264enc tune=zerolatency speed-preset=ultrafast bitrate=8000 key-int-max=30 bframes=0"
+        )
+        raw_format = "NV12" if self.use_qsv else "I420"
+        payload_type = 103
 
         pipeline_str = (
             "webrtcbin name=sendrecv "
@@ -70,11 +77,11 @@ class WebRTCClient:
             "h265parse ! "
             "queue max-size-buffers=1 leaky=downstream ! "
             f"{decoder} ! "
-            "video/x-raw,format=NV12 ! "
+            f"video/x-raw,format={raw_format} ! "
             f"{encoder} ! "
             "h264parse config-interval=1 ! "
-            "rtph264pay aggregate-mode=zero-latency pt=96 config-interval=1 ! "
-            "capsfilter name=filter caps=\"application/x-rtp,media=video,encoding-name=H264,payload=96\""
+            f"rtph264pay aggregate-mode=zero-latency pt={payload_type} config-interval=1 ! "
+            f"capsfilter name=filter caps=\"application/x-rtp,media=video,encoding-name=H264,payload={payload_type},packetization-mode=1\""
         )
 
         print("[GST] 正在以‘安全模式’初始化管线...")
@@ -144,9 +151,10 @@ class WebRTCClient:
                 "sdpMid": "video",
             },
         }
-        asyncio.get_event_loop().call_soon_threadsafe(
-            asyncio.create_task, self._ws.send(json.dumps(payload))
-        )
+        if self._async_loop:
+            self._async_loop.call_soon_threadsafe(
+                asyncio.create_task, self._ws.send(json.dumps(payload))
+            )
 
     async def _send_answer(self, answer: GstWebRTC.WebRTCSessionDescription) -> None:
         sdp_text = answer.sdp.as_text()
@@ -154,22 +162,23 @@ class WebRTCClient:
             json.dumps({"msg_type": "answer", "payload": {"sdp": sdp_text, "type": "answer"}})
         )
 
-    def _on_answer_created(self, promise: Gst.Promise, _user_data) -> None:
+    def _on_answer_created(self, promise: Gst.Promise, _user_data, *_args) -> None:
         if not self._webrtcbin or not self._ws:
             return
 
         reply = promise.get_reply()
         answer = reply.get_value("answer")
         self._webrtcbin.emit("set-local-description", answer, Gst.Promise.new())
-        asyncio.get_event_loop().call_soon_threadsafe(
-            asyncio.create_task, self._send_answer(answer)
-        )
+        if self._async_loop:
+            self._async_loop.call_soon_threadsafe(
+                asyncio.create_task, self._send_answer(answer)
+            )
 
     def _set_remote_offer(self, sdp: str) -> None:
         if not self._webrtcbin:
             return
 
-        sdp_msg = GstSdp.SDPMessage.new()
+        _, sdp_msg = GstSdp.SDPMessage.new()
         GstSdp.sdp_message_parse_buffer(bytes(sdp.encode("utf-8")), sdp_msg)
         offer = GstWebRTC.WebRTCSessionDescription.new(
             GstWebRTC.WebRTCSDPType.OFFER, sdp_msg
@@ -185,6 +194,7 @@ class WebRTCClient:
         self._webrtcbin.emit("add-ice-candidate", sdp_mline_index, candidate)
 
     async def run(self) -> None:
+        self._async_loop = asyncio.get_running_loop()
         async with websockets.connect(self.ws_url) as websocket:
             self._ws = websocket
             print(f"[WS] connected: {self.ws_url}")

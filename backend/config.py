@@ -7,6 +7,7 @@
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import AnyUrl
 from pydantic_settings import BaseSettings
@@ -90,7 +91,7 @@ class Settings(BaseSettings):
     THERMAL_THRESHOLD: float = 60.0  # 温度阈值（°C）
 
     class Config:
-        env_file = ".env"
+        env_file = str(Path(__file__).resolve().parent.parent / ".env")
         env_file_encoding = "utf-8"
 
 
