@@ -65,8 +65,7 @@ class GStreamerStreamer:
         self.bitrate = bitrate
         self.host = host
         self.port = port
-        # 强制绑定到 192.168.144.40 发送视频数据
-        self.bind_address = "192.168.144.40"
+        self.bind_address = bind_address
         self.passthrough = passthrough
         self.pipeline: Gst.Pipeline | None = None
         self.loop = GLib.MainLoop()

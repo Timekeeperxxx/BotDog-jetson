@@ -39,7 +39,7 @@ class GstRtspBridge:
             f"! {encoder} "
             "! h264parse config-interval=1 "
             "! rtph264pay pt=96 mtu=1200 config-interval=1 "
-            "! udpsink host=127.0.0.1 port=5000 sync=false async=false"
+            f"! udpsink host=127.0.0.1 port={settings.VIDEO_UDP_PORT} sync=false async=false"
         )
 
     def start(self) -> None:

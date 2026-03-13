@@ -10,9 +10,9 @@ WIDTH=${3:-1920}
 HEIGHT=${4:-1080}
 FRAMERATE=${5:-30}
 BITRATE=${6:-8000000}
-TARGET_HOST=${7:-192.168.144.40}
+TARGET_HOST=${7:-192.168.144.30}
 TARGET_PORT=${8:-5000}
-BIND_ADDRESS=${9:-192.168.144.40}
+BIND_ADDRESS=${9:-192.168.144.30}
 
 # 参数说明
 if [ "$SOURCE" = "help" ] || [ "$SOURCE" = "--help" ] || [ "$SOURCE" = "-h" ]; then

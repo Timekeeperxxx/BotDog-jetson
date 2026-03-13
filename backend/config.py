@@ -68,9 +68,9 @@ class Settings(BaseSettings):
     VIDEO_LATENCY_PRESET: str = "low"  # 延迟预设：stable(100/100/30), low(50/0/15), ultralow(20/0/10)
 
     # UDP 视频流转发器配置（已禁用 - video_track_native 直接监听 UDP）
-    UDP_RELAY_ENABLED: bool = False  # 禁用 UDP 转发器
+    UDP_RELAY_ENABLED: bool = True  # 启用 UDP 转发器
     UDP_RELAY_LISTEN_PORT: int = 5000  # 转发器监听端口（边缘端推送到此端口）
-    UDP_RELAY_BIND_ADDRESS: str = "192.168.144.30"  # 转发器绑定地址
+    UDP_RELAY_BIND_ADDRESS: str = "192.168.144.25"  # 转发器绑定地址
     UDP_RELAY_TARGET_ADDRESS: str = "127.0.0.1"  # 转发目标地址（本地 WebRTC）
     UDP_RELAY_BUFFER_SIZE: int = 65536  # UDP 缓冲区大小（字节）
     UDP_RELAY_ENABLE_STATS: bool = True  # 启用统计
