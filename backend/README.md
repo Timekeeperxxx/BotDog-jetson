@@ -484,6 +484,20 @@ sudo apt-get install -y \
 aiortc==1.6.0
 ```
 
+### webrtcbin 直出模式（WSL2 可选）
+
+1. `.env` 中启用：`VIDEO_BACKEND_MODE=webrtcbin`（可回退为 `aiortc`）。
+2. Windows 后端保持运行（`uvicorn backend.main:app --host 0.0.0.0 --port 8000`）。
+3. WSL2 启动 runner：
+
+```bash
+python3 backend/webrtc_gst_runner.py \
+  --ws ws://<WINDOWS_HOST>:8000/ws/webrtc-gst \
+  --rtsp rtsp://<CAMERA_IP>:8554/main.264
+```
+
+> `WINDOWS_HOST` 建议使用 Windows 主机的局域网 IP 或 WSL2 `/etc/resolv.conf` 中的 nameserver。
+
 ### 新增模块
 
 | 模块 | 说明 |

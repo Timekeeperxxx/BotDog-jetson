@@ -102,6 +102,18 @@ curl http://localhost:8000/api/v1/video/udp-relay/stats
 }
 ```
 
+### 2B. WSL2 webrtcbin runner（可选）
+
+当启用 `VIDEO_BACKEND_MODE=webrtcbin` 时，视频由 WSL2 侧 webrtcbin 直出，后端仅做信令中转。
+
+```bash
+python3 backend/webrtc_gst_runner.py \
+  --ws ws://<WINDOWS_HOST>:8000/ws/webrtc-gst \
+  --rtsp rtsp://<CAMERA_IP>:8554/main.264
+```
+
+> `WINDOWS_HOST` 建议使用 Windows 主机局域网 IP 或 WSL2 `/etc/resolv.conf` 中的 nameserver。
+
 ### 3. 检查端口监听
 
 ```bash

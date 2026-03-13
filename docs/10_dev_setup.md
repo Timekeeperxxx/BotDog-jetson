@@ -44,6 +44,13 @@
 * FFmpeg（用于调试流媒体）
 * `gst-inspect-1.0` / `gst-launch-1.0` 命令可用
 
+### 2.5 WebRTC 直出（WSL2 可选）
+
+* webrtcbin 运行在 WSL2（Windows 后端仅信令中转）
+* 后端 `.env` 设置：`VIDEO_BACKEND_MODE=webrtcbin`
+* WSL2 需安装：`python3-gi`、`gstreamer1.0-plugins-*`
+* runner 入口：`backend/webrtc_gst_runner.py`
+
 ## 3. 后端本地启动步骤
 
 假设仓库根目录为 `BotDog/`。

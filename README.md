@@ -132,6 +132,31 @@ npm run dev
 - ✅ 支持所有现代浏览器
 - ✅ 可调节码率和分辨率适应网络
 
+#### 方法 1B：WSL2 webrtcbin 直出（可选）
+
+适用于 WSL2 侧用 GStreamer webrtcbin 直出 WebRTC（后端仅转发信令）。
+
+**步骤**：
+1. `.env` 中启用：`VIDEO_BACKEND_MODE=webrtcbin`（可回退为 `aiortc`）。
+2. 在 WSL2 安装依赖：
+   ```bash
+   sudo apt-get install -y \
+     gstreamer1.0-plugins-base \
+     gstreamer1.0-plugins-good \
+     gstreamer1.0-plugins-bad \
+     gstreamer1.0-tools \
+     python3-gi
+   ```
+3. 运行 runner：
+   ```bash
+   python3 backend/webrtc_gst_runner.py \
+     --ws ws://<WINDOWS_HOST>:8000/ws/webrtc-gst \
+     --rtsp rtsp://<CAMERA_IP>:8554/main.264
+   ```
+4. 打开前端页面，流程与方法 1 相同。
+
+> `WINDOWS_HOST` 建议使用 Windows 主机的局域网 IP 或 WSL2 /etc/resolv.conf 中的 nameserver。
+
 #### 方法 2：GStreamer 命令直接接收
 
 **查看实时视频**：
