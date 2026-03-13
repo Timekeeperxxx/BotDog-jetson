@@ -1,4 +1,4 @@
-# BotDog 后端 - 阶段 1 实现
+# BotDog 后端 - 阶段 3 实现
 
 ## 技术栈
 
@@ -11,6 +11,7 @@
 - uvicorn（ASGI 服务器）
 - websockets（WebSocket 支持）
 - Pydantic（数据验证）
+- GStreamer / webrtcbin（视频管线）
 
 ## 环境配置
 
@@ -61,6 +62,16 @@ TELEMETRY_BROADCAST_HZ=15.0        # 遥测广播频率（Hz）
 
 # 模拟数据 Worker（开发调试用）
 SIMULATION_WORKER_ENABLED=true
+
+# 视频后端模式（aiortc | webrtcbin）
+VIDEO_BACKEND_MODE=webrtcbin
+WEBRTC_GST_WS_PATH=/ws/webrtc-gst
+
+# 相机 RTSP
+CAMERA_RTSP_URL=rtsp://192.168.144.25:8554/main.264
+
+# WebRTC 服务器
+WEBRTC_ICE_SERVERS=["stun:stun.l.google.com:19302"]
 ```
 
 ## 启动服务
@@ -497,6 +508,8 @@ python3 backend/webrtc_gst_runner.py \
 ```
 
 > `WINDOWS_HOST` 建议使用 Windows 主机的局域网 IP 或 WSL2 `/etc/resolv.conf` 中的 nameserver。
+>
+> 后端日志中如出现 `WebRTC (webrtcbin) runner connected` 表示信令中转已建立。
 
 ### 新增模块
 
@@ -504,6 +517,7 @@ python3 backend/webrtc_gst_runner.py \
 |------|------|
 | `webrtc_signaling.py` | WebRTC 信令处理器（SDP/ICE 交换） |
 | `video_track.py` | GStreamer 视频轨道（UDP RTP H.264 → aiortc MediaStreamTrack） |
+| `video_track_native.py` | 原生视频轨道（UDP RTP H.264 → aiortc MediaStreamTrack） |
 | `video_watchdog.py` | 视频看门狗（超时检测与重连） |
 
 ### 新增配置项
@@ -515,7 +529,7 @@ python3 backend/webrtc_gst_runner.py \
 VIDEO_RESOLUTION=3840x2160
 VIDEO_BITRATE=8000000
 VIDEO_FRAMERATE=30
-VIDEO_UDP_PORT=5000
+VIDEO_UDP_PORT=19856
 VIDEO_WATCHDOG_TIMEOUT_S=5.0
 
 # WebRTC 配置
@@ -524,11 +538,13 @@ WEBRTC_ICE_SERVERS=["stun:stun.l.google.com:19302"]
 
 ### 新增 API 端点
 
-#### WebRTC 信令 WebSocket
+#### WebRTC 信令 WebSocket（浏览器）
 
 ```
 WS /ws/webrtc
 ```
+
+浏览器与后端之间的信令通道，负责与 WSL2 webrtcbin runner 中转 SDP/ICE。
 
 **信令流程：**
 
@@ -553,6 +569,14 @@ WS /ws/webrtc
   }
 }
 ```
+
+#### WebRTC 信令 WebSocket（WSL2 webrtcbin runner）
+
+```
+WS /ws/webrtc-gst
+```
+
+WSL2 runner 专用入口，用于接收浏览器 offer 并回传 answer/ICE。
 
 ### 边缘端推流（部署在 Jetson）
 

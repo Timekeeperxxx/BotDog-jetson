@@ -40,9 +40,11 @@ src/
 │   ├── AttitudeHUD.tsx     # 姿态仪表
 │   ├── BatteryIndicator.tsx # 电池状态
 │   ├── PositionPanel.tsx    # 位置信息
-│   └── StatusBar.tsx        # 系统状态栏
+│   ├── StatusBar.tsx        # 系统状态栏
+│   └── VideoPlayer.tsx      # WebRTC 视频播放器
 ├── hooks/              # 自定义 Hooks
-│   └── useTelemetryWebSocket.ts # WebSocket 连接管理
+│   ├── useTelemetryWebSocket.ts # WebSocket 连接管理
+│   └── useWebRTC.ts            # WebRTC 连接管理
 ├── stores/             # Zustand Store
 │   └── telemetryStore.ts     # 遥测数据状态管理
 ├── types/              # TypeScript 类型定义
@@ -55,15 +57,24 @@ src/
 
 - ✅ WebSocket 自动连接与重连
 - ✅ 实时遥测数据显示（姿态、位置、电池）
+- ✅ WebRTC 视频播放与 HUD 叠层
 - ✅ 状态持久化与状态管理
 - ✅ 响应式布局设计
 - ✅ 深色工业控制台主题
 
 ## WebSocket 连接
 
-默认连接到 `ws://localhost:8000/ws/telemetry`
+### 遥测 WebSocket
+
+默认连接到 `ws://localhost:8000/ws/telemetry`。
 
 可在 `src/hooks/useTelemetryWebSocket.ts` 中修改连接地址。
+
+### WebRTC 信令 WebSocket
+
+默认连接到 `ws://<API_HOST>:8000/ws/webrtc`，地址由 [frontend/src/config/api.ts](frontend/src/config/api.ts) 中的 `API_BASE_URL` 派生。
+
+需要时可在 `src/hooks/useWebRTC.ts` 通过 `wsUrl` 覆盖。
 
 ## 组件说明
 
@@ -113,6 +124,5 @@ src/
 
 待后端实现完成后，可以继续添加：
 - 控制输入组件
-- 视频播放器
 - 告警列表
 - 历史页面
