@@ -54,6 +54,9 @@ db/
 # Logs
 *.log
 
+# Tools
+/tools/
+
 # OS
 .DS_Store
 Thumbs.db
