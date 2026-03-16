@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MediaMTX WHEP 播放测试</title>
+  <style>
+    body { background:#0f1115; color:#e2e8f0; font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif; margin:0; padding:16px; }
+    .container { max-width: 960px; margin: 0 auto; }
+    h1 { font-size: 18px; margin-bottom: 12px; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; }
+    input { flex:1; min-width:280px; padding:8px; border-radius:6px; border:1px solid #334155; background:#111827; color:#e2e8f0; }
+    button { padding:8px 14px; border-radius:6px; border:none; background:#3b82f6; color:white; cursor:pointer; }
+    .status { margin-top:8px; font-size:12px; color:#94a3b8; }
+    video { width: 100%; background:#000; border-radius:8px; margin-top:12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>MediaMTX WHEP 播放测试</h1>
+    <div class="row">
+      <input id="whepUrl" placeholder="WHEP URL" />
+      <button id="connectBtn">连接</button>
+      <button id="disconnectBtn" disabled>断开</button>
+    </div>
+    <div class="status" id="status">未连接</div>
+    <video id="video" autoplay playsinline muted></video>
+  </div>
+
+  <script>
+    const defaultUrl = localStorage.getItem('whepUrl') || 'http://192.168.144.30:8889/cam/whep';
+    const whepInput = document.getElementById('whepUrl');
+    const statusEl = document.getElementById('status');
+    const videoEl = document.getElementById('video');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+
+    whepInput.value = defaultUrl;
+
+    let pc = null;
+    let sessionUrl = null;
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    async function connect() {
+      const url = whepInput.value.trim();
+      if (!url) {
+        setStatus('请输入 WHEP URL');
+        return;
+      }
+
+      localStorage.setItem('whepUrl', url);
+
+      pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.ontrack = (event) => {
+        videoEl.srcObject = event.streams[0];
+      };
+      pc.onconnectionstatechange = () => {
+        setStatus(`连接状态: ${pc.connectionState}`);
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp' },
+        body: offer.sdp,
+      });
+
+      if (!res.ok) {
+        setStatus(`WHEP 连接失败: ${res.status}`);
+        return;
+      }
+
+      sessionUrl = res.headers.get('Location');
+      const answerSdp = await res.text();
+      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+
+      connectBtn.disabled = true;
+      disconnectBtn.disabled = false;
+      setStatus('已连接');
+    }
+
+    async function disconnect() {
+      if (pc) {
+        pc.close();
+        pc = null;
+      }
+      if (sessionUrl) {
+        try { await fetch(sessionUrl, { method: 'DELETE' }); } catch (_) {}
+        sessionUrl = null;
+      }
+      videoEl.srcObject = null;
+      connectBtn.disabled = false;
+      disconnectBtn.disabled = true;
+      setStatus('已断开');
+    }
+
+    connectBtn.addEventListener('click', () => { connect().catch(err => setStatus(`连接错误: ${err}`)); });
+    disconnectBtn.addEventListener('click', () => { disconnect().catch(err => setStatus(`断开错误: ${err}`)); });
+  </script>
+</body>
+</html>
