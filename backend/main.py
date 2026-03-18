@@ -10,10 +10,12 @@ import asyncio
 import contextlib
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Dict, AsyncIterator, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .database import get_db, init_db, get_session_factory
@@ -21,6 +23,8 @@ from .logging_config import logger, setup_logging
 from .schemas import (
     EStopResetResponse,
     EStopResponse,
+    EvidenceBulkDeleteRequest,
+    EvidenceDeleteResponse,
     EvidenceListResponse,
     LogsPage,
     SessionStartRequest,
@@ -30,17 +34,17 @@ from .schemas import (
     SystemHealthResponse,
     utc_now_iso,
 )
-from .services_evidence import list_evidence
+from .services_evidence import list_evidence, delete_evidence_by_ids
 from .services_logs import list_logs, write_log
 from .services_tasks import create_task, stop_task
+from .alert_service import AlertService
 from .mavlink_gateway import MAVLinkGateway
 from .mavlink_dto import SystemStatusDTO
 from .state_machine import StateMachine, SystemState
 from .telemetry_queue import TelemetryQueueManager, set_telemetry_queue_manager
-from .ws_broadcaster import websocket_telemetry_handler, WebSocketBroadcaster
 from .workers_telemetry import TelemetryPersistenceWorker
+from .ws_broadcaster import websocket_telemetry_handler, WebSocketBroadcaster
 from .ws_event_broadcaster import EventBroadcaster
-from .alert_service import AlertService
 
 
 APP_START_MONO = time.monotonic()
@@ -52,6 +56,7 @@ _mavlink_gateway: MAVLinkGateway | None = None
 _ws_broadcaster: WebSocketBroadcaster | None = None
 _persistence_worker: TelemetryPersistenceWorker | None = None
 _event_broadcaster: EventBroadcaster | None = None
+_ai_worker: Any | None = None
 
 
 def _get_state_machine() -> StateMachine | None:
@@ -84,6 +89,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("BotDog backend starting up (lifespan)...")
     await init_db()
     logger.info("Database initialized.")
+
+    snapshot_dir = Path(settings.SNAPSHOT_DIR)
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     # 全局停止事件
     global stop_event
@@ -149,7 +157,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             tasks.append(asyncio.create_task(simulation_worker(stop_event)))
             logger.info("模拟数据 Worker 已启动")
 
-        # 6. 初始化事件广播器（阶段 4）
+        # 7. 启动 AI Worker（旁路识别）
+        if settings.AI_ENABLED:
+            from .workers_ai import AIWorker
+            global _ai_worker
+            _ai_worker = AIWorker(
+                session_factory=get_session_factory(),
+                state_machine=_state_machine,
+                mavlink_gateway=_mavlink_gateway,
+                snapshot_dir=snapshot_dir,
+            )
+            tasks.append(asyncio.create_task(_ai_worker.start(stop_event)))
+            logger.info("AI Worker 已启动")
+        else:
+            logger.info("AI Worker 已禁用")
+
+        # 8. 初始化事件广播器（阶段 4）
         from .global_event_broadcaster import set_global_event_broadcaster
         from .alert_service import set_alert_service
         global _event_broadcaster
@@ -216,6 +239,12 @@ def create_app() -> FastAPI:
         allow_credentials=cors_allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
+    )
+
+    app.mount(
+        "/api/v1/static",
+        StaticFiles(directory=str(Path(settings.SNAPSHOT_DIR)), check_dir=False),
+        name="static",
     )
 
     register_routes(app)
@@ -389,6 +418,22 @@ def register_routes(app: FastAPI) -> None:
                 for row in rows
             ]
         )
+
+    @app.delete("/api/v1/evidence/{evidence_id}", response_model=EvidenceDeleteResponse)
+    async def delete_evidence(
+        evidence_id: int,
+        db=Depends(get_db),
+    ) -> EvidenceDeleteResponse:
+        result = await delete_evidence_by_ids(db, evidence_ids=[evidence_id])
+        return EvidenceDeleteResponse(success=True, **result)
+
+    @app.post("/api/v1/evidence/bulk-delete", response_model=EvidenceDeleteResponse)
+    async def bulk_delete_evidence(
+        request: EvidenceBulkDeleteRequest,
+        db=Depends(get_db),
+    ) -> EvidenceDeleteResponse:
+        result = await delete_evidence_by_ids(db, evidence_ids=request.evidence_ids)
+        return EvidenceDeleteResponse(success=True, **result)
 
     @app.websocket("/ws/telemetry")
     async def telemetry_ws(websocket: WebSocket) -> None:

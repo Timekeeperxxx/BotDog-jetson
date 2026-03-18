@@ -3,8 +3,7 @@
  * 用于查看和筛选历史告警记录
  */
 
-import { useEffect, useState } from 'react';
-import { useEventWebSocket } from '../hooks/useEventWebSocket';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertEvent } from '../types/event';
 import { getApiUrl } from '../config/api';
 
@@ -19,12 +18,22 @@ interface EvidenceListResponse {
   total?: number;
 }
 
+interface EvidenceDeleteResponse {
+  success: boolean;
+  deleted: number;
+  missing_files: number;
+  not_found_ids: number[];
+}
+
 export function EvidenceHistory() {
   const [evidenceList, setEvidenceList] = useState<EvidenceRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filterTaskId, setFilterTaskId] = useState<string>('');
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // 获取证据列表
   const fetchEvidence = async () => {
@@ -47,12 +56,82 @@ export function EvidenceHistory() {
 
       const data: EvidenceListResponse = await response.json();
       setEvidenceList(data.items || []);
+      setSelectedIds(new Set());
     } catch (err) {
       console.error('获取证据列表失败:', err);
       setError(err instanceof Error ? err.message : '未知错误');
     } finally {
       setLoading(false);
     }
+  };
+
+  const filteredList = useMemo(() => {
+    return evidenceList.filter((item) => {
+      if (filterSeverity !== 'all' && item.severity !== filterSeverity) {
+        return false;
+      }
+      return true;
+    });
+  }, [evidenceList, filterSeverity]);
+
+  const toggleSelected = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (filteredList.length === 0) return;
+    const allSelected = filteredList.every((item) => item.evidence_id && selectedIds.has(item.evidence_id));
+    if (allSelected) {
+      setSelectedIds(new Set());
+      return;
+    }
+    const next = new Set<number>();
+    filteredList.forEach((item) => {
+      if (item.evidence_id) next.add(item.evidence_id);
+    });
+    setSelectedIds(next);
+  };
+
+  const deleteByIds = async (ids: number[]) => {
+    if (ids.length === 0) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const response = await fetch(getApiUrl('/api/v1/evidence/bulk-delete'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ evidence_ids: ids }),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const data: EvidenceDeleteResponse = await response.json();
+      if (!data.success) {
+        throw new Error('删除失败');
+      }
+      await fetchEvidence();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : '删除失败');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const deleteSingle = async (id?: number) => {
+    if (!id) return;
+    await deleteByIds([id]);
+  };
+
+  const deleteSelected = async () => {
+    await deleteByIds(Array.from(selectedIds));
   };
 
   // 加载数据
@@ -88,13 +167,6 @@ export function EvidenceHistory() {
     }
   };
 
-  // 过滤证据列表
-  const filteredList = evidenceList.filter((item) => {
-    if (filterSeverity !== 'all' && item.severity !== filterSeverity) {
-      return false;
-    }
-    return true;
-  });
 
   return (
     <div
@@ -132,6 +204,7 @@ export function EvidenceHistory() {
           display: 'flex',
           gap: '16px',
           alignItems: 'center',
+          flexWrap: 'wrap',
         }}
       >
         {/* 任务 ID 筛选 */}
@@ -200,7 +273,7 @@ export function EvidenceHistory() {
         </div>
 
         {/* 搜索按钮 */}
-        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px' }}>
           <button
             onClick={fetchEvidence}
             disabled={loading}
@@ -218,6 +291,24 @@ export function EvidenceHistory() {
             }}
           >
             {loading ? '加载中...' : '搜索'}
+          </button>
+          <button
+            onClick={deleteSelected}
+            disabled={deleting || selectedIds.size === 0}
+            style={{
+              padding: '10px 20px',
+              background: selectedIds.size === 0 ? 'rgba(239,68,68,0.2)' : '#ef4444',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              fontWeight: 'bold',
+              fontSize: '12px',
+              cursor: selectedIds.size === 0 || deleting ? 'not-allowed' : 'pointer',
+              opacity: selectedIds.size === 0 || deleting ? 0.6 : 1,
+              textTransform: 'uppercase',
+            }}
+          >
+            {deleting ? '删除中...' : `删除选中(${selectedIds.size})`}
           </button>
         </div>
       </div>
@@ -239,6 +330,22 @@ export function EvidenceHistory() {
         </div>
       )}
 
+      {deleteError && (
+        <div
+          style={{
+            padding: '12px',
+            marginBottom: '20px',
+            background: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: '6px',
+            color: '#ef4444',
+            fontSize: '12px',
+          }}
+        >
+          {deleteError}
+        </div>
+      )}
+
       {/* 证据列表 */}
       <div
         style={{
@@ -252,7 +359,7 @@ export function EvidenceHistory() {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '80px 1fr 1fr 120px 120px 100px',
+            gridTemplateColumns: '32px 80px 1fr 1fr 120px 120px 100px 80px',
             gap: '16px',
             padding: '12px',
             borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
@@ -260,14 +367,23 @@ export function EvidenceHistory() {
             fontWeight: 'bold',
             color: '#94a3b8',
             textTransform: 'uppercase',
+            alignItems: 'center',
           }}
         >
+          <div>
+            <input
+              type="checkbox"
+              checked={filteredList.length > 0 && filteredList.every((item) => item.evidence_id && selectedIds.has(item.evidence_id))}
+              onChange={toggleSelectAll}
+            />
+          </div>
           <div>严重</div>
           <div>消息</div>
           <div>事件类型</div>
           <div>时间</div>
           <div>置信度</div>
           <div>位置</div>
+          <div>操作</div>
         </div>
 
         {/* 列表内容 */}
@@ -292,7 +408,7 @@ export function EvidenceHistory() {
               key={`${item.evidence_id || index}-${item.timestamp}`}
               style={{
                 display: 'grid',
-                gridTemplateColumns: '80px 1fr 1fr 120px 120px 100px',
+                gridTemplateColumns: '32px 80px 1fr 1fr 120px 120px 100px 80px',
                 gap: '16px',
                 padding: '12px',
                 borderBottom:
@@ -311,6 +427,14 @@ export function EvidenceHistory() {
                 e.currentTarget.style.background = 'transparent';
               }}
             >
+              <div>
+                <input
+                  type="checkbox"
+                  checked={item.evidence_id ? selectedIds.has(item.evidence_id) : false}
+                  onChange={() => item.evidence_id && toggleSelected(item.evidence_id)}
+                />
+              </div>
+
               {/* 严重程度 */}
               <div>
                 <div
@@ -363,7 +487,7 @@ export function EvidenceHistory() {
                   fontSize: '10px',
                 }}
               >
-                {new Date(item.timestamp).toLocaleString('zh-CN', {
+                {new Date(item.timestamp || item.created_at).toLocaleString('zh-CN', {
                   hour12: false,
                 })}
               </div>
@@ -430,6 +554,25 @@ export function EvidenceHistory() {
                 ) : (
                   <span style={{ color: '#64748b' }}>-</span>
                 )}
+              </div>
+
+              <div>
+                <button
+                  onClick={() => deleteSingle(item.evidence_id)}
+                  disabled={deleting}
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                    color: '#ef4444',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    fontSize: '10px',
+                    cursor: deleting ? 'not-allowed' : 'pointer',
+                    opacity: deleting ? 0.6 : 1,
+                  }}
+                >
+                  删除
+                </button>
               </div>
             </div>
           ))

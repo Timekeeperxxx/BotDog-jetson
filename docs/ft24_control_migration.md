@@ -60,9 +60,41 @@ FT24 手柄 (TX) → 接收机 (RX) → MCU
 - `CAMERA_RTSP_URL=rtsp://192.168.144.25:8554/main.264`
 - `VITE_WHEP_URL=http://127.0.0.1:8889/cam/whep`
 
-## 7. 验收标准
+## 7. FT24 手柄连通性测试（有接收机，无机器狗）
+### 7.1 连接方式
+- **UART**：接收机串口输出（常见 115200 8N1）。
+- **SBUS**：接收机 SBUS 输出（100000 8E2，部分需要反相）。
+
+### 7.2 辅助脚本
+脚本位置：[scripts/ft24_rx_test.py](../scripts/ft24_rx_test.py)
+
+#### 运行示例
+1) **自动检测模式（推荐）**
+```
+python scripts/ft24_rx_test.py --port COM4 --mode auto --duration 10
+```
+2) **明确 UART**
+```
+python scripts/ft24_rx_test.py --port COM4 --mode uart --baud 115200 --duration 10
+```
+3) **明确 SBUS**
+```
+python scripts/ft24_rx_test.py --port COM4 --mode sbus --duration 10
+```
+
+#### 判定标准
+- **UART**：持续输出字节流，且在拨动摇杆/开关时，输出块内容发生变化。
+- **SBUS**：持续输出帧，`ch1~ch8` 数值随摇杆变化而变化；`failsafe`/`lost` 为 `False`。
+
+### 7.3 手工验证步骤
+1. 连接接收机到 USB-UART（确认设备管理器中端口号）。
+2. 运行脚本并观察输出。
+3. 依次拨动摇杆与拨码开关，确认输出变化。
+
+## 8. 验收标准
 - 控制链路由 FT24 硬件直连，不再提供 Web 控制。
 - `/ws/telemetry` 可用且数据持续更新。
 - 前端无控制面板与控制 WS 连接。
 - WHEP 视频流在主界面与 `web/index.html` 可播放。
+- FT24 接收机连通性测试通过。
 - 测试用例通过，文档与实现一致。

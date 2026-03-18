@@ -5,6 +5,7 @@
 
 import sys
 import os
+import asyncio
 
 # 添加项目根目录到 Python 路径
 sys.path.insert(0, os.path.dirname(__file__))
@@ -22,6 +23,9 @@ if __name__ == "__main__":
     print("\n按 Ctrl+C 停止服务器")
     print("=" * 80)
     print()
+
+    if sys.platform.startswith("win"):
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
     uvicorn.run(
         app,

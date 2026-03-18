@@ -78,6 +78,17 @@ class EvidenceListResponse(BaseModel):
     items: list[EvidenceItem]
 
 
+class EvidenceBulkDeleteRequest(BaseModel):
+    evidence_ids: list[int] = Field(..., min_length=1)
+
+
+class EvidenceDeleteResponse(BaseModel):
+    success: bool
+    deleted: int
+    missing_files: int
+    not_found_ids: list[int]
+
+
 class ManualControlDTO(BaseModel):
     """
     手动控制指令数据传输对象。

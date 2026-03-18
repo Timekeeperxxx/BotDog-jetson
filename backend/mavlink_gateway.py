@@ -79,6 +79,10 @@ class MAVLinkGateway:
         # 温度监控器
         self._temperature_monitor: Optional[TemperatureMonitor] = None
 
+    def get_latest_position(self) -> Optional[PositionDTO]:
+        """获取最新的 GPS 位置缓存。"""
+        return self._cached_position
+
     async def start(self, stop_event: asyncio.Event) -> None:
         """
         启动 MAVLink 网关。

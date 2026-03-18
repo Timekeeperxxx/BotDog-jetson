@@ -24,7 +24,7 @@ def setup_logging() -> None:
     # 控制台输出（面向开发与容器 stdout）
     logger.add(
         sink=lambda msg: print(msg, end=""),
-        level="INFO",
+        level="DEBUG",
         colorize=True,
         backtrace=True,
         diagnose=False,

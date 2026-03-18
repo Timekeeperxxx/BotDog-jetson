@@ -1,0 +1,472 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { 
+  Activity, 
+  Battery, 
+  Wifi, 
+  MapPin, 
+  Camera, 
+  ShieldCheck, 
+  Thermometer, 
+  Navigation2,
+  Bell,
+  ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  Clock,
+  LayoutGrid,
+  History,
+  Search,
+  Filter,
+  Trash2,
+  Download,
+  AlertTriangle,
+  Play,
+  Square,
+  CheckCircle2,
+  XCircle,
+  Info,
+  Terminal,
+  FileText,
+  Copy,
+  ArrowDown,
+  Maximize2,
+  Minimize2 
+} from 'lucide-react';
+
+/**
+ * BotDog Industrial Horizon - 极简版 (v0.6.2)
+ * 核心修改：移除左侧独立日志与地图模块，专注于核心巡检与档案管理。
+ */
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState('console');
+  const [detections, setDetections] = useState([]);
+  const [logs, setLogs] = useState([]); 
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isMissionRunning, setIsMissionRunning] = useState(false);
+  const [isLogExpanded, setIsLogExpanded] = useState(true);
+  const [isUiFullscreen, setIsUiFullscreen] = useState(false);
+  
+  const sidebarLogEndRef = useRef(null);
+
+  // 模拟生成检测数据
+  useEffect(() => {
+    const mockInterval = setInterval(() => {
+      if (!isMissionRunning) return;
+      const isPerson = Math.random() > 0.7;
+      const id = Math.random().toString(36).substr(2, 6).toUpperCase();
+      const newDetect = {
+        id,
+        type: isPerson ? 'STRANGER' : 'OBSTACLE',
+        label: isPerson ? '发现未授权人员' : '检测到路面遗留物',
+        confidence: (0.88 + Math.random() * 0.1).toFixed(3),
+        time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+        date: new Date().toLocaleDateString('zh-CN'),
+        location: "39.9042N, 116.4074E",
+        thumbnail: isPerson 
+          ? 'https://images.unsplash.com/photo-1543269664-76ad3997792d?auto=format&fit=crop&q=80&w=400' 
+          : 'https://images.unsplash.com/photo-1582139329536-e7284fece509?auto=format&fit=crop&q=80&w=400',
+      };
+      setDetections(prev => [newDetect, ...prev].slice(0, 50));
+      addLog('INFO', `AI检测: ${newDetect.label} (置信度: ${newDetect.confidence})`);
+    }, 8000);
+    return () => clearInterval(mockInterval);
+  }, [isMissionRunning]);
+
+  // 模拟生成系统运行日志
+  useEffect(() => {
+    const logInterval = setInterval(() => {
+      const levels = ['INFO', 'INFO', 'INFO', 'WARN', 'ERROR'];
+      const level = levels[Math.floor(Math.random() * levels.length)];
+      const messages = {
+        INFO: ['MAVLink 心跳信号已接收', '电池电压稳定: 24.2V', 'IMU 传感器自检: 正常', 'GPS 锁定: 12 颗卫星'],
+        WARN: ['检测到网络延迟: 120ms', '电机温度升高: 52C', '正在接近任务区域边界'],
+        ERROR: ['MAVLink 连接丢失', 'AI 识别进程重启失败', '严重低电量报警: 5%']
+      };
+      const msg = messages[level][Math.floor(Math.random() * messages[level].length)];
+      addLog(level, msg);
+    }, 3000);
+    return () => clearInterval(logInterval);
+  }, []);
+
+  const addLog = (level, message) => {
+    const newLog = {
+      id: Date.now(),
+      time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+      level,
+      message
+    };
+    setLogs(prev => [...prev, newLog].slice(-100));
+  };
+
+  useEffect(() => {
+    if (isLogExpanded) {
+      sidebarLogEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs, isLogExpanded]);
+
+  const filteredDetections = useMemo(() => {
+    return detections.filter(d => 
+      d.label.includes(searchQuery) || d.type.includes(searchQuery) || d.id.includes(searchQuery)
+    );
+  }, [detections, searchQuery]);
+
+  const logRecentStatus = useMemo(() => {
+    return logs.slice(-5).map(l => l.level);
+  }, [logs]);
+
+  const toggleFullScreen = () => setIsUiFullscreen(!isUiFullscreen);
+
+  return (
+    <div className="flex h-screen w-full bg-[#050506] text-white font-sans overflow-hidden antialiased selection:bg-white selection:text-black">
+      
+      {/* 1. 侧边全局导航 (已精简) */}
+      {!isUiFullscreen && (
+        <nav className="w-14 flex flex-col items-center py-6 bg-black border-r border-white/20 z-50 shadow-2xl">
+          <div className="w-9 h-9 border-2 border-white rounded flex items-center justify-center mb-10 group cursor-pointer hover:bg-white transition-all">
+            <Activity size={18} className="text-white group-hover:text-black" />
+          </div>
+          
+          <div className="flex-1 flex flex-col space-y-5">
+            <SidebarBtn icon={<LayoutGrid size={20}/>} active={activeTab === 'console'} onClick={() => setActiveTab('console')} label="控制台" />
+            <SidebarBtn icon={<History size={20}/>} active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="档案库" />
+          </div>
+
+          <div className="mt-auto space-y-5 pt-4 border-t border-white/10">
+            <SidebarBtn icon={<Bell size={20}/>} active={false} dot label="消息" />
+            <SidebarBtn icon={<Info size={20}/>} active={false} label="系统" />
+          </div>
+        </nav>
+      )}
+
+      {/* 主视图区域 */}
+      <main className="flex-1 flex flex-col min-w-0 relative">
+        
+        {/* 顶部页眉 */}
+        {!isUiFullscreen && (
+          <header className="h-12 bg-black backdrop-blur-md border-b border-white/20 flex items-center justify-between px-6 z-40">
+            <div className="flex items-center space-x-6">
+              <div className="flex items-center space-x-3">
+                <span className="text-[11px] font-black text-white uppercase tracking-widest">BotDog Industrial</span>
+                <div className="h-4 w-px bg-white/30" />
+                <span className="text-[10px] font-mono text-slate-300 font-bold tracking-tight">V0.6.2-RELEASE</span>
+              </div>
+              {isMissionRunning && (
+                <div className="flex items-center space-x-2 px-2.5 py-1 bg-white rounded-sm border border-white shadow-[0_0_10px_rgba(255,255,255,0.2)]">
+                  <div className="w-1.5 h-1.5 bg-black rounded-full animate-pulse" />
+                  <span className="text-[9px] font-black text-black uppercase tracking-tighter">Active</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center space-x-10">
+               <div className="hidden lg:flex items-center space-x-8 pr-8 border-r border-white/20 font-bold">
+                  <DataPointHeader label="Spd" value="1.2" unit="m/s" />
+                  <DataPointHeader label="Hdg" value="284" unit="°" />
+                  <DataPointHeader label="Alt" value="0.4" unit="m" />
+               </div>
+
+               <div className="flex items-center space-x-6">
+                  <TopStatus icon={<Wifi size={16}/>} value="98%" label="链路" />
+                  <TopStatus icon={<Battery size={16}/>} value="84%" label="电量" />
+                  <TopStatus icon={<Thermometer size={16}/>} value="38°C" label="温度" />
+               </div>
+               
+               <div className="text-[11px] font-mono font-black text-white pl-6 border-l border-white/20">
+                  {new Date().toLocaleTimeString('zh-CN', { hour12: false })}
+               </div>
+            </div>
+          </header>
+        )}
+
+        {activeTab === 'console' ? (
+          <div className="flex-1 flex min-h-0 relative">
+            {/* 视频监控区 */}
+            <div className={`flex-1 bg-black relative overflow-hidden transition-all duration-300 ${isUiFullscreen ? 'fixed inset-0 z-[100]' : 'border-r border-white/20'}`}>
+              <img 
+                src="https://images.unsplash.com/photo-1628113310821-9144d93021f1?auto=format&fit=crop&q=80&w=1600" 
+                className="w-full h-full object-cover opacity-70"
+                alt="Camera Feed"
+              />
+              
+              {/* HUD 叠加 (仅准心线) */}
+              <div className="absolute inset-0 pointer-events-none p-6">
+                 <div className="h-full flex flex-col justify-between items-center relative">
+                    <div className="w-full flex justify-between">
+                       <div className="w-6 h-6 border-t-2 border-l-2 border-white/40" />
+                       <div className="w-6 h-6 border-t-2 border-r-2 border-white/40" />
+                    </div>
+                    {/* 准心 */}
+                    <div className="w-40 h-40 border border-white/20 rounded-full flex items-center justify-center">
+                       <div className="w-8 h-[1px] bg-white/50" />
+                       <div className="w-[1px] h-8 bg-white/50 absolute" />
+                    </div>
+                    <div className="w-full flex justify-between">
+                       <div className="w-6 h-6 border-b-2 border-l-2 border-white/40" />
+                       <div className="w-6 h-6 border-b-2 border-r-2 border-white/40" />
+                    </div>
+                 </div>
+              </div>
+
+              {/* 底部悬浮控制台 */}
+              <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-lg px-6 z-30 pointer-events-auto">
+                <div className="bg-black border-2 border-white/30 p-3 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,1)] flex items-center justify-between px-8">
+                   <div className="flex items-center space-x-5 text-white">
+                      <button 
+                        onClick={toggleFullScreen}
+                        className="p-2 hover:bg-white hover:text-black rounded-lg transition-all"
+                        title={isUiFullscreen ? "退出全屏" : "全屏切换"}
+                      >
+                         {isUiFullscreen ? <Minimize2 size={22} /> : <Maximize2 size={22} />}
+                      </button>
+                      <div className="h-8 w-px bg-white/30" />
+                      <button className="p-2 hover:bg-white hover:text-black rounded-lg transition-all" title="手动抓拍">
+                        <Camera size={22} />
+                      </button>
+                   </div>
+                   
+                   <button 
+                     onClick={() => setIsMissionRunning(!isMissionRunning)}
+                     className={`flex items-center space-x-4 px-12 py-3 rounded-lg font-black text-xs uppercase transition-all transform active:scale-95 shadow-xl ${isMissionRunning ? 'bg-white text-black border-2 border-white' : 'bg-white text-black ring-4 ring-white/20'}`}
+                   >
+                     {isMissionRunning ? <><Square size={14} fill="black"/><span>终止任务</span></> : <><Play size={14} fill="black"/><span>启动巡检</span></>}
+                   </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 右侧边栏 (实时终端 + AI 监测) */}
+            {!isUiFullscreen && (
+              <aside className="w-64 bg-black flex flex-col shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
+                {/* 实时日志区 (支持折叠) */}
+                <div className={`flex flex-col border-b border-white/20 transition-all duration-300 ${isLogExpanded ? 'h-1/3' : 'h-10'}`}>
+                  <div 
+                    onClick={() => setIsLogExpanded(!isLogExpanded)}
+                    className="flex items-center justify-between px-4 h-10 bg-white/10 cursor-pointer hover:bg-white hover:text-black transition-all group"
+                  >
+                    <div className="flex items-center space-x-3 font-bold">
+                      <Terminal size={14} />
+                      <span className="text-[10px] uppercase tracking-widest font-black text-white">终端状态</span>
+                      <div className="flex space-x-1.5 ml-2">
+                         {logRecentStatus.map((level, i) => (
+                           <div key={i} className={`w-2 h-2 rounded-full border border-black/20 ${level === 'ERROR' ? 'bg-red-500 shadow-[0_0_8px_red]' : level === 'WARN' ? 'bg-orange-500' : 'bg-white'}`} />
+                         ))}
+                      </div>
+                    </div>
+                    {isLogExpanded ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+                  </div>
+                  
+                  {isLogExpanded && (
+                    <div className="flex-1 overflow-y-auto p-4 font-mono text-[10px] bg-black custom-scrollbar border-t border-white/5">
+                      {logs.slice(-30).map(log => (
+                        <div key={log.id} className="flex space-x-3 mb-2 border-b border-white/[0.05] pb-1">
+                          <span className="text-slate-500 whitespace-nowrap">[{log.time.split(':').slice(1).join(':')}]</span>
+                          <span className={
+                            log.level === 'ERROR' ? 'text-red-500 font-black' : 
+                            log.level === 'WARN' ? 'text-orange-500 font-black' : 
+                            'text-slate-200 font-bold'
+                          }>{log.level.charAt(0)}</span>
+                          <span className="text-slate-100 truncate leading-relaxed font-medium">{log.message}</span>
+                        </div>
+                      ))}
+                      <div ref={sidebarLogEndRef} />
+                    </div>
+                  )}
+                </div>
+
+                {/* AI 监测区 */}
+                <div className="flex-1 flex flex-col overflow-hidden">
+                  <div className="p-4 border-b border-white/20 flex items-center justify-between bg-black">
+                    <div className="flex items-center space-x-3 font-black text-white">
+                      <Camera size={16} />
+                      <span className="text-[11px] uppercase tracking-widest">AI 识别流</span>
+                    </div>
+                    <span className="text-[9px] px-2 py-0.5 bg-white text-black font-black rounded uppercase tracking-tighter">Real-time</span>
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-zinc-900/20">
+                    {detections.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3">
+                        <ShieldCheck size={40} className="text-white/20" />
+                        <p className="text-[10px] uppercase font-black tracking-widest text-white/30">监测运行中...</p>
+                      </div>
+                    ) : (
+                      detections.slice(0, 15).map(d => (
+                        <DetectionAlert key={d.id} data={d} />
+                      ))
+                    )}
+                  </div>
+                </div>
+              </aside>
+            )}
+          </div>
+        ) : (
+          /* 档案库页面 */
+          <div className="flex-1 flex flex-col bg-black overflow-hidden p-8">
+             <header className="flex items-end justify-between mb-10 border-b border-white/20 pb-8">
+                <div>
+                  <h1 className="text-4xl font-black tracking-tighter text-white mb-2 uppercase">数据档案库</h1>
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Digital Evidence & Analytics</p>
+                </div>
+                <div className="flex items-center space-x-4">
+                  <div className="relative group">
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                    <input 
+                      type="text" 
+                      placeholder="搜索 ID / 标签 / 时间..." 
+                      className="bg-zinc-900 border-2 border-white/20 rounded-lg py-3 pl-12 pr-6 text-sm font-bold text-white focus:outline-none focus:border-white transition-all w-80 placeholder:text-zinc-700"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                  </div>
+                  <button className="flex items-center space-x-3 px-8 py-3 bg-white text-black rounded-lg text-xs font-black hover:bg-zinc-200 transition-all active:scale-95 uppercase tracking-widest">
+                    <Download size={18} />
+                    <span>导出 PDF 报告</span>
+                  </button>
+                </div>
+             </header>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar pb-10">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-10">
+                {filteredDetections.map((d) => (
+                  <ArchiveCard key={d.id} data={d} />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+// --- 高对比子组件 ---
+
+function DataPointHeader({ label, value, unit }) {
+  return (
+    <div className="flex items-baseline space-x-2 group">
+      <span className="text-[9px] uppercase font-black text-slate-500 tracking-tighter group-hover:text-white">{label}</span>
+      <span className="text-lg font-mono font-black text-white">{value}</span>
+      <span className="text-[10px] font-mono font-bold text-slate-400">{unit}</span>
+    </div>
+  );
+}
+
+function SidebarBtn({ icon, active, onClick, label, dot }) {
+  return (
+    <div 
+      onClick={onClick}
+      className={`relative p-3 rounded-lg cursor-pointer transition-all duration-200 group ${
+        active 
+          ? 'bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.3)]' 
+          : 'text-slate-400 hover:text-white hover:bg-zinc-900'
+      }`}
+    >
+      {icon}
+      {dot && <div className="absolute top-2 right-2 w-2 h-2 bg-red-600 rounded-full border-2 border-black" />}
+      <div className="absolute left-16 opacity-0 group-hover:opacity-100 pointer-events-none bg-white text-black border-2 border-white px-3 py-1.5 rounded text-[10px] uppercase font-black whitespace-nowrap transition-all transform group-hover:translate-x-1 z-[100]">
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function TopStatus({ icon, value, label }) {
+  return (
+    <div className="flex items-center space-x-3">
+      <div className="p-2 rounded bg-zinc-900 text-white border border-white/10">
+        {icon}
+      </div>
+      <div className="flex flex-col -space-y-1">
+        <span className="text-[9px] uppercase font-black text-slate-500 tracking-tighter">{label}</span>
+        <span className="text-[11px] font-mono font-black text-white">{value}</span>
+      </div>
+    </div>
+  );
+}
+
+function DetectionAlert({ data }) {
+  return (
+    <div className="group bg-zinc-900 border-2 border-white/10 p-3 rounded-xl animate-in slide-in-from-right-4 duration-500 shadow-2xl hover:border-white transition-all cursor-pointer">
+      <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2">
+        <div className="flex items-center space-x-2">
+           <div className={`w-2 h-2 rounded-full ${data.type === 'STRANGER' ? 'bg-red-500 animate-pulse' : 'bg-orange-500'}`} />
+           <span className="text-[10px] font-black uppercase tracking-widest text-white">
+            {data.type}
+           </span>
+        </div>
+        <span className="text-[10px] font-mono font-black text-slate-400">{data.time.split(':').slice(1).join(':')}</span>
+      </div>
+      <div className="flex space-x-4 items-center">
+        <div className="w-14 h-14 rounded-lg overflow-hidden border-2 border-white/20 bg-black shadow-inner">
+           <img src={data.thumbnail} className="w-full h-full object-cover opacity-90 group-hover:scale-110 transition-transform" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-[12px] font-black text-white truncate leading-tight tracking-wide">{data.label}</p>
+          <div className="flex items-center space-x-2 mt-2">
+             <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden border border-white/5">
+                <div className="h-full bg-white" style={{ width: `${data.confidence * 100}%` }} />
+             </div>
+             <p className="text-[10px] text-white font-mono font-black">{(data.confidence * 100).toFixed(0)}%</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ArchiveCard({ data }) {
+  return (
+    <div className="group bg-zinc-900 border-2 border-white/10 hover:border-white transition-all duration-500 rounded-2xl overflow-hidden flex flex-col shadow-[0_30px_60px_-12px_rgba(0,0,0,0.8)]">
+      <div className="relative h-48 bg-black">
+        <img src={data.thumbnail} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 group-hover:scale-105 transition-all duration-700" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-5">
+          <div className="flex space-x-3 w-full">
+            <button className="flex-1 py-3 bg-white text-black text-[10px] font-black uppercase tracking-widest rounded-lg shadow-xl active:scale-95 transition-all">
+              查看证据详情
+            </button>
+            <button className="p-3 bg-red-600 text-white rounded-lg hover:bg-red-700 active:scale-90 transition-all border border-red-500">
+              <Trash2 size={20} />
+            </button>
+          </div>
+        </div>
+        <div className="absolute top-5 left-5">
+          <span className={`px-3 py-1.5 rounded font-black text-[10px] uppercase tracking-widest border-2 shadow-2xl ${data.type === 'STRANGER' ? 'bg-red-600 border-red-400 text-white' : 'bg-black border-white text-white'}`}>
+            {data.type}
+          </span>
+        </div>
+        <div className="absolute top-5 right-5">
+           <div className="px-3 py-1.5 bg-black border-2 border-white/40 text-[10px] font-mono font-black text-white rounded shadow-2xl">
+             # {data.id}
+           </div>
+        </div>
+      </div>
+      <div className="p-6 flex-1 flex flex-col bg-zinc-900">
+        <div className="flex justify-between items-start mb-6">
+          <h4 className="text-sm font-black text-white tracking-wide uppercase">{data.label}</h4>
+          <span className="text-[10px] font-mono font-black text-slate-500">{data.time}</span>
+        </div>
+        
+        <div className="space-y-5 mt-auto">
+          <div className="flex items-center justify-between text-[11px] font-black">
+            <span className="text-slate-500 uppercase tracking-widest">识别置信度</span>
+            <span className="font-mono text-white">{(data.confidence * 100).toFixed(1)}%</span>
+          </div>
+          <div className="h-2 bg-black rounded-full overflow-hidden border border-white/10 shadow-inner">
+            <div className="h-full bg-white shadow-[0_0_15px_white]" style={{ width: `${data.confidence * 100}%` }} />
+          </div>
+          
+          <div className="pt-5 border-t border-white/10 grid grid-cols-2 gap-4">
+             <div className="flex items-center text-[10px] text-white font-black">
+               <Clock size={14} className="mr-2 text-slate-500" />
+               <span className="uppercase">{data.date}</span>
+             </div>
+             <div className="flex items-center justify-end text-[10px] text-white font-black">
+               <MapPin size={14} className="mr-2 text-slate-500" />
+               <span className="truncate uppercase">Sector A-09</span>
+             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

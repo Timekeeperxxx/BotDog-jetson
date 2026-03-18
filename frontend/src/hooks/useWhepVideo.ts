@@ -20,13 +20,24 @@ export function useWhepVideo() {
   const sessionUrlRef = useRef<string | null>(null);
   const connectingRef = useRef(false);
   const retryTimerRef = useRef<number | null>(null);
+  const statsTimerRef = useRef<number | null>(null);
+  const [videoLatencyMs, setVideoLatencyMs] = useState<number | null>(null);
+  const connectSessionIdRef = useRef(0);
+  const shouldRetryRef = useRef(true);
 
   const cleanup = useCallback(async () => {
     connectingRef.current = false;
+    connectSessionIdRef.current += 1;
+    shouldRetryRef.current = false;
 
     if (pcRef.current) {
       pcRef.current.close();
       pcRef.current = null;
+    }
+
+    if (statsTimerRef.current) {
+      window.clearInterval(statsTimerRef.current);
+      statsTimerRef.current = null;
     }
 
     if (retryTimerRef.current) {
@@ -43,15 +54,23 @@ export function useWhepVideo() {
       sessionUrlRef.current = null;
     }
 
+    setVideoLatencyMs(null);
+
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
   }, []);
 
   const connect = useCallback(async () => {
-    if (state.status === 'connected' || connectingRef.current) {
+    if (connectingRef.current) {
       return;
     }
+
+    await cleanup();
+    shouldRetryRef.current = true;
+
+    const sessionId = connectSessionIdRef.current + 1;
+    connectSessionIdRef.current = sessionId;
 
     const whepUrl = (import.meta.env.VITE_WHEP_URL as string | undefined) || DEFAULT_WHEP_URL;
 
@@ -75,14 +94,52 @@ export function useWhepVideo() {
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'connected') {
           setState({ status: 'connected', error: null });
+          if (!statsTimerRef.current) {
+            statsTimerRef.current = window.setInterval(async () => {
+              const currentPc = pcRef.current;
+              if (!currentPc) return;
+              try {
+                const stats = await currentPc.getStats();
+                let rttSeconds: number | null = null;
+
+                stats.forEach((report) => {
+                  if (rttSeconds !== null) return;
+                  if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
+                    const currentRtt = (report as RTCIceCandidatePairStats).currentRoundTripTime;
+                    if (typeof currentRtt === 'number' && currentRtt > 0) {
+                      rttSeconds = currentRtt;
+                    }
+                  }
+                });
+
+                if (rttSeconds === null) {
+                  stats.forEach((report) => {
+                    if (rttSeconds !== null) return;
+                    if (report.type === 'remote-inbound-rtp' && report.kind === 'video') {
+                      const currentRtt = (report as RTCRemoteInboundRtpStreamStats).roundTripTime;
+                      if (typeof currentRtt === 'number' && currentRtt > 0) {
+                        rttSeconds = currentRtt;
+                      }
+                    }
+                  });
+                }
+
+                if (rttSeconds !== null) {
+                  const latencyMs = Math.round((rttSeconds * 1000) / 2);
+                  setVideoLatencyMs(latencyMs);
+                }
+              } catch {
+                // ignore stats errors
+              }
+            }, 1000);
+          }
         } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
           setState({ status: 'error', error: 'WHEP 连接失败' });
-          if (!retryTimerRef.current) {
-            retryTimerRef.current = window.setTimeout(() => {
-              retryTimerRef.current = null;
-              void connect();
-            }, 2000);
+          if (statsTimerRef.current) {
+            window.clearInterval(statsTimerRef.current);
+            statsTimerRef.current = null;
           }
+          setVideoLatencyMs(null);
         }
       };
 
@@ -101,10 +158,17 @@ export function useWhepVideo() {
 
       const sessionUrl = response.headers.get('Location');
       if (sessionUrl) {
-        sessionUrlRef.current = sessionUrl;
+        try {
+          sessionUrlRef.current = new URL(sessionUrl, whepUrl).toString();
+        } catch {
+          sessionUrlRef.current = sessionUrl;
+        }
       }
 
       const answerSdp = await response.text();
+      if (connectSessionIdRef.current !== sessionId || pc.signalingState === 'closed') {
+        return;
+      }
       await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
       if (retryTimerRef.current) {
@@ -114,15 +178,12 @@ export function useWhepVideo() {
 
       connectingRef.current = false;
     } catch (error) {
+      if (connectSessionIdRef.current !== sessionId) {
+        return;
+      }
       await cleanup();
       connectingRef.current = false;
       setState({ status: 'error', error: String(error) });
-      if (!retryTimerRef.current) {
-        retryTimerRef.current = window.setTimeout(() => {
-          retryTimerRef.current = null;
-          void connect();
-        }, 2000);
-      }
     }
   }, [cleanup, state.status]);
 
@@ -140,6 +201,7 @@ export function useWhepVideo() {
   return {
     status: state,
     videoRef,
+    videoLatencyMs,
     connect,
     disconnect,
   };

@@ -48,11 +48,14 @@ class EventBroadcaster:
         logger.info(f"事件 WebSocket 已连接，当前连接数: {len(self._connections)}")
 
         # 发送欢迎消息
-        await websocket.send_json({
-            "msg_type": "welcome",
-            "timestamp": utc_now_iso(),
-            "message": "事件流已连接",
-        })
+        try:
+            await websocket.send_json({
+                "msg_type": "welcome",
+                "timestamp": utc_now_iso(),
+                "message": "事件流已连接",
+            })
+        except Exception as exc:
+            logger.info(f"事件 WebSocket 欢迎消息发送失败: {exc}")
 
     async def disconnect(self, websocket: WebSocket) -> None:
         """
@@ -156,7 +159,7 @@ class EventBroadcaster:
 
         try:
             while True:
-                # 等待消息（心跳或其他控制消息）
+                # 保持连接活跃，接收客户端消息（如 ping）
                 try:
                     data = await websocket.receive_json()
 
@@ -171,9 +174,9 @@ class EventBroadcaster:
                     logger.info("客户端主动断开连接")
                     break
 
-                except Exception as e:
-                    logger.error(f"接收消息错误: {e}")
-                    break
+                except Exception:
+                    # 客户端不主动发送消息时，保持连接
+                    await asyncio.sleep(1.0)
 
         finally:
             await self.disconnect(websocket)

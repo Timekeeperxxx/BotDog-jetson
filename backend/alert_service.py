@@ -8,8 +8,6 @@
 - 管理告警生命周期
 """
 
-import asyncio
-from pathlib import Path
 from typing import Optional, Dict, Any
 from datetime import datetime
 from dataclasses import dataclass
@@ -29,8 +27,9 @@ class EvidenceRecord:
     event_code: str
     severity: str
     message: str
-    confidence: float
+    confidence: Optional[float]
     file_path: Optional[str]
+    image_url: Optional[str]
     gps_lat: Optional[float]
     gps_lon: Optional[float]
 
@@ -87,6 +86,7 @@ class AlertService:
             message=f"检测到目标温度过高 ({alert.temperature:.1f}°C)",
             confidence=min(100.0, (alert.temperature / alert.threshold) * 100),
             file_path=None,  # TODO: 实现截图功能
+            image_url=None,
             gps_lat=position.get("lat") if position else None,
             gps_lon=position.get("lon") if position else None,
         )
@@ -102,6 +102,47 @@ class AlertService:
         # 广播告警（如果有 WebSocket 连接）
         await self._broadcast_alert(alert, evidence)
 
+        return evidence
+
+    async def handle_ai_event(
+        self,
+        *,
+        event_type: str,
+        event_code: str,
+        severity: str,
+        message: str,
+        confidence: Optional[float],
+        file_path: str,
+        image_url: Optional[str],
+        gps_lat: Optional[float],
+        gps_lon: Optional[float],
+        task_id: Optional[int],
+        session: Optional[AsyncSession] = None,
+    ) -> EvidenceRecord:
+        """
+        处理 AI 识别告警。
+        """
+        evidence = EvidenceRecord(
+            task_id=task_id,
+            event_type=event_type,
+            event_code=event_code,
+            severity=severity,
+            message=message,
+            confidence=confidence,
+            file_path=file_path,
+            image_url=image_url,
+            gps_lat=gps_lat,
+            gps_lon=gps_lon,
+        )
+
+        if session:
+            try:
+                await self._store_evidence(evidence, session)
+                logger.info(f"证据记录已保存: {evidence.event_type}")
+            except Exception as e:
+                logger.error(f"保存证据记录失败: {e}")
+
+        await self._broadcast_alert_payload(evidence=evidence)
         return evidence
 
     async def _store_evidence(
@@ -126,9 +167,10 @@ class AlertService:
             message=evidence.message,
             confidence=evidence.confidence,
             file_path=evidence.file_path,
+            image_url=evidence.image_url,
             gps_lat=evidence.gps_lat,
             gps_lon=evidence.gps_lon,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now().isoformat(timespec="milliseconds"),
         )
 
         session.add(db_evidence)
@@ -146,6 +188,27 @@ class AlertService:
             alert: 温度告警
             evidence: 证据记录
         """
+        await self._broadcast_alert_payload(
+            evidence=evidence,
+            temperature=alert.temperature,
+            threshold=alert.threshold,
+        )
+
+    async def _broadcast_alert_payload(
+        self,
+        *,
+        evidence: EvidenceRecord,
+        temperature: Optional[float] = None,
+        threshold: Optional[float] = None,
+    ) -> None:
+        """
+        广播告警消息负载。
+
+        Args:
+            evidence: 证据记录
+            temperature: 温度值（可选）
+            threshold: 阈值（可选）
+        """
         # 使用注入的 broadcaster 实例
         if self._event_broadcaster is None:
             # 回退到全局单例
@@ -153,18 +216,23 @@ class AlertService:
             self._event_broadcaster = get_global_event_broadcaster()
             logger.debug(f"使用回退的全局 broadcaster: {id(self._event_broadcaster)}")
 
+        payload: Dict[str, Any] = {}
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if threshold is not None:
+            payload["threshold"] = threshold
+
         await self._event_broadcaster.broadcast_alert(
             event_type=evidence.event_type,
             event_code=evidence.event_code,
             severity=evidence.severity,
             message=evidence.message,
             evidence_id=None,  # TODO: 从数据库获取
-            image_url=evidence.file_path,
+            image_url=evidence.image_url,
             gps_lat=evidence.gps_lat,
             gps_lon=evidence.gps_lon,
             confidence=evidence.confidence,
-            temperature=alert.temperature,
-            threshold=alert.threshold,
+            **payload,
         )
 
         logger.info(

@@ -195,7 +195,8 @@ async def websocket_telemetry_handler(
     try:
         while True:
             # 保持连接活跃，接收客户端消息（如 ping）
-            _ = await websocket.receive_text()
+            # 允许空载连接，不要求客户端主动发送
+            await asyncio.sleep(1.0)
     except WebSocketDisconnect:
         logger.info("客户端已断开 /ws/telemetry")
     except Exception as exc:  # noqa: BLE001

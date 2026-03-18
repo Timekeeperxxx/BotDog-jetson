@@ -53,8 +53,29 @@ class Settings(BaseSettings):
     # 阶段 4：AI 告警配置
     THERMAL_THRESHOLD: float = 60.0  # 温度阈值（°C）
 
+    # 阶段 5：旁路 AI 识别与抓拍
+    AI_ENABLED: bool = True
+    AI_RTSP_URL: str = "rtsp://127.0.0.1:8554/cam"
+    AI_FRAME_WIDTH: int = 1920
+    AI_FRAME_HEIGHT: int = 1080
+    AI_FPS: int = 10
+    AI_PATROL_SKIP: int = 5  # 巡逻态跳帧（10fps / 5 = 2fps 推理）
+    AI_SUSPECT_SKIP: int = 1  # 疑似目标全速推理
+    AI_STABLE_HITS: int = 3  # 连续命中阈值
+    AI_RESET_MISSES: int = 3  # 连续未命中重置阈值
+    AI_COOLDOWN_SECONDS: float = 30.0  # 冷却时间
+    AI_SIMULATE_DETECTION: bool = False
+    AI_SIMULATE_PROB: float = 0.02
+    AI_DEVICE: str = "auto"  # auto / cpu / cuda / cuda:0
+    AI_MODEL_PATH: str = "yolov8n.pt"  # YOLO 模型路径
+    AI_CONFIDENCE_THRESHOLD: float = 0.5  # 推理置信度阈值
+    AI_TARGET_CLASSES: list[str] = ["person"]  # 目标类别
+
+    # 抓拍存储目录（用于 /api/v1/static）
+    SNAPSHOT_DIR: str = "data/snapshots"
+
     class Config:
-        env_file = str(Path(__file__).resolve().parent.parent / ".env")
+        env_file = str(Path(__file__).resolve().parent / ".env")
         env_file_encoding = "utf-8"
 
 

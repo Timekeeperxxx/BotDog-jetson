@@ -31,3 +31,11 @@ export interface EventWebSocketStatus {
   status: 'disconnected' | 'connecting' | 'connected' | 'error';
   error: string | null;
 }
+
+export interface AIStatus {
+  frames_processed: number;
+  detections_count: number;
+  mode: 'idle' | 'patrol' | 'suspect' | 'alert';
+  hits: number;
+  stable_hits: number;
+}
