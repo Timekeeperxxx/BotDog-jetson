@@ -109,14 +109,23 @@ class UnitreeB2Adapter(BaseRobotAdapter):
     依赖：
     - pip install unitree_sdk2_python    (或从源码 pip install -e .)
     - 网线连接 B2（默认 IP 192.168.123.161）
-    - 指定连接机器人的网卡名（如 eth0 / enp2s0）
+    - 运行环境必须是 Linux（官方不支持 Windows/Mac）
+
+    官方速度范围（来自 AI 运控服务接口文档）：
+        vx:   [-0.6 ~ 0.6]  m/s
+        vy:   [-0.4 ~ 0.4]  m/s
+        vyaw: [-0.8 ~ 0.8]  rad/s
+
+    初始化序列（必须按顺序）：
+        ChannelFactoryInitialize → Init() → BalanceStand()（解锁）
+        → ClassicWalk(True)（进入经典步态）→ SwitchMoveMode(True)（持续响应）
 
     命令映射：
         forward  → Move(vx, 0, 0)
         backward → Move(-vx, 0, 0)
         left     → Move(0, 0, +vyaw)     # 偏航正值 = 逆时针 = 向左转
         right    → Move(0, 0, -vyaw)
-        stop     → StopMove()
+        stop     → StopMove() + BalanceStand()（停止但保持解锁）
         stand    → RecoveryStand()
         sit      → StandDown()
     """
@@ -131,9 +140,9 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         初始化宇树 B2 适配器。
 
         Args:
-            network_interface: 连接机器人的网卡名（eth0 / enp2s0 / Ethernet 等）
-            vx: 前进/后退速度（m/s），默认 0.3
-            vyaw: 偏航转速（rad/s），默认 0.5
+            network_interface: 连接 B2 的网卡名（eth0 / enp2s0）
+            vx: 前进/后退速度（m/s），范围 0~0.6，默认 0.3
+            vyaw: 偏航转速（rad/s），范围 0~0.8，默认 0.5
         """
         self._vx = vx
         self._vyaw = vyaw
@@ -143,15 +152,24 @@ class UnitreeB2Adapter(BaseRobotAdapter):
 
         try:
             from unitree_sdk2py.core.channel import ChannelFactoryInitialize
-            from unitree_sdk2py.go2.sport.sport_client import SportClient
+            # B2 使用 b2 命名空间，不是 go2
+            from unitree_sdk2py.b2.sport.sport_client import SportClient
 
             ChannelFactoryInitialize(0, network_interface)
 
             self._sport_client = SportClient()
             self._sport_client.SetTimeout(5.0)
             self._sport_client.Init()
-            self._initialized = True
 
+            # 初始化序列：解锁 → 经典步态 → 持续响应 Move 指令
+            import time
+            self._sport_client.BalanceStand()     # 解除关节锁定
+            time.sleep(1.0)
+            self._sport_client.ClassicWalk(True)  # 进入经典步态（可移动状态）
+            time.sleep(0.5)
+            self._sport_client.SwitchMoveMode(True)  # 持续响应 Move 指令
+
+            self._initialized = True
             logger.info(
                 f"[UnitreeB2] 初始化成功（网卡={network_interface}, "
                 f"vx={vx} m/s, vyaw={vyaw} rad/s）"
@@ -187,7 +205,9 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             elif cmd == "right":
                 await asyncio.to_thread(client.Move, 0.0, 0.0, -self._vyaw)
             elif cmd == "stop":
+                # 停止运动，但保持 BalanceStand 解锁状态，允许后续继续 Move
                 await asyncio.to_thread(client.StopMove)
+                await asyncio.to_thread(client.BalanceStand)
             elif cmd == "stand":
                 await asyncio.to_thread(client.RecoveryStand)
             elif cmd == "sit":
@@ -200,6 +220,7 @@ class UnitreeB2Adapter(BaseRobotAdapter):
 
         except Exception as e:
             logger.error(f"[UnitreeB2] 命令执行失败 ({cmd}): {e}")
+
 
 
 # ─── 工厂函数 ────────────────────────────────────────────────────────────────
