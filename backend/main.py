@@ -202,7 +202,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         # 9. 初始化控制服务（阶段 6）
         global _control_service
-        _adapter = create_adapter(settings.CONTROL_ADAPTER_TYPE)
+        _adapter_kwargs = {}
+        if settings.CONTROL_ADAPTER_TYPE == "unitree_b2":
+            _adapter_kwargs = {
+                "network_interface": settings.UNITREE_NETWORK_IFACE,
+                "vx": settings.UNITREE_B2_VX,
+                "vyaw": settings.UNITREE_B2_VYAW,
+            }
+        _adapter = create_adapter(settings.CONTROL_ADAPTER_TYPE, **_adapter_kwargs)
         _control_service = ControlService(
             adapter=_adapter,
             state_machine=_state_machine,

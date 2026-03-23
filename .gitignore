@@ -76,8 +76,11 @@ backend/.env
 .DS_Store
 Thumbs.db
 
-# Claude Code
-.claude/
+# Agent
+.agent/
+
+# Process
+.process/
 
 # Temporary files
 *.tmp

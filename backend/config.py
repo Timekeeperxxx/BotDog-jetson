@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     AUTO_TRACK_FORWARD_AREA_RATIO: float = 0.15   # 前进触发的面积比阈值
     AUTO_TRACK_STOP_SNAPSHOT_ENABLED: bool = True  # 跟踪停止时是否补拍终止证据图
 
+    # 宇树 B2 硬件适配器配置
+    UNITREE_NETWORK_IFACE: str = "eth0"       # 连接 B2 的网卡名（eth0/enp2s0/Ethernet）
+    UNITREE_B2_VX: float = 0.3                # 前进/后退速度（m/s）
+    UNITREE_B2_VYAW: float = 0.5              # 偏航转速（rad/s）
+
 
     class Config:
         env_file = str(Path(__file__).resolve().parent / ".env")
