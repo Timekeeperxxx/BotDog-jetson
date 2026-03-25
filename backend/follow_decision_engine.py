@@ -35,7 +35,7 @@ class FollowDecisionEngine:
         forward_area_ratio: float = 0.15,
         anchor_y_stop_ratio: float = 0.80,
         command_interval_ms: float = 200.0,
-        direction_debounce_frames: int = 3,
+        direction_debounce_frames: int = 1,  #左右防抖所需帧数
     ) -> None:
         """
         初始化决策引擎。

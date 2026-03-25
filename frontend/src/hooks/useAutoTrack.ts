@@ -22,6 +22,7 @@ export interface TrackDecision {
   reason: string;        // 人类可读决策原因
   bbox?: number[];       // [x1,y1,x2,y2]
   anchor?: number[];     // [cx, cy_bottom]
+  track_id?: number;
 }
 
 // API helpers

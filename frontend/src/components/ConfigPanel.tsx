@@ -48,6 +48,11 @@ export function ConfigPanel() {
       displayName: '存储配置',
       configs: Object.values(configHook.configs).filter(c => c.category === 'storage'),
     },
+    {
+      name: 'auto_track',
+      displayName: '自动追踪 (AI)',
+      configs: Object.values(configHook.configs).filter(c => c.category === 'auto_track'),
+    },
   ];
 
   // 获取当前选中的分组

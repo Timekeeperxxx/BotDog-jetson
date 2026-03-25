@@ -10,7 +10,8 @@ PID_DIR="$ROOT_DIR/logs"
 
 MEDIAMTX="${MEDIAMTX_EXE:-$ROOT_DIR/scripts/mediamtx}"
 CAMERA_RTSP_URL="${CAMERA_RTSP_URL:-rtsp://192.168.144.25:8554/main.264}"
-CAMERA2_RTSP_URL="${CAMERA2_RTSP_URL:-rtsp://192.168.144.26:8554/main.264}"
+# cam2 暂时禁用（.26 当前无法访问）
+# CAMERA2_RTSP_URL="${CAMERA2_RTSP_URL:-rtsp://192.168.144.26:8554/main.264}"
 # 使用 RTMP 推流（mediamtx 已在 1935 监听）
 MEDIA_MTX_CAM1="rtmp://127.0.0.1:1935/cam"
 MEDIA_MTX_CAM2="rtmp://127.0.0.1:1935/cam2"
@@ -68,22 +69,8 @@ setsid bash -c '
 echo $! > "$PID_DIR/ffmpeg_cam1.pid"
 echo "FFmpeg cam1 PID: $(cat "$PID_DIR/ffmpeg_cam1.pid")"
 
-# ── cam2 看门狗（.26 → cam2，H265→H264 转码 + RTMP 推流）──
-echo "Starting FFmpeg watchdog cam2..."
-setsid bash -c '
-  while true; do
-    echo "[$(date "+%F %T")] Starting FFmpeg cam2..." >> "'"$ROOT_DIR"'/logs/ffmpeg.log"
-    ffmpeg -rtsp_transport tcp -stimeout 5000000 \
-      -i "'"$CAMERA2_RTSP_URL"'" \
-      -c:v libx264 -preset ultrafast -tune zerolatency -b:v 1500k -maxrate 2000k -bufsize 1000k -vf "scale=1280:720" -r 30 \
-      -f flv "'"$MEDIA_MTX_CAM2"'" \
-      >> "'"$ROOT_DIR"'/logs/ffmpeg.log" 2>&1 || true
-    echo "[$(date "+%F %T")] FFmpeg cam2 exited, restarting in 3s..." >> "'"$ROOT_DIR"'/logs/ffmpeg.log"
-    sleep 3
-  done
-' &
-echo $! > "$PID_DIR/ffmpeg_cam2.pid"
-echo "FFmpeg cam2 PID: $(cat "$PID_DIR/ffmpeg_cam2.pid")"
+# cam2 管道已禁用（.26 无法访问）
+# echo "FFmpeg cam2 PID: $(cat "$PID_DIR/ffmpeg_cam2.pid")"
 
 echo ""
 echo "Pipeline started."

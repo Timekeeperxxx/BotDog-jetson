@@ -96,9 +96,10 @@ class ControlService:
                 latency_ms=_elapsed_ms(start_ts),
             )
 
-        # 3. 速率限制（stop 命令跳过限制，确保能立即响应）
+        # 3. 速率限制（stop/stand/sit 跳过限制：stop 需立即响应，stand/sit 是一次性姿态命令）
+        POSTURE_COMMANDS = frozenset({"stop", "stand", "sit"})
         now = time.monotonic()
-        if cmd != "stop" and (now - self._last_request_time) < self._rate_limit_s:
+        if cmd not in POSTURE_COMMANDS and (now - self._last_request_time) < self._rate_limit_s:
             return ControlAckDTO(
                 ack_cmd=cmd,
                 result=RESULT_RATE_LIMITED,

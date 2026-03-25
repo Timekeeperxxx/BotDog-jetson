@@ -121,7 +121,7 @@ export function useWhepVideo(customWhepUrl?: string) {
                   stats.forEach((report) => {
                     if (rttSeconds !== null) return;
                     if (report.type === 'remote-inbound-rtp' && report.kind === 'video') {
-                      const currentRtt = (report as RTCRemoteInboundRtpStreamStats).roundTripTime;
+                      const currentRtt = (report as any).roundTripTime;
                       if (typeof currentRtt === 'number' && currentRtt > 0) {
                         rttSeconds = currentRtt;
                       }

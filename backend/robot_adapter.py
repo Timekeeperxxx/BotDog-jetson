@@ -152,6 +152,9 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         self._sport_client = None
         self._initialized = False
 
+        # 姿态命令（stand/sit）执行期间置 True，防止被后续命令从队列挤掉
+        self._busy_with_posture = False
+
         # 启动单独的工作线程处理阻塞的 SDK 调用，防止耗尽 FastAPI 的线程池
         self._cmd_queue = queue.Queue(maxsize=1)
         self._worker_thread = threading.Thread(target=self._command_worker, daemon=True)
@@ -187,7 +190,7 @@ class UnitreeB2Adapter(BaseRobotAdapter):
 
             # Step 2: 初始化 SportClient
             self._sport_client = SportClient()
-            self._sport_client.SetTimeout(5.0)
+            self._sport_client.SetTimeout(1.5)  # RPC 超时：1.5s（原 5s，减少界面卡顿）
             self._sport_client.Init()
 
             self._initialized = True
@@ -226,20 +229,35 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                 elif cmd == "right":
                     client.Move(0.0, 0.0, -self._vyaw)
                 elif cmd == "stop":
-                    client.StopMove()
+                    ret = client.StopMove()
+                    logger.debug(f"[UnitreeB2 Worker] StopMove ret={ret}")
                 elif cmd == "stand":
-                    # 起立前先解锁关节+切步态（初始化未自动起立时必须）
-                    import time
-                    client.BalanceStand()
-                    time.sleep(1.0)
-                    client.ClassicWalk(True)
-                    time.sleep(0.5)
-                    client.RecoveryStand()
+                    self._busy_with_posture = True
+                    try:
+                        import time
+                        ret_rs = client.RecoveryStand()
+                        logger.info(f"[UnitreeB2 Worker] RecoveryStand ret={ret_rs}")
+                        # RecoveryStand 后机器狗处于静态平衡模式，需切换到运动模式才能响应 Move()
+                        time.sleep(0.5)
+                        ret_mm = client.SwitchMoveMode(True)
+                        logger.info(f"[UnitreeB2 Worker] SwitchMoveMode(True) ret={ret_mm}")
+                    finally:
+                        self._busy_with_posture = False
                 elif cmd == "sit":
-                    client.StandDown()
+                    self._busy_with_posture = True
+                    try:
+                        import time
+                        # 先停步态，再坐下
+                        client.StopMove()
+                        time.sleep(0.3)
+                        ret_sd = client.StandDown()
+                        logger.info(f"[UnitreeB2 Worker] StandDown ret={ret_sd}")
+                    finally:
+                        self._busy_with_posture = False
 
                 logger.debug(f"[UnitreeB2 Worker] 执行完成: {cmd}")
             except Exception as e:
+                self._busy_with_posture = False
                 logger.error(f"[UnitreeB2 Worker] 执行异常 ({cmd}): {e}")
 
     async def send_command(self, cmd: str) -> None:
@@ -254,18 +272,45 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             return
 
         import queue
-        try:
-            # 清空队列，确保始终只运行最新的命令，防止阻塞导致堆积
-            while not self._cmd_queue.empty():
-                self._cmd_queue.get_nowait()
-        except queue.Empty:
-            pass
 
-        try:
-            self._cmd_queue.put_nowait(cmd)
-            logger.debug(f"[UnitreeB2] 已放入后台队列: {cmd}")
-        except queue.Full:
-            logger.warning(f"[UnitreeB2] 队列已满，丢弃命令: {cmd}")
+        if cmd in ("stand", "sit"):
+            # ── 姿态命令：特殊处理 ─────────────────────────────────────
+            # 若正在执行另一个姿态命令，忽略
+            if self._busy_with_posture:
+                logger.debug(f"[UnitreeB2] 正在执行姿态命令，忽略: {cmd}")
+                return
+            # 提前占位标志，消灭 race window
+            self._busy_with_posture = True
+            # 清空队列中积压的运动命令，确保姿态命令能顺利入队
+            try:
+                while not self._cmd_queue.empty():
+                    self._cmd_queue.get_nowait()
+            except queue.Empty:
+                pass
+            # 阻塞入队（maxsize=1，已清空，一定成功）
+            try:
+                self._cmd_queue.put_nowait(cmd)
+                logger.info(f"[UnitreeB2] 姿态命令已入队: {cmd}")
+            except queue.Full:
+                # 意外：重置标志防止死锁
+                self._busy_with_posture = False
+                logger.warning(f"[UnitreeB2] 姿态命令入队失败，队列仍满: {cmd}")
+        else:
+            # ── 运动/停止命令：若姿态命令执行中则忽略 ──────────────────
+            if self._busy_with_posture:
+                logger.debug(f"[UnitreeB2] 正在执行姿态命令，忽略运动命令: {cmd}")
+                return
+            try:
+                # 清空积压，始终只执行最新命令
+                while not self._cmd_queue.empty():
+                    self._cmd_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._cmd_queue.put_nowait(cmd)
+                logger.debug(f"[UnitreeB2] 已放入后台队列: {cmd}")
+            except queue.Full:
+                logger.warning(f"[UnitreeB2] 队列已满，丢弃命令: {cmd}")
 
 
 

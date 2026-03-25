@@ -120,6 +120,43 @@ class ConfigService:
             "description": "遥测数据保留天数",
             "is_hot_reloadable": False,
         },
+
+        # 自动跟踪配置 (AutoTrack)
+        "auto_track_stable_hits": {
+            "value": "3",
+            "value_type": "int",
+            "category": "auto_track",
+            "description": "确定目标的防抖识别帧数",
+            "is_hot_reloadable": True,
+        },
+        "auto_track_lost_timeout_frames": {
+            "value": "30",
+            "value_type": "int",
+            "category": "auto_track",
+            "description": "目标丢失后等待的超时帧数",
+            "is_hot_reloadable": True,
+        },
+        "auto_track_yaw_deadband_px": {
+            "value": "80",
+            "value_type": "int",
+            "category": "auto_track",
+            "description": "目标居中平移转向死区 (像素)",
+            "is_hot_reloadable": True,
+        },
+        "auto_track_forward_area_ratio": {
+            "value": "0.15",
+            "value_type": "float",
+            "category": "auto_track",
+            "description": "开始前进的目标面积比例上限",
+            "is_hot_reloadable": True,
+        },
+        "auto_track_anchor_y_stop_ratio": {
+            "value": "0.80",
+            "value_type": "float",
+            "category": "auto_track",
+            "description": "防止过近的底部警戒线比例",
+            "is_hot_reloadable": True,
+        },
     }
 
     # 配置验证规则
@@ -134,6 +171,11 @@ class ConfigService:
         "snapshot_retention_days": {"min": 7, "max": 365},
         "max_snapshot_disk_usage_gb": {"min": 10, "max": 500},
         "telemetry_retention_days": {"min": 30, "max": 365},
+        "auto_track_stable_hits": {"min": 1, "max": 30},
+        "auto_track_lost_timeout_frames": {"min": 5, "max": 300},
+        "auto_track_yaw_deadband_px": {"min": 10, "max": 640},
+        "auto_track_forward_area_ratio": {"min": 0.01, "max": 1.0},
+        "auto_track_anchor_y_stop_ratio": {"min": 0.1, "max": 1.0},
     }
 
     def __init__(self):

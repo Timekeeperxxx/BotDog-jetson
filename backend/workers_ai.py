@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import random
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -43,7 +44,8 @@ class DetectionResult:
     """AIWorker 内部检测结果（兼容老路径用）。"""
     label: str
     confidence: float
-    bbox: Optional[tuple[int, int, int, int]] = None  # 新增 bbox 字段
+    bbox: Optional[tuple[int, int, int, int]] = None
+    track_id: int = -1  # YOLO ByteTrack 分配的跨帧 ID
 
 
 class _BaseDetector:
@@ -259,12 +261,34 @@ class AIWorker:
             raise AIWorkerError("FFmpeg stdout 未初始化")
         stderr_task = asyncio.create_task(self._drain_stderr(process))
 
-        frame_index = 0
+        frame_queue = asyncio.Queue(maxsize=1)
+
+        async def reader_task() -> None:
+            frame_index = 0
+            try:
+                while not stop_event.is_set():
+                    frame = await process.stdout.readexactly(self._frame_size)
+                    frame_index += 1
+                    # 保持队列里始终只有一帧最新鲜的首帧，丢弃堆积的旧帧避免延迟累加
+                    if frame_queue.full():
+                        try:
+                            frame_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            pass
+                    await frame_queue.put((frame, frame_index))
+            except asyncio.IncompleteReadError:
+                logger.warning("AI Worker: FFmpeg 输出中断，准备重启")
+                stop_event.set()
+        
+        reader = asyncio.create_task(reader_task())
 
         try:
             while not stop_event.is_set():
-                frame = await process.stdout.readexactly(self._frame_size)
-                frame_index += 1
+                try:
+                    # 使用 timeout 定期唤醒检测 stop_event
+                    frame, frame_index = await asyncio.wait_for(frame_queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    continue
 
                 await self._update_current_task_id()
 
@@ -277,24 +301,26 @@ class AIWorker:
                     continue
 
                 # 调用 detect_many 返回所有候选结果
+                t_start = time.monotonic()
                 if hasattr(self._detector, 'detect_many'):
-                    detections = self._detector.detect_many(frame)
+                    detections = await asyncio.to_thread(self._detector.detect_many, frame)
                 else:
                     # _SimulatedDetector/_NullDetector 回退到 detect() 兼容
-                    single = self._detector.detect(frame)
+                    single = await asyncio.to_thread(self._detector.detect, frame)
                     detections = [single] if single else []
+                t_detect_end = time.monotonic()
 
-                await self._process_detection(detections, frame)
+                await self._process_detection(detections, frame, t_start, t_detect_end)
                 self._frames_processed += 1
                 if detections:
                     self._detections_count += 1
                 await self._maybe_broadcast_status()
-        except asyncio.IncompleteReadError:
-            logger.warning("AI Worker: FFmpeg 输出中断，准备重启")
         finally:
             stderr_task.cancel()
+            reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):  # CancelledError 不是 Exception，须单独捕获
                 await stderr_task
+                await reader
 
             with contextlib.suppress(ProcessLookupError, OSError):
                 process.terminate()
@@ -335,12 +361,13 @@ class AIWorker:
             return
 
         while True:
-            line = await process.stderr.readline()
-            if not line:
+            chunk = await process.stderr.read(4096)
+            if not chunk:
                 break
-            decoded = line.decode("utf-8", errors="ignore").strip()
-            if decoded:
-                logger.debug("[ffmpeg] {}", decoded)
+            # just suppress output or print it raw (split by \r or \n)
+            # FFmpeg progress uses \r, which often doesn't contain \n
+            # We can just ignore the detailed progress logging since it's too noisy
+            pass
 
     async def _update_current_task_id(self) -> None:
         current_time = asyncio.get_event_loop().time()
@@ -354,7 +381,10 @@ class AIWorker:
             self._current_task_id = task.task_id if task else None
 
     def _is_mission_active(self) -> bool:
-        return self._state_machine.state == SystemState.IN_MISSION and self._current_task_id is not None
+        # 移除对 self._state_machine.state == SystemState.IN_MISSION 的强依赖
+        # 只要存在运行中的任务，且 RTSP 摄像头推流正常，AI 就会开始分析画面（即使底盘由于离线处于 DISCONNECTED）
+        # 底盘失联时的移动指令丢弃由 ControlService 的 can_accept_control 代理把关。
+        return self._current_task_id is not None
 
     def _is_suspect_mode(self) -> bool:
         # 兼容路径：旧状态判断
@@ -379,6 +409,8 @@ class AIWorker:
         self,
         detections: list[DetectionResult],
         frame: bytes,
+        t_start: float = 0.0,
+        t_detect_end: float = 0.0,
     ) -> None:
         """
         处理检测结果。
@@ -390,7 +422,7 @@ class AIWorker:
         auto_track = get_auto_track_service()
 
         if auto_track is not None and auto_track._enabled:
-            # ── 优先路径：交给 AutoTrackService，传递 YOLO track_id ─────
+            # ── 优先路径：交给 AutoTrackService，传递 YOLO track_id + 计时 ─
             track_detections = [
                 TrackDetectionResult(
                     bbox=d.bbox or (0, 0, 1, 1),
@@ -406,6 +438,8 @@ class AIWorker:
                 frame=frame,
                 frame_index=self._frames_processed,
                 current_task_id=self._current_task_id,
+                t_start=t_start,
+                t_detect_end=t_detect_end,
             )
             return
 

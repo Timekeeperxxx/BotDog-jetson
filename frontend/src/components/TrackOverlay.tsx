@@ -12,7 +12,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 
 export interface TrackOverlayData {
-  persons: { bbox: number[]; conf: number }[];
+  persons: { bbox: number[]; conf: number; track_id?: number; is_stranger?: boolean }[];
   active_bbox: number[] | null;
   command: string | null;
   reason: string;
@@ -103,17 +103,34 @@ export function TrackOverlay({ data, videoRef }: Props) {
       const rx = x1 * sx, ry = y1 * sy;
       const rw = (x2 - x1) * sx, rh = (y2 - y1) * sy;
 
+      // 框体颜色（陌生人红/橘，已知绿）
+      const isKnown = p.is_stranger === false;
+      const boxColor = isKnown ? 'rgba(0,220,120,0.8)' : 'rgba(255,100,0,0.8)';
+      const labelColor = isKnown ? 'rgba(0,100,50,0.8)' : 'rgba(150,40,0,0.8)';
+      
       ctx.save();
-      ctx.strokeStyle = 'rgba(0,220,120,0.7)';
+      ctx.strokeStyle = boxColor;
       ctx.lineWidth = 1.5;
       ctx.strokeRect(rx, ry, rw, rh);
 
-      // 置信度标签
-      ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillRect(rx, ry - 14, 48, 14);
-      ctx.fillStyle = '#0dc';
+      // ID 和置信度标签
+      const headerText = `ID:${p.track_id !== undefined ? p.track_id : '?'} | ${(p.conf * 100).toFixed(0)}%`;
+      ctx.fillStyle = labelColor;
+      ctx.fillRect(rx, ry - 14, 80, 14);
+      ctx.fillStyle = '#fff';
       ctx.font = 'bold 10px monospace';
-      ctx.fillText(`${(p.conf * 100).toFixed(0)}%`, rx + 3, ry - 3);
+      ctx.fillText(headerText, rx + 4, ry - 3);
+
+      // Known/Stranger Tag
+      if (p.is_stranger !== undefined) {
+        const tagText = p.is_stranger ? "STRANGER" : "KNOWN";
+        const w = ctx.measureText(tagText).width + 8;
+        ctx.fillStyle = p.is_stranger ? 'rgba(220,0,0,0.85)' : 'rgba(0,180,80,0.85)';
+        ctx.fillRect(rx, y2 * sy, w, 14);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(tagText, rx + 4, y2 * sy + 10);
+      }
+      
       ctx.restore();
     }
 
@@ -128,12 +145,15 @@ export function TrackOverlay({ data, videoRef }: Props) {
       ctx.lineWidth = 2.5;
       ctx.strokeRect(rx, ry, rw, rh);
 
-      // TRACKING 标签
-      ctx.fillStyle = 'rgba(255,60,60,0.8)';
-      ctx.fillRect(rx, ry - 18, 78, 18);
+      // 锁定状态标签框
+      const stateBadge = data.state && data.state !== 'IDLE' ? data.state : 'TRACKING';
+      const badgeW = ctx.measureText(stateBadge).width + 30; // 预估宽度
+
+      ctx.fillStyle = 'rgba(255,40,40,0.9)';
+      ctx.fillRect(rx, ry - 18, Math.max(badgeW, 80), 18);
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 11px monospace';
-      ctx.fillText('TRACKING', rx + 4, ry - 5);
+      ctx.fillText(`🎯 ${stateBadge}`, rx + 4, ry - 5);
 
       // anchor 点（底部中心）
       const anchorX = (x1 + x2) / 2 * sx;

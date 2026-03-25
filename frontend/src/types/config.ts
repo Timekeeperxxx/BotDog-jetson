@@ -10,7 +10,7 @@ export type ConfigValueType = 'int' | 'float' | 'bool' | 'string';
 /**
  * 配置类别
  */
-export type ConfigCategory = 'backend' | 'frontend' | 'storage';
+export type ConfigCategory = 'backend' | 'frontend' | 'storage' | 'auto_track';
 
 /**
  * 系统配置项

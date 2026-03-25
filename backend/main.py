@@ -97,6 +97,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
     logger.info("Database initialized.")
 
+    from .services_config import get_config_service
+    config_service = get_config_service()
+    async with get_session_factory()() as _session:
+        await config_service.initialize_defaults(_session)
+        db_configs = await config_service.get_all_configs(_session)
+    logger.info("系统配置服务已初始化加载")
+
     # 清理上次进程遗留的僵尸任务（防止 AI Worker 误认为任务仍在运行）
     async with get_session_factory()() as _startup_session:
         _stale_count = await cleanup_stale_tasks(_startup_session)
@@ -305,14 +312,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             snapshot_dir=snapshot_dir,
             frame_width=settings.AI_FRAME_WIDTH,
             frame_height=settings.AI_FRAME_HEIGHT,
-            stable_hits=settings.AI_STABLE_HITS,
+            stable_hits=int(db_configs.get("auto_track_stable_hits", {}).get("value", settings.AI_STABLE_HITS)),
             reset_misses=settings.AI_RESET_MISSES,
             out_of_zone_frames=settings.AUTO_TRACK_OUT_OF_ZONE_FRAMES,
-            lost_timeout_frames=settings.AUTO_TRACK_LOST_TIMEOUT_FRAMES,
+            lost_timeout_frames=int(db_configs.get("auto_track_lost_timeout_frames", {}).get("value", settings.AUTO_TRACK_LOST_TIMEOUT_FRAMES)),
             command_interval_ms=settings.AUTO_TRACK_COMMAND_INTERVAL_MS,
-            yaw_deadband_px=settings.AUTO_TRACK_YAW_DEADBAND_PX,
-            forward_area_ratio=settings.AUTO_TRACK_FORWARD_AREA_RATIO,
-            anchor_y_stop_ratio=settings.AUTO_TRACK_ANCHOR_Y_STOP_RATIO,
+            yaw_deadband_px=int(db_configs.get("auto_track_yaw_deadband_px", {}).get("value", settings.AUTO_TRACK_YAW_DEADBAND_PX)),
+            forward_area_ratio=float(db_configs.get("auto_track_forward_area_ratio", {}).get("value", settings.AUTO_TRACK_FORWARD_AREA_RATIO)),
+            anchor_y_stop_ratio=float(db_configs.get("auto_track_anchor_y_stop_ratio", {}).get("value", settings.AUTO_TRACK_ANCHOR_Y_STOP_RATIO)),
             stop_snapshot_enabled=settings.AUTO_TRACK_STOP_SNAPSHOT_ENABLED,
             default_enabled=settings.AUTO_TRACK_ENABLED,
             yaw_pulse_ms=settings.AUTO_TRACK_YAW_PULSE_MS,
@@ -480,13 +487,25 @@ def register_routes(app: FastAPI) -> None:
 
         支持的命令：forward / backward / left / right / sit / stand / stop
 
-        - 按下时前端每 100ms 发一次，松手时立即发 stop
+        - 按下时前端每 500ms 发一次，松手时立即发 stop
+        - 非 stop 命令：自动向 ControlArbiter 申请 WEB_MANUAL 控制权（压制自动跟踪）
+        - stop 命令：自动释放 WEB_MANUAL 覆盖权（允许自动跟踪恢复）
         - E_STOP 状态下所有命令被拒绝（返回 REJECTED_E_STOP）
-        - Watchdog 超时 500ms 后自动执行 stop
+        - Watchdog 超时后自动执行 stop
         """
         svc = get_control_service()
         if svc is None:
             raise HTTPException(status_code=503, detail="控制服务未就绪")
+
+        # ── 仲裁器集成 ──────────────────────────────────────────────────────
+        from .control_arbiter import get_control_arbiter
+        from .tracking_types import ControlOwner
+        arbiter = get_control_arbiter()
+        if arbiter is not None:
+            if body.cmd != "stop":
+                # 按下任意运动/姿态命令 → 申请 WEB_MANUAL 控制权（压制 AUTO_TRACK）
+                arbiter.request_control(ControlOwner.WEB_MANUAL)
+
         return await svc.handle_command(body.cmd)
 
     @app.post("/api/v1/control/stop", response_model=ControlAckDTO)
@@ -495,6 +514,14 @@ def register_routes(app: FastAPI) -> None:
         svc = get_control_service()
         if svc is None:
             raise HTTPException(status_code=503, detail="控制服务未就绪")
+
+        # 不需要在这里释放人工覆盖权，前端已经有专门的 api (`/api/v1/auto-track/release-override`)
+        # 控制权应保持，直到用户明确在面板中点击“恢复自动跟踪”
+        # from .control_arbiter import get_control_arbiter
+        # arbiter = get_control_arbiter()
+        # if arbiter is not None:
+        #     arbiter.release_manual_override()
+
         return await svc.handle_command("stop")
 
     @app.post("/api/v1/session/start", response_model=SessionStartResponse)
@@ -861,6 +888,13 @@ def register_routes(app: FastAPI) -> None:
                 changed_by=changed_by,
                 reason=reason,
             )
+
+            # 热更新自动跟踪参数
+            if key.startswith("auto_track_"):
+                from .auto_track_service import get_auto_track_service
+                _at = get_auto_track_service()
+                if _at:
+                    _at.update_params(key, value)
 
             return {
                 "success": True,

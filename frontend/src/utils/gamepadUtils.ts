@@ -99,7 +99,7 @@ export function mapGamepadToControl(
 
   // 应用径向死区过滤摇杆输入
   const [leftX, leftY] = applyDeadzone(axes[0], axes[1], 0.15);
-  const [rightX, rightY] = applyDeadzone(axes[2], axes[3], 0.15);
+  const [, rightY] = applyDeadzone(axes[2], axes[3], 0.15);
 
   // 映射到控制指令并转换为 -1000 到 1000 范围
   const x = Math.round(-leftY * 1000);   // 左摇杆 Y: 前进/后退（Y 轴向上为负，需反转）

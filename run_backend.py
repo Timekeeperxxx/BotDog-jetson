@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 if __name__ == "__main__":
     import uvicorn
     from backend.main import app
-
+    
     print("=" * 80)
     print("启动 BotDog 后端系统")
     print("=" * 80)

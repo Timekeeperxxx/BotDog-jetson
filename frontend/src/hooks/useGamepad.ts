@@ -33,7 +33,7 @@ export function useGamepad(gamepadIndex: number = 0): GamepadState {
     axes: [],
   });
 
-  const requestRef = useRef<number>();
+  const requestRef = useRef<number | null>(null);
   const gamepadRef = useRef<Gamepad | null>(null);
 
   /**

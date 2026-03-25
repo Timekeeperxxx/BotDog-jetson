@@ -192,6 +192,34 @@ class AutoTrackService:
     def stop(self, reason: TrackStopReason, send_stop_command: bool = True) -> None:
         self._do_stop(reason, send_stop_command=send_stop_command)
 
+    def update_params(self, key: str, value: Any) -> None:
+        """
+        热更新系统参数（支持从数据库前台设置面板修改传入）。
+        """
+        try:
+            if key == "auto_track_stable_hits":
+                self._stable_hits = int(value)
+                logger.info(f"[AutoTrackService] 热更新 stable_hits={self._stable_hits}")
+            elif key == "auto_track_lost_timeout_frames":
+                self._lost_timeout_frames = int(value)
+                logger.info(f"[AutoTrackService] 热更新 lost_timeout_frames={self._lost_timeout_frames}")
+            elif key == "auto_track_yaw_deadband_px":
+                self._yaw_deadband_px = int(value)
+                self._decision_engine._yaw_deadband_px = self._yaw_deadband_px
+                logger.info(f"[AutoTrackService] 热更新 yaw_deadband_px={self._yaw_deadband_px}")
+            elif key == "auto_track_forward_area_ratio":
+                self._forward_area_ratio = float(value)
+                self._decision_engine._forward_area_ratio = self._forward_area_ratio
+                logger.info(f"[AutoTrackService] 热更新 forward_area_ratio={self._forward_area_ratio}")
+            elif key == "auto_track_anchor_y_stop_ratio":
+                self._anchor_y_stop_ratio = float(value)
+                self._decision_engine._anchor_y_stop_ratio = self._anchor_y_stop_ratio
+                logger.info(f"[AutoTrackService] 热更新 anchor_y_stop_ratio={self._anchor_y_stop_ratio}")
+            else:
+                logger.debug(f"[AutoTrackService] 忽略未知参数更新: {key}={value}")
+        except Exception as e:
+            logger.error(f"[AutoTrackService] 热更新参数 {key}={value} 失败: {e}")
+
     def get_status(self) -> dict:
         target_info = None
         if self._active_target:
@@ -229,12 +257,27 @@ class AutoTrackService:
         frame: bytes,
         frame_index: int,
         current_task_id: Optional[int] = None,
+        t_start: float = 0.0,
+        t_detect_end: float = 0.0,
     ) -> None:
         """
         处理单帧检测结果，驱动 7 态状态机。
         由 AIWorker 在每帧推理后调用。
         """
         self._frames_processed += 1
+
+        # ── 仲裁器自动恢复：若控制权已归还给 AUTO_TRACK，自动解除 PAUSED ──────
+        if (
+            self._paused
+            and self._control_arbiter is not None
+            and self._control_arbiter.can_auto_track_send()
+        ):
+            self._paused = False
+            if self._active_target is not None:
+                self._state = AutoTrackState.FOLLOWING
+            else:
+                self._state = AutoTrackState.IDLE
+            logger.info("[AutoTrackService] 仲裁器已释放人工覆盖，自动恢复跟踪")
 
         if not self._enabled or self._paused:
             return
@@ -273,7 +316,12 @@ class AutoTrackService:
         active_bbox = list(self._active_target.bbox) if self._active_target else None
         await self._broadcast_event("TRACK_OVERLAY", {
             "persons": [
-                {"bbox": list(d.bbox), "conf": round(d.confidence, 2), "track_id": d.track_id}
+                {
+                    "bbox": list(d.bbox),
+                    "conf": round(d.confidence, 2),
+                    "track_id": d.track_id,
+                    "is_stranger": self._is_stranger(d.track_id)
+                }
                 for d in persons
             ],
             "active_bbox": active_bbox,
@@ -288,6 +336,16 @@ class AutoTrackService:
         })
 
         await self._maybe_broadcast_debug_status()
+
+        # ── 延迟日志 ───────────────────────────────────────────────
+        if t_start > 0:
+            t_track_done = time.monotonic()
+            self._write_latency_log(
+                frame_index=frame_index,
+                t_start=t_start,
+                t_detect_end=t_detect_end,
+                t_track_done=t_track_done,
+            )
 
     # ─── 状态机各态处理 ──────────────────────────────────────────────────────
 
@@ -305,7 +363,9 @@ class AutoTrackService:
         # 发现 person → 检查区域 → 开始积累候选
         now = time.monotonic()
         found_candidate = False
+        print("IDLE: persons", persons)
         for det in persons:
+            print("det", det)
             x1, y1, x2, y2 = det.bbox
             anchor = ((x1 + x2) // 2, y2)
             if not self._zone_service.is_inside_zone(anchor):
@@ -328,6 +388,7 @@ class AutoTrackService:
                     f"[AutoTrackService] IDLE→DETECTING: 发现候选 track_id={det.track_id} "
                     f"conf={det.confidence:.2f}"
                 )
+                print("IDLE→DETECTING: 发现候选 track_id=", det.track_id)
                 found_candidate = True
             else:
                 # 已知候选，更新
@@ -728,11 +789,10 @@ class AutoTrackService:
         await self._broadcast_event("AUTO_TRACK_STATUS", self.get_status())
 
     def _is_mission_active(self, task_id: Optional[int]) -> bool:
-        from .state_machine import SystemState
-        return (
-            self._state_machine.state == SystemState.IN_MISSION
-            and task_id is not None
-        )
+        # 与 AI Worker 保持一致：
+        # 解除对 state_machine.state == SystemState.IN_MISSION（需要下位机心跳）的强依赖
+        # 只要前端启动了任务 (task_id 存在)，AI 就进入工作状态。
+        return task_id is not None
 
     # ─── 决策日志 ────────────────────────────────────────────────────────────
 
@@ -796,6 +856,49 @@ class AutoTrackService:
             except Exception:
                 pass
             self._decision_log_file = None
+
+    # ─── 延迟日志 ────────────────────────────────────────────────────────────
+
+    def _ensure_latency_log(self) -> None:
+        if hasattr(self, '_latency_log_file') and self._latency_log_file is not None:
+            return
+        import io
+        logs_dir = Path(__file__).resolve().parent.parent / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = logs_dir / f"track_latency_{ts}.log"
+        self._latency_log_file = io.open(log_path, "w", encoding="utf-8", buffering=1)
+        self._latency_log_file.write(
+            "# BotDog tracking latency log\n"
+            "# time | frame | state | persons | cmd | detect_ms | track_ms | total_ms\n"
+        )
+        logger.info(f"[AutoTrackService] Latency log: {log_path}")
+
+    def _write_latency_log(
+        self,
+        *,
+        frame_index: int,
+        t_start: float,
+        t_detect_end: float,
+        t_track_done: float,
+    ) -> None:
+        try:
+            self._ensure_latency_log()
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            detect_ms = (t_detect_end - t_start) * 1000
+            track_ms = (t_track_done - t_detect_end) * 1000
+            total_ms = (t_track_done - t_start) * 1000
+            cmd_str = self._last_command or "-"
+            persons = len(self._candidates) + (1 if self._active_target else 0)
+            line = (
+                f"{now_str} | {frame_index:06d} | {self._state.value}"
+                f" | {persons} | {cmd_str}"
+                f" | {detect_ms:.1f} | {track_ms:.1f} | {total_ms:.1f}\n"
+            )
+            self._latency_log_file.write(line)  # type: ignore
+        except Exception as exc:
+            logger.warning(f"[AutoTrackService] Failed to write latency log: {exc}")
+
 
 
 # ─── 全局单例 ────────────────────────────────────────────────────────────────
