@@ -123,10 +123,6 @@ class AutoTrackService:
             anchor_y_stop_ratio=anchor_y_stop_ratio,
             command_interval_ms=command_interval_ms,
         )
-        # 保存癌区参数供广播使用
-        self._yaw_deadband_px = yaw_deadband_px
-        self._forward_area_ratio = forward_area_ratio
-        self._anchor_y_stop_ratio = anchor_y_stop_ratio
 
         # 调试状态广播
         self._last_status_broadcast: float = 0.0
@@ -271,23 +267,6 @@ class AutoTrackService:
         else:
             # 已有活跃目标，更新并跟踪
             await self._update_and_follow(persons, frame, current_task_id)
-
-        # 每帧广播检测结果（供前端 canvas 叠层使用）
-        active_bbox = (
-            list(self._active_target.bbox) if self._active_target else None
-        )
-        await self._broadcast_event("TRACK_DETECTION", {
-            "persons": [
-                {"bbox": list(d.bbox), "conf": round(d.confidence, 2)}
-                for d in persons
-            ],
-            "active_bbox": active_bbox,
-            "frame_w": self._frame_width,
-            "frame_h": self._frame_height,
-            "deadband_px": self._yaw_deadband_px,
-            "anchor_y_stop_ratio": self._anchor_y_stop_ratio,
-            "forward_area_ratio": self._forward_area_ratio,
-        })
 
         # 每帧写入检测日志（包含人数、位置；跟踪中还包含决策）
         if not self._active_target:
