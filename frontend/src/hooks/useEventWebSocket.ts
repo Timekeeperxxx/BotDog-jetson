@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWsUrl } from '../config/api';
 import type { AlertEvent, AIStatus, EventWebSocketStatus, AutoTrackStatus } from '../types/event';
 import type { TrackDecision } from './useAutoTrack';
+import type { TrackOverlayData } from '../components/TrackOverlay';
 
 export interface EventHookState {
   status: EventWebSocketStatus;
@@ -14,6 +15,7 @@ export interface EventHookState {
   aiStatus: AIStatus | null;
   autoTrackStatus: AutoTrackStatus | null;
   trackDecision: TrackDecision | null;
+  trackOverlay: TrackOverlayData | null;
   connect: () => void;
   disconnect: () => void;
 }
@@ -28,6 +30,7 @@ export function useEventWebSocket(): EventHookState {
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
   const [autoTrackStatus, setAutoTrackStatus] = useState<AutoTrackStatus | null>(null);
   const [trackDecision, setTrackDecision] = useState<TrackDecision | null>(null);
+  const [trackOverlay, setTrackOverlay] = useState<TrackOverlayData | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -84,6 +87,11 @@ export function useEventWebSocket(): EventHookState {
 
           if (message.msg_type === 'TRACK_DECISION' && message.payload) {
             setTrackDecision(message.payload as unknown as TrackDecision);
+            return;
+          }
+
+          if (message.msg_type === 'TRACK_OVERLAY' && message.payload) {
+            setTrackOverlay(message.payload as unknown as TrackOverlayData);
             return;
           }
 
@@ -168,6 +176,7 @@ export function useEventWebSocket(): EventHookState {
     aiStatus,
     autoTrackStatus,
     trackDecision,
+    trackOverlay,
     connect,
     disconnect,
   };

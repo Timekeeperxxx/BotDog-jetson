@@ -12,6 +12,7 @@ import { ControlPad } from './components/ControlPad';
 import { useEventWebSocket } from './hooks/useEventWebSocket';
 import { useAutoTrack } from './hooks/useAutoTrack';
 import { AutoTrackPanel } from './components/AutoTrackPanel';
+import { TrackOverlay } from './components/TrackOverlay';
 import { getApiUrl } from './config/api';
 import {
   Activity,
@@ -175,7 +176,7 @@ export default function IndustrialConsoleComplete() {
     disconnect: disconnectWs,
   } = useBotDogWebSocket();
 
-  const { alerts, latestAlert, aiStatus, autoTrackStatus, trackDecision } = useEventWebSocket();
+  const { alerts, latestAlert, aiStatus, autoTrackStatus, trackDecision, trackOverlay } = useEventWebSocket();
 
   const autoTrack = useAutoTrack(autoTrackStatus, trackDecision);
 
@@ -533,6 +534,8 @@ export default function IndustrialConsoleComplete() {
                   inset: 0, width: '100%', height: '100%', zIndex: 1, borderRadius: 0,
                 }}
               />
+              {/* YOLO 检测框 + 决策区域叠层（仅主画面） */}
+              {!isCamSwapped && <TrackOverlay data={trackOverlay} videoRef={videoRef} />}
               {/* CAM2 video - single element */}
               <video
                 ref={videoRef2}

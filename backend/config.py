@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     AUTO_TRACK_FORWARD_AREA_RATIO: float = 0.15   # 前进触发的面积比阈值
     AUTO_TRACK_ANCHOR_Y_STOP_RATIO: float = 0.80  # 锚点纵向停止比（超过则禁止前进）
     AUTO_TRACK_STOP_SNAPSHOT_ENABLED: bool = True  # 跟踪停止时是否补拍终止证据图
+    AUTO_TRACK_YAW_PULSE_MS: float = 0.0           # 脉冲转向时长（ms），0=禁用，推荐80~150ms
 
     # 宇树 B2 硬件适配器配置
     UNITREE_NETWORK_IFACE: str = "eth0"       # 连接 B2 的网卡名（eth0/enp2s0/Ethernet）

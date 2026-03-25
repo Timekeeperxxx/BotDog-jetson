@@ -315,6 +315,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             anchor_y_stop_ratio=settings.AUTO_TRACK_ANCHOR_Y_STOP_RATIO,
             stop_snapshot_enabled=settings.AUTO_TRACK_STOP_SNAPSHOT_ENABLED,
             default_enabled=settings.AUTO_TRACK_ENABLED,
+            yaw_pulse_ms=settings.AUTO_TRACK_YAW_PULSE_MS,
             target_manager=_target_manager,
             control_arbiter=_arbiter,
         )

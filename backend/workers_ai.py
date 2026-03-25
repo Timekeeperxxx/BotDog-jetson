@@ -122,11 +122,23 @@ class _YoloDetector(_BaseDetector):
         return results[0] if results else None
 
     def detect_many(self, frame_bytes: bytes) -> list[DetectionResult]:
-        """返回所有目标类别的检测结果列表，供 AutoTrackService 处理。"""
+        """返回所有目标类别的检测结果列表，使用 ByteTrack 提供稳定 track_id。"""
         frame = self._np.frombuffer(frame_bytes, dtype=self._np.uint8)
         frame = frame.reshape((self._frame_height, self._frame_width, 3))
 
-        results = self._model.predict(frame, conf=self._confidence, verbose=False)
+        # 使用 YOLO 内置 ByteTrack，persist=True 保证跨帧 ID 稳定
+        try:
+            results = self._model.track(
+                frame,
+                conf=self._confidence,
+                persist=True,
+                tracker="bytetrack.yaml",
+                verbose=False,
+            )
+        except Exception as exc:
+            # tracker 不可用时降级到 predict
+            logger.warning("[YoloDetector] track() 失败，降级到 predict(): %s", exc)
+            results = self._model.predict(frame, conf=self._confidence, verbose=False)
 
         if not results or len(results[0].boxes) == 0:
             return []
@@ -140,10 +152,19 @@ class _YoloDetector(_BaseDetector):
             if cls_name not in self._target_classes:
                 continue
 
-            # 提取 bbox (x1,y1,x2,y2) 格式
+            # 提取 bbox (x1,y1,x2,y2)
             xyxy = box.xyxy[0].tolist()
             bbox = (int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3]))
-            detections.append(DetectionResult(label=cls_name, confidence=conf, bbox=bbox))
+
+            # 提取 YOLO 分配的稳定 track_id（无则 -1）
+            track_id = int(box.id[0]) if box.id is not None else -1
+
+            detections.append(DetectionResult(
+                label=cls_name,
+                confidence=conf,
+                bbox=bbox,
+                track_id=track_id,
+            ))
 
         return detections
 
@@ -336,7 +357,18 @@ class AIWorker:
         return self._state_machine.state == SystemState.IN_MISSION and self._current_task_id is not None
 
     def _is_suspect_mode(self) -> bool:
-        return self._hits > 0 or self._in_alert
+        # 兼容路径：旧状态判断
+        if self._hits > 0 or self._in_alert:
+            return True
+        # AutoTrackService 路径：有活跃目标或候选目标时切高帧率
+        from .auto_track_service import get_auto_track_service
+        auto_track = get_auto_track_service()
+        if auto_track is not None and auto_track._enabled:
+            return (
+                auto_track._active_target is not None
+                or len(auto_track._candidates) > 0
+            )
+        return False
 
     def _reset_detection_state(self) -> None:
         self._hits = 0
@@ -358,13 +390,13 @@ class AIWorker:
         auto_track = get_auto_track_service()
 
         if auto_track is not None and auto_track._enabled:
-            # ── 优先路径：交给 AutoTrackService ─────────────────────────
-            # 将 DetectionResult 转换为 tracking_types.DetectionResult
+            # ── 优先路径：交给 AutoTrackService，传递 YOLO track_id ─────
             track_detections = [
                 TrackDetectionResult(
                     bbox=d.bbox or (0, 0, 1, 1),
                     confidence=d.confidence,
                     class_name=d.label,
+                    track_id=getattr(d, 'track_id', -1),
                 )
                 for d in detections
                 if d.bbox is not None

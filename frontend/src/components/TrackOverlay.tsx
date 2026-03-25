@@ -1,0 +1,212 @@
+/**
+ * TrackOverlay — YOLO 检测框 + 决策区域可视化叠层。
+ *
+ * 叠加在主视频 <video> 上方的 canvas，实时绘制：
+ * 1. 所有检测到的 person bbox（绿色）
+ * 2. 当前锁定目标的 bbox（红色加粗）
+ * 3. 水平死区中线（蓝色虚线）
+ * 4. 纵向停止线（黄色虚线）
+ * 5. 当前决策文字（左上角）
+ */
+
+import { useEffect, useRef, useCallback } from 'react';
+
+export interface TrackOverlayData {
+  persons: { bbox: number[]; conf: number }[];
+  active_bbox: number[] | null;
+  command: string | null;
+  reason: string;
+  state: string;
+  frame_w: number;
+  frame_h: number;
+  deadband_px: number;
+  anchor_y_stop_ratio: number;
+  forward_area_ratio: number;
+}
+
+interface Props {
+  data: TrackOverlayData | null;
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+}
+
+export function TrackOverlay({ data, videoRef }: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rafRef = useRef<number>(0);
+
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video) return;
+
+    const parent = canvas.parentElement;
+    if (!parent) return;
+
+    // canvas 覆盖 parent 的全部尺寸
+    const rect = parent.getBoundingClientRect();
+    const cw = rect.width;
+    const ch = rect.height;
+    if (cw < 10 || ch < 10) return;
+
+    canvas.width = cw;
+    canvas.height = ch;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, cw, ch);
+
+    if (!data || data.frame_w <= 0 || data.frame_h <= 0) return;
+
+    const sx = cw / data.frame_w;
+    const sy = ch / data.frame_h;
+
+    // ─── 1. 水平死区（两条蓝色虚线） ───────────────────────────────
+    const centerX = cw / 2;
+    const dbPx = data.deadband_px * sx;
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    ctx.strokeStyle = 'rgba(80,160,255,0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(centerX - dbPx, 0);
+    ctx.lineTo(centerX - dbPx, ch);
+    ctx.moveTo(centerX + dbPx, 0);
+    ctx.lineTo(centerX + dbPx, ch);
+    ctx.stroke();
+    ctx.restore();
+
+    // 死区标签
+    ctx.save();
+    ctx.fillStyle = 'rgba(80,160,255,0.35)';
+    ctx.font = '10px monospace';
+    ctx.fillText('← 死区 →', centerX - 22, 14);
+    ctx.restore();
+
+    // ─── 2. 纵向停止线（黄色虚线） ──────────────────────────────────
+    const stopY = data.anchor_y_stop_ratio * ch;
+    ctx.save();
+    ctx.setLineDash([8, 4]);
+    ctx.strokeStyle = 'rgba(255,200,0,0.55)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, stopY);
+    ctx.lineTo(cw, stopY);
+    ctx.stroke();
+    // 标签
+    ctx.fillStyle = 'rgba(255,200,0,0.55)';
+    ctx.font = '10px monospace';
+    ctx.fillText(`停止线 y=${Math.round(stopY)}`, 6, stopY - 4);
+    ctx.restore();
+
+    // ─── 3. 所有检测到的 person（绿框） ─────────────────────────────
+    for (const p of data.persons) {
+      const [x1, y1, x2, y2] = p.bbox;
+      const rx = x1 * sx, ry = y1 * sy;
+      const rw = (x2 - x1) * sx, rh = (y2 - y1) * sy;
+
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0,220,120,0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(rx, ry, rw, rh);
+
+      // 置信度标签
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(rx, ry - 14, 48, 14);
+      ctx.fillStyle = '#0dc';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText(`${(p.conf * 100).toFixed(0)}%`, rx + 3, ry - 3);
+      ctx.restore();
+    }
+
+    // ─── 4. 锁定目标（红色加粗框） ──────────────────────────────────
+    if (data.active_bbox) {
+      const [x1, y1, x2, y2] = data.active_bbox;
+      const rx = x1 * sx, ry = y1 * sy;
+      const rw = (x2 - x1) * sx, rh = (y2 - y1) * sy;
+
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,60,60,0.85)';
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(rx, ry, rw, rh);
+
+      // TRACKING 标签
+      ctx.fillStyle = 'rgba(255,60,60,0.8)';
+      ctx.fillRect(rx, ry - 18, 78, 18);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('TRACKING', rx + 4, ry - 5);
+
+      // anchor 点（底部中心）
+      const anchorX = (x1 + x2) / 2 * sx;
+      const anchorY = y2 * sy;
+      ctx.beginPath();
+      ctx.arc(anchorX, anchorY, 4, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,100,0,0.9)';
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // ─── 5. 决策信息（左下角） ───────────────────────────────────────
+    if (data.command || data.state) {
+      const cmdLabel: Record<string, string> = {
+        forward: '↑ 前进', left: '← 左转', right: '→ 右转', stop: '■ 停止',
+      };
+      const cmdText = data.command ? (cmdLabel[data.command] || data.command) : '';
+      const stateText = data.state || '';
+
+      ctx.save();
+      // 背景
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(4, ch - 52, 320, 48);
+
+      // 状态
+      ctx.fillStyle = '#aaa';
+      ctx.font = '10px monospace';
+      ctx.fillText(`状态: ${stateText}  |  人数: ${data.persons.length}`, 10, ch - 36);
+
+      // 决策命令
+      if (cmdText) {
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 13px monospace';
+        ctx.fillText(cmdText, 10, ch - 20);
+      }
+      // 原因
+      if (data.reason) {
+        ctx.fillStyle = '#8cf';
+        ctx.font = '10px monospace';
+        ctx.fillText(data.reason.slice(0, 45), 90, ch - 20);
+      }
+      ctx.restore();
+    }
+  }, [data, videoRef]);
+
+  useEffect(() => {
+    draw();
+  }, [draw]);
+
+  // 窗口 resize 时重绘
+  useEffect(() => {
+    const handler = () => {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(draw);
+    };
+    window.addEventListener('resize', handler);
+    return () => {
+      window.removeEventListener('resize', handler);
+      cancelAnimationFrame(rafRef.current);
+    };
+  }, [draw]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: 2,
+      }}
+    />
+  );
+}
