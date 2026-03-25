@@ -114,11 +114,15 @@ class ControlService:
             # 不向前端暴露内部错误，仍返回 ACCEPTED（保持接口稳定）
 
         # 5. 更新 Watchdog 状态
+        # 只有持续运动命令（forward/backward/left/right）激活 Watchdog；
+        # stand/sit 是一次性姿态命令，不需要周期性续命，发完即可。
+        MOTION_COMMANDS = frozenset({"forward", "backward", "left", "right"})
         self._watchdog_last_reset = time.monotonic()
         if cmd == "stop":
             self._watchdog_active = False
-        else:
+        elif cmd in MOTION_COMMANDS:
             self._watchdog_active = True
+        # stand/sit：不改变 _watchdog_active，维持当前状态
 
         return ControlAckDTO(
             ack_cmd=cmd,

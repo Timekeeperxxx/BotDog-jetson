@@ -16,6 +16,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getApiBaseUrl } from '../config/api';
 import type { AutoTrackStatus, KnownTarget } from '../types/event';
 
+export interface TrackDecision {
+  command: string;       // forward / left / right / stop
+  should_send: boolean;
+  reason: string;        // 人类可读决策原因
+  bbox?: number[];       // [x1,y1,x2,y2]
+  anchor?: number[];     // [cx, cy_bottom]
+}
+
 // API helpers
 const apiPost = (path: string, body?: object) =>
   fetch(`${getApiBaseUrl()}${path}`, {
@@ -31,6 +39,7 @@ export interface AutoTrackHookState {
   knownTargets: KnownTarget[];
   loading: boolean;
   error: string | null;
+  trackDecision: TrackDecision | null;  // 最新每帧决策
   // 控制接口
   enable: () => Promise<void>;
   disable: () => Promise<void>;
@@ -50,19 +59,24 @@ export interface AutoTrackHookState {
 export function useAutoTrack(
   /** 外部推送来的 ws 消息，来自 useEventWebSocket 的 AUTO_TRACK_STATUS payload */
   wsTrackStatus?: AutoTrackStatus | null,
+  /** 外部推送来的 TRACK_DECISION payload（每帧决策） */
+  wsTrackDecision?: TrackDecision | null,
 ): AutoTrackHookState {
   const [status, setStatus] = useState<AutoTrackStatus | null>(null);
   const [knownTargets, setKnownTargets] = useState<KnownTarget[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [trackDecision, setTrackDecision] = useState<TrackDecision | null>(null);
   const pollTimerRef = useRef<number | null>(null);
 
   // WS 推送时立即更新（最高优先级）
   useEffect(() => {
-    if (wsTrackStatus) {
-      setStatus(wsTrackStatus);
-    }
+    if (wsTrackStatus) setStatus(wsTrackStatus);
   }, [wsTrackStatus]);
+
+  useEffect(() => {
+    if (wsTrackDecision) setTrackDecision(wsTrackDecision);
+  }, [wsTrackDecision]);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -143,6 +157,7 @@ export function useAutoTrack(
     knownTargets,
     loading,
     error,
+    trackDecision,
     enable,
     disable,
     pause,

@@ -12,6 +12,7 @@ import { ControlPad } from './components/ControlPad';
 import { useEventWebSocket } from './hooks/useEventWebSocket';
 import { useAutoTrack } from './hooks/useAutoTrack';
 import { AutoTrackPanel } from './components/AutoTrackPanel';
+import { useTrackOverlay } from './hooks/useTrackOverlay';
 import { getApiUrl } from './config/api';
 import {
   Activity,
@@ -175,9 +176,13 @@ export default function IndustrialConsoleComplete() {
     disconnect: disconnectWs,
   } = useBotDogWebSocket();
 
-  const { alerts, latestAlert, aiStatus, autoTrackStatus } = useEventWebSocket();
+  const { alerts, latestAlert, aiStatus, autoTrackStatus, trackDecision, trackDetection } = useEventWebSocket();
 
-  const autoTrack = useAutoTrack(autoTrackStatus);
+  const autoTrack = useAutoTrack(autoTrackStatus, trackDecision);
+
+  // Canvas overlay for YOLO boxes + deadband lines
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  useTrackOverlay(overlayCanvasRef, trackDetection, { enabled: autoTrack.status?.enabled ?? false });
 
   const startupLoggedRef = useRef(false);
   const lastWsStatusRef = useRef<boolean | null>(null);
@@ -546,6 +551,28 @@ export default function IndustrialConsoleComplete() {
                   height: isPipLarge ? '270px' : '135px',
                   zIndex: 21, borderRadius: '8px',
                   display: isPipHidden ? 'none' : undefined,
+                }}
+              />
+
+              {/* Track overlay canvas — drawn over main (non-PiP) video */}
+              <canvas
+                className="absolute pointer-events-none"
+                style={{
+                  inset: 0,
+                  width: '100%',
+                  height: '100%',
+                  zIndex: 5,
+                }}
+                ref={(el) => {
+                  (overlayCanvasRef as React.MutableRefObject<HTMLCanvasElement | null>).current = el;
+                  if (!el) return;
+                  el.width = el.offsetWidth;
+                  el.height = el.offsetHeight;
+                  const ro = new ResizeObserver(() => {
+                    el.width = el.offsetWidth;
+                    el.height = el.offsetHeight;
+                  });
+                  ro.observe(el);
                 }}
               />
 

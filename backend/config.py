@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     AUTO_TRACK_LOST_TIMEOUT_FRAMES: int = 30      # 目标丢失超时帧数
     AUTO_TRACK_YAW_DEADBAND_PX: int = 80          # 水平偏航死区（像素）
     AUTO_TRACK_FORWARD_AREA_RATIO: float = 0.15   # 前进触发的面积比阈值
+    AUTO_TRACK_ANCHOR_Y_STOP_RATIO: float = 0.80  # 锚点纵向停止比（超过则禁止前进）
     AUTO_TRACK_STOP_SNAPSHOT_ENABLED: bool = True  # 跟踪停止时是否补拍终止证据图
 
     # 宇树 B2 硬件适配器配置

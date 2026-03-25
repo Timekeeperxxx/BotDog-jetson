@@ -36,7 +36,7 @@ export interface ControlAck {
 }
 
 // 命令发送间隔（ms）
-const SEND_INTERVAL_MS = 100;
+const SEND_INTERVAL_MS = 500;
 
 // 控制 API URL
 const CONTROL_URL = getApiUrl('/api/v1/control/command');
@@ -142,18 +142,12 @@ export function useRobotControl(): UseRobotControlReturn {
       navigator.sendBeacon(STOP_URL);
     };
 
-    const handleWindowBlur = () => {
-      stopCommand();
-    };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('beforeunload', handleBeforeUnload);
-    window.addEventListener('blur', handleWindowBlur);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      window.removeEventListener('blur', handleWindowBlur);
       // 组件卸载时停止
       clearInterval_();
       sendCommand('stop');

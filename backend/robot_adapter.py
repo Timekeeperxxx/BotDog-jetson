@@ -144,30 +144,51 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             vx: 前进/后退速度（m/s），范围 0~0.6，默认 0.3
             vyaw: 偏航转速（rad/s），范围 0~0.8，默认 0.5
         """
+        import queue
+        import threading
         self._vx = vx
         self._vyaw = vyaw
         self._network_interface = network_interface
         self._sport_client = None
         self._initialized = False
 
+        # 启动单独的工作线程处理阻塞的 SDK 调用，防止耗尽 FastAPI 的线程池
+        self._cmd_queue = queue.Queue(maxsize=1)
+        self._worker_thread = threading.Thread(target=self._command_worker, daemon=True)
+        self._worker_thread.start()
+
         try:
             from unitree_sdk2py.core.channel import ChannelFactoryInitialize
-            # B2 使用 b2 命名空间，不是 go2
             from unitree_sdk2py.b2.sport.sport_client import SportClient
+            from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
 
             ChannelFactoryInitialize(0, network_interface)
 
+            # Step 1: 通过 MotionSwitcher 切换到 AI 运控模式（必须在 SportClient 之前）
+            import time
+            msc = MotionSwitcherClient()
+            msc.SetTimeout(5.0)
+            msc.Init()
+
+            # 查询当前模式
+            code, data = msc.CheckMode()
+            current_mode = data.get("name", "unknown") if data else "unknown"
+            logger.info(f"[UnitreeB2] 当前运控模式: {current_mode} (code={code})")
+
+            # 如果不是 ai 模式，切换过去
+            if code == 0 and current_mode != "ai":
+                logger.info("[UnitreeB2] 切换到 AI 运控模式...")
+                sel_code, _ = msc.SelectMode("ai")
+                if sel_code == 0:
+                    logger.info("[UnitreeB2] 已切换到 ai 模式")
+                    time.sleep(2.0)  # 等待模式切换完成
+                else:
+                    logger.warning(f"[UnitreeB2] 模式切换失败 code={sel_code}，尝试继续")
+
+            # Step 2: 初始化 SportClient
             self._sport_client = SportClient()
             self._sport_client.SetTimeout(5.0)
             self._sport_client.Init()
-
-            # 初始化序列：解锁 → 经典步态 → 持续响应 Move 指令
-            import time
-            self._sport_client.BalanceStand()     # 解除关节锁定
-            time.sleep(1.0)
-            self._sport_client.ClassicWalk(True)  # 进入经典步态（可移动状态）
-            time.sleep(0.5)
-            self._sport_client.SwitchMoveMode(True)  # 持续响应 Move 指令
 
             self._initialized = True
             logger.info(
@@ -182,6 +203,45 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         except Exception as e:
             logger.error(f"[UnitreeB2] 初始化失败: {e}")
 
+    def _command_worker(self):
+        """后台专用的工作线程：消费队列并调用阻断的 SDK。"""
+        import queue
+        while True:
+            try:
+                cmd = self._cmd_queue.get()
+                if cmd == "_QUIT_":
+                    break
+                if not self._initialized or self._sport_client is None:
+                    continue
+
+                client = self._sport_client
+                logger.debug(f"[UnitreeB2 Worker] 执行命令: {cmd}")
+                
+                if cmd == "forward":
+                    client.Move(self._vx, 0.0, 0.0)
+                elif cmd == "backward":
+                    client.Move(-self._vx, 0.0, 0.0)
+                elif cmd == "left":
+                    client.Move(0.0, 0.0, self._vyaw)
+                elif cmd == "right":
+                    client.Move(0.0, 0.0, -self._vyaw)
+                elif cmd == "stop":
+                    client.StopMove()
+                elif cmd == "stand":
+                    # 起立前先解锁关节+切步态（初始化未自动起立时必须）
+                    import time
+                    client.BalanceStand()
+                    time.sleep(1.0)
+                    client.ClassicWalk(True)
+                    time.sleep(0.5)
+                    client.RecoveryStand()
+                elif cmd == "sit":
+                    client.StandDown()
+
+                logger.debug(f"[UnitreeB2 Worker] 执行完成: {cmd}")
+            except Exception as e:
+                logger.error(f"[UnitreeB2 Worker] 执行异常 ({cmd}): {e}")
+
     async def send_command(self, cmd: str) -> None:
         """
         通过 SportClient 发送控制命令。
@@ -193,33 +253,19 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             logger.warning(f"[UnitreeB2] 适配器未就绪，忽略命令: {cmd}")
             return
 
+        import queue
         try:
-            client = self._sport_client
+            # 清空队列，确保始终只运行最新的命令，防止阻塞导致堆积
+            while not self._cmd_queue.empty():
+                self._cmd_queue.get_nowait()
+        except queue.Empty:
+            pass
 
-            if cmd == "forward":
-                await asyncio.to_thread(client.Move, self._vx, 0.0, 0.0)
-            elif cmd == "backward":
-                await asyncio.to_thread(client.Move, -self._vx, 0.0, 0.0)
-            elif cmd == "left":
-                await asyncio.to_thread(client.Move, 0.0, 0.0, self._vyaw)
-            elif cmd == "right":
-                await asyncio.to_thread(client.Move, 0.0, 0.0, -self._vyaw)
-            elif cmd == "stop":
-                # 停止运动，但保持 BalanceStand 解锁状态，允许后续继续 Move
-                await asyncio.to_thread(client.StopMove)
-                await asyncio.to_thread(client.BalanceStand)
-            elif cmd == "stand":
-                await asyncio.to_thread(client.RecoveryStand)
-            elif cmd == "sit":
-                await asyncio.to_thread(client.StandDown)
-            else:
-                logger.warning(f"[UnitreeB2] 未知命令: {cmd}")
-                return
-
-            logger.debug(f"[UnitreeB2] 已发送: {cmd}")
-
-        except Exception as e:
-            logger.error(f"[UnitreeB2] 命令执行失败 ({cmd}): {e}")
+        try:
+            self._cmd_queue.put_nowait(cmd)
+            logger.debug(f"[UnitreeB2] 已放入后台队列: {cmd}")
+        except queue.Full:
+            logger.warning(f"[UnitreeB2] 队列已满，丢弃命令: {cmd}")
 
 
 

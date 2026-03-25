@@ -54,11 +54,19 @@ const OWNER_LABELS: Record<string, string> = {
 
 interface Props extends AutoTrackHookState {}
 
+const CMD_COLORS: Record<string, string> = {
+  forward:  '#2bd',
+  left:     '#fa6',
+  right:    '#f6a',
+  stop:     '#888',
+};
+
 export const AutoTrackPanel: React.FC<Props> = ({
   status,
   knownTargets,
   loading,
   error,
+  trackDecision,
   enable,
   disable,
   pause,
@@ -198,6 +206,32 @@ export const AutoTrackPanel: React.FC<Props> = ({
               </button>
             </span>
           ))}
+        </div>
+      )}
+
+      {/* 实时决策面板（每帧更新） */}
+      {trackDecision && isEnabled && (
+        <div style={styles.decisionBox}>
+          <div style={styles.decisionTitle}>🤖 实时决策</div>
+          <div style={styles.decisionRow}>
+            <span
+              style={{
+                ...styles.cmdBadge,
+                background: (CMD_COLORS[trackDecision.command] ?? '#888') + '33',
+                color: CMD_COLORS[trackDecision.command] ?? '#888',
+                border: `1px solid ${CMD_COLORS[trackDecision.command] ?? '#888'}44`,
+              }}
+            >
+              {trackDecision.command === 'forward' ? '↑ 前进'
+                : trackDecision.command === 'left' ? '← 左转'
+                : trackDecision.command === 'right' ? '→ 右转'
+                : '■ 停止'}
+            </span>
+            <span style={{ fontSize: 10, color: trackDecision.should_send ? '#2bd' : '#555' }}>
+              {trackDecision.should_send ? '✓ 已发送' : '○ 节流中'}
+            </span>
+          </div>
+          <div style={styles.decisionReason}>{trackDecision.reason}</div>
         </div>
       )}
 
@@ -351,4 +385,37 @@ const styles: Record<string, React.CSSProperties> = {
     borderTop: '1px solid #1e3a5a',
     paddingTop: 4,
   },
+  decisionBox: {
+    background: 'rgba(43,180,200,0.06)',
+    border: '1px solid rgba(43,189,200,0.25)',
+    borderRadius: 6,
+    padding: '7px 10px',
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  decisionTitle: {
+    fontSize: 10,
+    color: '#7cc',
+    fontWeight: 600,
+    marginBottom: 5,
+  },
+  decisionRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  decisionReason: {
+    fontSize: 10,
+    color: '#78a',
+    lineHeight: 1.4,
+    wordBreak: 'break-word' as const,
+  },
+  cmdBadge: {
+    fontSize: 11,
+    fontWeight: 700,
+    padding: '2px 10px',
+    borderRadius: 10,
+  },
 };
+

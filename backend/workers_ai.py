@@ -275,7 +275,8 @@ class AIWorker:
             with contextlib.suppress(asyncio.CancelledError):  # CancelledError 不是 Exception，须单独捕获
                 await stderr_task
 
-            process.terminate()
+            with contextlib.suppress(ProcessLookupError, OSError):
+                process.terminate()
             with contextlib.suppress(Exception):
                 await process.wait()
 

@@ -5,6 +5,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWsUrl } from '../config/api';
 import type { AlertEvent, AIStatus, EventWebSocketStatus, AutoTrackStatus } from '../types/event';
+import type { TrackDecision } from './useAutoTrack';
+
+export interface TrackDetection {
+  persons: { bbox: number[]; conf: number }[];  // all detected persons this frame
+  active_bbox: number[] | null;                  // locked target bbox
+  frame_w: number;
+  frame_h: number;
+  deadband_px: number;
+  anchor_y_stop_ratio: number;
+  forward_area_ratio: number;
+}
 
 export interface EventHookState {
   status: EventWebSocketStatus;
@@ -12,6 +23,8 @@ export interface EventHookState {
   latestAlert: AlertEvent | null;
   aiStatus: AIStatus | null;
   autoTrackStatus: AutoTrackStatus | null;
+  trackDecision: TrackDecision | null;
+  trackDetection: TrackDetection | null;
   connect: () => void;
   disconnect: () => void;
 }
@@ -25,6 +38,8 @@ export function useEventWebSocket(): EventHookState {
   const [latestAlert, setLatestAlert] = useState<AlertEvent | null>(null);
   const [aiStatus, setAiStatus] = useState<AIStatus | null>(null);
   const [autoTrackStatus, setAutoTrackStatus] = useState<AutoTrackStatus | null>(null);
+  const [trackDecision, setTrackDecision] = useState<TrackDecision | null>(null);
+  const [trackDetection, setTrackDetection] = useState<TrackDetection | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -76,6 +91,16 @@ export function useEventWebSocket(): EventHookState {
 
           if (message.msg_type === 'AUTO_TRACK_STATUS' && message.payload) {
             setAutoTrackStatus(message.payload as unknown as AutoTrackStatus);
+            return;
+          }
+
+          if (message.msg_type === 'TRACK_DECISION' && message.payload) {
+            setTrackDecision(message.payload as unknown as TrackDecision);
+            return;
+          }
+
+          if (message.msg_type === 'TRACK_DETECTION' && message.payload) {
+            setTrackDetection(message.payload as unknown as TrackDetection);
             return;
           }
 
@@ -159,6 +184,8 @@ export function useEventWebSocket(): EventHookState {
     latestAlert,
     aiStatus,
     autoTrackStatus,
+    trackDecision,
+    trackDetection,
     connect,
     disconnect,
   };

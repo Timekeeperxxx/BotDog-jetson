@@ -70,6 +70,7 @@ class AutoTrackService:
         command_interval_ms: float = 200.0,
         yaw_deadband_px: int = 80,
         forward_area_ratio: float = 0.15,
+        anchor_y_stop_ratio: float = 0.80,
         stop_snapshot_enabled: bool = True,
         default_enabled: bool = False,
         # 阶段 2 新增：可选依赖（None 时退回阶段 1 单目标路径）
@@ -119,13 +120,23 @@ class AutoTrackService:
         self._decision_engine = FollowDecisionEngine(
             yaw_deadband_px=yaw_deadband_px,
             forward_area_ratio=forward_area_ratio,
+            anchor_y_stop_ratio=anchor_y_stop_ratio,
             command_interval_ms=command_interval_ms,
         )
+        # 保存癌区参数供广播使用
+        self._yaw_deadband_px = yaw_deadband_px
+        self._forward_area_ratio = forward_area_ratio
+        self._anchor_y_stop_ratio = anchor_y_stop_ratio
 
         # 调试状态广播
         self._last_status_broadcast: float = 0.0
         self._last_command: Optional[str] = None
+        self._last_decision_reason: Optional[str] = None  # 每帧决策原因
         self._frames_processed: int = 0
+
+        # 跟踪决策日志文件（写入 scripts/ 目录）
+        self._decision_log_file: Optional["IO[str]"] = None  # type: ignore[name-defined]
+        self._decision_log_path: Optional[Path] = None
 
         logger.info(
             f"[AutoTrackService] 初始化完成，默认启用={default_enabled}，"
@@ -232,7 +243,7 @@ class AutoTrackService:
         if not self._enabled or self._paused:
             return
 
-        # 非任务状态禁止跟踪
+        # 非任务状态禁止跟踪（必须在开启巡检模式后才会激活）
         if not self._is_mission_active(current_task_id):
             if self._state not in (AutoTrackState.DISABLED, AutoTrackState.IDLE):
                 self._do_stop(TrackStopReason.MISSION_ENDED, send_stop_command=True)
@@ -260,6 +271,27 @@ class AutoTrackService:
         else:
             # 已有活跃目标，更新并跟踪
             await self._update_and_follow(persons, frame, current_task_id)
+
+        # 每帧广播检测结果（供前端 canvas 叠层使用）
+        active_bbox = (
+            list(self._active_target.bbox) if self._active_target else None
+        )
+        await self._broadcast_event("TRACK_DETECTION", {
+            "persons": [
+                {"bbox": list(d.bbox), "conf": round(d.confidence, 2)}
+                for d in persons
+            ],
+            "active_bbox": active_bbox,
+            "frame_w": self._frame_width,
+            "frame_h": self._frame_height,
+            "deadband_px": self._yaw_deadband_px,
+            "anchor_y_stop_ratio": self._anchor_y_stop_ratio,
+            "forward_area_ratio": self._forward_area_ratio,
+        })
+
+        # 每帧写入检测日志（包含人数、位置；跟踪中还包含决策）
+        if not self._active_target:
+            self._write_frame_log(persons)
 
         # 定时广播调试状态
         await self._maybe_broadcast_debug_status()
@@ -409,7 +441,96 @@ class AutoTrackService:
             if decision.should_send and decision.command:
                 await self._send_command_safe(decision.command)
 
+            # 每帧广播决策结果给前端（用于调试可视化）
+            self._last_decision_reason = decision.reason
+            await self._broadcast_event("TRACK_DECISION", {
+                "command": decision.command,
+                "should_send": decision.should_send,
+                "reason": decision.reason,
+                "bbox": list(matched.bbox),
+                "anchor": list(target.anchor_point),
+            })
+
+            # 写入跟踪决策日志文件
+            self._write_frame_log(
+                persons,
+                command=decision.command,
+                should_send=decision.should_send,
+                reason=decision.reason,
+                bbox=matched.bbox,
+                anchor=target.anchor_point,
+            )
+
     # ─── 内部工具 ────────────────────────────────────────────────────────────
+
+
+    # --- tracking decision log helpers ------------------------------------------
+
+    def _ensure_decision_log(self) -> None:
+        """Lazily create the log file on first write."""
+        if self._decision_log_file is not None:
+            return
+        import io
+        from datetime import datetime
+        scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = scripts_dir / f"track_decisions_{ts}.log"
+        self._decision_log_path = log_path
+        self._decision_log_file = io.open(log_path, "w", encoding="utf-8", buffering=1)
+        self._decision_log_file.write(
+            "# BotDog tracking decision log\n"
+            "# cols: timestamp | frame | detected | person_count"
+            " | persons_bboxes | track_cmd | sent | reason | active_bbox | anchor\n"
+            "# persons_bboxes: x1,y1,x2,y2;... (semicolon-separated, - if none)\n"
+        )
+        logger.info(f"[AutoTrackService] Decision log created: {log_path}")
+
+    def _write_frame_log(
+        self,
+        persons: list,
+        *,
+        command: Optional[str] = None,
+        should_send: bool = False,
+        reason: str = "",
+        bbox: Optional[tuple] = None,
+        anchor: Optional[tuple] = None,
+    ) -> None:
+        """Write one log line per frame. Records detection state and optional decision."""
+        try:
+            self._ensure_decision_log()
+            from datetime import datetime
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            person_count = len(persons)
+            detected = "YES" if person_count > 0 else "NO"
+            persons_bboxes = ";".join(
+                f"{d.bbox[0]},{d.bbox[1]},{d.bbox[2]},{d.bbox[3]}" for d in persons
+            ) if person_count > 0 else "-"
+            cmd_str = command or "-"
+            sent_str = "Y" if should_send else "N"
+            reason_str = reason.replace("|", "|") if reason else "-"
+            bbox_str = f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}" if bbox else "-"
+            anchor_str = f"{anchor[0]},{anchor[1]}" if anchor else "-"
+            line = (
+                f"{now_str} | {self._frames_processed:06d} | {detected} | {person_count}"
+                f" | {persons_bboxes} | {cmd_str} | {sent_str} | {reason_str}"
+                f" | {bbox_str} | {anchor_str}\n"
+            )
+            assert self._decision_log_file is not None
+            self._decision_log_file.write(line)
+        except Exception as exc:
+            logger.warning(f"[AutoTrackService] Failed to write decision log: {exc}")
+
+    def _close_decision_log(self) -> None:
+        """Flush and close the log file (call on service stop)."""
+        if self._decision_log_file is not None:
+            try:
+                self._decision_log_file.flush()
+                self._decision_log_file.close()
+                logger.info(f"[AutoTrackService] Decision log closed: {self._decision_log_path}")
+            except Exception:
+                pass
+            self._decision_log_file = None
 
     def _is_mission_active(self, task_id: Optional[int]) -> bool:
         from .state_machine import SystemState
