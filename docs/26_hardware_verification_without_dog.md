@@ -163,10 +163,10 @@ sqlite3 data/botdog.db "SELECT event_type, created_at FROM events ORDER BY creat
 
 ```bash
 # 1. 启动 MediaMTX
-run-pipeline.cmd
+scripts/run-pipeline.cmd
 
 # 2. 启动 FFmpeg 推流
-ffmpeg-supervisor.cmd
+scripts/ffmpeg-supervisor.cmd
 
 # 3. 打开 WHEP 测试页
 http://127.0.0.1:8090/index.html

@@ -15,12 +15,12 @@
 
 ### MediaMTX
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\setup-mediamtx.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-mediamtx.ps1
 ```
 
 ### FFmpeg
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\setup-ffmpeg.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\setup-ffmpeg.ps1
 ```
 
 ## 配置前端 WHEP 地址
@@ -36,12 +36,12 @@ VITE_WHEP_URL=http://192.168.144.30:8889/cam/whep
 
 ### 1) 启动后端（主界面遥测/控制所需）
 ```cmd
-.\start_backend.bat
+.\scripts\start_backend.bat
 ```
 
 ### 2) 启动 MediaMTX
 ```cmd
-.\tools\mediamtx\mediamtx.exe .\mediamtx.yml
+.\scripts\mediamtx .\config\mediamtx.yml
 ```
 
 启动日志应包含：
@@ -52,7 +52,7 @@ VITE_WHEP_URL=http://192.168.144.30:8889/cam/whep
 
 ### 3) 启动 FFmpeg 拉流转码推流
 ```cmd
-.\ffmpeg-supervisor.cmd
+.\scripts\ffmpeg-supervisor.cmd
 ```
 
 可选环境变量（降低负载/提高稳定性）：

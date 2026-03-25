@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     AI_SIMULATE_DETECTION: bool = False
     AI_SIMULATE_PROB: float = 0.02
     AI_DEVICE: str = "auto"  # auto / cpu / cuda / cuda:0
-    AI_MODEL_PATH: str = "yolov8n.pt"  # YOLO 模型路径
+    AI_MODEL_PATH: str = "models/yolov8n.pt"  # YOLO 模型路径
     AI_CONFIDENCE_THRESHOLD: float = 0.5  # 推理置信度阈值
     AI_TARGET_CLASSES: list[str] = ["person"]  # 目标类别
 

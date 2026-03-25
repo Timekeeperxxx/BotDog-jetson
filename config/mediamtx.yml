@@ -1,0 +1,28 @@
+# MediaMTX configuration
+# Docs: https://github.com/bluenviron/mediamtx
+
+logLevel: info
+
+# RTSP server (ingest)
+rtsp: yes
+rtspAddress: :8554
+# avoid UDP ports that conflict with backend on 8000
+rtspTransports:
+  - tcp
+
+# WHEP server
+webrtc: yes
+webrtcAddress: :8889
+webrtcEncryption: false
+
+
+# WHEP paths (explicit for clarity)
+webrtcAdditionalHosts:
+  - 127.0.0.1
+  - 192.168.144.30
+
+paths:
+  cam:
+    source: publisher
+  cam2:
+    source: publisher

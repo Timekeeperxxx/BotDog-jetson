@@ -56,10 +56,10 @@ db/
 
 # Logs
 *.log
+scripts/logs/
 
 # Files
 /tools/
-/scripts/
 /tests/
 /edge/
 

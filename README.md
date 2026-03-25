@@ -89,14 +89,17 @@ cp frontend/.env.example frontend/.env     # Linux/Mac
 
 ```bash
 # 在项目根目录执行（激活虚拟环境后）
-python init_db.py
+python scripts/init_db.py
 ```
 
 ### 5. 启动服务
 
 ```bash
 # 后端（终端 1，在项目根目录）
-python run_backend.py
+# Windows
+.\scripts\start_backend.bat
+# Linux/Mac
+bash scripts/start_backend.sh
 
 # 前端（终端 2）
 cd frontend
@@ -129,7 +132,7 @@ npm run dev
 ### 本机低延迟播放（推荐）
 
 **步骤**：
-1. 一键启动：`run-pipeline.cmd`
+1. 一键启动：`scripts/run-pipeline.cmd`
 2. 前端访问：`http://127.0.0.1:5174` 或 `http://YOUR_IP:5174`
 
 **默认配置**：
@@ -283,7 +286,10 @@ pytest tests/ --cov=backend --cov-report=term-missing
 
 ```bash
 # 推荐启动方式
-python run_backend.py
+# Windows
+.\scripts\start_backend.bat
+# Linux/Mac
+bash scripts/start_backend.sh
 
 # 开发模式（热重载）
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
@@ -292,7 +298,7 @@ uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 4
 
 # 初始化数据库
-python init_db.py
+python scripts/init_db.py
 
 # 运行单元测试
 pytest tests/
@@ -316,7 +322,7 @@ npm run preview
 
 ```bash
 # 初始化数据库表（首次运行必须执行）
-python init_db.py
+python scripts/init_db.py
 
 # 清理数据库（谨慎使用）
 del data\botdog.db    # Windows
@@ -326,8 +332,8 @@ rm -f data/botdog.db  # Linux/Mac
 ### AI 模型（可选）
 
 ```bash
-# 如需开启 AI 告警功能，下载 YOLOv8n 模型（~6MB）
-# 将文件放在项目根目录
+# 如需开启 AI 功能，下载 YOLOv8n 模型（~6MB）并放入 models/ 目录
+mkdir -p models
 # 下载地址：https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt
 # 然后在 backend/.env 中设置：AI_ENABLED=true
 ```
@@ -353,10 +359,13 @@ BotDog/
 │   │   └── utils/        # 工具函数
 │   └── package.json
 │
+├── models/              # YOLO 模型文件 (.pt)
+├── config/              # 媒体配置（mediamtx.yml 等）
+├── scripts/             # 启动脚本与工具
+│   └── logs/            # 历史追踪日志归档
 ├── docs/                # 项目文档
 ├── tests/               # 后端测试
-├── data/                # 数据库文件
-├── acceptance_test.py   # 验收测试
+├── data/                # 数据库 & 抓拍文件
 └── requirements.txt     # Python 依赖
 ```
 

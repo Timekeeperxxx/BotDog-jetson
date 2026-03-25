@@ -44,8 +44,8 @@
 ### 2.5 MediaMTX + WHEP（Windows 本机）
 
 * 运行 `setup-mediamtx.ps1` 与 `setup-ffmpeg.ps1` 安装依赖
-* 运行 `run-pipeline.cmd` 启动 MediaMTX 和静态 WHEP 页面
-* 运行 `ffmpeg-supervisor.cmd` 推流
+* 运行 `scripts/run-pipeline.cmd` 启动 MediaMTX 和静态 WHEP 页面
+* 运行 `scripts/ffmpeg-supervisor.cmd` 推流
 
 ## 3. 后端本地启动步骤
 

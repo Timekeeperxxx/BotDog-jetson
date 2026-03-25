@@ -50,7 +50,7 @@
 
 ```bash
 # 后端服务
-.start_backend.bat
+. scripts/start_backend.bat
 
 # 前端开发
 cd frontend
