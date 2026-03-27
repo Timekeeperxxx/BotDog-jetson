@@ -151,29 +151,13 @@ export const AutoTrackPanel: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 当前目标信息 */}
+      {/* 当前目标信息 (精简版) */}
       {target ? (
         <div style={styles.targetBox}>
           <div style={styles.targetTitle}>🎯 活跃目标 #{target.track_id}</div>
-          <div style={styles.targetRow}>
-            <span style={styles.label}>区域内</span>
-            <span style={{ color: target.inside_zone ? '#2bd' : '#e55' }}>
-              {target.inside_zone ? '✓ 是' : '✗ 否（出区 ' + target.out_of_zone_count + ' 帧）'}
-            </span>
-          </div>
-          <div style={styles.targetRow}>
-            <span style={styles.label}>丢失帧</span>
-            <span style={styles.value}>{target.lost_count}</span>
-          </div>
-          <div style={styles.targetRow}>
-            <span style={styles.label}>锚点</span>
-            <span style={styles.value}>
-              ({target.anchor_point[0]}, {target.anchor_point[1]})
-            </span>
-          </div>
           {/* 标记为已知人员 */}
           <button
-            style={{ ...styles.smallBtn, marginTop: 6, background: '#8844aa44', color: '#c8f' }}
+            style={{ ...styles.smallBtn, marginTop: 2, background: '#8844aa44', color: '#c8f' }}
             onClick={() => markKnown(target.track_id)}
             disabled={loading}
             title="将当前目标标记为已知人员，不再跟踪"
@@ -206,43 +190,6 @@ export const AutoTrackPanel: React.FC<Props> = ({
               </button>
             </span>
           ))}
-        </div>
-      )}
-
-      {/* 实时决策面板（每帧更新） */}
-      {trackDecision && isEnabled && (
-        <div style={styles.decisionBox}>
-          <div style={styles.decisionTitle}>🤖 实时决策</div>
-          <div style={styles.decisionRow}>
-            <span
-              style={{
-                ...styles.cmdBadge,
-                background: (CMD_COLORS[trackDecision.command] ?? '#888') + '33',
-                color: CMD_COLORS[trackDecision.command] ?? '#888',
-                border: `1px solid ${CMD_COLORS[trackDecision.command] ?? '#888'}44`,
-              }}
-            >
-              {trackDecision.command === 'forward' ? '↑ 前进'
-                : trackDecision.command === 'left' ? '← 左转'
-                : trackDecision.command === 'right' ? '→ 右转'
-                : '■ 停止'}
-            </span>
-            <span style={{ fontSize: 10, color: trackDecision.should_send ? '#2bd' : '#555' }}>
-              {trackDecision.should_send ? '✓ 已发送' : '○ 节流中'}
-            </span>
-          </div>
-          <div style={styles.decisionReason}>{trackDecision.reason}</div>
-        </div>
-      )}
-
-      {/* 调试信息 */}
-      {status && (
-        <div style={styles.debugRow}>
-          <span>帧: {status.frames_processed}</span>
-          <span>命中: {status.hit_count}/{status.stable_hits_threshold}</span>
-          {status.last_command && (
-            <span>CMD: {status.last_command}</span>
-          )}
         </div>
       )}
     </div>
