@@ -95,21 +95,16 @@ class FollowDecisionEngine:
             raw_cmd = "left" if err_x < 0 else "right"
             reason = f"水平偏差 err_x={err_x}px（死区={self._yaw_deadband_px}px）"
         elif area_ratio < self._forward_area_ratio:
-            # 目标居中但较远，判断是否允许前进
-            if anchor_y > image_height * self._anchor_y_stop_ratio:
-                # 锚点已靠近画面下缘，禁止前进（避免近距离前冲）
-                raw_cmd = "stop"
-                reason = (
-                    f"锚点已靠近底部（anchor_y={anchor_y}, "
-                    f"阈值={int(image_height * self._anchor_y_stop_ratio)}），禁止前进"
-                )
-            else:
-                raw_cmd = "forward"
-                reason = f"目标居中且较远（area_ratio={area_ratio:.3f}）"
+            # 只要面积不够，就强制向前走（无视底部锚点防撞线）
+            raw_cmd = "forward"
+            reason = f"目标面积较小（{area_ratio:.3f} < {self._forward_area_ratio}），继续前进"
         else:
-            # 目标居中且距离合适，保持
+            # 目标面积达标后，再结合锚点检查
             raw_cmd = "stop"
-            reason = f"目标居中且距离合适（area_ratio={area_ratio:.3f}）"
+            if anchor_y > image_height * self._anchor_y_stop_ratio:
+                reason = f"面积已达标（{area_ratio:.3f}），且锚点触底（{anchor_y} > 阈值），停止"
+            else:
+                reason = f"目标面积已达标（{area_ratio:.3f}），保持距离"
 
         # ── 方向防抖 ──────────────────────────────────────────────────────
         # 对于 left/right 切换，连续相同命令才真正下发
