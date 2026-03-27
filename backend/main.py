@@ -145,6 +145,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         global _mavlink_gateway
         if settings.CONTROL_ADAPTER_TYPE == "unitree_b2":
             # 宇树 B2 模式：使用 DDS 订阅 sportmodestate 获取真实遥测
+
             from .workers_unitree_telemetry import UnitreeTelemetryWorker
             _unitree_telemetry_worker = UnitreeTelemetryWorker(
                 queue_manager=_queue_manager,

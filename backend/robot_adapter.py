@@ -245,28 +245,20 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                 elif cmd == "stop":
                     ret = client.StopMove()
                     logger.debug(f"[UnitreeB2 Worker] StopMove ret={ret}")
-                    # 注意：不调用 BalanceStand()！
-                    # BalanceStand 会将机器人切出 SwitchMoveMode，导致后续 Move 物理失效。
-                    # StopMove 返回 -1 时（非运动模式），改用 Move(0,0,0) 作为备用停止。
                     if ret != 0:
-                        import time
                         client.Move(0.0, 0.0, 0.0)
                         logger.debug(f"[UnitreeB2 Worker] StopMove失败，备用 Move(0,0,0)")
                 elif cmd == "stand":
                     self._busy_with_posture = True
                     try:
                         import time
-                        # 直接用 BalanceStand() 从任意姿态（含蹲下）恢复到站立。
-                        # StandUp() 在 AI 模式下返回 3104（状态机不兼容），会导致后续
-                        # SwitchMoveMode 也失败，故跳过 StandUp，由 BalanceStand 完成起立。
+                        # 直接 BalanceStand，跳过 StandUp（StandUp 是专门从坐姿起立，但会破坏模式状态）
                         ret_bs = client.BalanceStand()
                         logger.info(f"[UnitreeB2 Worker] BalanceStand ret={ret_bs}")
                         time.sleep(2.0)  # 等待起立稳定
-                        # 重试最多5次，等待机器人完全进入平衡站立状态后再切运动模式
-                        ret_mm = -1
                         for attempt in range(5):
                             ret_mm = client.SwitchMoveMode(True)
-                            logger.info(f"[UnitreeB2 Worker] SwitchMoveMode(True) ret={ret_mm} (attempt {attempt + 1})")
+                            logger.info(f"[UnitreeB2 Worker] SwitchMoveMode(True) ret={ret_mm} (attempt {attempt+1})")
                             if ret_mm == 0:
                                 break
                             time.sleep(0.5)
@@ -278,14 +270,11 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                     self._busy_with_posture = True
                     try:
                         import time
-                        # 先 Move(0,0,0) 确保停步（StopMove 在非运动模式会返回 -1），再坐下
-                        client.Move(0.0, 0.0, 0.0)
-                        time.sleep(0.2)
+                        # 先停步态，再坐下
                         client.StopMove()
                         time.sleep(0.3)
                         ret_sd = client.StandDown()
                         logger.info(f"[UnitreeB2 Worker] StandDown ret={ret_sd}")
-                        time.sleep(0.8)  # 等待坐下完成后再释放锁
                     finally:
                         self._busy_with_posture = False
 

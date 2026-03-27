@@ -278,9 +278,7 @@ class AIWorker:
                     await frame_queue.put((frame, frame_index))
             except asyncio.IncompleteReadError:
                 logger.warning("AI Worker: FFmpeg 输出中断，准备重启")
-                # 注意：不调用 stop_event.set()！
-                # stop_event 是全局应用停止事件，设置它会终止整个后端（遥测、控制服务等）。
-                # FFmpeg 断流只需退出本次 reader_task，外层 while 循环会自动重连。
+                # stop_event.set()
         
         reader = asyncio.create_task(reader_task())
 

@@ -84,6 +84,9 @@ class UnitreeTelemetryWorker:
                     else:
                         raise  # 全部重试耗尽，抛出异常触发 fallback
 
+            # 创建订阅者（低频话题，50Hz）
+            subscriber = ChannelSubscriber(TOPIC_SPORT_STATE, SportModeState_)
+
             def on_state_message(msg: SportModeState_) -> None:
                 """DDS 回调：接收到新状态时更新缓存。SportModeState_ 是 dataclass，字段直接访问。"""
                 try:

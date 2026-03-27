@@ -76,7 +76,7 @@ class AutoTrackService:
         command_interval_ms: float = 200.0,
         yaw_deadband_px: int = 80,
         forward_area_ratio: float = 0.15,
-        anchor_y_stop_ratio: float = 0.80,
+        anchor_y_stop_ratio: float = 0.20,
         stop_snapshot_enabled: bool = True,
         default_enabled: bool = False,
         yaw_pulse_ms: float = 0.0,
