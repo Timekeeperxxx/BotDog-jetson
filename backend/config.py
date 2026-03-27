@@ -86,13 +86,13 @@ class Settings(BaseSettings):
     # 总开关：修改默认值为 True 以便开发板开箱即用（之前默认为 False，导致只走兼容的纯告警检测流）
     # 区域配置存储在数据库 focus_zones 表，不使用 .env 配置
     AUTO_TRACK_ENABLED: bool = True
-    AUTO_TRACK_COMMAND_INTERVAL_MS: int = 200     # 自动命令发送最小间隔（ms）
+    AUTO_TRACK_COMMAND_INTERVAL_MS: int = 100     # 自动命令发送最小间隔（ms），从200缩短到100提升灵敏度
     AUTO_TRACK_TARGET_HOLD_SECONDS: float = 3.0   # 目标最短保持时间（s）
     AUTO_TRACK_OUT_OF_ZONE_FRAMES: int = 10       # 连续出区帧数触发停止阈值
     AUTO_TRACK_LOST_TIMEOUT_FRAMES: int = 30      # 目标丢失超时帧数
-    AUTO_TRACK_YAW_DEADBAND_PX: int = 80          # 水平偏航死区（像素）
+    AUTO_TRACK_YAW_DEADBAND_PX: int = 40          # 水平偏航死区（像素），从80缩短到40提升转向灵敏度
     AUTO_TRACK_FORWARD_AREA_RATIO: float = 0.15   # 前进触发的面积比阈值
-    AUTO_TRACK_ANCHOR_Y_STOP_RATIO: float = 0.90  # 锚点纵向停止比（0.90 即留出底部 10% 作为停止区）
+    AUTO_TRACK_ANCHOR_Y_STOP_RATIO: float = 0.95  # 锚点纵向停止比（0.90 即留出底部 10% 作为停止区）
     AUTO_TRACK_STOP_SNAPSHOT_ENABLED: bool = True  # 跟踪停止时是否补拍终止证据图
     AUTO_TRACK_YAW_PULSE_MS: float = 0.0           # 脉冲转向时长（ms），0=禁用，推荐80~150ms
 
