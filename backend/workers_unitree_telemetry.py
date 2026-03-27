@@ -63,11 +63,26 @@ class UnitreeTelemetryWorker:
             # 初始化 DDS 频道（不重复初始化，B2Adapter 可能已初始化）
             try:
                 ChannelFactoryInitialize(0, self._network_interface)
-            except Exception:
-                pass  # 已初始化时忽略
+            except Exception as e:
+                logger.debug(f"[UnitreeTelemetry] ChannelFactoryInitialize 跳过（已初始化）: {e}")
 
-            # 创建订阅者（低频话题，50Hz）
-            subscriber = ChannelSubscriber(TOPIC_SPORT_STATE, SportModeState_)
+            # 创建订阅者（含重试逻辑）
+            # UnitreeB2Adapter 在后台线程同时初始化 DDS，两者并发时 Topic 创建会失败。
+            # 通过重试 + 等待解决竞态：B2Adapter 初始化约需 5~10s，最多等 15s。
+            subscriber = None
+            for _retry in range(5):
+                try:
+                    subscriber = ChannelSubscriber(TOPIC_SPORT_STATE, SportModeState_)
+                    break
+                except Exception as e_sub:
+                    if _retry < 4:
+                        logger.warning(
+                            f"[UnitreeTelemetry] DDS subscriber 创建失败（attempt {_retry + 1}/5），"
+                            f"等待 3s 重试（可能与 B2Adapter 初始化竞态）: {e_sub}"
+                        )
+                        await asyncio.sleep(3.0)
+                    else:
+                        raise  # 全部重试耗尽，抛出异常触发 fallback
 
             def on_state_message(msg: SportModeState_) -> None:
                 """DDS 回调：接收到新状态时更新缓存。SportModeState_ 是 dataclass，字段直接访问。"""

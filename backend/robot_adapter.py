@@ -126,7 +126,7 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         left     → Move(0, 0, +vyaw)     # 偏航正值 = 逆时针 = 向左转
         right    → Move(0, 0, -vyaw)
         stop     → StopMove() + BalanceStand()（停止但保持解锁）
-        stand    → RecoveryStand()
+        stand    → StandUp()（从蹲下起立）/ RecoveryStand()（倒地紧急恢复，作兜底）
         sit      → StandDown()
     """
 
@@ -165,7 +165,11 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             from unitree_sdk2py.b2.sport.sport_client import SportClient
             from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
 
-            ChannelFactoryInitialize(0, network_interface)
+            # 初始化 DDS 频道（如已由 main.py pre-init，会抛异常，需单独捕获，不能影响后续流程）
+            try:
+                ChannelFactoryInitialize(0, network_interface)
+            except Exception as _dds_e:
+                logger.debug(f"[UnitreeB2] ChannelFactoryInitialize 跳过（已初始化）: {_dds_e}")
 
             # Step 1: 通过 MotionSwitcher 切换到 AI 运控模式（必须在 SportClient 之前）
             import time
@@ -192,6 +196,16 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             self._sport_client = SportClient()
             self._sport_client.SetTimeout(1.5)  # RPC 超时：1.5s（原 5s，减少界面卡顿）
             self._sport_client.Init()
+
+            # Step 3: 解锁运动模式（必须，否则 Move() 命令被硬件层忽略）
+            # BalanceStand() → 切换到平衡站立（解除阻尼/静止锁定）
+            # SwitchMoveMode(True) → 进入持续响应 Move 的运动模式
+            import time as _time
+            _ret_bs = self._sport_client.BalanceStand()
+            logger.info(f"[UnitreeB2] BalanceStand ret={_ret_bs}")
+            _time.sleep(0.5)
+            _ret_mm = self._sport_client.SwitchMoveMode(True)
+            logger.info(f"[UnitreeB2] SwitchMoveMode(True) ret={_ret_mm}")
 
             self._initialized = True
             logger.info(
@@ -231,27 +245,47 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                 elif cmd == "stop":
                     ret = client.StopMove()
                     logger.debug(f"[UnitreeB2 Worker] StopMove ret={ret}")
+                    # 注意：不调用 BalanceStand()！
+                    # BalanceStand 会将机器人切出 SwitchMoveMode，导致后续 Move 物理失效。
+                    # StopMove 返回 -1 时（非运动模式），改用 Move(0,0,0) 作为备用停止。
+                    if ret != 0:
+                        import time
+                        client.Move(0.0, 0.0, 0.0)
+                        logger.debug(f"[UnitreeB2 Worker] StopMove失败，备用 Move(0,0,0)")
                 elif cmd == "stand":
                     self._busy_with_posture = True
                     try:
                         import time
-                        ret_rs = client.RecoveryStand()
-                        logger.info(f"[UnitreeB2 Worker] RecoveryStand ret={ret_rs}")
-                        # RecoveryStand 后机器狗处于静态平衡模式，需切换到运动模式才能响应 Move()
-                        time.sleep(0.5)
-                        ret_mm = client.SwitchMoveMode(True)
-                        logger.info(f"[UnitreeB2 Worker] SwitchMoveMode(True) ret={ret_mm}")
+                        # 直接用 BalanceStand() 从任意姿态（含蹲下）恢复到站立。
+                        # StandUp() 在 AI 模式下返回 3104（状态机不兼容），会导致后续
+                        # SwitchMoveMode 也失败，故跳过 StandUp，由 BalanceStand 完成起立。
+                        ret_bs = client.BalanceStand()
+                        logger.info(f"[UnitreeB2 Worker] BalanceStand ret={ret_bs}")
+                        time.sleep(2.0)  # 等待起立稳定
+                        # 重试最多5次，等待机器人完全进入平衡站立状态后再切运动模式
+                        ret_mm = -1
+                        for attempt in range(5):
+                            ret_mm = client.SwitchMoveMode(True)
+                            logger.info(f"[UnitreeB2 Worker] SwitchMoveMode(True) ret={ret_mm} (attempt {attempt + 1})")
+                            if ret_mm == 0:
+                                break
+                            time.sleep(0.5)
+                    except Exception as e_stand:
+                        logger.error(f"[UnitreeB2 Worker] stand 失败: {e_stand}")
                     finally:
                         self._busy_with_posture = False
                 elif cmd == "sit":
                     self._busy_with_posture = True
                     try:
                         import time
-                        # 先停步态，再坐下
+                        # 先 Move(0,0,0) 确保停步（StopMove 在非运动模式会返回 -1），再坐下
+                        client.Move(0.0, 0.0, 0.0)
+                        time.sleep(0.2)
                         client.StopMove()
                         time.sleep(0.3)
                         ret_sd = client.StandDown()
                         logger.info(f"[UnitreeB2 Worker] StandDown ret={ret_sd}")
+                        time.sleep(0.8)  # 等待坐下完成后再释放锁
                     finally:
                         self._busy_with_posture = False
 

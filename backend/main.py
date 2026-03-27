@@ -254,9 +254,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             async def _init_b2_adapter_background() -> None:
                 """后台初始化 B2 适配器，完成后热替换到 ControlService。"""
                 try:
-                    real_adapter = await asyncio.to_thread(
-                        create_adapter, "unitree_b2", **_adapter_kwargs
-                    )
+                    real_adapter = create_adapter("unitree_b2", **_adapter_kwargs)
+                    
                     _control_service._adapter = real_adapter
                     logger.info("[B2Init] UnitreeB2Adapter 初始化完成，已热替换控制适配器")
                 except Exception as exc:

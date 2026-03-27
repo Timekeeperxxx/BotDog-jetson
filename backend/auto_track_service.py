@@ -313,7 +313,12 @@ class AutoTrackService:
             self._state = AutoTrackState.IDLE
 
         # 叠层广播（每帧）
-        active_bbox = list(self._active_target.bbox) if self._active_target else None
+        # 注意：只有 FOLLOWING 状态才显示红框；LOST 状态目标已消失，不显示幽灵框
+        active_bbox = (
+            list(self._active_target.bbox)
+            if self._active_target and self._state == AutoTrackState.FOLLOWING
+            else None
+        )
         await self._broadcast_event("TRACK_OVERLAY", {
             "persons": [
                 {
