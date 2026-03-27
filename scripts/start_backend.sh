@@ -12,8 +12,8 @@ if [ ! -f "$VENV/bin/activate" ]; then
   exit 1
 fi
 
-# 确保宇树 B2 控制网卡 IP 已配置（ens37，SDK 通信）
-UNITREE_IFACE="${UNITREE_NETWORK_IFACE:-ens37}"
+# 确保宇树 B2 控制网卡 IP 已配置（如 eth0，SDK 通信）
+UNITREE_IFACE="${UNITREE_NETWORK_IFACE:-eth0}"
 UNITREE_IP="${UNITREE_LOCAL_IP:-192.168.123.222}"
 if ! ip addr show "$UNITREE_IFACE" 2>/dev/null | grep -q "$UNITREE_IP"; then
   echo "[INFO] 为 $UNITREE_IFACE 配置 IP $UNITREE_IP/24..."
