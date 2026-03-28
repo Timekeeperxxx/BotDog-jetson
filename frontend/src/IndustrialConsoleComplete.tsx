@@ -536,8 +536,8 @@ export default function IndustrialConsoleComplete() {
                   inset: 0, width: '100%', height: '100%', zIndex: 1, borderRadius: 0,
                 }}
               />
-              {/* YOLO 检测框 + 决策区域叠层（仅主画面） */}
-              {!isCamSwapped && <TrackOverlay data={trackOverlay} videoRef={videoRef} />}
+              {/* YOLO 检测框 + 决策区域叠层（仅主画面且跟踪启用时） */}
+              {!isCamSwapped && autoTrack.status?.enabled && <TrackOverlay data={trackOverlay} videoRef={videoRef} />}
               {/* CAM2 video - single element */}
               <video
                 ref={videoRef2}
@@ -642,7 +642,7 @@ export default function IndustrialConsoleComplete() {
                   </div>
                   {/* 自动跟踪控制面板 */}
                   <div className="pointer-events-auto">
-                    <AutoTrackPanel {...autoTrack} />
+                    <AutoTrackPanel {...autoTrack} isMissionRunning={isMissionRunning} />
                   </div>
 
                   <div className="bg-black/40 border border-white/10 px-3 py-2 text-[10px] font-mono text-white/80">

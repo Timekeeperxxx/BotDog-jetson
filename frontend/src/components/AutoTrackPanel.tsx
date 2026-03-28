@@ -1,20 +1,15 @@
 /**
- * AutoTrackPanel — 自动跟踪状态面板。
+ * AutoTrackPanel — 自动跟踪状态面板（简化版）。
  *
- * 功能：
- * - 显示当前自动跟踪状态（IDLE/DETECTING/FOLLOWING 等）
- * - 显示控制权拥有者（AUTO_TRACK / WEB_MANUAL / E_STOP 等）
- * - 提供启用/禁用开关
- * - 提供人工接管/释放按钮
- * - 显示当前活跃目标信息和候选数量
- * - 显示已知人员列表，支持取消标记
+ * 逻辑：
+ * - 必须先开始巡检才能启用跟踪
+ * - 无手动接管按钮（接管/恢复由控制输入自动触发）
+ * - 无暂停/恢复按钮（5 秒无操作后自动恢复）
  */
 
 import React from 'react';
 import type { AutoTrackHookState } from '../hooks/useAutoTrack';
 import type { AutoTrackStateValue } from '../types/event';
-
-// ─── 常量 ─────────────────────────────────────────────────────────────────────
 
 const STATE_LABELS: Record<AutoTrackStateValue, string> = {
   DISABLED: '已禁用',
@@ -24,7 +19,7 @@ const STATE_LABELS: Record<AutoTrackStateValue, string> = {
   FOLLOWING: '跟踪中 ●',
   LOST_SHORT: '目标短时丢失',
   OUT_OF_ZONE_PENDING: '目标出区缓冲',
-  MANUAL_OVERRIDE: '人工接管',
+  MANUAL_OVERRIDE: '已暂停（手动接管）',
   PAUSED: '已暂停',
   STOPPED: '已停止',
 };
@@ -38,53 +33,32 @@ const STATE_COLORS: Record<AutoTrackStateValue, string> = {
   LOST_SHORT: '#e88',
   OUT_OF_ZONE_PENDING: '#fa6',
   MANUAL_OVERRIDE: '#c8f',
-  PAUSED: '#999',
+  PAUSED: '#fa6',
   STOPPED: '#666',
 };
 
-const OWNER_LABELS: Record<string, string> = {
-  NONE: '无',
-  AUTO_TRACK: '自动跟踪',
-  WEB_MANUAL: 'Web 手动',
-  REMOTE_CONTROLLER: '遥控器',
-  E_STOP: '紧急停止',
-};
-
-// ─── 组件 ─────────────────────────────────────────────────────────────────────
-
-interface Props extends AutoTrackHookState {}
-
-const CMD_COLORS: Record<string, string> = {
-  forward:  '#2bd',
-  left:     '#fa6',
-  right:    '#f6a',
-  stop:     '#888',
-};
+interface Props extends AutoTrackHookState {
+  isMissionRunning: boolean;
+}
 
 export const AutoTrackPanel: React.FC<Props> = ({
   status,
   knownTargets,
   loading,
   error,
-  trackDecision,
   enable,
   disable,
-  pause,
-  resume,
-  manualOverride,
-  releaseOverride,
   markKnown,
   unmarkKnown,
+  isMissionRunning,
 }) => {
   const state = status?.state ?? 'DISABLED';
   const stateColor = STATE_COLORS[state] ?? '#666';
   const stateLabel = STATE_LABELS[state] ?? state;
   const isEnabled = status?.enabled ?? false;
-  const isManualOverride = state === 'MANUAL_OVERRIDE';
-  const owner = status?.control_arbiter?.owner ?? 'NONE';
-  const canAutoTrack = status?.control_arbiter?.can_auto_track ?? false;
   const target = status?.active_target;
   const candidateCount = status?.candidate_count ?? 0;
+  const isPaused = state === 'PAUSED' || state === 'MANUAL_OVERRIDE';
 
   return (
     <div style={styles.container}>
@@ -95,67 +69,41 @@ export const AutoTrackPanel: React.FC<Props> = ({
         <span style={{ ...styles.stateBadge, background: stateColor + '33', color: stateColor }}>
           {stateLabel}
         </span>
-        {/* 主开关 */}
+        {/* 主开关 — 巡检未开始时禁用 */}
         <button
           style={{
             ...styles.toggleBtn,
             background: isEnabled ? '#2bd3' : '#4445',
             color: isEnabled ? '#2bd' : '#888',
+            opacity: (!isMissionRunning && !isEnabled) ? 0.4 : 1,
           }}
           onClick={() => (isEnabled ? disable() : enable())}
-          disabled={loading}
-          title={isEnabled ? '禁用自动跟踪' : '启用自动跟踪'}
+          disabled={loading || (!isMissionRunning && !isEnabled)}
+          title={!isMissionRunning && !isEnabled ? '请先开始巡检' : isEnabled ? '禁用自动跟踪' : '启用自动跟踪'}
         >
           {isEnabled ? '■ 禁用' : '▷ 启用'}
         </button>
       </div>
+
+      {/* 巡检未开始提示 */}
+      {!isMissionRunning && !isEnabled && (
+        <div style={styles.hintBar}>请先点击「开始巡检」</div>
+      )}
+
+      {/* 接管状态提示（自动 5s 恢复） */}
+      {isEnabled && isPaused && (
+        <div style={styles.pausedBar}>⏸ 手动接管中，5 秒无操作后自动恢复跟踪</div>
+      )}
 
       {/* 错误提示 */}
       {error && (
         <div style={styles.errorBar}>{error}</div>
       )}
 
-      {/* 控制权行 */}
-      <div style={styles.row}>
-        <span style={styles.label}>控制权</span>
-        <span style={{
-          ...styles.value,
-          color: owner === 'AUTO_TRACK' ? '#2bd' : owner === 'E_STOP' ? '#e55' : '#fa6',
-        }}>
-          {OWNER_LABELS[owner] ?? owner}
-        </span>
-        {/* 人工接管 / 释放 */}
-        {isEnabled && (
-          isManualOverride || !canAutoTrack ? (
-            <button style={styles.smallBtn} onClick={releaseOverride} disabled={loading}>
-              释放
-            </button>
-          ) : (
-            <button style={{ ...styles.smallBtn, background: '#fa63' }} onClick={manualOverride} disabled={loading}>
-              接管
-            </button>
-          )
-        )}
-      </div>
-
-      {/* 暂停/恢复 */}
-      {isEnabled && (
-        <div style={styles.row}>
-          <span style={styles.label}>跟踪控制</span>
-          <button style={styles.smallBtn} onClick={pause} disabled={loading || state === 'PAUSED'}>
-            暂停
-          </button>
-          <button style={{ ...styles.smallBtn, marginLeft: 4 }} onClick={resume} disabled={loading || state !== 'PAUSED'}>
-            恢复
-          </button>
-        </div>
-      )}
-
-      {/* 当前目标信息 (精简版) */}
+      {/* 当前目标 */}
       {target ? (
         <div style={styles.targetBox}>
-          <div style={styles.targetTitle}>🎯 活跃目标 #{target.track_id}</div>
-          {/* 标记为已知人员 */}
+          <div style={styles.targetTitle}>🎯 跟踪目标 #{target.track_id}</div>
           <button
             style={{ ...styles.smallBtn, marginTop: 2, background: '#8844aa44', color: '#c8f' }}
             onClick={() => markKnown(target.track_id)}
@@ -195,8 +143,6 @@ export const AutoTrackPanel: React.FC<Props> = ({
     </div>
   );
 };
-
-// ─── 样式 ─────────────────────────────────────────────────────────────────────
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
@@ -242,6 +188,23 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontWeight: 600,
     transition: 'all 0.15s',
+  },
+  hintBar: {
+    background: '#4443',
+    color: '#888',
+    borderRadius: 4,
+    padding: '4px 8px',
+    marginBottom: 6,
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  pausedBar: {
+    background: '#fa62a',
+    color: '#fc8',
+    borderRadius: 4,
+    padding: '4px 8px',
+    marginBottom: 6,
+    fontSize: 11,
   },
   errorBar: {
     background: '#e553',
@@ -289,12 +252,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#2bd',
     marginBottom: 6,
   },
-  targetRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 3,
-  },
   knownList: {
     marginTop: 6,
     display: 'flex',
@@ -323,46 +280,4 @@ const styles: Record<string, React.CSSProperties> = {
     lineHeight: 1,
     fontWeight: 700,
   },
-  debugRow: {
-    display: 'flex',
-    gap: 10,
-    fontSize: 10,
-    color: '#567',
-    marginTop: 6,
-    borderTop: '1px solid #1e3a5a',
-    paddingTop: 4,
-  },
-  decisionBox: {
-    background: 'rgba(43,180,200,0.06)',
-    border: '1px solid rgba(43,189,200,0.25)',
-    borderRadius: 6,
-    padding: '7px 10px',
-    marginTop: 6,
-    marginBottom: 2,
-  },
-  decisionTitle: {
-    fontSize: 10,
-    color: '#7cc',
-    fontWeight: 600,
-    marginBottom: 5,
-  },
-  decisionRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 4,
-  },
-  decisionReason: {
-    fontSize: 10,
-    color: '#78a',
-    lineHeight: 1.4,
-    wordBreak: 'break-word' as const,
-  },
-  cmdBadge: {
-    fontSize: 11,
-    fontWeight: 700,
-    padding: '2px 10px',
-    borderRadius: 10,
-  },
 };
-

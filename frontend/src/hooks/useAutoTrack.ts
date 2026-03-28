@@ -1,15 +1,10 @@
 /**
  * useAutoTrack — 自动跟踪功能 Hook。
  *
- * 职责：
- * - 从 API 轮询和/或接收 WS 推送的 AutoTrackStatus
- * - 提供 enable/disable/pause/resume 控制
- * - 提供 manualOverride / releaseOverride 控制权管理
- * - 提供 markKnown / unmarkKnown 已知人员标记
- *
- * 设计：
- * - 轮询 /api/v1/auto-track/debug（2 秒间隔）作为基础状态获取
- * - WS AUTO_TRACK_STATUS 消息到来时实时更新（由 useEventWebSocket 转发）
+ * 逻辑：
+ * - 轮询 /api/v1/auto-track/debug（2 秒间隔）+ WS 推送实时更新
+ * - 当状态变为 PAUSED / MANUAL_OVERRIDE（手动接管），启动 5 秒倒计时，
+ *   若期间无手动操作则自动调用 resume()
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -17,15 +12,14 @@ import { getApiBaseUrl } from '../config/api';
 import type { AutoTrackStatus, KnownTarget } from '../types/event';
 
 export interface TrackDecision {
-  command: string;       // forward / left / right / stop
+  command: string;
   should_send: boolean;
-  reason: string;        // 人类可读决策原因
-  bbox?: number[];       // [x1,y1,x2,y2]
-  anchor?: number[];     // [cx, cy_bottom]
+  reason: string;
+  bbox?: number[];
+  anchor?: number[];
   track_id?: number;
 }
 
-// API helpers
 const apiPost = (path: string, body?: object) =>
   fetch(`${getApiBaseUrl()}${path}`, {
     method: 'POST',
@@ -35,32 +29,29 @@ const apiPost = (path: string, body?: object) =>
 
 const apiGet = (path: string) => fetch(`${getApiBaseUrl()}${path}`);
 
+// 手动接管后多少毫秒自动恢复跟踪
+const AUTO_RESUME_MS = 5000;
+
 export interface AutoTrackHookState {
   status: AutoTrackStatus | null;
   knownTargets: KnownTarget[];
   loading: boolean;
   error: string | null;
-  trackDecision: TrackDecision | null;  // 最新每帧决策
-  // 控制接口
+  trackDecision: TrackDecision | null;
   enable: () => Promise<void>;
   disable: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
-  // 仲裁接口
   manualOverride: () => Promise<void>;
   releaseOverride: () => Promise<void>;
-  // 已知人员标记
   markKnown: (trackId: number) => Promise<void>;
   unmarkKnown: (trackId: number) => Promise<void>;
   fetchKnownList: () => Promise<void>;
-  // 手动刷新
   refresh: () => void;
 }
 
 export function useAutoTrack(
-  /** 外部推送来的 ws 消息，来自 useEventWebSocket 的 AUTO_TRACK_STATUS payload */
   wsTrackStatus?: AutoTrackStatus | null,
-  /** 外部推送来的 TRACK_DECISION payload（每帧决策） */
   wsTrackDecision?: TrackDecision | null,
 ): AutoTrackHookState {
   const [status, setStatus] = useState<AutoTrackStatus | null>(null);
@@ -69,8 +60,9 @@ export function useAutoTrack(
   const [error, setError] = useState<string | null>(null);
   const [trackDecision, setTrackDecision] = useState<TrackDecision | null>(null);
   const pollTimerRef = useRef<number | null>(null);
+  const autoResumeTimerRef = useRef<number | null>(null);
 
-  // WS 推送时立即更新（最高优先级）
+  // WS 推送时立即更新
   useEffect(() => {
     if (wsTrackStatus) setStatus(wsTrackStatus);
   }, [wsTrackStatus]);
@@ -86,8 +78,7 @@ export function useAutoTrack(
       const data = await res.json() as AutoTrackStatus;
       setStatus(data);
       setError(null);
-    } catch (e) {
-      // 静默失败，不阻塞 UI
+    } catch {
       setError('无法获取跟踪状态');
     }
   }, []);
@@ -103,21 +94,15 @@ export function useAutoTrack(
     }
   }, []);
 
-  // 首次加载 + 2 秒轮询（当 WS 可用时轮询降频也没问题）
   useEffect(() => {
     fetchStatus();
     fetchKnownList();
-    pollTimerRef.current = window.setInterval(() => {
-      fetchStatus();
-    }, 2000);
+    pollTimerRef.current = window.setInterval(fetchStatus, 2000);
     return () => {
-      if (pollTimerRef.current !== null) {
-        clearInterval(pollTimerRef.current);
-      }
+      if (pollTimerRef.current !== null) clearInterval(pollTimerRef.current);
     };
   }, [fetchStatus, fetchKnownList]);
 
-  // 通用控制命令工具
   const sendCommand = useCallback(async (path: string) => {
     setLoading(true);
     try {
@@ -129,19 +114,55 @@ export function useAutoTrack(
         setError(null);
         await fetchStatus();
       }
-    } catch (e) {
+    } catch {
       setError('网络错误');
     } finally {
       setLoading(false);
     }
   }, [fetchStatus]);
 
-  const enable = useCallback(() => sendCommand('/api/v1/auto-track/enable'), [sendCommand]);
+  const enable  = useCallback(() => sendCommand('/api/v1/auto-track/enable'),  [sendCommand]);
   const disable = useCallback(() => sendCommand('/api/v1/auto-track/disable'), [sendCommand]);
-  const pause = useCallback(() => sendCommand('/api/v1/auto-track/pause'), [sendCommand]);
-  const resume = useCallback(() => sendCommand('/api/v1/auto-track/resume'), [sendCommand]);
-  const manualOverride = useCallback(() => sendCommand('/api/v1/auto-track/manual-override'), [sendCommand]);
+  const pause   = useCallback(() => sendCommand('/api/v1/auto-track/pause'),   [sendCommand]);
+  const resume  = useCallback(() => sendCommand('/api/v1/auto-track/resume'),  [sendCommand]);
+  const manualOverride  = useCallback(() => sendCommand('/api/v1/auto-track/manual-override'),  [sendCommand]);
   const releaseOverride = useCallback(() => sendCommand('/api/v1/auto-track/release-override'), [sendCommand]);
+
+  // ── 手动接管后自动恢复 ────────────────────────────────────────────────────
+  // 当状态进入 PAUSED / MANUAL_OVERRIDE（任何手动控制触发），启动 AUTO_RESUME_MS 倒计时。
+  // 若期间再次收到 PAUSED/MANUAL_OVERRIDE（说明用户还在操作），重置计时器。
+  // 倒计时结束后调用 resume()。
+  const prevStateRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const currentState = status?.state ?? null;
+    const isPaused = currentState === 'PAUSED' || currentState === 'MANUAL_OVERRIDE';
+    const wasActive = prevStateRef.current !== 'PAUSED' && prevStateRef.current !== 'MANUAL_OVERRIDE';
+
+    if (isPaused) {
+      // 每次收到 PAUSED 状态都重置计时器（用户仍在操作）
+      if (autoResumeTimerRef.current !== null) clearTimeout(autoResumeTimerRef.current);
+      autoResumeTimerRef.current = window.setTimeout(() => {
+        autoResumeTimerRef.current = null;
+        void resume();
+      }, AUTO_RESUME_MS);
+    } else {
+      // 不再是 PAUSED（已自然恢复或被停止），取消挂起的计时器
+      if (autoResumeTimerRef.current !== null) {
+        clearTimeout(autoResumeTimerRef.current);
+        autoResumeTimerRef.current = null;
+      }
+    }
+
+    prevStateRef.current = currentState;
+  }, [status?.state, resume]);
+
+  // 组件卸载时清理
+  useEffect(() => {
+    return () => {
+      if (autoResumeTimerRef.current !== null) clearTimeout(autoResumeTimerRef.current);
+    };
+  }, []);
 
   const markKnown = useCallback(async (trackId: number) => {
     await sendCommand(`/api/v1/auto-track/mark-known/${trackId}`);
