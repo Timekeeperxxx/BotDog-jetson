@@ -623,6 +623,27 @@ export default function IndustrialConsoleComplete() {
                 )}
               </div>
 
+              {/* 左下角 AI 帧数统计 */}
+              <div className="absolute bottom-20 left-4 z-10 font-mono text-[10px]">
+                <div className="bg-black/50 border-l-2 border-emerald-500/60 px-2.5 py-1.5 flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-white/40 uppercase">AI帧</span>
+                    <span className={`font-black ${aiStatus ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {aiStatus?.frames_processed ?? 0}
+                    </span>
+                    {!aiStatus && <span className="text-red-400/80">无数据</span>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-white/40 uppercase">检出</span>
+                    <span className="font-black text-amber-400">{aiStatus?.detections_count ?? 0}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-white/40 uppercase">跟踪帧</span>
+                    <span className="font-black text-cyan-400">{autoTrack.status?.frames_processed ?? 0}</span>
+                  </div>
+                </div>
+              </div>
+
               {(activeTab === 'console' || activeTab === 'simulate') && !isUiFullscreen && (
                 <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
                   <div className="bg-black/40 border border-white/10 px-3 py-2 text-[10px] font-mono text-white/80">
