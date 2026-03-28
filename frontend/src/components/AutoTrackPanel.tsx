@@ -49,6 +49,7 @@ export const AutoTrackPanel: React.FC<Props> = ({
   enable,
   disable,
   resume,
+  releaseOverride,
   markKnown,
   unmarkKnown,
   isMissionRunning,
@@ -104,7 +105,10 @@ export const AutoTrackPanel: React.FC<Props> = ({
             cursor: 'pointer', marginBottom: 6,
             background: '#fa63', color: '#fc8', border: '1px solid #fa66'
           }}
-          onClick={() => resume()}
+          onClick={() => {
+            void releaseOverride();
+            void resume();
+          }}
           disabled={loading}
           title="手动接管后重新开始自动跟踪"
         >
