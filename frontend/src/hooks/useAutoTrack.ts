@@ -129,25 +129,27 @@ export function useAutoTrack(
   const releaseOverride = useCallback(() => sendCommand('/api/v1/auto-track/release-override'), [sendCommand]);
 
   // ── 手动接管后自动恢复 ────────────────────────────────────────────────────
-  // 当状态进入 PAUSED / MANUAL_OVERRIDE（任何手动控制触发），启动 AUTO_RESUME_MS 倒计时。
-  // 若期间再次收到 PAUSED/MANUAL_OVERRIDE（说明用户还在操作），重置计时器。
-  // 倒计时结束后调用 resume()。
+  // 检测到 PAUSED / MANUAL_OVERRIDE 后启动 AUTO_RESUME_MS 倒计时。
+  // resume() 调用后进入 RESUME_COOLDOWN_MS 冷却，防止后端持续返回 PAUSED 时无限循环。
   const prevStateRef = useRef<string | null>(null);
+  const lastResumeAtRef = useRef<number>(0);
+  const RESUME_COOLDOWN_MS = 10_000; // resume 后 10 秒内不再自动触发
 
   useEffect(() => {
     const currentState = status?.state ?? null;
     const isPaused = currentState === 'PAUSED' || currentState === 'MANUAL_OVERRIDE';
-    const wasActive = prevStateRef.current !== 'PAUSED' && prevStateRef.current !== 'MANUAL_OVERRIDE';
 
     if (isPaused) {
-      // 每次收到 PAUSED 状态都重置计时器（用户仍在操作）
+      // 冷却期内不重新计时
+      if (Date.now() - lastResumeAtRef.current < RESUME_COOLDOWN_MS) return;
+
       if (autoResumeTimerRef.current !== null) clearTimeout(autoResumeTimerRef.current);
       autoResumeTimerRef.current = window.setTimeout(() => {
         autoResumeTimerRef.current = null;
+        lastResumeAtRef.current = Date.now();
         void resume();
       }, AUTO_RESUME_MS);
     } else {
-      // 不再是 PAUSED（已自然恢复或被停止），取消挂起的计时器
       if (autoResumeTimerRef.current !== null) {
         clearTimeout(autoResumeTimerRef.current);
         autoResumeTimerRef.current = null;
@@ -156,6 +158,7 @@ export function useAutoTrack(
 
     prevStateRef.current = currentState;
   }, [status?.state, resume]);
+
 
   // 组件卸载时清理
   useEffect(() => {

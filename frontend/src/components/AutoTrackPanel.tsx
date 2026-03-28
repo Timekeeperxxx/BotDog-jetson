@@ -58,7 +58,6 @@ export const AutoTrackPanel: React.FC<Props> = ({
   const isEnabled = status?.enabled ?? false;
   const target = status?.active_target;
   const candidateCount = status?.candidate_count ?? 0;
-  const isPaused = state === 'PAUSED' || state === 'MANUAL_OVERRIDE';
 
   return (
     <div style={styles.container}>
@@ -90,10 +89,6 @@ export const AutoTrackPanel: React.FC<Props> = ({
         <div style={styles.hintBar}>请先点击「开始巡检」</div>
       )}
 
-      {/* 接管状态提示（自动 5s 恢复） */}
-      {isEnabled && isPaused && (
-        <div style={styles.pausedBar}>⏸ 手动接管中，5 秒无操作后自动恢复跟踪</div>
-      )}
 
       {/* 错误提示 */}
       {error && (
