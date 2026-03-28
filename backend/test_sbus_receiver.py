@@ -319,6 +319,9 @@ class SBUSReceiver:
 
 async def main():
     """主函数。"""
+    import sys
+    port = sys.argv[1] if len(sys.argv) > 1 else "/dev/ttyUSB0"
+    
     # 配置日志
     logger.remove()
     logger.add(
@@ -330,14 +333,14 @@ async def main():
     print("="*60)
     print("SBUS遥控器接收测试程序")
     print("="*60)
-    print("端口配置: COM7 @ 100000 baud (8E2)")
+    print(f"端口配置: {port} @ 100000 baud (8E2)")
     print("协议: SBUS (16通道 + 2数字通道)")
     print("="*60)
     print("\n提示: 按 Ctrl+C 停止程序\n")
 
     # 创建接收器
     receiver = SBUSReceiver(
-        port="COM7",
+        port=port,
         baudrate=100000,
         invert=False,
         log_path="logs/sbus_raw.log",
