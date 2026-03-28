@@ -29,9 +29,6 @@ const apiPost = (path: string, body?: object) =>
 
 const apiGet = (path: string) => fetch(`${getApiBaseUrl()}${path}`);
 
-// 手动接管后多少毫秒自动恢复跟踪
-const AUTO_RESUME_MS = 5000;
-
 export interface AutoTrackHookState {
   status: AutoTrackStatus | null;
   knownTargets: KnownTarget[];
@@ -60,7 +57,6 @@ export function useAutoTrack(
   const [error, setError] = useState<string | null>(null);
   const [trackDecision, setTrackDecision] = useState<TrackDecision | null>(null);
   const pollTimerRef = useRef<number | null>(null);
-  const autoResumeTimerRef = useRef<number | null>(null);
 
   // WS 推送时立即更新
   useEffect(() => {
@@ -127,45 +123,6 @@ export function useAutoTrack(
   const resume  = useCallback(() => sendCommand('/api/v1/auto-track/resume'),  [sendCommand]);
   const manualOverride  = useCallback(() => sendCommand('/api/v1/auto-track/manual-override'),  [sendCommand]);
   const releaseOverride = useCallback(() => sendCommand('/api/v1/auto-track/release-override'), [sendCommand]);
-
-  // ── 手动接管后自动恢复 ────────────────────────────────────────────────────
-  // 检测到 PAUSED / MANUAL_OVERRIDE 后启动 AUTO_RESUME_MS 倒计时。
-  // resume() 调用后进入 RESUME_COOLDOWN_MS 冷却，防止后端持续返回 PAUSED 时无限循环。
-  const prevStateRef = useRef<string | null>(null);
-  const lastResumeAtRef = useRef<number>(0);
-  const RESUME_COOLDOWN_MS = 10_000; // resume 后 10 秒内不再自动触发
-
-  useEffect(() => {
-    const currentState = status?.state ?? null;
-    const isPaused = currentState === 'PAUSED' || currentState === 'MANUAL_OVERRIDE';
-
-    if (isPaused) {
-      // 冷却期内不重新计时
-      if (Date.now() - lastResumeAtRef.current < RESUME_COOLDOWN_MS) return;
-
-      if (autoResumeTimerRef.current !== null) clearTimeout(autoResumeTimerRef.current);
-      autoResumeTimerRef.current = window.setTimeout(() => {
-        autoResumeTimerRef.current = null;
-        lastResumeAtRef.current = Date.now();
-        void resume();
-      }, AUTO_RESUME_MS);
-    } else {
-      if (autoResumeTimerRef.current !== null) {
-        clearTimeout(autoResumeTimerRef.current);
-        autoResumeTimerRef.current = null;
-      }
-    }
-
-    prevStateRef.current = currentState;
-  }, [status?.state, resume]);
-
-
-  // 组件卸载时清理
-  useEffect(() => {
-    return () => {
-      if (autoResumeTimerRef.current !== null) clearTimeout(autoResumeTimerRef.current);
-    };
-  }, []);
 
   const markKnown = useCallback(async (trackId: number) => {
     await sendCommand(`/api/v1/auto-track/mark-known/${trackId}`);
