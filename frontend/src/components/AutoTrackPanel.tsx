@@ -48,6 +48,7 @@ export const AutoTrackPanel: React.FC<Props> = ({
   error,
   enable,
   disable,
+  resume,
   markKnown,
   unmarkKnown,
   isMissionRunning,
@@ -93,6 +94,22 @@ export const AutoTrackPanel: React.FC<Props> = ({
       {/* 错误提示 */}
       {error && (
         <div style={styles.errorBar}>{error}</div>
+      )}
+
+      {/* 恢复按钮 */}
+      {isEnabled && (state === 'PAUSED' || state === 'MANUAL_OVERRIDE') && (
+        <button
+          style={{
+            width: '100%', padding: '6px 0', borderRadius: 4, fontWeight: 600,
+            cursor: 'pointer', marginBottom: 6,
+            background: '#fa63', color: '#fc8', border: '1px solid #fa66'
+          }}
+          onClick={() => resume()}
+          disabled={loading}
+          title="手动接管后重新开始自动跟踪"
+        >
+          ▶ 恢复跟踪
+        </button>
       )}
 
       {/* 当前目标 */}
