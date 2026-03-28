@@ -14,14 +14,24 @@ else
   echo "[INFO] 启动 MediaMTX..."
   "$MTX_BIN" "$MTX_CFG" &
   MTX_PID=$!
-  # 等待 RTSP 端口就绪（最多 5 秒）
+  # 等待 RTSP 端口就绪（最多 5 秒），同时检查进程是否崩溃
+  READY=0
   for i in $(seq 1 10); do
+    if ! kill -0 "$MTX_PID" 2>/dev/null; then
+      echo "[ERROR] MediaMTX 启动失败（请检查 config/mediamtx.yml 配置）"
+      exit 1
+    fi
     if nc -z 127.0.0.1 8554 2>/dev/null; then
       echo "[INFO] MediaMTX 已就绪 (PID=$MTX_PID)"
+      READY=1
       break
     fi
     sleep 0.5
   done
+  if [ "$READY" -eq 0 ]; then
+    echo "[ERROR] MediaMTX 启动超时，端口 8554 未就绪"
+    exit 1
+  fi
 fi
 
 # ── 2. 检查摄像头设备 ───────────────────────────────────────────────────────

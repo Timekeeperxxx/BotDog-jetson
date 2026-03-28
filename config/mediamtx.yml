@@ -17,7 +17,10 @@ webrtcEncryption: false
 
 
 # WHEP paths (explicit for clarity)
-webrtcAdditionalHosts: "127.0.0.1,192.168.144.30,192.168.110.247"
+webrtcAdditionalHosts:
+  - 127.0.0.1
+  - 192.168.144.30
+  - 192.168.110.247
 
 paths:
   cam:
