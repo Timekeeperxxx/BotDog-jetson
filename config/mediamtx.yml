@@ -7,8 +7,8 @@ logLevel: info
 rtsp: yes
 rtspAddress: :8554
 # avoid UDP ports that conflict with backend on 8000
-rtspTransports:
-  - tcp
+# rtspTransports:
+#   - tcp
 
 # WHEP server
 webrtc: yes
@@ -17,10 +17,7 @@ webrtcEncryption: false
 
 
 # WHEP paths (explicit for clarity)
-webrtcAdditionalHosts:
-  - 127.0.0.1
-  - 192.168.144.30
-  - [IP_ADDRESS]
+webrtcAdditionalHosts: "127.0.0.1,192.168.144.30,192.168.110.247"
 
 paths:
   cam:

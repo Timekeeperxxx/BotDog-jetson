@@ -568,10 +568,14 @@ class AutoTrackService:
 
         if target.lost_count >= self._lost_timeout_frames:
             logger.info(
-                f"[AutoTrackService] LOST→STOPPED(超时): track_id={target.track_id} "
-                f"连续丢失 {target.lost_count} 帧"
+                f"[AutoTrackService] LOST→DETECTING(超时): track_id={target.track_id} "
+                f"连续丢失 {target.lost_count} 帧，重新进入检测"
             )
-            await self._stop_with_snapshot(TrackStopReason.TARGET_LOST, frame, task_id)
+            # 不发 stop 指令，不结束任务，直接重置目标并回到检测状态
+            self._active_target = None
+            self._candidates.clear()
+            self._last_command = None
+            self._state = AutoTrackState.DETECTING
         # 否则保持 LOST，下帧继续
 
     # ─── 内部工具 ────────────────────────────────────────────────────────────
