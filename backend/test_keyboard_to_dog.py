@@ -105,7 +105,7 @@ class B2KeyboardController:
                     vyaw, action = -self.VYAW_SPEED, "右旋转"
                 elif ch == ' ':
                     action = "急停"
-                elif ch == 'x':
+                elif ch == 'x' or ch == '\x03':  # \x03 是 Ctrl+C
                     print("\n正在停止并退出...")
                     if self.dog_ready:
                         self.sport_client.StopMove()
