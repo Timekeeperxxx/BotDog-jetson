@@ -16,9 +16,10 @@ def getch():
     return ch
 
 class B2KeyboardController:
-    def __init__(self):
+    def __init__(self, net_iface="eth0"):
         self.sport_client = None
         self.dog_ready = False
+        self.net_iface = net_iface
         
         # 预设的基础速度
         self.VX_SPEED = 0.3   # 前后 m/s
@@ -34,7 +35,7 @@ class B2KeyboardController:
             
             logger.info("-> 正在初始化 B2 SDK...")
             try:
-                ChannelFactoryInitialize(0, "eth0")
+                ChannelFactoryInitialize(0, self.net_iface)
             except Exception as e:
                 logger.debug(f"DDS 可能已初始化: {e}")
                 
@@ -132,5 +133,8 @@ class B2KeyboardController:
                 self.sport_client.StopMove()
 
 if __name__ == "__main__":
-    controller = B2KeyboardController()
+    # 可以通过命令行参数传入网卡名，例如: python test_keyboard_to_dog.py end0
+    iface = sys.argv[1] if len(sys.argv) > 1 else "eth0"
+    print(f"尝试使用网卡: {iface}")
+    controller = B2KeyboardController(net_iface=iface)
     controller.run()
