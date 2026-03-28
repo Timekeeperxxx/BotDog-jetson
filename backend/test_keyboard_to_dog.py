@@ -133,8 +133,15 @@ class B2KeyboardController:
                 self.sport_client.StopMove()
 
 if __name__ == "__main__":
-    # 可以通过命令行参数传入网卡名，例如: python test_keyboard_to_dog.py end0
-    iface = sys.argv[1] if len(sys.argv) > 1 else "eth0"
+    import os
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+        
+    default_iface = os.getenv("UNITREE_NETWORK_IFACE", "enP4p65s0")
+    iface = sys.argv[1] if len(sys.argv) > 1 else default_iface
     print(f"尝试使用网卡: {iface}")
     controller = B2KeyboardController(net_iface=iface)
     controller.run()
