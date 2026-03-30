@@ -288,6 +288,9 @@ class AIWorker:
                     # 使用 timeout 定期唤醒检测 stop_event
                     frame, frame_index = await asyncio.wait_for(frame_queue.get(), timeout=0.1)
                 except asyncio.TimeoutError:
+                    if reader.done():
+                        logger.warning("AI Worker: FFmpeg 进程已中断，跳出读取循环准备重连...")
+                        break
                     continue
 
                 await self._update_current_task_id()
