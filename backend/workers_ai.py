@@ -229,7 +229,7 @@ class AIWorker:
     async def start(self, stop_event: asyncio.Event) -> None:
         logger.info("AI Worker 已启动")
         retry_delay = 1.0
-        max_retry_delay = 10.0
+        max_retry_delay = 3.0   # 缩短最大重试间隔，RTSP 流恢复后最多 3 秒内重连
         reset_threshold = 10.0
 
         while not stop_event.is_set():
@@ -360,14 +360,27 @@ class AIWorker:
         if process.stderr is None:
             return
 
+        buffer = b""
         while True:
             chunk = await process.stderr.read(4096)
             if not chunk:
                 break
-            # just suppress output or print it raw (split by \r or \n)
-            # FFmpeg progress uses \r, which often doesn't contain \n
-            # We can just ignore the detailed progress logging since it's too noisy
-            pass
+            buffer += chunk
+            # 按行输出，FFmpeg 进度用 \r，错误用 \n
+            lines = buffer.replace(b"\r", b"\n").split(b"\n")
+            buffer = lines[-1]  # 保留未完成的行
+            for line in lines[:-1]:
+                text = line.decode("utf-8", errors="replace").strip()
+                if not text:
+                    continue
+                # 过滤掉高频进度行（frame= fps= 开头的），只保留有意义的信息
+                if text.startswith("frame=") or text.startswith("size="):
+                    continue
+                # 错误和警告优先输出
+                if "error" in text.lower() or "failed" in text.lower() or "connection" in text.lower():
+                    logger.warning("[FFmpeg] {}", text)
+                else:
+                    logger.debug("[FFmpeg] {}", text)
 
     async def _update_current_task_id(self) -> None:
         current_time = asyncio.get_event_loop().time()
