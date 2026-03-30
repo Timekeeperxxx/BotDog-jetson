@@ -249,6 +249,17 @@ export default function IndustrialConsoleComplete() {
         const data = await res.json();
         setMissionTaskId(data.task_id);
         addLog(`任务已启动: ${data.task_name}`, 'info', 'MISSION');
+
+        // 【关键】如果是调试台，启动任务后默认关闭狗的跟踪（只给底层推理并在画布画框）
+        // 主界面不受此影响，依然继承后端的默认跟踪状态
+        if (activeTab === 'simulate') {
+          await fetch(getApiUrl('/api/v1/auto-track/state'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: false }),
+          }).catch(err => console.error("调试台下停用跟踪失败", err));
+          addLog('调试台已自动停用机器狗跟踪动作，仅显示检测画面', 'info', 'SYSTEM');
+        }
       }
     } catch (err) {
       addLog(`任务操作失败: ${err}`, 'error', 'MISSION');
@@ -536,8 +547,8 @@ export default function IndustrialConsoleComplete() {
                   inset: 0, width: '100%', height: '100%', zIndex: 1, borderRadius: 0,
                 }}
               />
-              {/* YOLO 检测框 + 决策区域叠层（仅主画面且跟踪启用时） */}
-              {!isCamSwapped && autoTrack.status?.enabled && <TrackOverlay data={trackOverlay} videoRef={videoRef} />}
+              {/* YOLO 检测框 + 决策区域叠层 */}
+              {!isCamSwapped && (autoTrack.status?.enabled || activeTab === 'simulate') && <TrackOverlay data={trackOverlay} videoRef={videoRef} />}
               {/* CAM2 video - single element */}
               <video
                 ref={videoRef2}
