@@ -979,15 +979,6 @@ export default function IndustrialConsoleComplete() {
                         {trackDecision?.command ? trackDecision.command.toUpperCase() : 'NONE'}
                       </span>
                     </div>
-                    {(trackDecision?.vx !== undefined || trackDecision?.vyaw !== undefined) && (
-                      <div className="flex justify-between items-center bg-white/5 p-2 rounded">
-                        <span className="text-[10px] text-white/50 uppercase">连续速度</span>
-                        <div className="text-xs font-mono font-bold text-white flex space-x-2">
-                            <span>V: {trackDecision.vx?.toFixed(2) || '0.00'} m/s</span>
-                            <span>ω: {trackDecision.vyaw?.toFixed(2) || '0.00'} rad/s</span>
-                        </div>
-                      </div>
-                    )}
                     <div className="mt-2 text-[10px] text-white/40 font-mono">
                       (原始命令若为空说明被防抖拦截或不需要移动)
                     </div>

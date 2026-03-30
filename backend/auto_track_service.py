@@ -506,11 +506,7 @@ class AutoTrackService:
                 image_height=self._frame_height,
             )
             if decision.should_send and decision.command:
-                if decision.command == "stop":
-                    await self._send_command_safe("stop")
-                else:
-                    await self._send_velocity_safe(decision.vx, decision.vyaw, decision.command)
-                
+                await self._send_command_safe(decision.command)
                 if self._yaw_pulse_s > 0 and decision.command in ("left", "right"):
                     asyncio.create_task(self._send_stop_after(self._yaw_pulse_s))
 
@@ -519,8 +515,6 @@ class AutoTrackService:
                 "command": decision.command,
                 "should_send": decision.should_send,
                 "reason": decision.reason,
-                "vx": decision.vx,
-                "vyaw": decision.vyaw,
                 "bbox": list(matched.bbox),
                 "anchor": list(target.anchor_point),
                 "track_id": target.track_id,
@@ -730,38 +724,11 @@ class AutoTrackService:
                         await self._broadcast_event("AUTO_TRACK_MANUAL_OVERRIDE", {
                             "control_owner": owner.value,
                         })
-                        return
-
+                    return
             self._last_command = cmd
             await self._control_service.handle_command(cmd)
         except Exception as exc:
             logger.debug(f"[AutoTrackService] 发送命令 {cmd!r} 失败: {exc}")
-
-    async def _send_velocity_safe(self, vx: float, vyaw: float, raw_cmd: str) -> None:
-        """通过 ControlService 发送连续速度控制命令，发前检查权限。"""
-        try:
-            if self._control_arbiter is not None:
-                if not self._control_arbiter.can_auto_track_send():
-                    owner = self._control_arbiter.owner
-                    if self._state not in (
-                        AutoTrackState.PAUSED,
-                        AutoTrackState.DISABLED,
-                        AutoTrackState.STOPPED,
-                    ):
-                        logger.info(
-                            f"[AutoTrackService] 控制权被 {owner.value} 接管，"
-                            f"自动速度已被拦截，进入 PAUSED"
-                        )
-                        self._state = AutoTrackState.PAUSED
-                        await self._broadcast_event("AUTO_TRACK_MANUAL_OVERRIDE", {
-                            "control_owner": owner.value,
-                        })
-                        return
-
-            self._last_command = raw_cmd
-            await self._control_service.handle_velocity(vx, vyaw)
-        except Exception as exc:
-            logger.debug(f"[AutoTrackService] 发送速度 (vx={vx}, vyaw={vyaw}) 失败: {exc}")
 
     async def _take_snapshot_safe(
         self,

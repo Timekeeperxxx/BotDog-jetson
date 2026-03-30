@@ -147,8 +147,6 @@ class ActiveTarget:
 class TrackDecision:
     """跟踪决策结果（FollowDecisionEngine 输出）。"""
 
-    command: Optional[str] = None     # "left"/"right"/"forward"/"stop"/None (兼容旧接口，现可传 "velocity")
+    command: Optional[str] = None     # "left"/"right"/"forward"/"stop"/None
     should_send: bool = False         # 是否实际下发（节流/防抖判断后）
     reason: str = ""
-    vx: float = 0.0                   # 线速度（比例控制使用）
-    vyaw: float = 0.0                 # 角速度（比例控制使用）
