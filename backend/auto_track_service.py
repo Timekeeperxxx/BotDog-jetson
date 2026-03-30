@@ -279,40 +279,35 @@ class AutoTrackService:
                 self._state = AutoTrackState.IDLE
             logger.info("[AutoTrackService] 仲裁器已释放人工覆盖，自动恢复跟踪")
 
-        if not self._enabled or self._paused:
-            return
-
-        if not self._is_mission_active(current_task_id):
-            if self._state not in (AutoTrackState.DISABLED, AutoTrackState.IDLE):
-                self._do_stop(TrackStopReason.MISSION_ENDED, send_stop_command=True)
-                self._state = AutoTrackState.IDLE
-            return
-
         # 过滤只要 person
         persons = [d for d in detections if d.class_name == "person"]
 
         # 为无 track_id 的检测结果分配降级 IOU ID
         persons = self._assign_fallback_ids(persons)
 
-        # ── 状态机分发 ────────────────────────────────────────────────────
-        if self._state == AutoTrackState.IDLE:
-            await self._on_idle(persons, frame, current_task_id)
-
-        elif self._state == AutoTrackState.DETECTING:
-            await self._on_detecting(persons, frame, current_task_id)
-
-        elif self._state == AutoTrackState.FOLLOWING:
-            await self._on_following(persons, frame, current_task_id)
-
-        elif self._state == AutoTrackState.LOST:
-            await self._on_lost(persons, frame, current_task_id)
-
-        elif self._state == AutoTrackState.STOPPED:
-            # 自动回到 IDLE，等待下一个目标
-            self._reset_tracking_state()
-            self._state = AutoTrackState.IDLE
+        # 只有在启用且未暂停的情况下，才执行状态机和跟踪逻辑
+        if self._enabled and not self._paused:
+            if not self._is_mission_active(current_task_id):
+                if self._state not in (AutoTrackState.DISABLED, AutoTrackState.IDLE):
+                    self._do_stop(TrackStopReason.MISSION_ENDED, send_stop_command=True)
+                    self._state = AutoTrackState.IDLE
+            else:
+                # ── 状态机分发 ────────────────────────────────────────────────────
+                if self._state == AutoTrackState.IDLE:
+                    await self._on_idle(persons, frame, current_task_id)
+                elif self._state == AutoTrackState.DETECTING:
+                    await self._on_detecting(persons, frame, current_task_id)
+                elif self._state == AutoTrackState.FOLLOWING:
+                    await self._on_following(persons, frame, current_task_id)
+                elif self._state == AutoTrackState.LOST:
+                    await self._on_lost(persons, frame, current_task_id)
+                elif self._state == AutoTrackState.STOPPED:
+                    # 自动回到 IDLE，等待下一个目标
+                    self._reset_tracking_state()
+                    self._state = AutoTrackState.IDLE
 
         # 叠层广播（每帧）
+        # 即使不开跟踪，你也可以在前端看到绿色/灰色的框
         # 注意：只有 FOLLOWING 状态才显示红框；LOST 状态目标已消失，不显示幽灵框
         active_bbox = (
             list(self._active_target.bbox)
