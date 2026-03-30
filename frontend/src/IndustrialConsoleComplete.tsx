@@ -233,14 +233,18 @@ export default function IndustrialConsoleComplete() {
   const toggleMission = useCallback(async () => {
     try {
       if (missionTaskId) {
+        // 停止巡检 → 立即禁用 AI 跟踪
+        await fetch(getApiUrl('/api/v1/auto-track/disable'), { method: 'POST' })
+          .catch(err => console.error('停用跟踪失败', err));
         await fetch(getApiUrl('/api/v1/session/stop'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ task_id: missionTaskId }),
         });
         setMissionTaskId(null);
-        addLog('任务已停止', 'info', 'MISSION');
+        addLog('任务已停止，AI 跟踪已禁用', 'info', 'MISSION');
       } else {
+        // 开始巡检 → 启用 AI 跟踪
         const res = await fetch(getApiUrl('/api/v1/session/start'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -248,16 +252,9 @@ export default function IndustrialConsoleComplete() {
         });
         const data = await res.json();
         setMissionTaskId(data.task_id);
-        addLog(`任务已启动: ${data.task_name}`, 'info', 'MISSION');
-
-        // 【关键】如果是调试台，启动任务后默认关闭狗的跟踪（只给底层推理并在画布画框）
-        // 主界面不受此影响，依然继承后端的默认跟踪状态
-        if (activeTab === 'simulate') {
-          await fetch(getApiUrl('/api/v1/auto-track/disable'), {
-            method: 'POST',
-          }).catch(err => console.error("调试台下停用跟踪失败", err));
-          addLog('调试台已自动停用机器狗跟踪动作，仅显示检测画面', 'info', 'SYSTEM');
-        }
+        await fetch(getApiUrl('/api/v1/auto-track/enable'), { method: 'POST' })
+          .catch(err => console.error('启用跟踪失败', err));
+        addLog(`任务已启动: ${data.task_name}，AI 跟踪已启用`, 'info', 'MISSION');
       }
     } catch (err) {
       addLog(`任务操作失败: ${err}`, 'error', 'MISSION');
@@ -545,8 +542,8 @@ export default function IndustrialConsoleComplete() {
                   inset: 0, width: '100%', height: '100%', zIndex: 1, borderRadius: 0,
                 }}
               />
-              {/* YOLO 检测框 + 决策区域叠层 */}
-              {!isCamSwapped && (autoTrack.status?.enabled || activeTab === 'simulate') && <TrackOverlay data={trackOverlay} videoRef={videoRef} />}
+              {/* YOLO 检测框 + 决策区域叠层（跟随 AI 跟踪启用状态） */}
+              {!isCamSwapped && autoTrack.status?.enabled && <TrackOverlay data={trackOverlay} videoRef={videoRef} />}
               {/* CAM2 video - single element */}
               <video
                 ref={videoRef2}

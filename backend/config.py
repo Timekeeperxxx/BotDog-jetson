@@ -83,9 +83,8 @@ class Settings(BaseSettings):
     CONTROL_CMD_RATE_LIMIT_MS: int = 50
 
     # 阶段 7：自动跟踪配置
-    # 总开关：修改默认值为 True 以便开发板开箱即用（之前默认为 False，导致只走兼容的纯告警检测流）
-    # 区域配置存储在数据库 focus_zones 表，不使用 .env 配置
-    AUTO_TRACK_ENABLED: bool = True
+    # 默认禁用，由前端点击「开始巡检」时调用 /api/v1/auto-track/enable 启用
+    AUTO_TRACK_ENABLED: bool = False
     AUTO_TRACK_COMMAND_INTERVAL_MS: int = 100     # 自动命令发送最小间隔（ms），从200缩短到100提升灵敏度
     AUTO_TRACK_TARGET_HOLD_SECONDS: float = 3.0   # 目标最短保持时间（s）
     AUTO_TRACK_OUT_OF_ZONE_FRAMES: int = 10       # 连续出区帧数触发停止阈值
