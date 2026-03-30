@@ -253,10 +253,8 @@ export default function IndustrialConsoleComplete() {
         // 【关键】如果是调试台，启动任务后默认关闭狗的跟踪（只给底层推理并在画布画框）
         // 主界面不受此影响，依然继承后端的默认跟踪状态
         if (activeTab === 'simulate') {
-          await fetch(getApiUrl('/api/v1/auto-track/state'), {
+          await fetch(getApiUrl('/api/v1/auto-track/disable'), {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: false }),
           }).catch(err => console.error("调试台下停用跟踪失败", err));
           addLog('调试台已自动停用机器狗跟踪动作，仅显示检测画面', 'info', 'SYSTEM');
         }
