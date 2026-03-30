@@ -244,7 +244,7 @@ export default function IndustrialConsoleComplete() {
         setMissionTaskId(null);
         addLog('任务已停止，AI 跟踪已禁用', 'info', 'MISSION');
       } else {
-        // 开始巡检 → 启用 AI 跟踪
+        // 开始巡检 → 仅启动任务，AI 跟踪保持禁用，等用户手动点击「启用」
         const res = await fetch(getApiUrl('/api/v1/session/start'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -252,9 +252,7 @@ export default function IndustrialConsoleComplete() {
         });
         const data = await res.json();
         setMissionTaskId(data.task_id);
-        await fetch(getApiUrl('/api/v1/auto-track/enable'), { method: 'POST' })
-          .catch(err => console.error('启用跟踪失败', err));
-        addLog(`任务已启动: ${data.task_name}，AI 跟踪已启用`, 'info', 'MISSION');
+        addLog(`任务已启动: ${data.task_name}`, 'info', 'MISSION');
       }
     } catch (err) {
       addLog(`任务操作失败: ${err}`, 'error', 'MISSION');
