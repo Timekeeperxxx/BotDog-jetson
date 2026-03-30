@@ -131,6 +131,51 @@ class ControlService:
             latency_ms=_elapsed_ms(start_ts),
         )
 
+    async def handle_velocity(self, vx: float, vyaw: float) -> ControlAckDTO:
+        """
+        处理连续速度控制命令（由 AutoTrackService 调用）。
+
+        Args:
+            vx: 前进/后退线速度（m/s）
+            vyaw: 自转角速度（rad/s）
+        """
+        start_ts = time.monotonic()
+
+        # 1. 检查 E_STOP 状态
+        if self._is_e_stop_active():
+            logger.warning("[ControlService] E_STOP 激活，拒绝执行 velocity 命令")
+            return ControlAckDTO(
+                ack_cmd="velocity",
+                result=RESULT_REJECTED_E_STOP,
+                latency_ms=_elapsed_ms(start_ts),
+            )
+
+        # 2. 速率限制
+        now = time.monotonic()
+        if (now - self._last_request_time) < self._rate_limit_s:
+            return ControlAckDTO(
+                ack_cmd="velocity",
+                result=RESULT_RATE_LIMITED,
+                latency_ms=_elapsed_ms(start_ts),
+            )
+        self._last_request_time = now
+
+        # 3. 传给适配器
+        try:
+            await self._adapter.send_velocity(vx, vyaw)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception(f"[ControlService] 适配器执行速度失败: {exc}")
+
+        # 4. 重点：更新 Watchdog，只要发速度命令就视为活跃
+        self._watchdog_last_reset = time.monotonic()
+        self._watchdog_active = True
+
+        return ControlAckDTO(
+            ack_cmd="velocity",
+            result=RESULT_ACCEPTED,
+            latency_ms=_elapsed_ms(start_ts),
+        )
+
     async def run_watchdog(self, stop_event: asyncio.Event) -> None:
         """
         Watchdog 后台任务。

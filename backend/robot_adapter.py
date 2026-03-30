@@ -45,6 +45,17 @@ class BaseRobotAdapter(ABC):
         """
         ...
 
+    @abstractmethod
+    async def send_velocity(self, vx: float, vyaw: float) -> None:
+        """
+        向机器狗发送连续速度控制指令（常用于自动跟踪时的平滑比例控制）。
+
+        Args:
+            vx: 前进/后退线速度（m/s），正数为前进，负数为后退
+            vyaw: 自转角速度（rad/s），正数为左转，负数为右转
+        """
+        ...
+
     async def stop(self) -> None:
         """快捷停止方法，供 Watchdog 调用。"""
         await self.send_command("stop")
@@ -67,6 +78,11 @@ class SimulatedRobotAdapter(BaseRobotAdapter):
         """
         logger.info(f"[SimulatedAdapter] 执行命令: {cmd}")
         # 模拟指令执行延迟（约 5ms）
+        await asyncio.sleep(0.005)
+
+    async def send_velocity(self, vx: float, vyaw: float) -> None:
+        """模拟发送速度命令。"""
+        logger.debug(f"[SimulatedAdapter] 发送速度: vx={vx:.3f}, vyaw={vyaw:.3f}")
         await asyncio.sleep(0.005)
 
 
@@ -97,6 +113,10 @@ class MAVLinkRobotAdapter(BaseRobotAdapter):
         # TODO: 实现具体的 MAVLink 命令映射
         # 例如：forward -> SET_POSITION_TARGET_LOCAL_NED with vx=1.0
         logger.warning(f"[MAVLinkAdapter] send_command({cmd}) 尚未实现，已忽略")
+
+    async def send_velocity(self, vx: float, vyaw: float) -> None:
+        """通过 MAVLink 发送连续速度。"""
+        logger.warning(f"[MAVLinkAdapter] send_velocity({vx}, {vyaw}) 尚未实现，已忽略")
 
 
 class UnitreeB2Adapter(BaseRobotAdapter):
@@ -225,14 +245,25 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         import queue
         while True:
             try:
-                cmd = self._cmd_queue.get()
-                if cmd == "_QUIT_":
+                cmd_item = self._cmd_queue.get()
+                if cmd_item == "_QUIT_":
                     break
                 if not self._initialized or self._sport_client is None:
                     continue
 
                 client = self._sport_client
-                logger.debug(f"[UnitreeB2 Worker] 执行命令: {cmd}")
+
+                # 元组表示速度控制: ("velocity", vx, vyaw)
+                if isinstance(cmd_item, tuple) and cmd_item[0] == "velocity":
+                    _, req_vx, req_vyaw = cmd_item
+                    logger.debug(f"[UnitreeB2 Worker] 执行速度: vx={req_vx:.3f}, vy={0.0}, vyaw={req_vyaw:.3f}")
+                    # B2 接口: Move(vx, vy, vyaw)
+                    client.Move(req_vx, 0.0, req_vyaw)
+                    continue
+
+                # 否则为字符串指令格式
+                cmd = cmd_item
+                logger.debug(f"[UnitreeB2 Worker] 执行离散命令: {cmd}")
                 
                 if cmd == "forward":
                     client.Move(self._vx, 0.0, 0.0)
@@ -334,6 +365,29 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                 logger.debug(f"[UnitreeB2] 已放入后台队列: {cmd}")
             except queue.Full:
                 logger.warning(f"[UnitreeB2] 队列已满，丢弃命令: {cmd}")
+
+    async def send_velocity(self, vx: float, vyaw: float) -> None:
+        """
+        通过 SportClient 发送连续速度控制命令。
+        """
+        if not self._initialized or self._sport_client is None:
+            return
+
+        import queue
+        if self._busy_with_posture:
+            return
+
+        try:
+            while not self._cmd_queue.empty():
+                self._cmd_queue.get_nowait()
+        except queue.Empty:
+            pass
+
+        try:
+            # 放入包含速度信息的元组
+            self._cmd_queue.put_nowait(("velocity", float(vx), float(vyaw)))
+        except queue.Full:
+            pass
 
 
 

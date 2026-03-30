@@ -12,9 +12,11 @@ import { getApiBaseUrl } from '../config/api';
 import type { AutoTrackStatus, KnownTarget } from '../types/event';
 
 export interface TrackDecision {
-  command: string;
+  command: 'forward' | 'backward' | 'left' | 'right' | 'stop' | null;
   should_send: boolean;
   reason: string;
+  vx?: number;
+  vyaw?: number;
   bbox?: number[];
   anchor?: number[];
   track_id?: number;

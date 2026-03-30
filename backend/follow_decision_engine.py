@@ -18,6 +18,7 @@ from __future__ import annotations
 import time
 from typing import Optional
 
+from .config import settings
 from .tracking_types import TrackDecision
 
 
@@ -58,6 +59,10 @@ class FollowDecisionEngine:
         self._last_sent_command: Optional[str] = None
         self._pending_command: Optional[str] = None
         self._pending_count: int = 0
+
+        # 取配置速度
+        self._max_vx = settings.UNITREE_B2_VX
+        self._max_vyaw = settings.UNITREE_B2_VYAW
 
     def decide(
         self,
@@ -138,10 +143,53 @@ class FollowDecisionEngine:
                     reason=f"节流等待（间隔={self._command_interval_s * 1000:.0f}ms）",
                 )
 
-        # ── 允许下发 ──────────────────────────────────────────────────────
+        # ── 比例控制计算速度 ──────────────────────────────────────────────
+        vx = 0.0
+        vyaw = 0.0
+
+        target_area = self._forward_area_ratio * frame_area if frame_area > 0 else 0
+        
+        # --- 转向（横向）---
+        # 如果超出死区，根据偏离比例计算转向速度
+        # max_err 是半个屏幕宽
+        max_err_x = image_width / 2.0
+        
+        if abs(err_x) > self._yaw_deadband_px:
+            # 基础比例 (0 ~ 1)
+            yaw_ratio = abs(err_x) / max_err_x
+            # 增加最小力矩，防止偏差太小导致速度太低动不起来
+            yaw_ratio = max(0.2, min(yaw_ratio * 1.5, 1.0))
+            
+            # err_x < 0 表示目标在左边，转速应为正（由适配器约定：正为 left，负为 right）
+            # 所以当 err_x < 0 时，我们要输出正的 vyaw
+            vyaw_sign = 1.0 if err_x < 0 else -1.0
+            vyaw = vyaw_sign * yaw_ratio * self._max_vyaw
+
+        # --- 前进（纵向）---
+        if raw_cmd == "forward":
+            if target_area > 0:
+                # 距离比例 = 当前面积 / 目标面积 (0 ~ 1)
+                distance_ratio = area_ratio / self._forward_area_ratio
+                # 越远（面积越小）速度越快
+                speed_ratio = 1.0 - distance_ratio
+                speed_ratio = max(0.2, min(speed_ratio * 1.5, 1.0))
+                vx = speed_ratio * self._max_vx
+            else:
+                vx = self._max_vx
+
+        # 前端 UI 根据 decision.command (forward/left/right) 来亮灯
+        # 下游发送实际命令时，不再发这个离散字符串，而是依据 decision.vx 和 decision.vyaw 判断
+        
+        # ── 放行下发 ──────────────────────────────────────────────────────
         self._last_sent_time = now
         self._last_sent_command = raw_cmd
-        return TrackDecision(command=raw_cmd, should_send=True, reason=reason)
+        return TrackDecision(
+            command=raw_cmd,
+            should_send=True,
+            reason=reason,
+            vx=vx,
+            vyaw=vyaw
+        )
 
     def reset(self) -> None:
         """重置内部状态（目标切换或跟踪停止时调用）。"""
