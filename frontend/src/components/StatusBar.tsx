@@ -8,7 +8,7 @@
  */
 
 import { useTelemetryStore } from "../stores/telemetryStore";
-import type { ConnectionStatus } from "../hooks/useTelemetryWebSocket";
+type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
 
 interface StatusBarProps {
   connectionStatus: ConnectionStatus;

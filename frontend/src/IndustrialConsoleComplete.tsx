@@ -23,7 +23,6 @@ import {
   LayoutGrid,
   History,
   Bell,
-  Info,
   Terminal,
   ChevronDown,
   ChevronUp,
@@ -34,10 +33,7 @@ import {
   ShieldCheck,
   Settings,
   Search,
-  Download,
   Clock,
-  MapPin,
-  Trash2,
   ArrowLeftRight,
   X,
   MonitorPlay,
@@ -428,11 +424,6 @@ export default function IndustrialConsoleComplete() {
     error: { color: 'text-red-500', text: whepStatus.error || '错误' },
   };
   const currentWhep = whepConfig[whepStatus.status] || whepConfig.disconnected;
-
-  const filteredAlerts = useMemo(() => {
-    if (!searchQuery) return alerts;
-    return alerts.filter(a => a.message.includes(searchQuery) || a.severity.includes(searchQuery));
-  }, [alerts, searchQuery]);
 
   const filteredEvidence = useMemo(() => {
     if (!searchQuery) return evidenceItems;

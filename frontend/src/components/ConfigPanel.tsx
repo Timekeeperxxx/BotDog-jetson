@@ -18,8 +18,6 @@ export function ConfigPanel() {
   const [selectedCategory, setSelectedCategory] = useState<ConfigCategory>('backend');
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState<string | number | boolean>('');
   const [validationError, setValidationError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -85,9 +83,7 @@ export function ConfigPanel() {
       // 重新加载配置
       await configHook.fetchConfigs();
 
-      // 清除编辑状态
-      setEditingKey(null);
-      setEditValue('');
+      // 刷新配置已完成
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : '更新失败');
     }
@@ -120,7 +116,6 @@ export function ConfigPanel() {
    * 渲染配置项的输入控件
    */
   const renderConfigInput = (config: SystemConfig) => {
-    const isEditing = editingKey === config.key;
 
     if (config.value_type === 'bool') {
       return (
@@ -204,7 +199,7 @@ export function ConfigPanel() {
             borderRadius: '6px',
             color: '#e2e8f0',
             fontSize: '13px',
-            disabled: configHook.loading ? { opacity: 0.5 } : undefined,
+            opacity: configHook.loading ? 0.5 : 1,
           }}
         />
         <button
