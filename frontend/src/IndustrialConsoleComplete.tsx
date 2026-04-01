@@ -1157,14 +1157,14 @@ export default function IndustrialConsoleComplete() {
 
       {/* 配置面板模态框 */}
       {showConfigPanel && (
-        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-[1000]">
-          <div className="w-[800px] max-h-[90vh] overflow-auto rounded-lg">
+        <div className="fixed inset-0 bg-black/85 flex items-center justify-center z-[1000] backdrop-blur-sm">
+          <div className="w-[1000px] max-h-[95vh] overflow-auto rounded-none">
             <ConfigPanel />
             <button
               onClick={() => setShowConfigPanel(false)}
-              className="mt-4 w-full py-3 px-6 bg-red-500/20 border border-red-500/40 rounded-md text-red-300 text-xs font-bold cursor-pointer hover:bg-red-500/30 transition-all"
+              className="mt-4 w-full py-4 px-6 bg-red-600/20 border border-red-500/50 rounded-none text-red-400 text-sm font-black cursor-pointer hover:bg-red-600/40 hover:text-white transition-all uppercase tracking-[0.2em] shadow-[0_0_15px_rgba(220,38,38,0.2)]"
             >
-              关闭配置
+              关闭参数矩阵 // CLOSE MATRIX
             </button>
           </div>
         </div>

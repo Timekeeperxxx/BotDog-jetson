@@ -1,6 +1,6 @@
 /**
  * 工业风系统高级参数配置面板
- * 与主控制台保持一致的高端、暗黑工业美学风格。
+ * 完全采用直角、无emoji的硬核工业控制美学设计，对齐主界面风格。
  */
 
 import { useState, useEffect, useRef } from 'react';
@@ -93,11 +93,11 @@ export function ConfigPanel() {
               onChange={(e) => handleSaveConfig(config.key, e.target.checked)}
               disabled={configHook.loading}
             />
-            <div className={`block w-12 h-6 rounded-full transition-all border-2 border-black ${
-              isChecked ? 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]' : 'bg-slate-700'
+            <div className={`block w-12 h-6 transition-all border-2 rounded-none ${
+              isChecked ? 'bg-emerald-500 border-white shadow-[0_0_15px_rgba(16,185,129,0.5)]' : 'bg-zinc-800 border-white/20'
             }`}></div>
-            <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform duration-300 ${
-              isChecked ? 'transform translate-x-6' : ''
+            <div className={`absolute left-0 top-0 bg-white w-6 h-6 rounded-none border-2 border-transparent transition-transform duration-300 ${
+              isChecked ? 'transform translate-x-6 border-black' : 'border-white/20 bg-slate-400'
             }`}></div>
           </div>
           <span className={`text-xs font-black uppercase tracking-widest ${isChecked ? 'text-emerald-400' : 'text-slate-500'}`}>
@@ -113,7 +113,7 @@ export function ConfigPanel() {
           value={config.value as string}
           onChange={(e) => handleSaveConfig(config.key, e.target.value)}
           disabled={configHook.loading}
-          className="w-full bg-black/60 border border-white/20 text-white font-mono text-xs px-4 py-2.5 rounded-md focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all cursor-pointer uppercase tracking-wider"
+          className="w-full bg-black border border-white/20 text-white font-mono text-xs px-4 py-2.5 rounded-none focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all cursor-pointer uppercase tracking-wider appearance-none"
         >
           <option value="zh-CN">简体中文 (ZH-CN)</option>
           <option value="en-US">English (EN-US)</option>
@@ -127,7 +127,7 @@ export function ConfigPanel() {
           value={config.value as string}
           onChange={(e) => handleSaveConfig(config.key, e.target.value)}
           disabled={configHook.loading}
-          className="w-full bg-black/60 border border-white/20 text-white font-mono text-xs px-4 py-2.5 rounded-md focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all cursor-pointer uppercase tracking-wider"
+          className="w-full bg-black border border-white/20 text-white font-mono text-xs px-4 py-2.5 rounded-none focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all cursor-pointer uppercase tracking-wider appearance-none"
         >
           <option value="dark">暗夜工业 (DARK)</option>
           <option value="light">耀眼极光 (LIGHT)</option>
@@ -145,7 +145,7 @@ export function ConfigPanel() {
           step={config.value_type === 'float' ? '0.1' : '1'}
           defaultValue={config.value as string | number}
           disabled={configHook.loading}
-          className="flex-1 bg-black/60 border border-white/20 text-white font-mono text-sm px-4 py-2.5 rounded-md focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all placeholder-white/20"
+          className="flex-1 bg-black border border-white/20 text-white font-mono text-sm px-4 py-2.5 rounded-none focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all placeholder-white/20"
           placeholder={`Enter ${config.value_type}...`}
         />
         <button
@@ -154,7 +154,7 @@ export function ConfigPanel() {
             if (el) handleSaveConfig(config.key, el.value);
           }}
           disabled={configHook.loading}
-          className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-slate-800 disabled:text-slate-500 font-black text-[11px] uppercase tracking-widest rounded-md border border-indigo-400/30 transition-all flex items-center justify-center min-w-[100px] shadow-[0_0_15px_rgba(79,70,229,0.3)] hover:shadow-[0_0_20px_rgba(79,70,229,0.5)]"
+          className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-slate-800 disabled:text-slate-500 font-black text-[11px] uppercase tracking-widest rounded-none border border-indigo-400/30 transition-all flex items-center justify-center min-w-[100px] shadow-[0_0_15px_rgba(79,70,229,0.3)] hover:shadow-[0_0_20px_rgba(79,70,229,0.5)]"
         >
           <Save size={14} className="mr-2" />
           {configHook.loading ? '执行中' : '写入 (OVR)'}
@@ -166,7 +166,7 @@ export function ConfigPanel() {
   const renderConfigItem = (config: SystemConfig) => (
     <div
       key={config.key}
-      className="bg-black/40 border border-white/10 p-5 rounded-xl hover:border-white/30 transition-all duration-300 relative overflow-hidden group mb-4"
+      className="bg-black/80 border border-white/10 p-5 rounded-none hover:border-white/30 transition-all duration-300 relative overflow-hidden group mb-4"
     >
       <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/30 group-hover:bg-indigo-400 transition-colors"></div>
       
@@ -175,11 +175,11 @@ export function ConfigPanel() {
           <div className="flex items-center space-x-3 mb-1.5">
             <span className="text-sm font-mono font-black text-white tracking-wide">{config.key}</span>
             {config.is_hot_reloadable ? (
-              <span className="text-[9px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded uppercase font-black tracking-widest">
+              <span className="text-[9px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-none uppercase font-black tracking-widest">
                 热重载 ACTIVE
               </span>
             ) : (
-              <span className="text-[9px] px-2 py-0.5 bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded uppercase font-black tracking-widest">
+              <span className="text-[9px] px-2 py-0.5 bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded-none uppercase font-black tracking-widest">
                 需硬重启
               </span>
             )}
@@ -192,7 +192,7 @@ export function ConfigPanel() {
         {renderConfigInput(config)}
         <div className="mt-3 flex items-center space-x-2">
           <span className="text-[9px] uppercase tracking-widest text-slate-600 font-black">CURR_STATE //</span>
-          <span className="text-[10px] font-mono text-slate-300 bg-white/5 px-2 py-0.5 rounded border border-white/10">
+          <span className="text-[10px] font-mono text-slate-300 bg-white/5 px-2 py-0.5 rounded-none border border-white/10">
             {getConfigDisplayValue(config)}
           </span>
           <span className="text-[9px] font-mono text-indigo-400/60 uppercase tracking-widest pl-2 border-l border-white/10">
@@ -204,12 +204,12 @@ export function ConfigPanel() {
   );
 
   return (
-    <div className="bg-[#050506] border-2 border-white/10 rounded-xl overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.8)] flex flex-col w-full text-white font-sans ring-1 ring-white/5">
+    <div className="bg-[#050506] border-2 border-white/20 rounded-none overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.8)] flex flex-col w-full text-white font-sans ring-1 ring-white/5">
       {/* 头部标题区 */}
-      <div className="bg-zinc-900 border-b border-white/10 px-6 py-4 flex justify-between items-center relative overflow-hidden">
+      <div className="bg-zinc-900 border-b border-white/20 px-6 py-4 flex justify-between items-center relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/10 to-transparent pointer-events-none"></div>
         <div className="flex items-center space-x-3 relative z-10">
-          <div className="w-8 h-8 rounded border border-indigo-500/50 bg-indigo-500/20 flex items-center justify-center shadow-[0_0_15px_rgba(79,70,229,0.3)]">
+          <div className="w-8 h-8 rounded-none border border-indigo-500/50 bg-indigo-500/20 flex items-center justify-center shadow-[0_0_15px_rgba(79,70,229,0.3)]">
             <Settings size={16} className="text-indigo-300" />
           </div>
           <div>
@@ -220,7 +220,7 @@ export function ConfigPanel() {
         <button
           onClick={() => configHook.fetchConfigs()}
           disabled={configHook.loading}
-          className="flex items-center space-x-2 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md transition-all group z-10"
+          className="flex items-center space-x-2 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/20 rounded-none transition-all group z-10"
         >
           <RefreshCw size={12} className={`text-indigo-400 group-hover:text-indigo-300 ${configHook.loading ? 'animate-spin' : ''}`} />
           <span className="text-[10px] font-black uppercase tracking-widest text-slate-300 group-hover:text-white">SYS_SYNC</span>
@@ -230,19 +230,19 @@ export function ConfigPanel() {
       {/* 动态警报栏 */}
       <div className="px-6 pt-4">
         {configHook.error && (
-          <div className="mb-4 p-3 bg-red-900/30 border-l-4 border-red-500 rounded-r-md flex items-center space-x-3">
+          <div className="mb-4 p-3 bg-red-900/30 border-l-4 border-red-500 rounded-none flex items-center space-x-3">
             <AlertTriangle size={16} className="text-red-400 shrink-0" />
             <span className="text-xs font-mono text-red-200">{configHook.error}</span>
           </div>
         )}
         {successMessage && (
-          <div className="mb-4 p-3 bg-emerald-900/30 border-l-4 border-emerald-500 rounded-r-md flex items-center space-x-3">
+          <div className="mb-4 p-3 bg-emerald-900/30 border-l-4 border-emerald-500 rounded-none flex items-center space-x-3">
             <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
             <span className="text-xs font-mono text-emerald-200">{successMessage}</span>
           </div>
         )}
         {validationError && (
-          <div className="mb-4 p-3 bg-amber-900/30 border-l-4 border-amber-500 rounded-r-md flex items-center space-x-3">
+          <div className="mb-4 p-3 bg-amber-900/30 border-l-4 border-amber-500 rounded-none flex items-center space-x-3">
             <AlertTriangle size={16} className="text-amber-400 shrink-0" />
             <span className="text-xs font-mono text-amber-200">{validationError}</span>
           </div>
@@ -252,7 +252,7 @@ export function ConfigPanel() {
       {/* 本体内容区 */}
       <div className="flex-1 flex flex-col p-6 pt-2">
         {/* 顶部标签页 */}
-        <div className="flex flex-wrap gap-2 border-b border-white/10 pb-5 mb-5">
+        <div className="flex flex-wrap gap-2 border-b border-white/20 pb-5 mb-5">
           {categories.map(cat => {
             const count = allConfigs.filter(c => c.category === cat).length;
             const isActive = selectedCategory === cat;
@@ -260,14 +260,14 @@ export function ConfigPanel() {
               <button
                 key={cat}
                 onClick={() => setSelectedCategory(cat)}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-all border ${
+                className={`flex items-center space-x-2 px-4 py-2 rounded-none transition-all border ${
                   isActive 
-                    ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-300 shadow-[0_0_15px_rgba(79,70,229,0.2)]' 
-                    : 'bg-white/5 border-transparent text-slate-400 hover:bg-white/10 hover:text-white'
+                    ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300 shadow-[0_0_15px_rgba(79,70,229,0.2)]' 
+                    : 'bg-zinc-900 border-white/10 text-slate-400 hover:bg-black hover:border-white/30 hover:text-white'
                 }`}
               >
                 <span className="text-[11px] font-black uppercase tracking-widest">{categoryNames[cat] || cat}</span>
-                <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${isActive ? 'bg-indigo-500/30 text-indigo-200' : 'bg-black/50 text-slate-500'}`}>
+                <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded-none border border-transparent ${isActive ? 'bg-indigo-500/30 text-indigo-200 border-indigo-500/50' : 'bg-black text-slate-500 border-white/10'}`}>
                   {count}
                 </span>
               </button>
@@ -279,7 +279,7 @@ export function ConfigPanel() {
         <div className="max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
           {currentGroupConfigs.length === 0 ? (
             <div className="py-12 flex flex-col items-center justify-center opacity-50">
-              <div className="w-16 h-16 border-2 border-dashed border-white/20 rounded-full flex items-center justify-center mb-4 animate-[spin_10s_linear_infinite]">
+              <div className="w-16 h-16 border-2 border-dashed border-white/20 rounded-none flex items-center justify-center mb-4 animate-[spin_10s_linear_infinite]">
                 <Settings size={24} className="text-white/40" />
               </div>
               <span className="text-xs font-mono uppercase tracking-widest text-slate-400">NO CONFIGS FOUND IN SECTOR</span>
@@ -290,14 +290,14 @@ export function ConfigPanel() {
         </div>
 
         {/* 底部历史记录查阅 */}
-        <div className="mt-6 pt-5 border-t border-white/10">
+        <div className="mt-6 pt-5 border-t border-white/20">
           <button
             onClick={handleShowHistory}
             disabled={showHistory}
-            className={`w-full py-3 rounded-md font-black text-[11px] uppercase tracking-widest transition-all flex items-center justify-center space-x-2 ${
+            className={`w-full py-3 rounded-none font-black text-[11px] uppercase tracking-widest transition-all flex items-center justify-center space-x-2 ${
               showHistory 
-                ? 'bg-zinc-900 border border-white/10 text-slate-500 cursor-not-allowed' 
-                : 'bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 hover:text-white hover:border-slate-500'
+                ? 'bg-zinc-900 border border-white/20 text-slate-500 cursor-not-allowed' 
+                : 'bg-black text-slate-300 border border-white/20 hover:bg-zinc-900 hover:text-white hover:border-white/40'
             }`}
           >
             <History size={14} />
@@ -305,7 +305,7 @@ export function ConfigPanel() {
           </button>
           
           {showHistory && (
-            <div className="mt-4 bg-[#0a0a0c] border border-indigo-500/30 rounded-lg p-5 relative">
+            <div className="mt-4 bg-black border border-indigo-500/50 rounded-none p-5 relative shadow-[0_0_20px_rgba(79,70,229,0.15)]">
               <div className="absolute top-0 right-0 p-3">
                 <button 
                   onClick={() => setShowHistory(false)}
@@ -320,23 +320,23 @@ export function ConfigPanel() {
                 指令下发日志
               </h4>
               {history.length === 0 ? (
-                <div className="py-6 text-center text-[10px] font-mono text-slate-500 uppercase">NO MODIFICATION LOGS FOUND</div>
+                <div className="py-6 text-center text-[10px] font-mono text-slate-500 uppercase border border-white/5 bg-white/5">NO MODIFICATION LOGS FOUND</div>
               ) : (
                 <div className="max-h-[250px] overflow-y-auto space-y-3 pr-2 custom-scrollbar">
                   {history.map(item => (
-                    <div key={item.history_id} className="bg-black/40 border-l-2 border-indigo-500/50 p-3 rounded-r flex flex-col space-y-2">
+                    <div key={item.history_id} className="bg-black border border-white/10 border-l-4 border-l-indigo-500 p-3 rounded-none flex flex-col space-y-2">
                        <div className="flex items-center justify-between">
-                         <span className="font-mono text-xs font-bold text-white">{item.config_key}</span>
+                         <span className="font-mono text-xs font-bold text-white uppercase">{item.config_key}</span>
                          <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">{new Date(item.changed_at).toLocaleString('zh-CN', { hour12: false })}</span>
                        </div>
-                       <div className="flex items-center space-x-3 text-xs font-mono bg-white/5 p-2 rounded border border-white/5">
-                         <span className="text-slate-400 strike-through line-through opacity-70">{item.old_value}</span>
+                       <div className="flex items-center space-x-3 text-xs font-mono bg-zinc-900 p-2 rounded-none border border-white/5">
+                         <span className="text-slate-500 strike-through line-through opacity-70">{item.old_value}</span>
                          <span className="text-indigo-400">→</span>
                          <span className="text-emerald-400 font-bold">{item.new_value}</span>
                        </div>
                        <div className="flex items-center justify-between text-[10px]">
                          <span className="text-slate-500 uppercase tracking-widest">{item.changed_by}</span>
-                         {item.reason && <span className="text-indigo-300/80 italic w-1/2 text-right truncate">"{item.reason}"</span>}
+                         {item.reason && <span className="text-indigo-400/80 italic w-1/2 text-right truncate">"{item.reason}"</span>}
                        </div>
                     </div>
                   ))}
