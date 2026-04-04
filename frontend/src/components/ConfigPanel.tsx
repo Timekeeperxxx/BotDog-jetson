@@ -72,7 +72,7 @@ export function ConfigPanel() {
   };
 
   const getConfigDisplayValue = (config: SystemConfig): string => {
-    if (config.value_type === 'bool') return config.value ? 'ACTIVE' : 'DORMANT';
+    if (config.value_type === 'bool') return config.value ? '已激活' : '已休眠';
     return String(config.value);
   };
 
@@ -100,7 +100,7 @@ export function ConfigPanel() {
             <span className={`text-[10px] font-bold uppercase tracking-[0.2em] ${
               isChecked ? 'text-white' : 'text-zinc-600'
             }`}>
-              {isChecked ? 'ENABLED' : 'DISABLED'}
+              {isChecked ? '已启用' : '已禁用'}
             </span>
           </label>
         </div>
@@ -149,7 +149,7 @@ export function ConfigPanel() {
           defaultValue={config.value as string | number}
           disabled={configHook.loading}
           className="flex-1 bg-zinc-950 border border-zinc-800 px-4 py-2 text-sm text-white font-mono focus:outline-none focus:border-white transition-all placeholder-zinc-700"
-          placeholder={`Enter ${config.value_type}...`}
+          placeholder={`输入 ${config.value_type}...`}
         />
         <button
           onClick={() => {
@@ -159,7 +159,7 @@ export function ConfigPanel() {
           disabled={configHook.loading}
           className="bg-zinc-900 border border-zinc-700 text-white px-5 py-2 text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-white hover:text-black hover:border-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {configHook.loading ? '...' : 'Write'}
+          {configHook.loading ? '写入中' : '写入'}
         </button>
       </div>
     );
@@ -186,7 +186,7 @@ export function ConfigPanel() {
         </div>
 
         {/* 描述 */}
-        <div className="text-[11px] text-zinc-600 ml-3 tracking-tight font-mono">
+        <div className="text-[11px] text-zinc-300 ml-3 tracking-tight font-mono">
           // {config.description}
         </div>
 
@@ -196,9 +196,9 @@ export function ConfigPanel() {
         </div>
 
         {/* 底部元信息 */}
-        <div className="ml-3 flex items-center gap-6 text-[9px] text-zinc-800 uppercase border-t border-zinc-900 pt-3 font-bold tracking-widest">
-          <span>CURR: <span className="text-zinc-500">{getConfigDisplayValue(config)}</span></span>
-          <span>TYPE: {config.value_type.toUpperCase()}</span>
+        <div className="ml-3 flex items-center gap-6 text-[9px] text-zinc-700 uppercase border-t border-zinc-900 pt-3 font-bold tracking-widest">
+          <span>当前值: <span className="text-zinc-500">{getConfigDisplayValue(config)}</span></span>
+          <span>类型: {config.value_type.toUpperCase()}</span>
           <span>REF: 0x{config.key.slice(0, 4).toUpperCase()}</span>
         </div>
       </div>
@@ -211,10 +211,10 @@ export function ConfigPanel() {
       <div className="h-12 border-b border-zinc-800 flex items-center justify-between px-5 bg-black shrink-0">
         <div className="flex items-center gap-5">
           <span className="text-xs tracking-[0.2em] font-bold border-r border-zinc-800 pr-5 uppercase">
-            BOTDOG // CONFIG_MATRIX
+            BOTDOG // 参数矩阵
           </span>
           <span className="text-[10px] text-zinc-600 uppercase tracking-widest hidden md:block">
-            Authorization: GRANTED // LVL_1_ACCESS
+            访问权限: 已授权 // LVL_1
           </span>
         </div>
         <button
@@ -223,7 +223,7 @@ export function ConfigPanel() {
           className="flex items-center gap-2 px-3 h-full text-zinc-500 hover:text-white hover:bg-zinc-900 transition-all border-l border-zinc-800 disabled:opacity-40"
         >
           <RefreshCw size={12} className={configHook.loading ? 'animate-spin' : ''} />
-          <span className="text-[10px] font-bold uppercase tracking-[0.2em]">SYS_SYNC</span>
+          <span className="text-[10px] font-bold uppercase tracking-[0.2em]">刷新同步</span>
         </button>
       </div>
 
@@ -279,11 +279,11 @@ export function ConfigPanel() {
           <div className="flex items-center gap-2">
             <div className="w-0.5 h-4 bg-white" />
             <h2 className="text-xs font-bold tracking-widest uppercase">
-              Configuration // <span className="text-zinc-500">{categoryNames[selectedCategory] || selectedCategory}</span>
+              参数配置 // <span className="text-zinc-500">{categoryNames[selectedCategory] || selectedCategory}</span>
             </h2>
           </div>
           <span className="text-[9px] text-zinc-700 uppercase tracking-widest">
-            {currentGroupConfigs.length} PARAMS LOADED
+            共 {currentGroupConfigs.length} 个参数
           </span>
         </div>
 
@@ -293,7 +293,7 @@ export function ConfigPanel() {
               <div className="w-12 h-12 border border-dashed border-zinc-800 flex items-center justify-center">
                 <span className="text-lg">∅</span>
               </div>
-              <span className="text-[10px] uppercase tracking-widest">NO CONFIGS IN SECTOR</span>
+              <span className="text-[10px] uppercase tracking-widest">当前分类无参数</span>
             </div>
           ) : (
             <div className="grid gap-px bg-zinc-900">
@@ -314,7 +314,7 @@ export function ConfigPanel() {
             }`}
           >
             <History size={12} />
-            <span>查阅指令下发历史 (SYSTEM LOG)</span>
+            <span>查阅指令下发历史</span>
           </button>
 
           {showHistory && (
@@ -322,18 +322,19 @@ export function ConfigPanel() {
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
                   <History size={11} />
-                  <span>MODIFICATION LOG</span>
+                  <span>修改记录</span>
                 </div>
                 <button
                   onClick={() => setShowHistory(false)}
-                  className="text-zinc-600 hover:text-white text-xs transition-colors"
+                  className="text-zinc-600 hover:text-white text-[10px] transition-colors px-1"
+                  title="关闭"
                 >
-                  [CLOSE]
+                  ✕
                 </button>
               </div>
               {history.length === 0 ? (
                 <div className="py-4 text-center text-[9px] font-mono text-zinc-700 uppercase border border-zinc-900">
-                  NO MODIFICATION LOGS FOUND
+                  暂无修改记录
                 </div>
               ) : (
                 <div className="max-h-52 overflow-y-auto space-y-px bg-zinc-900 custom-scrollbar">
