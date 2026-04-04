@@ -27,14 +27,14 @@ export function ConfigPanel() {
   const categories = Array.from(new Set(allConfigs.map(c => c.category)));
 
   const categoryNames: Record<string, string> = {
-    backend: '核心节点',
-    frontend: '界面终端',
-    storage: '黑匣存储',
-    auto_track: '猎眼 AI',
-    camera: '周界感知',
-    hardware: '机电调优',
-    system: '底层基座',
-    navigation: '领航系统',
+    backend: '后端参数',
+    frontend: '界面参数',
+    storage: '存储参数',
+    auto_track: 'AI 参数',
+    camera: '摄像参数',
+    hardware: '硬件参数',
+    system: '系统参数',
+    navigation: '导航参数',
   };
 
   const currentGroupConfigs = allConfigs.filter(c => c.category === selectedCategory);
@@ -180,7 +180,7 @@ export function ConfigPanel() {
                 ? 'border-zinc-800 text-zinc-500'
                 : 'border-white text-white'
             }`}>
-              {config.is_hot_reloadable ? 'HOT_SYNC' : 'REBOOT_REQ'}
+              {config.is_hot_reloadable ? '热重载' : '需重启'}
             </span>
           </div>
         </div>
