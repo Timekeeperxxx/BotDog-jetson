@@ -1,34 +1,31 @@
 /**
- * 工业风系统高级参数配置面板
- * 完全采用直角、无emoji的硬核工业控制美学设计，对齐主界面风格。
+ * BOTDOG // CONFIG_MATRIX
+ * 系统参数配置终端 - 工业硬核风格
  */
 
 import { useState, useEffect, useRef } from 'react';
 import { useConfig } from '../hooks/useConfig';
 import type { SystemConfig } from '../types/config';
-import { Settings, RefreshCw, History, Save, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { RefreshCw, History, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 export function ConfigPanel() {
   const configHook = useConfig();
 
-  // UI 状态
   const [selectedCategory, setSelectedCategory] = useState<string>('backend');
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Refs 防止重渲染丢失输入焦点
   const inputRefs = useRef<Record<string, HTMLInputElement | HTMLSelectElement | null>>({});
 
   useEffect(() => {
     configHook.fetchConfigs();
   }, []);
 
-  // 动态解析模块分类
   const allConfigs = Object.values(configHook.configs);
   const categories = Array.from(new Set(allConfigs.map(c => c.category)));
-  
+
   const categoryNames: Record<string, string> = {
     backend: '核心节点',
     frontend: '界面终端',
@@ -37,7 +34,7 @@ export function ConfigPanel() {
     camera: '周界感知',
     hardware: '机电调优',
     system: '底层基座',
-    navigation: '领航系统'
+    navigation: '领航系统',
   };
 
   const currentGroupConfigs = allConfigs.filter(c => c.category === selectedCategory);
@@ -57,7 +54,6 @@ export function ConfigPanel() {
 
       await configHook.updateConfig(key, value, '前端特权指令覆写');
       setSuccessMessage(`指令执行成功：参数 [${key}] 已重载`);
-
       setTimeout(() => setSuccessMessage(null), 3000);
       await configHook.fetchConfigs();
     } catch (error) {
@@ -76,7 +72,7 @@ export function ConfigPanel() {
   };
 
   const getConfigDisplayValue = (config: SystemConfig): string => {
-    if (config.value_type === 'bool') return config.value ? '已激活 (ACTIVE)' : '已休眠 (DORMANT)';
+    if (config.value_type === 'bool') return config.value ? 'ACTIVE' : 'DORMANT';
     return String(config.value);
   };
 
@@ -84,68 +80,75 @@ export function ConfigPanel() {
     if (config.value_type === 'bool') {
       const isChecked = Boolean(config.value);
       return (
-        <label className="flex items-center space-x-3 cursor-pointer group">
-          <div className="relative">
-            <input
-              type="checkbox"
-              className="sr-only"
-              checked={isChecked}
-              onChange={(e) => handleSaveConfig(config.key, e.target.checked)}
-              disabled={configHook.loading}
-            />
-            <div className={`block w-12 h-6 transition-all border-2 rounded-none ${
-              isChecked ? 'bg-emerald-500 border-white shadow-[0_0_15px_rgba(16,185,129,0.5)]' : 'bg-zinc-800 border-white/20'
-            }`}></div>
-            <div className={`absolute left-0 top-0 bg-white w-6 h-6 rounded-none border-2 border-transparent transition-transform duration-300 ${
-              isChecked ? 'transform translate-x-6 border-black' : 'border-white/20 bg-slate-400'
-            }`}></div>
-          </div>
-          <span className={`text-xs font-black uppercase tracking-widest ${isChecked ? 'text-emerald-400' : 'text-slate-500'}`}>
-            {isChecked ? 'Active' : 'Standby'}
-          </span>
-        </label>
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <div className="relative">
+              <input
+                type="checkbox"
+                className="sr-only"
+                checked={isChecked}
+                onChange={(e) => handleSaveConfig(config.key, e.target.checked)}
+                disabled={configHook.loading}
+              />
+              <div className={`w-10 h-5 border transition-all ${
+                isChecked ? 'bg-white border-white' : 'bg-zinc-900 border-zinc-700'
+              }`} />
+              <div className={`absolute top-0.5 w-4 h-4 transition-transform duration-200 ${
+                isChecked ? 'translate-x-5 bg-black' : 'translate-x-0.5 bg-zinc-600'
+              }`} />
+            </div>
+            <span className={`text-[10px] font-bold uppercase tracking-[0.2em] ${
+              isChecked ? 'text-white' : 'text-zinc-600'
+            }`}>
+              {isChecked ? 'ENABLED' : 'DISABLED'}
+            </span>
+          </label>
+        </div>
       );
     }
 
     if (config.key === 'ui_lang') {
       return (
-        <select
-          value={config.value as string}
-          onChange={(e) => handleSaveConfig(config.key, e.target.value)}
-          disabled={configHook.loading}
-          className="w-full bg-black border border-white/20 text-white font-mono text-xs px-4 py-2.5 rounded-none focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all cursor-pointer uppercase tracking-wider appearance-none"
-        >
-          <option value="zh-CN">简体中文 (ZH-CN)</option>
-          <option value="en-US">English (EN-US)</option>
-        </select>
+        <div className="flex items-center gap-3">
+          <select
+            value={config.value as string}
+            onChange={(e) => handleSaveConfig(config.key, e.target.value)}
+            disabled={configHook.loading}
+            className="flex-1 bg-zinc-950 border border-zinc-800 text-white font-mono text-xs px-4 py-2 focus:outline-none focus:border-white transition-all appearance-none uppercase tracking-wider"
+          >
+            <option value="zh-CN">简体中文 (ZH-CN)</option>
+            <option value="en-US">English (EN-US)</option>
+          </select>
+        </div>
       );
     }
 
     if (config.key === 'ui_theme') {
       return (
-        <select
-          value={config.value as string}
-          onChange={(e) => handleSaveConfig(config.key, e.target.value)}
-          disabled={configHook.loading}
-          className="w-full bg-black border border-white/20 text-white font-mono text-xs px-4 py-2.5 rounded-none focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all cursor-pointer uppercase tracking-wider appearance-none"
-        >
-          <option value="dark">暗夜工业 (DARK)</option>
-          <option value="light">耀眼极光 (LIGHT)</option>
-        </select>
+        <div className="flex items-center gap-3">
+          <select
+            value={config.value as string}
+            onChange={(e) => handleSaveConfig(config.key, e.target.value)}
+            disabled={configHook.loading}
+            className="flex-1 bg-zinc-950 border border-zinc-800 text-white font-mono text-xs px-4 py-2 focus:outline-none focus:border-white transition-all appearance-none uppercase tracking-wider"
+          >
+            <option value="dark">暗夜工业 (DARK)</option>
+            <option value="light">耀眼极光 (LIGHT)</option>
+          </select>
+        </div>
       );
     }
 
-    // Number & String inputs
     const isNum = config.value_type === 'int' || config.value_type === 'float';
     return (
-      <div className="flex space-x-3 w-full">
+      <div className="flex items-center gap-3">
         <input
           ref={(el) => { inputRefs.current[config.key] = el; }}
-          type={isNum ? "number" : "text"}
+          type={isNum ? 'number' : 'text'}
           step={config.value_type === 'float' ? '0.1' : '1'}
           defaultValue={config.value as string | number}
           disabled={configHook.loading}
-          className="flex-1 bg-black border border-white/20 text-white font-mono text-sm px-4 py-2.5 rounded-none focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/50 transition-all placeholder-white/20"
+          className="flex-1 bg-zinc-950 border border-zinc-800 px-4 py-2 text-sm text-white font-mono focus:outline-none focus:border-white transition-all placeholder-zinc-700"
           placeholder={`Enter ${config.value_type}...`}
         />
         <button
@@ -154,190 +157,205 @@ export function ConfigPanel() {
             if (el) handleSaveConfig(config.key, el.value);
           }}
           disabled={configHook.loading}
-          className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white disabled:bg-slate-800 disabled:text-slate-500 font-black text-[11px] uppercase tracking-widest rounded-none border border-indigo-400/30 transition-all flex items-center justify-center min-w-[100px] shadow-[0_0_15px_rgba(79,70,229,0.3)] hover:shadow-[0_0_20px_rgba(79,70,229,0.5)]"
+          className="bg-zinc-900 border border-zinc-700 text-white px-5 py-2 text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-white hover:text-black hover:border-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          <Save size={14} className="mr-2" />
-          {configHook.loading ? '执行中' : '写入 (OVR)'}
+          {configHook.loading ? '...' : 'Write'}
         </button>
       </div>
     );
   };
 
   const renderConfigItem = (config: SystemConfig) => (
-    <div
-      key={config.key}
-      className="bg-black/80 border border-white/10 p-5 rounded-none hover:border-white/30 transition-all duration-300 relative overflow-hidden group mb-4"
-    >
-      <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500/30 group-hover:bg-indigo-400 transition-colors"></div>
-      
-      <div className="flex justify-between items-start mb-4">
-        <div className="flex-1 pl-3">
-          <div className="flex items-center space-x-3 mb-1.5">
-            <span className="text-sm font-mono font-black text-white tracking-wide">{config.key}</span>
-            {config.is_hot_reloadable ? (
-              <span className="text-[9px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 rounded-none uppercase font-black tracking-widest">
-                热重载 ACTIVE
-              </span>
-            ) : (
-              <span className="text-[9px] px-2 py-0.5 bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded-none uppercase font-black tracking-widest">
-                需硬重启
-              </span>
-            )}
+    <div key={config.key} className="bg-black p-5 group hover:bg-zinc-950 transition-colors">
+      <div className="flex flex-col gap-4">
+        {/* 顶部：参数名 + 类型标签 */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-0.5 h-4 bg-zinc-700 group-hover:bg-white transition-colors shrink-0" />
+            <span className="text-sm font-bold tracking-widest uppercase text-zinc-300 group-hover:text-white transition-colors truncate font-mono">
+              {config.key}
+            </span>
+            <span className={`text-[8px] px-2 py-0.5 border font-bold shrink-0 uppercase tracking-wider ${
+              config.is_hot_reloadable
+                ? 'border-zinc-800 text-zinc-500'
+                : 'border-white text-white'
+            }`}>
+              {config.is_hot_reloadable ? 'HOT_SYNC' : 'REBOOT_REQ'}
+            </span>
           </div>
-          <p className="text-xs text-slate-400 font-bold leading-relaxed">{config.description}</p>
         </div>
-      </div>
 
-      <div className="pl-3">
-        {renderConfigInput(config)}
-        <div className="mt-3 flex items-center space-x-2">
-          <span className="text-[9px] uppercase tracking-widest text-slate-600 font-black">CURR_STATE //</span>
-          <span className="text-[10px] font-mono text-slate-300 bg-white/5 px-2 py-0.5 rounded-none border border-white/10">
-            {getConfigDisplayValue(config)}
-          </span>
-          <span className="text-[9px] font-mono text-indigo-400/60 uppercase tracking-widest pl-2 border-l border-white/10">
-            TYPE: {config.value_type}
-          </span>
+        {/* 描述 */}
+        <div className="text-[11px] text-zinc-600 ml-3 tracking-tight font-mono">
+          // {config.description}
+        </div>
+
+        {/* 输入区 */}
+        <div className="ml-3">
+          {renderConfigInput(config)}
+        </div>
+
+        {/* 底部元信息 */}
+        <div className="ml-3 flex items-center gap-6 text-[9px] text-zinc-800 uppercase border-t border-zinc-900 pt-3 font-bold tracking-widest">
+          <span>CURR: <span className="text-zinc-500">{getConfigDisplayValue(config)}</span></span>
+          <span>TYPE: {config.value_type.toUpperCase()}</span>
+          <span>REF: 0x{config.key.slice(0, 4).toUpperCase()}</span>
         </div>
       </div>
     </div>
   );
 
   return (
-    <div className="bg-[#050506] border-2 border-white/20 rounded-none overflow-hidden shadow-[0_20px_60px_rgba(0,0,0,0.8)] flex flex-col w-full text-white font-sans ring-1 ring-white/5">
-      {/* 头部标题区 */}
-      <div className="bg-zinc-900 border-b border-white/20 px-6 py-4 flex justify-between items-center relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/10 to-transparent pointer-events-none"></div>
-        <div className="flex items-center space-x-3 relative z-10">
-          <div className="w-8 h-8 rounded-none border border-indigo-500/50 bg-indigo-500/20 flex items-center justify-center shadow-[0_0_15px_rgba(79,70,229,0.3)]">
-            <Settings size={16} className="text-indigo-300" />
-          </div>
-          <div>
-            <h3 className="text-sm font-black text-white uppercase tracking-[0.2em] leading-tight">BotDog 高级参数矩阵</h3>
-            <p className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">System Configuration Panel // LEVEL-1 ACCESS</p>
-          </div>
+    <div className="bg-black text-white font-mono flex flex-col w-full border border-zinc-800">
+      {/* 顶部标题栏 */}
+      <div className="h-12 border-b border-zinc-800 flex items-center justify-between px-5 bg-black shrink-0">
+        <div className="flex items-center gap-5">
+          <span className="text-xs tracking-[0.2em] font-bold border-r border-zinc-800 pr-5 uppercase">
+            BOTDOG // CONFIG_MATRIX
+          </span>
+          <span className="text-[10px] text-zinc-600 uppercase tracking-widest hidden md:block">
+            Authorization: GRANTED // LVL_1_ACCESS
+          </span>
         </div>
         <button
           onClick={() => configHook.fetchConfigs()}
           disabled={configHook.loading}
-          className="flex items-center space-x-2 px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/20 rounded-none transition-all group z-10"
+          className="flex items-center gap-2 px-3 h-full text-zinc-500 hover:text-white hover:bg-zinc-900 transition-all border-l border-zinc-800 disabled:opacity-40"
         >
-          <RefreshCw size={12} className={`text-indigo-400 group-hover:text-indigo-300 ${configHook.loading ? 'animate-spin' : ''}`} />
-          <span className="text-[10px] font-black uppercase tracking-widest text-slate-300 group-hover:text-white">SYS_SYNC</span>
+          <RefreshCw size={12} className={configHook.loading ? 'animate-spin' : ''} />
+          <span className="text-[10px] font-bold uppercase tracking-[0.2em]">SYS_SYNC</span>
         </button>
       </div>
 
-      {/* 动态警报栏 */}
-      <div className="px-6 pt-4">
-        {configHook.error && (
-          <div className="mb-4 p-3 bg-red-900/30 border-l-4 border-red-500 rounded-none flex items-center space-x-3">
-            <AlertTriangle size={16} className="text-red-400 shrink-0" />
-            <span className="text-xs font-mono text-red-200">{configHook.error}</span>
-          </div>
-        )}
-        {successMessage && (
-          <div className="mb-4 p-3 bg-emerald-900/30 border-l-4 border-emerald-500 rounded-none flex items-center space-x-3">
-            <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
-            <span className="text-xs font-mono text-emerald-200">{successMessage}</span>
-          </div>
-        )}
-        {validationError && (
-          <div className="mb-4 p-3 bg-amber-900/30 border-l-4 border-amber-500 rounded-none flex items-center space-x-3">
-            <AlertTriangle size={16} className="text-amber-400 shrink-0" />
-            <span className="text-xs font-mono text-amber-200">{validationError}</span>
-          </div>
-        )}
+      {/* 告警/成功提示栏 */}
+      {(configHook.error || successMessage || validationError) && (
+        <div className="border-b border-zinc-900 px-5 py-3 space-y-2">
+          {configHook.error && (
+            <div className="flex items-center gap-3 text-red-400 text-[10px] font-mono">
+              <AlertTriangle size={12} className="shrink-0" />
+              <span>{configHook.error}</span>
+            </div>
+          )}
+          {successMessage && (
+            <div className="flex items-center gap-3 text-white text-[10px] font-mono bg-zinc-900 px-3 py-1.5 border border-zinc-700">
+              <CheckCircle2 size={12} className="shrink-0" />
+              <span>{successMessage}</span>
+            </div>
+          )}
+          {validationError && (
+            <div className="flex items-center gap-3 text-zinc-400 text-[10px] font-mono">
+              <AlertTriangle size={12} className="shrink-0" />
+              <span>{validationError}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 分类 Tab */}
+      <div className="flex gap-px bg-zinc-900 border-b border-zinc-800 shrink-0">
+        {categories.map(cat => {
+          const count = allConfigs.filter(c => c.category === cat).length;
+          const isActive = selectedCategory === cat;
+          return (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat)}
+              className={`flex-1 flex items-center justify-between px-3 py-3 text-[10px] transition-all ${
+                isActive
+                  ? 'bg-white text-black font-bold'
+                  : 'bg-black text-zinc-500 hover:text-white hover:bg-zinc-950'
+              }`}
+            >
+              <span className="tracking-widest uppercase">{categoryNames[cat] || cat}</span>
+              <span className="opacity-40 font-mono">[{String(count).padStart(2, '0')}]</span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* 本体内容区 */}
-      <div className="flex-1 flex flex-col p-6 pt-2">
-        {/* 顶部标签页 */}
-        <div className="flex flex-wrap gap-2 border-b border-white/20 pb-5 mb-5">
-          {categories.map(cat => {
-            const count = allConfigs.filter(c => c.category === cat).length;
-            const isActive = selectedCategory === cat;
-            return (
-              <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-none transition-all border ${
-                  isActive 
-                    ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300 shadow-[0_0_15px_rgba(79,70,229,0.2)]' 
-                    : 'bg-zinc-900 border-white/10 text-slate-400 hover:bg-black hover:border-white/30 hover:text-white'
-                }`}
-              >
-                <span className="text-[11px] font-black uppercase tracking-widest">{categoryNames[cat] || cat}</span>
-                <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded-none border border-transparent ${isActive ? 'bg-indigo-500/30 text-indigo-200 border-indigo-500/50' : 'bg-black text-slate-500 border-white/10'}`}>
-                  {count}
-                </span>
-              </button>
-            );
-          })}
+      {/* 参数列表 */}
+      <div className="flex-1 overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between border-b border-zinc-900 px-5 py-3 shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="w-0.5 h-4 bg-white" />
+            <h2 className="text-xs font-bold tracking-widest uppercase">
+              Configuration // <span className="text-zinc-500">{categoryNames[selectedCategory] || selectedCategory}</span>
+            </h2>
+          </div>
+          <span className="text-[9px] text-zinc-700 uppercase tracking-widest">
+            {currentGroupConfigs.length} PARAMS LOADED
+          </span>
         </div>
 
-        {/* 核心配置列表 */}
-        <div className="max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+        <div className="overflow-y-auto custom-scrollbar flex-1">
           {currentGroupConfigs.length === 0 ? (
-            <div className="py-12 flex flex-col items-center justify-center opacity-50">
-              <div className="w-16 h-16 border-2 border-dashed border-white/20 rounded-none flex items-center justify-center mb-4 animate-[spin_10s_linear_infinite]">
-                <Settings size={24} className="text-white/40" />
+            <div className="py-16 flex flex-col items-center justify-center gap-3 text-zinc-700">
+              <div className="w-12 h-12 border border-dashed border-zinc-800 flex items-center justify-center">
+                <span className="text-lg">∅</span>
               </div>
-              <span className="text-xs font-mono uppercase tracking-widest text-slate-400">NO CONFIGS FOUND IN SECTOR</span>
+              <span className="text-[10px] uppercase tracking-widest">NO CONFIGS IN SECTOR</span>
             </div>
           ) : (
-            currentGroupConfigs.map(config => renderConfigItem(config))
+            <div className="grid gap-px bg-zinc-900">
+              {currentGroupConfigs.map(config => renderConfigItem(config))}
+            </div>
           )}
         </div>
 
-        {/* 底部历史记录查阅 */}
-        <div className="mt-6 pt-5 border-t border-white/20">
+        {/* 历史记录区 */}
+        <div className="border-t border-zinc-900 shrink-0">
           <button
             onClick={handleShowHistory}
             disabled={showHistory}
-            className={`w-full py-3 rounded-none font-black text-[11px] uppercase tracking-widest transition-all flex items-center justify-center space-x-2 ${
-              showHistory 
-                ? 'bg-zinc-900 border border-white/20 text-slate-500 cursor-not-allowed' 
-                : 'bg-black text-slate-300 border border-white/20 hover:bg-zinc-900 hover:text-white hover:border-white/40'
+            className={`w-full py-3 flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] transition-all ${
+              showHistory
+                ? 'text-zinc-700 cursor-not-allowed bg-black'
+                : 'text-zinc-500 hover:text-white hover:bg-zinc-950 bg-black'
             }`}
           >
-            <History size={14} />
-            <span>查阅全局指令下发历史 (SYSTEM LOG)</span>
+            <History size={12} />
+            <span>查阅指令下发历史 (SYSTEM LOG)</span>
           </button>
-          
+
           {showHistory && (
-            <div className="mt-4 bg-black border border-indigo-500/50 rounded-none p-5 relative shadow-[0_0_20px_rgba(79,70,229,0.15)]">
-              <div className="absolute top-0 right-0 p-3">
-                <button 
+            <div className="border-t border-zinc-900 bg-black p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
+                  <History size={11} />
+                  <span>MODIFICATION LOG</span>
+                </div>
+                <button
                   onClick={() => setShowHistory(false)}
-                  className="text-slate-500 hover:text-white transition-colors"
+                  className="text-zinc-600 hover:text-white text-xs transition-colors"
                 >
-                  <span className="sr-only">关闭历史</span>
-                  ✕
+                  [CLOSE]
                 </button>
               </div>
-              <h4 className="text-xs font-black text-indigo-400 uppercase tracking-widest mb-4 flex items-center">
-                <History size={14} className="mr-2" />
-                指令下发日志
-              </h4>
               {history.length === 0 ? (
-                <div className="py-6 text-center text-[10px] font-mono text-slate-500 uppercase border border-white/5 bg-white/5">NO MODIFICATION LOGS FOUND</div>
+                <div className="py-4 text-center text-[9px] font-mono text-zinc-700 uppercase border border-zinc-900">
+                  NO MODIFICATION LOGS FOUND
+                </div>
               ) : (
-                <div className="max-h-[250px] overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                <div className="max-h-52 overflow-y-auto space-y-px bg-zinc-900 custom-scrollbar">
                   {history.map(item => (
-                    <div key={item.history_id} className="bg-black border border-white/10 border-l-4 border-l-indigo-500 p-3 rounded-none flex flex-col space-y-2">
-                       <div className="flex items-center justify-between">
-                         <span className="font-mono text-xs font-bold text-white uppercase">{item.config_key}</span>
-                         <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider">{new Date(item.changed_at).toLocaleString('zh-CN', { hour12: false })}</span>
-                       </div>
-                       <div className="flex items-center space-x-3 text-xs font-mono bg-zinc-900 p-2 rounded-none border border-white/5">
-                         <span className="text-slate-500 strike-through line-through opacity-70">{item.old_value}</span>
-                         <span className="text-indigo-400">→</span>
-                         <span className="text-emerald-400 font-bold">{item.new_value}</span>
-                       </div>
-                       <div className="flex items-center justify-between text-[10px]">
-                         <span className="text-slate-500 uppercase tracking-widest">{item.changed_by}</span>
-                         {item.reason && <span className="text-indigo-400/80 italic w-1/2 text-right truncate">"{item.reason}"</span>}
-                       </div>
+                    <div key={item.history_id} className="bg-black px-4 py-3 flex flex-col gap-1.5 group hover:bg-zinc-950">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-xs font-bold text-white uppercase">{item.config_key}</span>
+                        <span className="text-[9px] font-mono text-zinc-600">
+                          {new Date(item.changed_at).toLocaleString('zh-CN', { hour12: false })}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 text-[10px] font-mono bg-zinc-950 px-3 py-1.5">
+                        <span className="text-zinc-600 line-through">{item.old_value}</span>
+                        <span className="text-zinc-500">→</span>
+                        <span className="text-white font-bold">{item.new_value}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-[9px]">
+                        <span className="text-zinc-700 uppercase tracking-widest">{item.changed_by}</span>
+                        {item.reason && (
+                          <span className="text-zinc-600 italic truncate max-w-[60%] text-right">"{item.reason}"</span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
