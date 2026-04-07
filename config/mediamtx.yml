@@ -17,10 +17,9 @@ webrtcEncryption: false
 
 
 # WHEP paths (explicit for clarity)
+# 填写 OrangePi 对外可达的 IP（交换机/HM30 侧），供地面端浏览器 ICE 协商使用
 webrtcAdditionalHosts:
-  - 127.0.0.1
-  - 192.168.144.30
-  - 192.168.110.247
+  - 192.168.144.104
 
 paths:
   cam:

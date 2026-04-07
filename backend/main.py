@@ -406,6 +406,42 @@ def create_app() -> FastAPI:
 
     register_routes(app)
 
+    # ── SPA 前端托管（生产模式）──────────────────────────────────────────────
+    # 将 npm run build 产物挂载到根路径，实现地面端单端口访问（:8000 同时提供页面和 API）
+    _frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+    if _frontend_dist.is_dir():
+        from fastapi.responses import FileResponse as _FileResponse
+
+        # 挂载静态资源（js/css/images 等）
+        _assets_dir = _frontend_dist / "assets"
+        if _assets_dir.is_dir():
+            app.mount(
+                "/assets",
+                StaticFiles(directory=str(_assets_dir)),
+                name="frontend_assets",
+            )
+
+        # SPA fallback：所有非 /api、/ws 的路径都返回 index.html
+        # 注意：必须在 register_routes() 之后注册，避免覆盖 API 路由
+        @app.get("/{full_path:path}")
+        async def serve_spa(full_path: str):
+            # 根目录直接返回 index.html
+            if not full_path:
+                return _FileResponse(str(_frontend_dist / "index.html"))
+            # 尝试精确匹配文件（favicon.ico 等根目录静态文件）
+            _file = _frontend_dist / full_path
+            if _file.is_file():
+                return _FileResponse(str(_file))
+            # SPA fallback：React Router 路由
+            return _FileResponse(str(_frontend_dist / "index.html"))
+
+        logger.info(f"前端 SPA 已挂载: {_frontend_dist}")
+    else:
+        logger.warning(
+            f"未找到前端构建产物: {_frontend_dist}，仅提供 API 服务。"
+            "运行 cd frontend && npm run build 后重启后端即可启用。"
+        )
+
     return app
 
 
