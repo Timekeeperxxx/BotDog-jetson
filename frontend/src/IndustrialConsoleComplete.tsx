@@ -8,12 +8,14 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useBotDogWebSocket } from './hooks/useBotDogWebSocket';
 import { useWhepVideo } from './hooks/useWhepVideo';
 import { ConfigPanel } from './components/ConfigPanel';
+import { AdminPanel } from './components/AdminPanel';
 import { ControlPad } from './components/ControlPad';
 import { useEventWebSocket } from './hooks/useEventWebSocket';
 import { useAutoTrack } from './hooks/useAutoTrack';
 import { AutoTrackPanel } from './components/AutoTrackPanel';
 import { TrackOverlay } from './components/TrackOverlay';
 import { getApiUrl } from './config/api';
+import type { VideoSource } from './types/admin';
 import {
   Activity,
   Battery,
@@ -37,6 +39,7 @@ import {
   ArrowLeftRight,
   X,
   MonitorPlay,
+  Database,
 } from 'lucide-react';
 
 interface EvidenceItem {
@@ -195,14 +198,33 @@ export default function IndustrialConsoleComplete() {
   } = useWhepVideo();
   const connectWhepRef = useRef(connectWhep);
 
+  // ── 动态摄像头 URL ──────────────────────────────────────────
+  const [cam2WhepUrl, setCam2WhepUrl] = useState<string | undefined>(undefined);
+
+  // 启动时从后端获取活跃视频源，动态设置 CAM2 的 WHEP URL
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(getApiUrl('/api/v1/video-sources/active'));
+        if (!res.ok) return;
+        const data = await res.json();
+        const sources: VideoSource[] = data.sources || [];
+        // CAM2 = 非主画面的第一个视频源
+        const secondary = sources.find(s => !s.is_primary);
+        if (secondary?.whep_url) setCam2WhepUrl(secondary.whep_url);
+      } catch (err) {
+        console.error('获取视频源配置失败:', err);
+      }
+    })();
+  }, []);
+
   // 第二路摄像头 (PiP)
-  const CAM2_WHEP_URL = 'http://127.0.0.1:8889/cam2/whep';
   const {
     status: whepStatus2,
     videoRef: videoRef2,
     connect: connectWhep2,
     disconnect: disconnectWhep2,
-  } = useWhepVideo(CAM2_WHEP_URL);
+  } = useWhepVideo(cam2WhepUrl);
   // isCamSwapped: false = cam1主画面+cam2 PiP, true = cam2主画面+cam1 PiP
   const [isCamSwapped, setIsCamSwapped] = useState(false);
   // PiP 窗口状态
@@ -212,7 +234,7 @@ export default function IndustrialConsoleComplete() {
   const [isUiFullscreen, setIsUiFullscreen] = useState(false);
   const [showConfigPanel, setShowConfigPanel] = useState(false);
   const [missionTaskId, setMissionTaskId] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<'console' | 'history' | 'simulate'>('console');
+  const [activeTab, setActiveTab] = useState<'console' | 'history' | 'simulate' | 'admin'>('console');
   const [isLogExpanded, setIsLogExpanded] = useState(false);
   const [isAiStatsExpanded, setIsAiStatsExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -467,6 +489,7 @@ export default function IndustrialConsoleComplete() {
             <SidebarBtn icon={<LayoutGrid size={20} />} active={activeTab === 'console'} onClick={() => setActiveTab('console')} label="控制台" />
             <SidebarBtn icon={<History size={20} />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="档案库" />
             <SidebarBtn icon={<MonitorPlay size={20} />} active={activeTab === 'simulate'} onClick={() => setActiveTab('simulate')} label="调试台" />
+            <SidebarBtn icon={<Database size={20} />} active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} label="后台管理" />
           </div>
           <div className="mt-auto space-y-5 pt-4 border-t border-white/10">
             <SidebarBtn icon={<Settings size={20} />} active={false} onClick={() => setShowConfigPanel(true)} label="设置" />
@@ -1030,6 +1053,11 @@ export default function IndustrialConsoleComplete() {
                 </div>
               </aside>
             )}
+          </div>
+        ) : activeTab === 'admin' ? (
+          /* 后台管理页面 */
+          <div className="flex-1 flex flex-col bg-black overflow-hidden">
+            <AdminPanel />
           </div>
         ) : (
           /* 档案库页面 */

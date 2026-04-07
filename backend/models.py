@@ -283,3 +283,129 @@ class SessionKnownTarget(Base):
         nullable=False,
         default=utc_now_iso,
     )
+
+
+class VideoSource(Base):
+    """
+    视频源配置。
+
+    存储摄像头的视频流地址（WHEP / RTSP），支持运行时动态管理。
+    前端通过 WHEP 地址播放视频流，AI Worker 通过 RTSP 地址拉取推理帧。
+
+    字段说明：
+    - name: 唯一标识符，如 "cam1"、"cam2"
+    - label: 人类可读标签，如 "USB 主摄像头"、"图传摄像头"
+    - source_type: 视频源类型（whep / rtsp / usb）
+    - whep_url: WHEP 播放地址，供前端 WebRTC 播放器使用
+    - rtsp_url: RTSP 拉流地址，供 AI 推理模块使用
+    - is_primary: 是否为主画面（仅允许一个）
+    - is_ai_source: 是否为 AI 推理数据源（仅允许一个）
+    """
+
+    __tablename__ = "video_sources"
+
+    source_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(
+        String(50), unique=True, nullable=False,
+        comment="唯一标识符，如 cam1、cam2",
+    )
+    label: Mapped[str] = mapped_column(
+        String(100), nullable=False,
+        comment="人类可读标签，如 USB 主摄像头",
+    )
+    source_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="whep",
+        comment="视频源类型：whep / rtsp / usb",
+    )
+    whep_url: Mapped[str | None] = mapped_column(
+        String(500), nullable=True,
+        comment="WHEP 播放地址（前端用）",
+    )
+    rtsp_url: Mapped[str | None] = mapped_column(
+        String(500), nullable=True,
+        comment="RTSP 拉流地址（AI 推理用）",
+    )
+    enabled: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1,
+        comment="是否启用：0=禁用，1=启用",
+    )
+    is_primary: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0,
+        comment="是否为主画面：0=否，1=是",
+    )
+    is_ai_source: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0,
+        comment="是否为 AI 推理源：0=否，1=是",
+    )
+    sort_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0,
+        comment="显示排序序号",
+    )
+    created_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+
+    __table_args__ = (
+        CheckConstraint("enabled IN (0, 1)", name="ck_video_sources_enabled"),
+        CheckConstraint("is_primary IN (0, 1)", name="ck_video_sources_is_primary"),
+        CheckConstraint("is_ai_source IN (0, 1)", name="ck_video_sources_is_ai_source"),
+        CheckConstraint(
+            "source_type IN ('whep', 'rtsp', 'usb')",
+            name="ck_video_sources_source_type",
+        ),
+    )
+
+
+class NetworkInterface(Base):
+    """
+    网口配置。
+
+    存储系统网络接口的名称、IP 地址等元信息，用于后端服务
+    在连接机器人或摄像头时选择正确的网卡。
+
+    注意：仅存储配置信息，不执行操作系统级别的网口启停命令。
+
+    字段说明：
+    - name: 唯一标识符，如 "robot_link"
+    - label: 人类可读标签，如 "连接宇树 B2 的网口"
+    - iface_name: 系统网卡名，如 "enP3p49s0"、"eth0"
+    - ip_address: 静态 IP 地址
+    - purpose: 用途分类（robot / camera / other）
+    """
+
+    __tablename__ = "network_interfaces"
+
+    iface_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(
+        String(50), unique=True, nullable=False,
+        comment="唯一标识符，如 robot_link",
+    )
+    label: Mapped[str] = mapped_column(
+        String(100), nullable=False,
+        comment="人类可读标签，如 连接宇树 B2 的网口",
+    )
+    iface_name: Mapped[str] = mapped_column(
+        String(50), nullable=False,
+        comment="系统网卡名，如 enP3p49s0、eth0",
+    )
+    ip_address: Mapped[str | None] = mapped_column(
+        String(50), nullable=True,
+        comment="静态 IP 地址",
+    )
+    purpose: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="other",
+        comment="用途分类：robot / camera / other",
+    )
+    enabled: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1,
+        comment="是否启用：0=禁用，1=启用",
+    )
+    created_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+
+    __table_args__ = (
+        CheckConstraint("enabled IN (0, 1)", name="ck_network_interfaces_enabled"),
+        CheckConstraint(
+            "purpose IN ('robot', 'camera', 'other')",
+            name="ck_network_interfaces_purpose",
+        ),
+    )

@@ -104,6 +104,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         db_configs = await config_service.get_all_configs(_session)
     logger.info("系统配置服务已初始化加载")
 
+    # 初始化视频源和网口默认数据
+    from .services_video_sources import get_video_source_service, get_network_interface_service
+    _vs_service = get_video_source_service()
+    _ni_service = get_network_interface_service()
+    async with get_session_factory()() as _vs_session:
+        await _vs_service.initialize_defaults(_vs_session)
+        await _ni_service.initialize_defaults(_vs_session)
+    logger.info("视频源 & 网口配置服务已初始化")
+
     # 清理上次进程遗留的僵尸任务（防止 AI Worker 误认为任务仍在运行）
     async with get_session_factory()() as _startup_session:
         _stale_count = await cleanup_stale_tasks(_startup_session)
@@ -1210,6 +1219,165 @@ def register_routes(app: FastAPI) -> None:
             "total": policy.known_count,
         }
 
+    # ── 视频源管理 API ─────────────────────────────────────────────────────────
+
+    from pydantic import BaseModel as _PydanticBaseVS
+
+    class VideoSourceRequest(_PydanticBaseVS):
+        """视频源请求体。"""
+        name: str
+        label: str
+        source_type: str = "whep"
+        whep_url: Optional[str] = None
+        rtsp_url: Optional[str] = None
+        enabled: bool = True
+        is_primary: bool = False
+        is_ai_source: bool = False
+        sort_order: int = 0
+
+    class VideoSourceResponse(_PydanticBaseVS):
+        """视频源响应体。"""
+        source_id: int
+        name: str
+        label: str
+        source_type: str
+        whep_url: Optional[str] = None
+        rtsp_url: Optional[str] = None
+        enabled: bool
+        is_primary: bool
+        is_ai_source: bool
+        sort_order: int
+        created_at: str
+        updated_at: str
+
+    @app.get("/api/v1/video-sources")
+    async def list_video_sources(db=Depends(get_db)) -> dict:
+        """获取所有视频源列表。"""
+        from .services_video_sources import get_video_source_service
+        svc = get_video_source_service()
+        sources = await svc.list_all(db)
+        return {"sources": sources, "total": len(sources)}
+
+    @app.get("/api/v1/video-sources/active")
+    async def list_active_video_sources(db=Depends(get_db)) -> dict:
+        """获取所有已启用的视频源（供前端视频播放器消费）。"""
+        from .services_video_sources import get_video_source_service
+        svc = get_video_source_service()
+        sources = await svc.list_active(db)
+        return {"sources": sources, "total": len(sources)}
+
+    @app.post("/api/v1/video-sources", status_code=201)
+    async def create_video_source(
+        body: VideoSourceRequest,
+        db=Depends(get_db),
+    ) -> dict:
+        """新增视频源。"""
+        from .services_video_sources import get_video_source_service
+        svc = get_video_source_service()
+        try:
+            source = await svc.create(db, body.model_dump())
+            return {"success": True, "source": source}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.put("/api/v1/video-sources/{source_id}")
+    async def update_video_source(
+        source_id: int,
+        body: VideoSourceRequest,
+        db=Depends(get_db),
+    ) -> dict:
+        """更新视频源。"""
+        from .services_video_sources import get_video_source_service
+        svc = get_video_source_service()
+        result = await svc.update(db, source_id, body.model_dump())
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"视频源 id={source_id} 不存在")
+        return {"success": True, "source": result}
+
+    @app.delete("/api/v1/video-sources/{source_id}")
+    async def delete_video_source(
+        source_id: int,
+        db=Depends(get_db),
+    ) -> dict:
+        """删除视频源。"""
+        from .services_video_sources import get_video_source_service
+        svc = get_video_source_service()
+        deleted = await svc.delete(db, source_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"视频源 id={source_id} 不存在")
+        return {"success": True, "deleted_source_id": source_id}
+
+    # ── 网口管理 API ───────────────────────────────────────────────────────────
+
+    class NetworkInterfaceRequest(_PydanticBaseVS):
+        """网口配置请求体。"""
+        name: str
+        label: str
+        iface_name: str
+        ip_address: Optional[str] = None
+        purpose: str = "other"
+        enabled: bool = True
+
+    class NetworkInterfaceResponse(_PydanticBaseVS):
+        """网口配置响应体。"""
+        iface_id: int
+        name: str
+        label: str
+        iface_name: str
+        ip_address: Optional[str] = None
+        purpose: str
+        enabled: bool
+        created_at: str
+        updated_at: str
+
+    @app.get("/api/v1/network-interfaces")
+    async def list_network_interfaces(db=Depends(get_db)) -> dict:
+        """获取所有网口配置。"""
+        from .services_video_sources import get_network_interface_service
+        svc = get_network_interface_service()
+        ifaces = await svc.list_all(db)
+        return {"interfaces": ifaces, "total": len(ifaces)}
+
+    @app.post("/api/v1/network-interfaces", status_code=201)
+    async def create_network_interface(
+        body: NetworkInterfaceRequest,
+        db=Depends(get_db),
+    ) -> dict:
+        """新增网口配置。"""
+        from .services_video_sources import get_network_interface_service
+        svc = get_network_interface_service()
+        try:
+            iface = await svc.create(db, body.model_dump())
+            return {"success": True, "interface": iface}
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @app.put("/api/v1/network-interfaces/{iface_id}")
+    async def update_network_interface(
+        iface_id: int,
+        body: NetworkInterfaceRequest,
+        db=Depends(get_db),
+    ) -> dict:
+        """更新网口配置。"""
+        from .services_video_sources import get_network_interface_service
+        svc = get_network_interface_service()
+        result = await svc.update(db, iface_id, body.model_dump())
+        if result is None:
+            raise HTTPException(status_code=404, detail=f"网口 id={iface_id} 不存在")
+        return {"success": True, "interface": result}
+
+    @app.delete("/api/v1/network-interfaces/{iface_id}")
+    async def delete_network_interface(
+        iface_id: int,
+        db=Depends(get_db),
+    ) -> dict:
+        """删除网口配置。"""
+        from .services_video_sources import get_network_interface_service
+        svc = get_network_interface_service()
+        deleted = await svc.delete(db, iface_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"网口 id={iface_id} 不存在")
+        return {"success": True, "deleted_iface_id": iface_id}
 
 
 
