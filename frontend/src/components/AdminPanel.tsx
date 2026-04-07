@@ -6,16 +6,31 @@
 import { useState, useEffect } from 'react';
 import { useVideoSources } from '../hooks/useVideoSources';
 import type { VideoSource, VideoSourceRequest, NetworkInterface, NetworkInterfaceRequest } from '../types/admin';
+import { getApiUrl } from '../config/api';
 import {
   RefreshCw, Plus, Trash2, Edit3, CheckCircle2, AlertTriangle, X,
-  Video, Wifi, Save, Camera, Network, Star, Cpu,
+  Video, Wifi, Save, Camera, Network, Star, Cpu, Info, Lock,
 } from 'lucide-react';
 
 interface AdminPanelProps {
   onClose?: () => void;
 }
 
-type AdminTab = 'video' | 'network';
+type AdminTab = 'video' | 'network' | 'sysinfo';
+
+interface SysInfoItem {
+  key: string;
+  label: string;
+  value: string;
+  note: string;
+  env_key: string;
+}
+
+interface SysInfoGroup {
+  group: string;
+  icon: string;
+  items: SysInfoItem[];
+}
 
 // ── 编辑表单（视频源）──────────────────────────────────────────
 interface VideoFormData {
@@ -120,6 +135,8 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
   const admin = useVideoSources();
   const [activeTab, setActiveTab] = useState<AdminTab>('video');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [sysInfo, setSysInfo] = useState<SysInfoGroup[]>([]);
+  const [sysInfoLoading, setSysInfoLoading] = useState(false);
 
   // 视频源编辑状态
   const [editingSourceId, setEditingSourceId] = useState<number | null>(null); // null=新增, number=编辑
@@ -136,6 +153,13 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
   useEffect(() => {
     admin.fetchSources();
     admin.fetchInterfaces();
+    // 拉取系统硬件信息
+    setSysInfoLoading(true);
+    fetch(getApiUrl('/api/v1/system-info'))
+      .then(r => r.json())
+      .then(d => setSysInfo(d.groups || []))
+      .catch(() => {})
+      .finally(() => setSysInfoLoading(false));
   }, []);
 
   const showSuccess = (msg: string) => {
@@ -554,9 +578,10 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
   };
 
   // ── 主渲染 ──────────────────────────────────────────────
-  const tabInfo = {
-    video: { icon: <Video size={12} />, label: '视频源管理', count: admin.sources.length },
-    network: { icon: <Network size={12} />, label: '网口管理', count: admin.interfaces.length },
+  const tabInfo: Record<AdminTab, { icon: React.ReactNode; label: string; count: number | null }> = {
+    video:   { icon: <Video size={12} />,   label: '视频源管理', count: admin.sources.length },
+    network: { icon: <Network size={12} />, label: '网口管理',   count: admin.interfaces.length },
+    sysinfo: { icon: <Info size={12} />,    label: '系统信息',   count: null },
   };
 
   return (
@@ -627,7 +652,9 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
               {info.icon}
               <span className="tracking-widest uppercase">{info.label}</span>
             </div>
-            <span className="opacity-50 font-mono">[{String(info.count).padStart(2, '0')}]</span>
+            <span className="opacity-50 font-mono">
+              {info.count !== null ? `[${String(info.count).padStart(2, '0')}]` : ''}
+            </span>
           </button>
         ))}
       </div>
@@ -728,11 +755,96 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
             </div>
           </>
         )}
-      </div>
 
-      {/* 弹窗 */}
-      {renderSourceFormModal()}
-      {renderIfaceFormModal()}
+        {/* ── 系统信息（只读）── */}
+        {activeTab === 'sysinfo' && (
+          <>
+            <div className="flex items-center justify-between border-b border-zinc-900 px-5 py-3 bg-black">
+              <div className="flex items-center gap-2">
+                <div className="w-0.5 h-4 bg-white" />
+                <h2 className="text-xs font-bold tracking-widest uppercase">
+                  系统硬件信息 // <span className="text-zinc-400">只读 · 来源 .env</span>
+                </h2>
+              </div>
+              <span className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-widest border border-zinc-700 px-2 py-1 text-zinc-500">
+                <Lock size={9} /> 只读
+              </span>
+            </div>
+
+            {sysInfoLoading ? (
+              <div className="py-16 flex items-center justify-center text-zinc-600 text-[10px] uppercase tracking-widest">
+                加载中...
+              </div>
+            ) : (
+              <div className="p-5 space-y-6">
+                {sysInfo.map(group => (
+                  <div key={group.group}>
+                    {/* 分组标题 */}
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-0.5 h-3 bg-zinc-600" />
+                      <span className="text-[9px] font-bold uppercase tracking-[0.25em] text-zinc-500">
+                        {group.group}
+                      </span>
+                      <div className="flex-1 h-px bg-zinc-900" />
+                    </div>
+
+                    {/* 条目列表 */}
+                    <div className="space-y-2">
+                      {group.items.map(item => (
+                        <div
+                          key={item.key}
+                          className="bg-zinc-950 border border-zinc-900 px-4 py-3 flex flex-col gap-1.5 hover:border-zinc-700 transition-colors"
+                        >
+                          <div className="flex items-center justify-between gap-4">
+                            <span className="text-[9px] font-bold uppercase tracking-[0.18em] text-zinc-500 shrink-0">
+                              {item.label}
+                            </span>
+                            {/* 来源标注 */}
+                            {item.env_key !== '—' && (
+                              <span className="text-[8px] font-mono text-zinc-700 border border-zinc-800 px-1.5 py-0.5 shrink-0">
+                                {item.env_key}
+                              </span>
+                            )}
+                          </div>
+                          {/* 值 */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-mono font-bold text-white tracking-wide break-all">
+                              {item.value}
+                            </span>
+                            {item.env_key === '—' && (
+                              <span className="text-[8px] font-bold uppercase tracking-wider border border-zinc-800 px-1.5 py-0.5 text-zinc-600 shrink-0">
+                                硬件固定
+                              </span>
+                            )}
+                          </div>
+                          {/* 说明 */}
+                          <p className="text-[9px] text-zinc-600 font-mono leading-relaxed">
+                            {item.note}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+
+                {/* 底部提示 */}
+                <div className="flex items-start gap-2 text-[9px] font-mono text-zinc-700 border-t border-zinc-900 pt-4">
+                  <AlertTriangle size={10} className="shrink-0 mt-0.5" />
+                  <span>
+                    以上参数来源于部署时的 <code className="text-zinc-500">.env</code> 文件。
+                    如需修改，请在 OrangePi 上编辑 <code className="text-zinc-500">backend/.env</code>
+                    后重启后端服务生效。「硬件固定」项由硬件厂商出厂设定，无法通过软件修改。
+                  </span>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* 弹窗 */}
+        {renderSourceFormModal()}
+        {renderIfaceFormModal()}
+      </div>
     </div>
   );
 }
