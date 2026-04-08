@@ -37,12 +37,12 @@ if [[ ! -x "$SCRIPT_DIR/mediamtx" ]]; then
 fi
 
 echo ">>> 复制 service 文件到 /etc/systemd/system/ ..."
-# 动态替换 service 文件中的用户名和路径（适配不同 OrangePi 用户名）
+# 动态替换 service 文件中的用户名和路径（适配不同 OrangePi 用户名），同时去除 Windows 的 \r 回车符
 sed "s|/home/orangepi|/home/${CURRENT_USER}|g; s|User=orangepi|User=${CURRENT_USER}|g" \
-  "$SCRIPT_DIR/botdog-backend.service" > /etc/systemd/system/botdog-backend.service
+  "$SCRIPT_DIR/botdog-backend.service" | tr -d '\r' > /etc/systemd/system/botdog-backend.service
 
 sed "s|/home/orangepi|/home/${CURRENT_USER}|g; s|User=orangepi|User=${CURRENT_USER}|g" \
-  "$SCRIPT_DIR/botdog-pipeline.service" > /etc/systemd/system/botdog-pipeline.service
+  "$SCRIPT_DIR/botdog-pipeline.service" | tr -d '\r' > /etc/systemd/system/botdog-pipeline.service
 
 echo ">>> 重载 systemd daemon ..."
 systemctl daemon-reload
