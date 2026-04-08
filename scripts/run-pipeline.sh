@@ -60,8 +60,8 @@ setsid bash -c '
     ffmpeg -fflags nobuffer -rtsp_transport tcp -stimeout 5000000 \
       -i "'"$CAMERA_RTSP_URL"'" \
       -c:v libx264 -preset ultrafast -tune zerolatency -threads 4 \
-      -b:v 1000k -maxrate 1500k -bufsize 500k -g 30 -bf 0 -pix_fmt yuv420p \
-      -vf "scale=1280:720" -r 30 \
+      -b:v 800k -maxrate 1200k -bufsize 400k -g 15 -bf 0 -pix_fmt yuv420p \
+      -vf "scale=1280:720" -r 15 \
       -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/cam" \
       >> "'"$ROOT_DIR"'/logs/ffmpeg.log" 2>&1 || true
     echo "[$(date "+%F %T")] FFmpeg cam1 exited, restarting in 3s..." >> "'"$ROOT_DIR"'/logs/ffmpeg.log"
