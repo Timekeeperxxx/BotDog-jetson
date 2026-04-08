@@ -1,0 +1,28 @@
+[Unit]
+Description=BotDog Video Pipeline (MediaMTX + FFmpeg)
+Documentation=https://github.com/Timekeeperxxx/BotDog
+After=network-online.target botdog-backend.service
+Wants=network-online.target
+Requires=botdog-backend.service
+
+[Service]
+Type=simple
+User=orangepi
+WorkingDirectory=/home/orangepi/Code/Project/BOTDOG/BotDog
+
+# 等后端完全起来后（约 5 秒）再启动流水线
+ExecStartPre=/bin/sleep 5
+
+# 启动视频流水线（mediamtx + ffmpeg 看门狗）
+ExecStart=/bin/bash /home/orangepi/Code/Project/BOTDOG/BotDog/scripts/run-pipeline.sh
+
+# 崩溃后自动重启（10 秒后，给摄像头时间恢复）
+Restart=on-failure
+RestartSec=10s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=botdog-pipeline
+
+[Install]
+WantedBy=multi-user.target

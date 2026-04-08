@@ -1,0 +1,36 @@
+[Unit]
+Description=BotDog Backend Service
+Documentation=https://github.com/Timekeeperxxx/BotDog
+# 网络就绪后再启动（图传网卡 UP 后）
+After=network-online.target
+Wants=network-online.target
+# 视频流水线要等后端先起来
+Before=botdog-pipeline.service
+
+[Service]
+Type=simple
+User=orangepi
+WorkingDirectory=/home/orangepi/Code/Project/BOTDOG/BotDog
+
+# 环境变量（CycloneDDS 依赖路径）
+Environment="CYCLONEDDS_HOME=/home/orangepi/cyclonedds/install"
+Environment="LD_LIBRARY_PATH=/home/orangepi/cyclonedds/install/lib"
+Environment="PYTHONPATH=/home/orangepi/Code/Project/BOTDOG/BotDog"
+
+# 使用虚拟环境里的 Python 启动
+ExecStart=/home/orangepi/Code/Project/BOTDOG/BotDog/.venv/bin/python run_backend.py
+
+# 崩溃后自动重启（5 秒后）
+Restart=on-failure
+RestartSec=5s
+
+# 日志重定向（journalctl -u botdog-backend -f 可实时查看）
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=botdog-backend
+
+# 给 B2 适配器初始化足够的时间（超时设长一点）
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target
