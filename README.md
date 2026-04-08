@@ -1,458 +1,219 @@
 # BotDog 机器狗控制系统
 
-![Version](https://img.shields.io/badge/version-5.0-blue)
+![Version](https://img.shields.io/badge/version-6.0-blue)
 ![Python](https://img.shields.io/badge/python-3.12+-blue)
+![Platform](https://img.shields.io/badge/platform-OrangePi%205%20Ultra-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
+
+---
 
 ## 项目简介
 
-BotDog 是一个完整的**四足机器狗远程控制系统**，提供实时控制、遥测监控、AI 告警和可视化界面。
+BotDog 是一个完整的**四足机器狗远程控制系统**，运行在 OrangePi 5 Ultra 上，通过 HM30 无线图传与地面端浏览器实现实时的视频监控、AI 目标识别、自动跟踪和键盘/触控遥控。
 
 ### 核心功能
 
-- ✅ **遥测监控** - 实时姿态、位置、温度、电池
-- ✅ **AI 告警** - 温度异常自动检测和告警
-- ✅ **配置管理** - 可视化配置界面，13 个配置项
-- ✅ **视频流** - RTSP(H.265) → FFmpeg(H.264) → MediaMTX(WHEP)
-- ✅ **事件系统** - 实时事件推送和历史记录
-
-### 技术栈
-
-**后端**:
-- Python 3.12+
-- FastAPI（Web 框架）
-- SQLAlchemy（ORM）
-- WebSocket（实时通信）
-- MAVLink（机器人通信协议）
-
-**视频流链路**:
-- FFmpeg（H.265 → H.264 转码）
-- MediaMTX（RTSP → WHEP 网关）
-- WHEP（浏览器 WebRTC 播放）
-
-**前端**:
-- React 18
-- TypeScript
-- Vite（构建工具）
-- WebSocket（实时数据）
-
----
-
-## 快速开始
-
-### 1. 环境要求
-
-```bash
-# Python 3.12+
-python --version
-
-# Node.js 18+
-node --version
-npm --version
-```
-
-### 2. 安装依赖
-
-```bash
-# 后端：创建并激活 Python 虚拟环境
-python -m venv .venv
-
-# Windows
-.venv\Scripts\activate
-# Linux/Mac
-source .venv/bin/activate
-
-pip install -r requirements.txt
-
-# 前端
-cd frontend
-npm install
-```
-
-### 3. 配置环境变量
-
-```bash
-# 后端配置（复制模板，按需修改）
-copy backend\.env.example backend\.env   # Windows
-cp backend/.env.example backend/.env       # Linux/Mac
-
-# 前端配置（复制模板，按需修改）
-copy frontend\.env.example frontend\.env  # Windows
-cp frontend/.env.example frontend/.env     # Linux/Mac
-```
-
-> **提示**：
-> - 默认配置即为**纯模拟模式**，无需任何硬件即可运行
-> - AI 功能默认关闭（`AI_ENABLED=false`），开启需额外下载模型文件（见下文）
-
-### 4. 初始化数据库
-
-```bash
-# 在项目根目录执行（激活虚拟环境后）
-python scripts/init_db.py
-```
-
-### 5. 启动服务
-
-```bash
-# 后端（终端 1，在项目根目录）
-# Windows
-.\scripts\start_backend.bat
-# Linux/Mac
-bash scripts/start_backend.sh
-
-# 前端（终端 2）
-cd frontend
-npm run dev
-```
-
-### 6. 访问界面
-
-打开浏览器访问: `http://localhost:5174`
-
----
-
-## 视频流与技术栈转换
-
-### 视频流架构
-
-```
-┌─────────────┐   RTSP(H.265)   ┌─────────────┐   RTSP publish  ┌─────────────┐
-│  相机 RTSP   │ ──────────────> │   FFmpeg     │ ──────────────> │  MediaMTX   │
-│ (H.265)      │   554/8554     │  转码 H.264  │                 │  WHEP 输出  │
-└─────────────┘                  └─────────────┘                 └─────┬──────┘
-                                                                       │
-                                                                       ▼
-                                                               ┌─────────────┐
-                                                               │  浏览器播放  │
-                                                               │  (WHEP)     │
-                                                               └─────────────┘
-```
-
-### 本机低延迟播放（推荐）
-
-**步骤**：
-1. 一键启动：`scripts/run-pipeline.cmd`
-2. 前端访问：`http://127.0.0.1:5174` 或 `http://YOUR_IP:5174`
-
-**默认配置**：
-- 相机 RTSP：`CAMERA_RTSP_URL=rtsp://192.168.144.25:8554/main.264`
-- MediaMTX RTSP：`rtsp://127.0.0.1:8554/cam`
-- WHEP：`http://127.0.0.1:8889/cam/whep`
-
-### 重连机制说明
-
-- FFmpeg 断流会自动重启（脚本内置看门狗）。
-- 前端 WHEP 连接断开后会自动重连。
-
-### WHEP 测试页
-
-- `web/index.html` 用于快速验证 WHEP 播放（需要 MediaMTX 运行中）
-- 可在输入框中修改 WHEP URL
-
----
-
-## 控制方式
-
-支持两种控制方式：
-- **Web 控制面板**：通过界面上的虚拟摇杆或键盘控制，无需硬件
-- **FT24 遥控器**：通过 SBUS 协议硬件直连控制机器狗（需要硬件）
-
----
-
-## 配置管理
-
-### 配置界面
-
-点击顶部状态栏的 **"⚙️ 配置"** 按钮打开配置界面。
-
-### 配置类别
-
-**后端配置** (4 项):
-- `thermal_threshold` - 高温告警阈值
-- `heartbeat_timeout` - 心跳超时
-- `ws_max_clients_per_ip` - WebSocket 连接限制
-- `video_watchdog_timeout_s` - 视频看门狗超时
-
-**前端配置** (4 项):
-- `ui_alert_ack_timeout_s` - 告警确认超时
-- `telemetry_display_hz` - 遥测显示刷新率
-- `ui_lang` - 界面语言
-- `ui_theme` - UI 主题
-
-**存储配置** (3 项):
-- `snapshot_retention_days` - 快照保留天数
-- `max_snapshot_disk_usage_gb` - 快照最大占用
-- `telemetry_retention_days` - 遥测数据保留天数
+- ✅ **实时遥控** — Web 控制面板，支持键盘（WASD/QE/Shift/Ctrl）和触控操作
+- ✅ **AI 目标识别** — YOLOv8 推理，自动检测、跟踪人员目标并抓拍证据
+- ✅ **自动跟踪** — AutoTrackService 状态机，目标进入画面即自动跟随
+- ✅ **低延迟视频图传** — HM30 无线图传 + WHEP WebRTC 浏览器播放
+- ✅ **遥测监控** — 实时姿态、温度、电量 WebSocket 推送
+- ✅ **配置管理** — 可视化配置界面，无需重启即可热更新参数
+- ✅ **告警与证据** — 异常自动告警、快照落盘、历史查询
 
 ---
 
 ## 系统架构
 
 ```
-┌───────────────────────────────────────────────────────┐
-│                       浏览器界面                        │
-│  ┌────────────────────────────────────────────────┐   │
-│  │  HeaderBar  │  VideoSection  │  SnapshotList │   │
-│  └────────────────────────────────────────────────┘   │
-└───────────────────────────────────────────────────────┘
-                           │
-                  WebSocket + WHEP
-                           │
-┌───────────────────────────────────────────────────────┐
-│                    FastAPI 后端                      │
-│  ┌───────────────┐  ┌───────────────┐  ┌─────────┐ │
-│  │  WebSocket   │  │ AlertService  │  │MAVLink  │ │
-│  │   Handler     │  │ConfigService  │  │ Gateway │ │
-│  └───────────────┘  └───────────────┘  └─────────┘ │
-│  ┌───────────────────────────────────────────────┐   │
-│  │                Database (SQLite)             │   │
-│  └───────────────────────────────────────────────┘   │
-└───────────────────────────────────────────────────────┘
-                           │
-                   MAVLink / Serial
-                           │
-┌───────────────────────────────────────────────────────┐
-│              机器狗硬件（摄像头、MAVLink 设备）      │
-└───────────────────────────────────────────────────────┘
+[ IP 摄像头 192.168.144.25 H.265 RTSP ]
+        │
+        ├── FFmpeg(软解转码) → MediaMTX(:8889 WHEP) → 浏览器视频
+        └── AIWorker(YOLOv8 推理) → AutoTrackService → 控制指令
+                                                          │
+[ OrangePi 5 Ultra ]                              UnitreeB2Adapter
+        │ 网线 192.168.123.222                            │
+[ Unitree B2 机器狗 ]  ←─────────────────────────────────┘
+        │
+  HM30 天空端 → ~ → HM30 地面端 → 交换机 → 笔记本浏览器
+                                   http://192.168.144.104:8000
 ```
 
+### 技术栈
+
+**后端**：Python 3.12 / FastAPI / SQLAlchemy / WebSocket / Unitree SDK2
+
+**AI**：YOLOv8n (Ultralytics) / OpenCV / RTSP 拉流推理
+
+**视频链路**：FFmpeg（H.265→H.264 转码）/ MediaMTX / WebRTC WHEP
+
+**前端**：React 18 / TypeScript / Vite
+
+---
+
+## 快速开始
+
+### 1. 环境要求（OrangePi 5 Ultra）
+
+```bash
+python3 --version   # 3.12+
+node --version      # 18+
+ffmpeg -version     # 任意版本
 ```
-┌─────────────┐   RTSP(H.265)   ┌─────────────┐   RTSP publish  ┌─────────────┐
-│  相机 RTSP   │ ──────────────> │   FFmpeg     │ ──────────────> │  MediaMTX   │
-│ (H.265)      │                 │  转码 H.264  │                 │  WHEP 输出  │
-└─────────────┘                  └─────────────┘                 └─────┬──────┘
-                                                                      │
-                                                                      ▼
-                                                              ┌─────────────┐
-                                                              │  浏览器播放  │
-                                                              │  (WHEP)     │
-                                                              └─────────────┘
+
+### 2. 安装依赖
+
+```bash
+cd ~/Code/Project/BOTDOG/BotDog
+
+# 后端
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Unitree SDK（真机必须）
+pip install cyclonedds==0.10.2
+git clone https://github.com/unitreerobotics/unitree_sdk2_python.git
+cd unitree_sdk2_python && pip install -e . && cd ..
+
+# 前端构建
+cd frontend && npm install && npm run build && cd ..
+
+# MediaMTX（ARM64）
+cd scripts && wget -qO- https://github.com/bluenviron/mediamtx/releases/download/v1.9.3/mediamtx_v1.9.3_linux_arm64.tar.gz | tar -xzf - mediamtx && chmod +x mediamtx && cd ..
+```
+
+### 3. 配置
+
+```bash
+cp backend/.env.example backend/.env
+# 修改关键参数：
+#   CONTROL_ADAPTER_TYPE=unitree_b2
+#   UNITREE_NETWORK_IFACE=enP3p49s0
+#   AI_ENABLED=true
+```
+
+### 4. 启动
+
+```bash
+# 初始化数据库（首次）
+python scripts/init_db.py
+
+# 启动视频流水线
+bash scripts/run-pipeline.sh
+
+# 启动后端
+bash scripts/start_backend.sh
+
+# 浏览器访问
+# http://<OrangePi_IP>:8000
 ```
 
 ---
 
-## 测试
+## 控制方式
 
-```bash
-# 运行单元测试
-pytest tests/
+### 键盘快捷键
 
-# 带覆盖率报告
-pytest tests/ --cov=backend --cov-report=term-missing
+| 按键 | 功能 | 按键 | 功能 |
+|------|------|------|------|
+| `W` | 前进 | `S` | 后退 |
+| `A` | 左平移 | `D` | 右平移 |
+| `Q` | 左转 | `E` | 右转 |
+| `Shift` | 起立 | `Ctrl` | 下蹲 |
+
+> 键盘在任意页面内生效（输入框聚焦时自动屏蔽）
+
+### 控制优先级
+
+```
+E-STOP  >  遥控器（FT24）  >  Web 手动  >  AutoTrack 自动跟踪
 ```
 
-### 测试覆盖
+---
 
-- ✅ 系统健康检查
-- ✅ 遥测 WebSocket 连接
-- ✅ 事件 WebSocket 连接
-- ✅ 配置管理 API
-- ✅ 告警系统功能
+## 视频流架构
+
+```
+IP 摄像头 (H.265 RTSP)
+    ↓  FFmpeg：-fflags nobuffer -bf 0 -preset ultrafast -r 15
+MediaMTX RTSP (:8554/cam)
+    ↓  WebRTC WHEP
+浏览器 <video>
+```
+
+> **延迟说明**：当前软解转码延迟约 200-400ms（H.265 源头限制）。
+> 换用 H.264 摄像头后可通过 MediaMTX 直通无转码，延迟降至 <50ms。
+
+---
+
+## 项目结构
+
+```
+BotDog/
+├── backend/              # FastAPI 后端
+│   ├── main.py           # 应用入口
+│   ├── robot_adapter.py  # UnitreeB2Adapter
+│   ├── auto_track_service.py  # 自动跟踪状态机
+│   ├── control_arbiter.py     # 控制权仲裁
+│   ├── workers_ai.py          # YOLOv8 推理 Worker
+│   └── config.py         # 全量配置项
+│
+├── frontend/             # React 前端
+│   └── src/
+│       ├── components/   # ControlPad（键盘+触控）、VideoPlayer 等
+│       ├── hooks/        # useRobotControl、useWebSocket 等
+│       └── config/       # api.ts（动态 API 地址）
+│
+├── scripts/
+│   ├── run-pipeline.sh   # 视频流水线（FFmpeg + MediaMTX）
+│   ├── start_backend.sh  # 后端启动脚本
+│   └── install-services.sh  # systemd 服务安装
+│
+├── config/
+│   └── mediamtx.yml      # MediaMTX 配置
+│
+├── docs/                 # 项目文档（见 docs/01_项目索引.md）
+├── models/               # YOLOv8 模型文件
+└── data/                 # SQLite 数据库 & 快照
+```
 
 ---
 
 ## 文档
 
-详细文档请查看 [docs/](docs/) 目录：
+详细文档见 [docs/01_项目索引.md](docs/01_项目索引.md)
 
-### 核心文档
-- [需求与用例](docs/01_requirements_use_cases.md)
-- [实施计划](docs/13_implementation_plan.md)
-- [开发环境搭建](docs/10_dev_setup.md)
-
-### 技术规范
-- [前端视图契约](docs/05_frontend_view_contract.md)
-- [后端协议规范](docs/06_backend_protocol_schema.md)
-- [MAVLink 规范](docs/07_mavlink_spec.md)
-
-### 最新功能
-- [配置管理界面](docs/23_config_panel_implementation.md)
-
-### 部署指南
-- [Git 推送指南](docs/25_git_push_guide.md)
+| 文件 | 说明 |
+|------|------|
+| [docs/03_实施计划与架构.md](docs/03_实施计划与架构.md) | 系统架构与功能完成清单 |
+| [docs/04_开发环境搭建.md](docs/04_开发环境搭建.md) | OrangePi 环境搭建详细步骤 |
+| [docs/12_宇树B2硬件接入指南.md](docs/12_宇树B2硬件接入指南.md) | B2 SDK、HM30、网络配置 |
 
 ---
 
-## 🔧 开发命令
-
-> **提示**: 所有后端命令都需要先激活虚拟环境：
-> ```bash
-> source .venv/bin/activate  # Linux/Mac
-> .venv\Scripts\activate     # Windows
-> ```
-
-### 后端
+## 开机自启
 
 ```bash
-# 推荐启动方式
-# Windows
-.\scripts\start_backend.bat
-# Linux/Mac
-bash scripts/start_backend.sh
+sudo bash scripts/install-services.sh
 
-# 开发模式（热重载）
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+# 查看服务状态
+sudo systemctl status botdog-backend
+sudo systemctl status botdog-pipeline
 
-# 生产模式
-uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 4
-
-# 初始化数据库
-python scripts/init_db.py
-
-# 运行单元测试
-pytest tests/
-```
-
-### 前端
-
-```bash
-# 开发模式（端口 5174）
-cd frontend
-npm run dev
-
-# 生产构建
-npm run build
-
-# 预览生产构建
-npm run preview
-```
-
-### 数据库
-
-```bash
-# 初始化数据库表（首次运行必须执行）
-python scripts/init_db.py
-
-# 清理数据库（谨慎使用）
-del data\botdog.db    # Windows
-rm -f data/botdog.db  # Linux/Mac
-```
-
-### AI 模型（可选）
-
-```bash
-# 如需开启 AI 功能，下载 YOLOv8n 模型（~6MB）并放入 models/ 目录
-mkdir -p models
-# 下载地址：https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt
-# 然后在 backend/.env 中设置：AI_ENABLED=true
+# 查看日志
+journalctl -u botdog-backend -f
 ```
 
 ---
 
-## 📁 项目结构
-
-```
-BotDog/
-├── backend/              # FastAPI 后端
-│   ├── main.py          # 主应用入口
-│   ├── database.py      # 数据库连接
-│   ├── models*.py       # SQLAlchemy 模型
-│   ├── services_*.py    # 业务服务层
-│   └── ws_*.py          # WebSocket 处理器
-│
-├── frontend/            # React 前端
-│   ├── src/
-│   │   ├── components/   # React 组件
-│   │   ├── hooks/        # React Hooks
-│   │   ├── types/        # TypeScript 类型
-│   │   └── utils/        # 工具函数
-│   └── package.json
-│
-├── models/              # YOLO 模型文件 (.pt)
-├── config/              # 媒体配置（mediamtx.yml 等）
-├── scripts/             # 启动脚本与工具
-│   └── logs/            # 历史追踪日志归档
-├── docs/                # 项目文档
-├── tests/               # 后端测试
-├── data/                # 数据库 & 抓拍文件
-└── requirements.txt     # Python 依赖
-```
-
----
-
-## 🚢 部署
-
-### 纯模拟模式（无需任何硬件）
-
-适合快速体验和前端开发：
-
-```bash
-# backend/.env 中确保以下配置
-MAVLINK_SOURCE=simulation
-SIMULATION_WORKER_ENABLED=true
-AI_ENABLED=false
-```
-
-### 连接真实机器狗
-
-1. **机器狗端需要**:
-   - MAVLink 设备（串口或 UDP 连接）
-   - 摄像头设备（RTSP 输出）
-   - Python 3.12+ 环境
-
-2. **操作端需要**:
-   - 现代浏览器（Chrome/Firefox/Edge）
-   - 与机器狗在同一网段
-   - 游戏手柄（可选）
-
-3. **配置修改**:
-   ```bash
-   # backend/.env
-   MAVLINK_SOURCE=mavlink
-   MAVLINK_ENDPOINT=serial:COM3:57600  # Windows 串口示例
-   # MAVLINK_ENDPOINT=serial:/dev/ttyUSB0:57600  # Linux 串口示例
-   ```
-
-详细部署步骤请参考: [docs/31_startup_guide.md](docs/31_startup_guide.md)
-
----
-
-## 🤝 贡献指南
-
-欢迎提交 Issue 和 Pull Request！
-
-### 开发流程
-
-1. Fork 本仓库
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
-
-### 提交规范
-
-- 遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范
-- 添加测试覆盖新功能
-- 更新相关文档
-
----
-
-## 📄 许可证
+## 许可证
 
 MIT License
 
 ---
 
-## 作者
-
-- **开发者**: Claude Code + Human collaborator
-- **项目**: BotDog 机器狗控制系统
-- **版本**: v5.0
-
----
-
-## 致谢
-
-感谢所有开源项目的贡献者：
-- FastAPI
-- React
-- MediaMTX
-- FFmpeg
-- MAVLink
-
----
-
-**状态**: ✅ 生产就绪
-**最后更新**: 2026-03-20
-**仓库**: https://github.com/Timekeeperxxx/BotDog
+**状态**：✅ 生产就绪  
+**最后更新**：2026-04-08  
+**平台**：OrangePi 5 Ultra / Unitree B2  
+**仓库**：https://github.com/Timekeeperxxx/BotDog
