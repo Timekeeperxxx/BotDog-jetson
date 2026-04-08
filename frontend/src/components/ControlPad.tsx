@@ -1,19 +1,22 @@
 /**
- * 机器狗控制面板组件（紧凑两排版）
+ * 机器狗控制面板组件（3×3 九宫格版）
  *
  * 布局：
- * 行1: [起立] [前进] [下蹲]
- * 行2: [左转] [后退] [右转]
+ * 行1: [左旋转] [前进]  [右旋转]
+ * 行2: [左平移] [后退]  [右平移]
+ * 行3: [起立]   [    ]  [下蹲]
  */
 
 import React, { useCallback } from 'react';
 import {
   ArrowUp,
   ArrowDown,
-  ArrowLeft,
-  ArrowRight,
+  RotateCcw,
+  RotateCw,
   ChevronsDown,
   ChevronsUp,
+  ArrowLeftFromLine,
+  ArrowRightFromLine,
 } from 'lucide-react';
 import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl';
 
@@ -22,18 +25,25 @@ interface ControlPadProps {
 }
 
 interface ButtonConfig {
-  cmd: RobotCommand;
+  cmd: RobotCommand | null;  // null = 占位空格
   label: string;
   icon: React.ReactNode;
 }
 
+// 3×3 九宫格布局
 const BUTTONS: ButtonConfig[] = [
-  { cmd: 'stand',    label: '起立', icon: <ChevronsUp size={14} /> },
-  { cmd: 'forward',  label: '前进', icon: <ArrowUp size={14} /> },
-  { cmd: 'sit',      label: '下蹲', icon: <ChevronsDown size={14} /> },
-  { cmd: 'left',     label: '左转', icon: <ArrowLeft size={14} /> },
-  { cmd: 'backward', label: '后退', icon: <ArrowDown size={14} /> },
-  { cmd: 'right',    label: '右转', icon: <ArrowRight size={14} /> },
+  // 第一行：旋转 + 前进
+  { cmd: 'left',         label: '左旋转', icon: <RotateCcw size={14} /> },
+  { cmd: 'forward',      label: '前进',   icon: <ArrowUp size={14} /> },
+  { cmd: 'right',        label: '右旋转', icon: <RotateCw size={14} /> },
+  // 第二行：平移 + 后退
+  { cmd: 'strafe_left',  label: '左平移', icon: <ArrowLeftFromLine size={14} /> },
+  { cmd: 'backward',     label: '后退',   icon: <ArrowDown size={14} /> },
+  { cmd: 'strafe_right', label: '右平移', icon: <ArrowRightFromLine size={14} /> },
+  // 第三行：姿态
+  { cmd: 'stand',        label: '起立',   icon: <ChevronsUp size={14} /> },
+  { cmd: null,           label: '',       icon: null },
+  { cmd: 'sit',          label: '下蹲',   icon: <ChevronsDown size={14} /> },
 ];
 
 export function ControlPad({ isDisabled = false }: ControlPadProps) {
@@ -76,31 +86,38 @@ export function ControlPad({ isDisabled = false }: ControlPadProps) {
         )}
       </div>
 
-      {/* 两排 3×2 按钮 */}
+      {/* 3×3 九宫格 */}
       <div className="grid grid-cols-3 gap-1">
-        {BUTTONS.map(({ cmd, label, icon }) => (
-          <button
-            key={cmd}
-            onPointerDown={handlePointerDown(cmd)}
-            onPointerUp={handlePointerUp}
-            onPointerLeave={handlePointerUp}
-            onContextMenu={(e) => e.preventDefault()}
-            className={`
-              flex flex-col items-center justify-center gap-0.5
-              h-8 rounded border
-              font-black text-[7px] uppercase tracking-tight
-              transition-all duration-100 cursor-pointer select-none touch-none
-              ${
-                currentCmd === cmd && isControlling
-                  ? 'bg-white text-black border-white shadow-[0_0_8px_white]'
-                  : 'bg-zinc-800/80 text-white/60 border-white/15 hover:border-white/50 hover:text-white'
-              }
-            `}
-          >
-            {icon}
-            <span>{label}</span>
-          </button>
-        ))}
+        {BUTTONS.map(({ cmd, label, icon }, idx) => {
+          // 空位占位
+          if (cmd === null) {
+            return <div key={`empty-${idx}`} className="h-8" />;
+          }
+
+          return (
+            <button
+              key={cmd}
+              onPointerDown={handlePointerDown(cmd)}
+              onPointerUp={handlePointerUp}
+              onPointerLeave={handlePointerUp}
+              onContextMenu={(e) => e.preventDefault()}
+              className={`
+                flex flex-col items-center justify-center gap-0.5
+                h-8 rounded border
+                font-black text-[7px] uppercase tracking-tight
+                transition-all duration-100 cursor-pointer select-none touch-none
+                ${
+                  currentCmd === cmd && isControlling
+                    ? 'bg-white text-black border-white shadow-[0_0_8px_white]'
+                    : 'bg-zinc-800/80 text-white/60 border-white/15 hover:border-white/50 hover:text-white'
+                }
+              `}
+            >
+              {icon}
+              <span>{label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* 状态栏 */}

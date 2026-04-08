@@ -71,7 +71,7 @@ class ControlService:
         处理控制命令。
 
         Args:
-            cmd: 动作名（forward/backward/left/right/sit/stand/stop）
+            cmd: 动作名（forward/backward/left/right/strafe_left/strafe_right/sit/stand/stop）
 
         Returns:
             ControlAckDTO 应答
@@ -117,7 +117,7 @@ class ControlService:
         # 5. 更新 Watchdog 状态
         # 只有持续运动命令（forward/backward/left/right）激活 Watchdog；
         # stand/sit 是一次性姿态命令，不需要周期性续命，发完即可。
-        MOTION_COMMANDS = frozenset({"forward", "backward", "left", "right"})
+        MOTION_COMMANDS = frozenset({"forward", "backward", "left", "right", "strafe_left", "strafe_right"})
         self._watchdog_last_reset = time.monotonic()
         if cmd == "stop":
             self._watchdog_active = False

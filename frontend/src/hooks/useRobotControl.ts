@@ -24,6 +24,8 @@ export type RobotCommand =
   | 'backward'
   | 'left'
   | 'right'
+  | 'strafe_left'
+  | 'strafe_right'
   | 'sit'
   | 'stand'
   | 'stop';

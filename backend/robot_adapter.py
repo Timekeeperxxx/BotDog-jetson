@@ -22,6 +22,8 @@ VALID_COMMANDS = frozenset({
     "backward",
     "left",
     "right",
+    "strafe_left",
+    "strafe_right",
     "sit",
     "stand",
     "stop",
@@ -121,19 +123,22 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         → ClassicWalk(True)（进入经典步态）→ SwitchMoveMode(True)（持续响应）
 
     命令映射：
-        forward  → Move(vx, 0, 0)
-        backward → Move(-vx, 0, 0)
-        left     → Move(0, 0, +vyaw)     # 偏航正值 = 逆时针 = 向左转
-        right    → Move(0, 0, -vyaw)
-        stop     → StopMove() + BalanceStand()（停止但保持解锁）
-        stand    → StandUp()（从蹲下起立）/ RecoveryStand()（倒地紧急恢复，作兜底）
-        sit      → StandDown()
+        forward      → Move(vx, 0, 0)
+        backward     → Move(-vx, 0, 0)
+        left         → Move(0, 0, +vyaw)     # 偏航正值 = 逆时针 = 向左转
+        right        → Move(0, 0, -vyaw)
+        strafe_left  → Move(0, +vy, 0)       # 正值 = 向左平移
+        strafe_right → Move(0, -vy, 0)
+        stop         → StopMove() + BalanceStand()（停止但保持解锁）
+        stand        → StandUp()（从蹲下起立）/ RecoveryStand()（倒地紧急恢复，作兜底）
+        sit          → StandDown()
     """
 
     def __init__(
         self,
         network_interface: str = "eth0",
         vx: float = 0.3,
+        vy: float = 0.25,
         vyaw: float = 0.5,
     ) -> None:
         """
@@ -142,11 +147,13 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         Args:
             network_interface: 连接 B2 的网卡名（eth0 / enp2s0）
             vx: 前进/后退速度（m/s），范围 0~0.6，默认 0.3
+            vy: 横向平移速度（m/s），范围 0~0.4，默认 0.25
             vyaw: 偏航转速（rad/s），范围 0~0.8，默认 0.5
         """
         import queue
         import threading
         self._vx = vx
+        self._vy = vy
         self._vyaw = vyaw
         self._network_interface = network_interface
         self._sport_client = None
@@ -242,6 +249,11 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                     client.Move(0.0, 0.0, self._vyaw)
                 elif cmd == "right":
                     client.Move(0.0, 0.0, -self._vyaw)
+                elif cmd == "strafe_left":
+                    client.Move(0.0, self._vy, 0.0)
+                elif cmd == "strafe_right":
+                    client.Move(0.0, -self._vy, 0.0)
+
                 elif cmd == "stop":
                     ret = client.StopMove()
                     logger.debug(f"[UnitreeB2 Worker] StopMove ret={ret}")
