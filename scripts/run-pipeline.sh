@@ -57,7 +57,7 @@ echo "Starting FFmpeg watchdog cam1..."
 setsid bash -c '
   while true; do
     echo "[$(date "+%F %T")] Starting FFmpeg cam1..." >> "'"$ROOT_DIR"'/logs/ffmpeg.log"
-    ffmpeg -rtsp_transport tcp -stimeout 5000000 \
+    ffmpeg -rtsp_transport tcp -stimeout 5000000 -fflags +discardcorrupt \
       -i "'"$CAMERA_RTSP_URL"'" \
       -c:v libx264 -preset ultrafast -tune zerolatency -b:v 1500k -maxrate 2000k -bufsize 1000k -vf "scale=1280:720" -r 30 \
       -f flv "'"$MEDIA_MTX_CAM1"'" \
