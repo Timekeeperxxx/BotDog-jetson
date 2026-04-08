@@ -38,7 +38,6 @@ import {
   Clock,
   ArrowLeftRight,
   X,
-  MonitorPlay,
   Database,
 } from 'lucide-react';
 
@@ -488,7 +487,6 @@ export default function IndustrialConsoleComplete() {
           <div className="flex-1 flex flex-col space-y-5">
             <SidebarBtn icon={<LayoutGrid size={20} />} active={activeTab === 'console'} onClick={() => setActiveTab('console')} label="控制台" />
             <SidebarBtn icon={<History size={20} />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="档案库" />
-            <SidebarBtn icon={<MonitorPlay size={20} />} active={activeTab === 'simulate'} onClick={() => setActiveTab('simulate')} label="调试台" />
             <SidebarBtn icon={<Database size={20} />} active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} label="后台管理" />
           </div>
           <div className="mt-auto space-y-5 pt-4 border-t border-white/10">
@@ -535,7 +533,7 @@ export default function IndustrialConsoleComplete() {
           </header>
         )}
 
-        {activeTab === 'console' || activeTab === 'simulate' ? (
+        {activeTab === 'console' ? (
           <div className="flex-1 flex min-h-0 relative">
             {/* 视频监控区 */}
             <div className={`flex-1 bg-black relative overflow-hidden transition-all duration-300 ${isUiFullscreen ? 'fixed inset-0 z-[100]' : 'border-r border-white/20'}`}>
@@ -662,7 +660,7 @@ export default function IndustrialConsoleComplete() {
                 </div>
               </div>
 
-              {(activeTab === 'console' || activeTab === 'simulate') && !isUiFullscreen && (
+              {activeTab === 'console' && !isUiFullscreen && (
                 <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
                   <div className="bg-black/40 border border-white/10 px-3 py-2 text-[10px] font-mono text-white/80">
                     <div className="uppercase tracking-widest text-white/40 mb-1">WHEP</div>
@@ -705,7 +703,7 @@ export default function IndustrialConsoleComplete() {
               )}
 
               {/* PiP overlay: border, badges, masks, controls */}
-              {(activeTab === 'console' || activeTab === 'simulate') && !isUiFullscreen && (() => {
+              {activeTab === 'console' && !isUiFullscreen && (() => {
                 const pipStatus = isCamSwapped ? whepStatus : whepStatus2;
                 const pipLabel = isCamSwapped ? 'CAM1' : 'CAM2';
                 const pipW = isPipLarge ? 480 : 240;
@@ -966,93 +964,6 @@ export default function IndustrialConsoleComplete() {
               </aside>
             )}
 
-            {/* Simulation View 右侧栏 */}
-            {!isUiFullscreen && activeTab === 'simulate' && (
-              <aside className="w-80 bg-zinc-950 border-l border-white/20 flex flex-col overflow-hidden shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
-                {/* 1. 决策面板 Decision Interpreter */}
-                <div className="flex-1 flex flex-col border-b border-white/10 overflow-hidden">
-                  <div className="p-3 bg-black border-b border-white/20 flex items-center shrink-0">
-                    <Activity size={16} className="text-white mr-2" />
-                    <span className="text-[11px] uppercase tracking-widest font-black text-white">推演控制决策</span>
-                  </div>
-                  <div className="p-4 flex-1 overflow-y-auto custom-scrollbar bg-black/50 space-y-3">
-                    <div className="flex justify-between items-center bg-white/5 p-2 rounded">
-                      <span className="text-[10px] text-white/50 uppercase">当前目标ID</span>
-                      <span className="text-xs font-mono font-bold text-white">{trackDecision?.track_id ?? '--'}</span>
-                    </div>
-                    <div className="flex justify-between items-start bg-white/5 p-2 rounded">
-                      <span className="text-[10px] text-white/50 uppercase whitespace-nowrap mr-4">状态轨迹</span>
-                      <div className="flex flex-col items-end">
-                        <span className="text-xs font-black text-emerald-400">{autoTrackStatus?.state || 'IDLE'}</span>
-                        <span className="text-[9px] text-white/40 mt-1 text-right">{trackDecision?.reason || '--'}</span>
-                      </div>
-                    </div>
-                    <div className="flex justify-between items-center bg-white/5 p-2 rounded">
-                      <span className="text-[10px] text-white/50 uppercase">决策命令</span>
-                      <span className={`text-xs font-black px-2 py-0.5 rounded ${trackDecision?.command ? 'bg-orange-500/20 text-orange-400' : 'bg-white/10 text-white/40'}`}>
-                        {trackDecision?.command ? trackDecision.command.toUpperCase() : 'NONE'}
-                      </span>
-                    </div>
-                    <div className="mt-2 text-[10px] text-white/40 font-mono">
-                      (原始命令若为空说明被防抖拦截或不需要移动)
-                    </div>
-                  </div>
-                </div>
-
-                {/* 2. 真实状态呈现 Virtual Dog Telemetry */}
-                <div className="flex-1 flex flex-col border-b border-white/10 overflow-hidden">
-                  <div className="p-3 bg-black border-b border-white/20 flex items-center shrink-0">
-                    <Thermometer size={16} className="text-white mr-2" />
-                    <span className="text-[11px] uppercase tracking-widest font-black text-white">真实执行状态</span>
-                  </div>
-                  <div className="p-4 flex-1 overflow-y-auto custom-scrollbar bg-black/50">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-white/5 p-2 rounded flex flex-col items-center">
-                        <span className="text-[9px] text-white/50 uppercase mb-1">连通性</span>
-                        <span className={`text-xs font-bold ${isConnected ? 'text-emerald-400' : 'text-red-400'}`}>{isConnected ? 'WS OK' : '离线'}</span>
-                      </div>
-                      <div className="bg-white/5 p-2 rounded flex flex-col items-center">
-                        <span className="text-[9px] text-white/50 uppercase mb-1">地速速度</span>
-                        <span className="text-xs font-mono font-bold">{telemetry ? telemetry.position.groundspeed.toFixed(2) : '--'} m/s</span>
-                      </div>
-                      <div className="bg-white/5 p-3 rounded flex flex-col items-center col-span-2">
-                        <span className="text-[9px] text-white/50 uppercase mb-2">航向可视化 (Yaw)</span>
-                        <div className="w-16 h-16 rounded-full border-2 border-white/20 relative flex items-center justify-center">
-                          <span className="absolute -top-3 text-[8px] text-white/40">N</span>
-                          <span className="absolute -bottom-3 text-[8px] text-white/40">S</span>
-                          <span className="text-[10px] font-mono font-bold relative z-10">{telemetry ? (telemetry.attitude.yaw || 0).toFixed(0) : '--'}°</span>
-                          {telemetry && telemetry.attitude.yaw !== undefined && (
-                            <div className="absolute inset-0 transition-transform duration-200" style={{ transform: `rotate(${telemetry.attitude.yaw}deg)` }}>
-                              <div className="w-1 h-1/2 bg-blue-500 mx-auto transform origin-bottom translate-y[-50%]" />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 3. 事件时间线 Event Log */}
-                <div className="flex-1 flex flex-col overflow-hidden">
-                  <div className="p-3 bg-black border-b border-white/20 flex items-center shrink-0">
-                    <Terminal size={16} className="text-white mr-2" />
-                    <span className="text-[11px] uppercase tracking-widest font-black text-white">事件生命线</span>
-                  </div>
-                  <div className="flex-1 overflow-y-auto custom-scrollbar bg-black/50 p-3 flex flex-col space-y-2">
-                    {alerts.length === 0 ? (
-                      <div className="text-center text-white/30 text-[10px] pt-4 uppercase">暂无追踪事件</div>
-                    ) : (
-                      alerts.slice(0, 15).map((a, i) => (
-                        <div key={i} className="flex flex-col bg-white/[0.03] border-l-2 border-blue-500 pl-2 py-1.5 rounded-sm">
-                          <span className="text-[9px] text-slate-500 font-mono">{new Date(a.timestamp).toLocaleTimeString()}</span>
-                          <span className="text-[10px] font-bold text-white mt-0.5">{a.message}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </aside>
-            )}
           </div>
         ) : activeTab === 'admin' ? (
           /* 后台管理页面 */
