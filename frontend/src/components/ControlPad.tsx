@@ -7,7 +7,7 @@
  * 行3: [起立]   [    ]  [下蹲]
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import {
   ArrowUp,
   ArrowDown,
@@ -63,6 +63,65 @@ export function ControlPad({ isDisabled = false }: ControlPadProps) {
     if (isDisabled) return;
     stopCommand();
   }, [isDisabled, stopCommand]);
+
+  // 键盘控制逻辑
+  useEffect(() => {
+    if (isDisabled) {
+      if (isControlling) stopCommand();
+      return;
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+      if (e.repeat) return; // 防止长按重复触发
+
+      let cmd: RobotCommand | null = null;
+      switch (e.key.toLowerCase()) {
+        case 'w': case 'arrowup': cmd = 'forward'; break;
+        case 's': case 'arrowdown': cmd = 'backward'; break;
+        case 'a': cmd = 'strafe_left'; break;
+        case 'd': cmd = 'strafe_right'; break;
+        case 'q': case 'arrowleft': cmd = 'left'; break;
+        case 'e': case 'arrowright': cmd = 'right'; break;
+        case 'control': cmd = 'sit'; break;
+        case 'shift': cmd = 'stand'; break;
+      }
+
+      if (cmd) {
+        e.preventDefault();
+        startCommand(cmd);
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+
+      let cmd: RobotCommand | null = null;
+      switch (e.key.toLowerCase()) {
+        case 'w': case 'arrowup': cmd = 'forward'; break;
+        case 's': case 'arrowdown': cmd = 'backward'; break;
+        case 'a': cmd = 'strafe_left'; break;
+        case 'd': cmd = 'strafe_right'; break;
+        case 'q': case 'arrowleft': cmd = 'left'; break;
+        case 'e': case 'arrowright': cmd = 'right'; break;
+        case 'control': cmd = 'sit'; break;
+        case 'shift': cmd = 'stand'; break;
+      }
+
+      if (cmd && currentCmd === cmd) {
+        e.preventDefault();
+        stopCommand();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [isDisabled, isControlling, currentCmd, startCommand, stopCommand]);
 
   const resultColor =
     lastResult?.result === 'ACCEPTED'

@@ -7,7 +7,7 @@
 // 后端地址配置
 // 优先使用 VITE_API_BASE_URL（构建时注入）；
 // 未设置时自动使用当前页面的 origin，兼容后端托管 SPA 的场景（OrangePi 无需写死 IP）。
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || window.location.origin;
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://192.168.123.222:8000";
 
 /**
  * 获取后端 API 基础 URL
