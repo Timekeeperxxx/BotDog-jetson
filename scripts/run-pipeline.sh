@@ -57,18 +57,11 @@ echo "Starting FFmpeg watchdog cam1..."
 setsid bash -c '
   while true; do
     echo "[$(date "+%F %T")] Starting FFmpeg cam1..." >> "'"$ROOT_DIR"'/logs/ffmpeg.log"
-    # 动态检测是否支持硬件编码器 (OrangePi 5 / RK3588)
-    ENC_ARGS="-c:v libx264 -preset ultrafast -tune zerolatency -threads 4 -b:v 1000k -maxrate 1500k -bufsize 500k -vf scale=1280:720 -r 30"
-    if ffmpeg -encoders 2>/dev/null | grep -q "h264_rkmpp"; then
-      ENC_ARGS="-c:v h264_rkmpp -b:v 1500k -profile:v baseline"
-    elif ffmpeg -encoders 2>/dev/null | grep -q "h264_v4l2m2m"; then
-        ENC_ARGS="-c:v h264_v4l2m2m -b:v 1500k -num_capture_buffers 16"
-    fi
-
-    ffmpeg -fflags nobuffer+discardcorrupt -flags low_delay -strict experimental \
-      -probesize 32 -analyzeduration 0 -rtsp_transport tcp -stimeout 5000000 \
+    ffmpeg -fflags nobuffer -rtsp_transport tcp -stimeout 5000000 \
       -i "'"$CAMERA_RTSP_URL"'" \
-      $ENC_ARGS -g 30 -bf 0 \
+      -c:v libx264 -preset ultrafast -tune zerolatency -threads 4 \
+      -b:v 1000k -maxrate 1500k -bufsize 500k -g 30 -bf 0 -pix_fmt yuv420p \
+      -vf "scale=1280:720" -r 30 \
       -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/cam" \
       >> "'"$ROOT_DIR"'/logs/ffmpeg.log" 2>&1 || true
     echo "[$(date "+%F %T")] FFmpeg cam1 exited, restarting in 3s..." >> "'"$ROOT_DIR"'/logs/ffmpeg.log"
