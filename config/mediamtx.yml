@@ -25,4 +25,6 @@ paths:
   cam:
     source: publisher
   cam2:
+    # USB 摄像头 C920，由 run-pipeline.sh 中的 FFmpeg 看门狗负责推流
     source: publisher
+

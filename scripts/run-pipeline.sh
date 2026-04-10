@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # BotDog 视频流水线启动脚本（Linux 版）
-# 启动 MediaMTX + FFmpeg 看门狗（cam1 + cam2）
-# 使用 RTMP 推流（避免 FFmpeg 4.2 RTSP 输出端口冲突）
+# 启动 MediaMTX + FFmpeg 看门狗
+#   cam1: HM30 IP 摄像头 (RTSP 拉流 → MediaMTX)
+#   cam2: USB 摄像头 Logitech C920 (/dev/video1 → MediaMTX)
 
 set -euo pipefail
 
@@ -9,12 +10,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 PID_DIR="$ROOT_DIR/logs"
 
 MEDIAMTX="${MEDIAMTX_EXE:-$ROOT_DIR/scripts/mediamtx}"
+# cam1：HM30 IP 摄像头 RTSP 地址
 CAMERA_RTSP_URL="${CAMERA_RTSP_URL:-rtsp://192.168.144.25:8554/main.264}"
-# cam2 暂时禁用（.26 当前无法访问）
-# CAMERA2_RTSP_URL="${CAMERA2_RTSP_URL:-rtsp://192.168.144.26:8554/main.264}"
-# 使用 RTMP 推流（mediamtx 已在 1935 监听）
-MEDIA_MTX_CAM1="rtmp://127.0.0.1:1935/cam"
-MEDIA_MTX_CAM2="rtmp://127.0.0.1:1935/cam2"
+# cam2：USB 摄像头设备节点（C920 = /dev/video1）
+CAM2_DEV="${CAM2_DEV:-/dev/video1}"
 
 mkdir -p "$PID_DIR"
 
@@ -71,8 +70,27 @@ setsid bash -c '
 echo $! > "$PID_DIR/ffmpeg_cam1.pid"
 echo "FFmpeg cam1 PID: $(cat "$PID_DIR/ffmpeg_cam1.pid")"
 
-# cam2 管道已禁用（.26 无法访问）
-# echo "FFmpeg cam2 PID: $(cat "$PID_DIR/ffmpeg_cam2.pid")"
+# ── cam2 看门狗（C920 USB → /dev/video1 → cam2，直接 MJPEG 采集）──
+echo "Starting FFmpeg watchdog cam2 (USB C920)..."
+setsid bash -c '
+  while true; do
+    if [ ! -e "'"$CAM2_DEV"'" ]; then
+      echo "[$(date "+%F %T")] cam2 device '"$CAM2_DEV"' not found, waiting..." >> "'"$ROOT_DIR"'/logs/ffmpeg_cam2.log"
+      sleep 5; continue
+    fi
+    echo "[$(date "+%F %T")] Starting FFmpeg cam2..." >> "'"$ROOT_DIR"'/logs/ffmpeg_cam2.log"
+    ffmpeg -f v4l2 -input_format mjpeg -framerate 30 -video_size 1280x720 \
+      -i "'"$CAM2_DEV"'" \
+      -c:v libx264 -preset ultrafast -tune zerolatency -threads 2 \
+      -b:v 1500k -maxrate 2000k -bufsize 500k -g 30 -bf 0 -pix_fmt yuv420p \
+      -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam2 \
+      >> "'"$ROOT_DIR"'/logs/ffmpeg_cam2.log" 2>&1 || true
+    echo "[$(date "+%F %T")] FFmpeg cam2 exited, restarting in 3s..." >> "'"$ROOT_DIR"'/logs/ffmpeg_cam2.log"
+    sleep 3
+  done
+' &
+echo $! > "$PID_DIR/ffmpeg_cam2.pid"
+echo "FFmpeg cam2 PID: $(cat "$PID_DIR/ffmpeg_cam2.pid")"
 
 echo ""
 echo "Pipeline started."
