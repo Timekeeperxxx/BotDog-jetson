@@ -23,6 +23,8 @@ export function useWhepVideo(customWhepUrl?: string) {
   const connectingRef = useRef(false);
   const retryTimerRef = useRef<number | null>(null);
   const statsTimerRef = useRef<number | null>(null);
+  // 上一次 inbound-rtp 快照，用于增量计算 jitter buffer 和 decode 延迟
+  const prevInboundRef = useRef<{ jitterBufferDelay: number; jitterBufferEmittedCount: number; totalDecodeTime: number; framesDecoded: number } | null>(null);
   const [videoLatencyMs, setVideoLatencyMs] = useState<number | null>(null);
   const [videoResolution, setVideoResolution] = useState<{ width: number | null; height: number | null }>({
     width: null,
@@ -60,6 +62,7 @@ export function useWhepVideo(customWhepUrl?: string) {
       sessionUrlRef.current = null;
     }
 
+    prevInboundRef.current = null;
     setVideoLatencyMs(null);
     setVideoResolution({ width: null, height: null });
 
@@ -108,32 +111,59 @@ export function useWhepVideo(customWhepUrl?: string) {
               try {
                 const stats = await currentPc.getStats();
                 let rttSeconds: number | null = null;
+                let curInbound: { jitterBufferDelay: number; jitterBufferEmittedCount: number; totalDecodeTime: number; framesDecoded: number } | null = null;
 
                 stats.forEach((report) => {
-                  if (rttSeconds !== null) return;
-                  if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
-                    const currentRtt = (report as RTCIceCandidatePairStats).currentRoundTripTime;
-                    if (typeof currentRtt === 'number' && currentRtt > 0) {
-                      rttSeconds = currentRtt;
+                  // --- 网络单程延迟：从 ICE candidate-pair 获取 RTT ---
+                  if (report.type === 'candidate-pair' && (report as any).state === 'succeeded' && (report as any).nominated) {
+                    const rtt = (report as RTCIceCandidatePairStats).currentRoundTripTime;
+                    if (typeof rtt === 'number' && rtt > 0 && rttSeconds === null) {
+                      rttSeconds = rtt;
                     }
+                  }
+                  // --- 抖动缓冲区 + 解码延迟：从 inbound-rtp 获取累计值 ---
+                  if (report.type === 'inbound-rtp' && (report as any).kind === 'video') {
+                    const r = report as any;
+                    curInbound = {
+                      jitterBufferDelay: typeof r.jitterBufferDelay === 'number' ? r.jitterBufferDelay : 0,
+                      jitterBufferEmittedCount: typeof r.jitterBufferEmittedCount === 'number' ? r.jitterBufferEmittedCount : 0,
+                      totalDecodeTime: typeof r.totalDecodeTime === 'number' ? r.totalDecodeTime : 0,
+                      framesDecoded: typeof r.framesDecoded === 'number' ? r.framesDecoded : 0,
+                    };
                   }
                 });
 
+                // 备用：从 remote-inbound-rtp 获取 RTT
                 if (rttSeconds === null) {
                   stats.forEach((report) => {
                     if (rttSeconds !== null) return;
-                    if (report.type === 'remote-inbound-rtp' && report.kind === 'video') {
-                      const currentRtt = (report as any).roundTripTime;
-                      if (typeof currentRtt === 'number' && currentRtt > 0) {
-                        rttSeconds = currentRtt;
-                      }
+                    if (report.type === 'remote-inbound-rtp' && (report as any).kind === 'video') {
+                      const rtt = (report as any).roundTripTime;
+                      if (typeof rtt === 'number' && rtt > 0) rttSeconds = rtt;
                     }
                   });
                 }
 
-                if (rttSeconds !== null) {
-                  const latencyMs = Math.round((rttSeconds * 1000) / 2);
-                  setVideoLatencyMs(latencyMs);
+                // 用增量计算本周期的平均 jitter buffer 延迟和解码时间
+                let jitterBufferMs = 0;
+                let decodeMs = 0;
+                if (curInbound && prevInboundRef.current) {
+                  const prev = prevInboundRef.current;
+                  const cur = curInbound as { jitterBufferDelay: number; jitterBufferEmittedCount: number; totalDecodeTime: number; framesDecoded: number };
+                  const deltaEmitted = cur.jitterBufferEmittedCount - prev.jitterBufferEmittedCount;
+                  const deltaJitter = cur.jitterBufferDelay - prev.jitterBufferDelay;
+                  const deltaFrames = cur.framesDecoded - prev.framesDecoded;
+                  const deltaDecode = cur.totalDecodeTime - prev.totalDecodeTime;
+                  if (deltaEmitted > 0) jitterBufferMs = (deltaJitter / deltaEmitted) * 1000;
+                  if (deltaFrames > 0) decodeMs = (deltaDecode / deltaFrames) * 1000;
+                }
+                if (curInbound) prevInboundRef.current = curInbound as { jitterBufferDelay: number; jitterBufferEmittedCount: number; totalDecodeTime: number; framesDecoded: number };
+
+                // 总延迟 = 网络单程 + 抖动缓冲区 + 解码
+                if (rttSeconds !== null || jitterBufferMs > 0) {
+                  const networkMs = rttSeconds !== null ? (rttSeconds * 1000) / 2 : 0;
+                  const totalMs = Math.round(networkMs + jitterBufferMs + decodeMs);
+                  setVideoLatencyMs(totalMs);
                 }
               } catch {
                 // ignore stats errors
