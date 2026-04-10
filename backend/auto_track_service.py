@@ -337,15 +337,7 @@ class AutoTrackService:
 
         await self._maybe_broadcast_debug_status()
 
-        # ── 延迟日志 ───────────────────────────────────────────────
-        if t_start > 0:
-            t_track_done = time.monotonic()
-            self._write_latency_log(
-                frame_index=frame_index,
-                t_start=t_start,
-                t_detect_end=t_detect_end,
-                t_track_done=t_track_done,
-            )
+
 
     # ─── 状态机各态处理 ──────────────────────────────────────────────────────
 
@@ -817,40 +809,9 @@ class AutoTrackService:
         )
         logger.info(f"[AutoTrackService] Decision log: {log_path}")
 
-    def _write_frame_log(
-        self,
-        persons: list,
-        *,
-        command: Optional[str] = None,
-        should_send: bool = False,
-        reason: str = "",
-        bbox: Optional[tuple] = None,
-        anchor: Optional[tuple] = None,
-    ) -> None:
-        try:
-            self._ensure_decision_log()
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            person_count = len(persons)
-            detected = "YES" if person_count > 0 else "NO"
-            persons_str = ";".join(
-                f"{d.track_id}:{d.bbox[0]},{d.bbox[1]},{d.bbox[2]},{d.bbox[3]}"
-                for d in persons
-            ) if person_count > 0 else "-"
-            cmd_str = command or "-"
-            sent_str = "Y" if should_send else "N"
-            reason_str = reason or "-"
-            bbox_str = f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}" if bbox else "-"
-            anchor_str = f"{anchor[0]},{anchor[1]}" if anchor else "-"
-            line = (
-                f"{now_str} | {self._frames_processed:06d} | {self._state.value}"
-                f" | {detected} | {person_count}"
-                f" | {persons_str} | {cmd_str} | {sent_str} | {reason_str}"
-                f" | {bbox_str} | {anchor_str}\n"
-            )
-            assert self._decision_log_file is not None
-            self._decision_log_file.write(line)
-        except Exception as exc:
-            logger.warning(f"[AutoTrackService] Failed to write decision log: {exc}")
+    def _write_frame_log(self, persons: list, **kwargs) -> None:
+        """决策日志已禁用（生产环境不需要）。"""
+        pass
 
     def _close_decision_log(self) -> None:
         if self._decision_log_file is not None:
@@ -878,30 +839,10 @@ class AutoTrackService:
         )
         logger.info(f"[AutoTrackService] Latency log: {log_path}")
 
-    def _write_latency_log(
-        self,
-        *,
-        frame_index: int,
-        t_start: float,
-        t_detect_end: float,
-        t_track_done: float,
-    ) -> None:
-        try:
-            self._ensure_latency_log()
-            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            detect_ms = (t_detect_end - t_start) * 1000
-            track_ms = (t_track_done - t_detect_end) * 1000
-            total_ms = (t_track_done - t_start) * 1000
-            cmd_str = self._last_command or "-"
-            persons = len(self._candidates) + (1 if self._active_target else 0)
-            line = (
-                f"{now_str} | {frame_index:06d} | {self._state.value}"
-                f" | {persons} | {cmd_str}"
-                f" | {detect_ms:.1f} | {track_ms:.1f} | {total_ms:.1f}\n"
-            )
-            self._latency_log_file.write(line)  # type: ignore
-        except Exception as exc:
-            logger.warning(f"[AutoTrackService] Failed to write latency log: {exc}")
+    def _write_latency_log(self, *, frame_index: int, t_start: float,
+                            t_detect_end: float, t_track_done: float) -> None:
+        """延迟日志已禁用（生产环境不需要）。"""
+        pass
 
 
 
