@@ -247,6 +247,7 @@ export default function IndustrialConsoleComplete() {
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [selectedEvidence, setSelectedEvidence] = useState<Set<number>>(new Set());
   const [evidenceDeleting, setEvidenceDeleting] = useState(false);
+  const [lightboxItem, setLightboxItem] = useState<EvidenceItem | null>(null);
 
   const fullscreenRequestedRef = useRef(false);
 
@@ -1054,7 +1055,7 @@ export default function IndustrialConsoleComplete() {
                     const confidence = item.confidence ?? undefined;
                     const timestamp = item.created_at || '';
                     return (
-                      <div key={`${item.evidence_id}-${i}`} className="group bg-zinc-900 border-2 border-white/10 hover:border-white transition-all duration-500 rounded-2xl overflow-hidden flex flex-col shadow-[0_30px_60px_-12px_rgba(0,0,0,0.8)]">
+                      <div key={`${item.evidence_id}-${i}`} onClick={() => setLightboxItem(item)} className="group bg-zinc-900 border-2 border-white/10 hover:border-white transition-all duration-500 rounded-2xl overflow-hidden flex flex-col shadow-[0_30px_60px_-12px_rgba(0,0,0,0.8)] cursor-pointer">
                         {/* 顶部图片区域：始终渲染，无图时显示占位图标 */}
                         <div className="relative h-48 bg-black shrink-0">
                           {imageSrc ? (
@@ -1076,7 +1077,7 @@ export default function IndustrialConsoleComplete() {
                           {/* 删除按钮 — 始终显示 */}
                           <div className="absolute top-5 right-5">
                             <button
-                              onClick={() => deleteEvidenceSingle(item.evidence_id)}
+                              onClick={(e) => { e.stopPropagation(); deleteEvidenceSingle(item.evidence_id); }}
                               className="px-2 py-1 text-[9px] font-black uppercase tracking-widest border border-red-500/60 text-red-300 hover:border-red-400 hover:text-red-200 bg-black/60"
                             >
                               删除
@@ -1087,7 +1088,8 @@ export default function IndustrialConsoleComplete() {
                             <input
                               type="checkbox"
                               checked={selectedEvidence.has(item.evidence_id)}
-                              onChange={() => toggleEvidenceSelected(item.evidence_id)}
+                              onChange={(e) => { e.stopPropagation(); toggleEvidenceSelected(item.evidence_id); }}
+                              onClick={(e) => e.stopPropagation()}
                               className="w-4 h-4 accent-white cursor-pointer"
                             />
                           </div>
@@ -1119,6 +1121,69 @@ export default function IndustrialConsoleComplete() {
           </div>
         )}
       </main>
+
+      {/* 证据灯箱 Modal */}
+      {lightboxItem && (() => {
+        const lb = lightboxItem;
+        const lbImg = getImageUrl(lb.image_url || undefined);
+        const lbConf = lb.confidence ?? undefined;
+        return (
+          <div
+            className="fixed inset-0 z-[1100] bg-black/95 backdrop-blur-sm flex items-center justify-center"
+            onClick={() => setLightboxItem(null)}
+          >
+            <div
+              className="relative flex flex-col max-w-4xl w-full mx-6 bg-zinc-900 border border-white/20 rounded-2xl overflow-hidden shadow-[0_40px_100px_rgba(0,0,0,1)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* 顶部工具栏 */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
+                <div className="flex items-center space-x-3">
+                  <span className={`px-3 py-1.5 rounded-sm font-black text-[11px] uppercase tracking-widest border-2 ${
+                    lb.severity === 'CRITICAL' ? 'bg-red-600 border-red-400 text-white' : 'bg-black border-white text-white'
+                  }`}>{lb.severity}</span>
+                  <span className="text-white font-black text-sm tracking-wide">{lb.message || lb.event_code || 'AI 告警'}</span>
+                </div>
+                <button
+                  onClick={() => setLightboxItem(null)}
+                  className="text-white/40 hover:text-white hover:bg-white/10 p-2 rounded-lg transition-all"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+              {/* 大图 */}
+              <div className="bg-black flex items-center justify-center" style={{ minHeight: '420px' }}>
+                {lbImg ? (
+                  <img src={lbImg} className="max-w-full max-h-[60vh] object-contain" />
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-24 text-white/20">
+                    <Thermometer size={64} className="mb-4" />
+                    <span className="text-xs uppercase tracking-widest font-black">无截图</span>
+                  </div>
+                )}
+              </div>
+              {/* 底部元数据 */}
+              <div className="px-6 py-5 border-t border-white/10 grid grid-cols-3 gap-6">
+                {lbConf !== undefined && (
+                  <div className="col-span-2">
+                    <div className="flex items-center justify-between text-[11px] font-black mb-2">
+                      <span className="text-slate-500 uppercase tracking-widest">置信度</span>
+                      <span className="font-mono text-white">{(lbConf * 100).toFixed(1)}%</span>
+                    </div>
+                    <div className="h-2 bg-black rounded-full overflow-hidden border border-white/10">
+                      <div className="h-full bg-white shadow-[0_0_15px_white]" style={{ width: `${lbConf * 100}%` }} />
+                    </div>
+                  </div>
+                )}
+                <div className="flex items-center col-span-1 text-[11px] text-white/60 font-black">
+                  <Clock size={14} className="mr-2 text-slate-500 shrink-0" />
+                  <span>{lb.created_at ? new Date(lb.created_at).toLocaleString('zh-CN', { hour12: false }) : '--'}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 配置面板模态框 */}
       {showConfigPanel && (
