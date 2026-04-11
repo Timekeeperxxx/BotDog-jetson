@@ -1,528 +1,396 @@
-# BotDog 后端 - 阶段 4 实现
+# BotDog 后端
+
+BotDog 机器人控制系统的后端服务，运行于 **OrangePi 5 Ultra**，负责遥测采集、AI 识别、运动控制、任务管理与 WebSocket 广播。
 
 ## 技术栈
 
-- Python 3.12+（当前使用 3.12.x）
-- FastAPI（Web 框架）
-- SQLAlchemy 2.0（异步 ORM）
-- aiosqlite（异步 SQLite 驱动）
-- pymavlink（MAVLink 协议解析）
-- loguru（日志系统）
-- uvicorn（ASGI 服务器）
-- websockets（WebSocket 支持）
-- Pydantic（数据验证）
+| 组件 | 版本/说明 |
+|------|-----------|
+| Python | 3.12+ |
+| FastAPI | Web 框架 + API 路由 |
+| uvicorn | ASGI 服务器 |
+| SQLAlchemy 2.0 | 异步 ORM |
+| aiosqlite | 异步 SQLite 驱动 |
+| Pydantic Settings | 类型安全配置管理 |
+| ultralytics (YOLOv8) | AI 目标检测 |
+| loguru | 结构化日志 |
 
-## 环境配置
+## 系统架构
 
-### 创建虚拟环境
+```
+OrangePi 5 Ultra
+├── backend/          ← 本服务（FastAPI）
+│   ├── 遥测广播 (WebSocket /ws/telemetry)
+│   ├── 事件广播 (WebSocket /ws/events)
+│   ├── AI 推理  (RTSP → YOLOv8 → ByteTrack)
+│   ├── 运动控制 (Unitree B2 SDK / 模拟)
+│   └── 任务管理 (SQLite)
+│
+├── MediaMTX          ← 视频服务器
+│   ├── cam  (WHEP)   ← HM30 IP 摄像头
+│   └── cam2 (WHEP)   ← USB 摄像头 (C920)
+│
+└── FFmpeg × 2        ← 视频采集推流（由 run-pipeline.sh 管理）
+    ├── cam1: HM30 摄像头 RTSP → MediaMTX
+    └── cam2: /dev/video1 V4L2 → MediaMTX
+```
+
+## 快速启动
+
+### 1. 准备虚拟环境
 
 ```bash
 # 在项目根目录执行
 python -m venv .venv
-source .venv/bin/activate  # Linux/macOS
-# Windows PowerShell: .venv\Scripts\Activate.ps1
+source .venv/bin/activate        # Linux
+# Windows: .venv\Scripts\Activate.ps1
 ```
 
-### 安装依赖
+### 2. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 环境变量配置
-
-在项目根目录创建 `.env` 文件：
+### 3. 配置环境变量
 
 ```bash
-# 基础网络配置
-BACKEND_HOST=0.0.0.0
-BACKEND_PORT=8000
-
-# MAVLink / 数据库
-MAVLINK_ENDPOINT=udp:127.0.0.1:14550
-DATABASE_URL=sqlite+aiosqlite:///./data/botdog.db
-
-# 安全配置
-JWT_SECRET=请在本地自定义
-
-# CORS 配置
-CORS_ALLOW_ORIGINS=["http://localhost:5174"]
-CORS_ALLOW_CREDENTIALS=false
-
-# MAVLink 数据源选择
-# - mavlink: 使用真实 MAVLink 端口
-# - simulation: 使用模拟数据生成器（开发默认）
-MAVLINK_SOURCE=simulation
-
-# 系统参数
-HEARTBEAT_TIMEOUT=3.0              # 心跳超时（秒）
-TELEMETRY_SAMPLING_HZ=2.0          # 遥测落盘采样频率（Hz）
-TELEMETRY_BROADCAST_HZ=15.0        # 遥测广播频率（Hz）
-
-# 模拟数据 Worker（开发调试用）
-SIMULATION_WORKER_ENABLED=true
-
+cp backend/.env.example backend/.env
+# 根据实际硬件修改 .env 关键项（见下方说明）
 ```
 
-## 启动服务
-
-### 开发模式
+### 4. 启动后端
 
 ```bash
-# 确保已激活虚拟环境
-source .venv/bin/activate
-
-# 启动后端服务（带热重载）
+# 开发模式（热重载）
 uvicorn backend.main:app --reload
 
-# 或指定端口
-uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+# 生产模式（OrangePi 上推荐）
+python run_backend.py
 ```
 
-### 生产模式
+### 5. 启动视频流水线
 
 ```bash
-uvicorn backend.main:app --host 0.0.0.0 --port 8000 --workers 4
+# 自动检测 HM30 摄像头和 USB 摄像头并启动 FFmpeg
+bash scripts/run-pipeline.sh
+
+# 停止
+bash scripts/run-pipeline.sh stop
 ```
 
-### 访问 API 文档
+## 环境变量说明
 
-启动服务后，访问以下地址：
+完整模板见 `backend/.env.example`，以下列出关键项：
 
-- Swagger UI: http://localhost:8000/api/docs
-- OpenAPI JSON: http://localhost:8000/api/openapi.json
+### 基础网络
+
+```bash
+BACKEND_HOST=0.0.0.0
+BACKEND_PORT=8000
+```
+
+### 遥测 & 数据库
+
+```bash
+DATABASE_URL=sqlite+aiosqlite:///./data/botdog.db
+MAVLINK_SOURCE=simulation        # simulation | mavlink
+MAVLINK_ENDPOINT=udp:127.0.0.1:14550
+SIMULATION_WORKER_ENABLED=false  # 生产环境关闭
+```
+
+### AI 识别
+
+```bash
+AI_ENABLED=true
+AI_RTSP_URL=rtsp://127.0.0.1:8554/cam   # MediaMTX cam 路径
+AI_FRAME_WIDTH=1280
+AI_FRAME_HEIGHT=720
+AI_FPS=30
+AI_MODEL_PATH=models/yolov8n.pt
+AI_CONFIDENCE_THRESHOLD=0.33
+AI_TARGET_CLASSES=["person"]
+AI_DEVICE=auto                   # auto | cpu | cuda
+```
+
+### 运动控制
+
+```bash
+CONTROL_ADAPTER_TYPE=unitree_b2  # unitree_b2 | simulation
+CONTROL_WATCHDOG_TIMEOUT_MS=1500 # 前端无命令超时自动 stop（ms）
+CONTROL_CMD_RATE_LIMIT_MS=50
+```
+
+### 自动跟踪
+
+```bash
+AUTO_TRACK_ENABLED=false         # 启动时默认关闭，由前端控制
+AUTO_TRACK_COMMAND_INTERVAL_MS=100
+AUTO_TRACK_YAW_DEADBAND_PX=150   # 中心死区（像素），防抖
+AUTO_TRACK_FORWARD_AREA_RATIO=0.35
+AUTO_TRACK_YAW_PULSE_MS=150      # 脉冲转向时长（ms），0=禁用
+```
+
+### 宇树 B2 硬件
+
+```bash
+UNITREE_NETWORK_IFACE=enP3p49s0  # 连接 B2 的网卡（ip addr 确认）
+UNITREE_B2_VX=0.3                # 前进/后退速度（m/s）
+UNITREE_B2_VYAW=0.5              # 偏航转速（rad/s）
+```
 
 ## 项目结构
 
 ```
 backend/
-├── __init__.py
-├── main.py                 # FastAPI 应用入口
-├── config.py               # 配置管理（Pydantic Settings）
-├── database.py             # 数据库连接与会话管理
-├── logging_config.py       # Loguru 日志配置
-├── models.py               # SQLAlchemy ORM 模型
-├── schemas.py              # Pydantic 数据传输对象（DTO）
-├── mavlink_gateway.py      # MAVLink 网关（UDP 报文解析）
-├── mavlink_dto.py          # MAVLink 数据传输对象
-├── telemetry_queue.py      # 遥测队列管理器
-├── state_machine.py        # 系统状态机
-├── ws_broadcaster.py       # WebSocket 遥测广播器
-├── workers_telemetry.py    # 遥测数据落盘 Worker
-├── workers_simulation.py   # 模拟数据生成器
-├── services_tasks.py       # 任务管理服务
-├── services_logs.py        # 日志服务
-├── services_telemetry.py   # 遥测数据服务
-└── services_evidence.py    # 异常证据服务
+├── main.py                     # FastAPI 应用入口，路由注册，生命周期
+├── config.py                   # Pydantic Settings 配置管理
+├── database.py                 # 数据库连接与会话
+├── models.py                   # SQLAlchemy ORM 模型
+├── schemas.py                  # Pydantic DTO（请求/响应结构）
+├── logging_config.py           # Loguru 日志配置
+│
+├── mavlink_gateway.py          # MAVLink UDP 报文解析网关
+├── mavlink_dto.py              # MAVLink 数据传输对象
+├── telemetry_queue.py          # 遥测队列管理（广播 & 落盘）
+├── state_machine.py            # 系统状态机
+│
+├── ws_broadcaster.py           # WebSocket 遥测广播器
+├── ws_event_broadcaster.py     # WebSocket 事件广播器（AI/控制事件）
+├── global_event_broadcaster.py # 全局事件总线（单例）
+│
+├── workers_ai.py               # AI Worker（YOLOv8 推理 + ByteTrack）
+├── workers_telemetry.py        # 遥测落盘 Worker
+├── workers_simulation.py       # 模拟遥测数据生成器
+├── workers_unitree_telemetry.py# 宇树 B2 遥测采集 Worker
+│
+├── control_service.py          # 控制命令服务（仲裁 + 发送）
+├── control_arbiter.py          # 控制权仲裁器（手动 vs 自动跟踪）
+├── robot_adapter.py            # 机器人适配器（B2 SDK / 模拟）
+│
+├── auto_track_service.py       # 自动跟踪服务（状态机 + AI 决策）
+├── follow_decision_engine.py   # 跟踪决策引擎（方向/速度计算）
+├── target_manager.py           # 跟踪目标管理器
+├── tracking_types.py           # 跟踪相关类型定义
+│
+├── alert_service.py            # 告警管理服务
+├── zone_service.py             # 区域管理服务
+├── stranger_policy.py          # 陌生人识别策略
+│
+├── services_config.py          # 配置管理 API 服务
+├── services_video_sources.py   # 视频源 & 网口管理服务
+├── services_tasks.py           # 任务管理服务
+├── services_logs.py            # 操作日志服务
+├── services_telemetry.py       # 遥测查询服务
+├── services_evidence.py        # 证据管理服务
+│
+├── video_watchdog.py           # 视频流看门狗
+└── temperature_monitor.py      # 系统温度监控
+
+scripts/
+├── run-pipeline.sh             # 视频流水线启动脚本（MediaMTX + FFmpeg）
+└── mediamtx                    # MediaMTX 可执行文件
+
+config/
+└── mediamtx.yml                # MediaMTX 配置（RTSP + WHEP 路径）
 ```
 
-## 核心模块说明
+## API 端点总览
 
-### main.py
+### 系统
 
-**职责：**
-- FastAPI 应用装配与生命周期管理
-- 路由注册与中间件配置
-- 全局组件初始化（状态机、MAVLink 网关、WebSocket 广播器等）
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/system/health` | 健康检查 |
+| GET | `/api/v1/system/status` | 系统完整状态 |
 
-**关键组件：**
-- `lifespan()`: 应用启动/关闭钩子
-- `create_app()`: FastAPI 应用工厂函数
-- `register_routes()`: 路由注册函数
+### 任务管理
 
-### config.py
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/session/start` | 启动巡检任务 |
+| POST | `/api/v1/session/stop` | 停止巡检任务 |
 
-**职责：**
-- 全局配置管理
-- 环境变量加载（`.env` 文件）
-- 类型安全的配置访问
+### 运动控制
 
-**配置项：**
-- `MAVLINK_SOURCE`: 数据源切换（`mavlink` 或 `simulation`）
-- `HEARTBEAT_TIMEOUT`: MAVLink 心跳超时检测
-- `TELEMETRY_SAMPLING_HZ`: 遥测数据采样频率
-- `TELEMETRY_BROADCAST_HZ`: WebSocket 广播频率
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/control/command` | 发送运动命令 |
+| POST | `/api/v1/control/stop` | 紧急停止 |
 
-### mavlink_gateway.py
+### AI 自动跟踪
 
-**职责：**
-- 监听 UDP 端口接收 MAVLink 报文
-- 解析 `HEARTBEAT`、`ATTITUDE`、`GLOBAL_POSITION_INT`、`SYS_STATUS` 等报文
-- 支持**模拟数据源**（通过 `MAVLINK_SOURCE` 配置切换）
-- 推送遥测数据到队列管理器
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/auto-track/enable` | 启用自动跟踪 |
+| POST | `/api/v1/auto-track/disable` | 禁用自动跟踪 |
+| GET | `/api/v1/auto-track/status` | 获取跟踪状态 |
 
-**数据流：**
-```
-MAVLink UDP (14550) → MAVLinkGateway → TelemetryQueueManager
-```
+### 证据 & 日志
 
-### ws_broadcaster.py
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/evidence` | 查询证据列表 |
+| POST | `/api/v1/evidence/bulk-delete` | 批量删除证据 |
+| GET | `/api/v1/logs` | 查询操作日志 |
 
-**职责：**
-- 维护 WebSocket 客户端连接池
-- 从遥测队列获取最新快照（15Hz）
-- 广播 `TELEMETRY_UPDATE` 消息给所有客户端
-- 管理消息序列号
+### 视频源管理
 
-**WebSocket 协议：**
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/video-sources` | 获取所有视频源 |
+| GET | `/api/v1/video-sources/active` | 获取已启用视频源 |
+| PUT | `/api/v1/video-sources/{id}` | 更新视频源配置 |
+
+### 配置管理
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/config` | 获取所有配置项 |
+| PUT | `/api/v1/config/{key}` | 更新配置项 |
+
+### WebSocket
+
+| 路径 | 说明 |
+|------|------|
+| `WS /ws/telemetry` | 遥测数据流（15Hz 推送） |
+| `WS /ws/events` | 事件流（AI 检测、告警、跟踪状态） |
+
+#### 遥测消息格式
+
 ```json
 {
   "type": "TELEMETRY_UPDATE",
   "seq": 123,
-  "timestamp": "2025-01-15T10:30:45.123Z",
+  "timestamp": "2026-04-10T10:30:45.123Z",
   "payload": {
     "attitude": { "pitch": 0.0, "roll": 0.0, "yaw": 0.0 },
-    "position": { "lat": 0.0, "lon": 0.0, "alt": 0.0, "hdg": 0.0 },
-    "battery": { "voltage": 12.6, "remaining_pct": 100 },
-    "system_status": { "armed": false, "mode": "STABILIZE" }
+    "position": { "lat": 0.0, "lon": 0.0, "alt": 0.0, "groundspeed": 0.0 },
+    "battery_pct": 85.0,
+    "rssi_dbm": -65,
+    "core_temp_c": 42.0
   }
 }
 ```
 
-### telemetry_queue.py
+#### 事件消息格式（AI 检测告警）
 
-**职责：**
-- 遥测数据队列管理（广播队列 + 落盘队列）
-- 采样控制（降频落盘）
-- 线程安全的数据访问
+```json
+{
+  "type": "AI_DETECTION",
+  "severity": "CRITICAL",
+  "message": "检测到陌生人",
+  "confidence": 0.92,
+  "image_url": "/api/v1/evidence/42/image",
+  "timestamp": "2026-04-10T10:30:45.123Z"
+}
+```
 
-### state_machine.py
-
-**职责：**
-- 系统状态管理（`DISCONNECTED`, `CONNECTED`, `ARMED`, `MISSION_ACTIVE`, `E_STOP_TRIGGERED`）
-- MAVLink 心跳超时检测
-- 状态转换验证
-
-### workers_telemetry.py
-
-**职责：**
-- 遥测数据持久化（写入 `telemetry_snapshots` 表）
-- 降采样存储策略
-- 任务关联（通过 `task_id`）
-
-### models.py
-
-**数据库模型：**
+## 数据库模型
 
 | 模型 | 表名 | 说明 |
 |------|------|------|
 | `InspectionTask` | `inspection_tasks` | 巡检任务 |
 | `TelemetrySnapshot` | `telemetry_snapshots` | 遥测快照（降采样） |
-| `AnomalyEvidence` | `anomaly_evidence` | 异常证据链 |
+| `AnomalyEvidence` | `anomaly_evidence` | AI 检测证据 |
 | `OperationLog` | `operation_logs` | 操作日志 |
-| `ConfigEntry` | `config` | 配置项（热更新） |
+| `ConfigEntry` | `config` | 运行时配置 |
+| `VideoSource` | `video_sources` | 视频源配置 |
+| `NetworkInterface` | `network_interfaces` | 网口配置 |
 
-## API 端点
+数据库文件：`data/botdog.db`（应用启动时自动建表）
 
-### 系统健康检查
+## 视频流接入
 
-```
-GET /api/v1/system/health
-```
-
-**响应示例：**
-```json
-{
-  "status": "healthy",
-  "mavlink_connected": true,
-  "uptime": 3600.123
-}
-```
-
-**状态说明：**
-- `healthy`: MAVLink 已连接且系统正常
-- `degraded`: MAVLink 断连或触发急停
-- `offline`: 启动初期（< 10 秒）且未检测到连接
-
-### 启动巡检任务
+### 视频管线
 
 ```
-POST /api/v1/session/start
+HM30 IP 摄像头 (192.168.144.25:8554)
+    → FFmpeg 拉流 → MediaMTX cam → WHEP → 浏览器主画面
+
+USB 摄像头 C920 (/dev/video1)
+    → FFmpeg V4L2 采集 → MediaMTX cam2 → WHEP → 浏览器 PiP
 ```
 
-**请求体：**
-```json
-{
-  "task_name": "巡检任务-001"
-}
-```
-
-**响应示例：**
-```json
-{
-  "task_id": 1,
-  "task_name": "巡检任务-001",
-  "status": "running",
-  "started_at": "2025-01-15T10:30:45.123Z",
-  "ended_at": null
-}
-```
-
-### 停止巡检任务
-
-```
-POST /api/v1/session/stop
-```
-
-**请求体：**
-```json
-{
-  "task_id": 1
-}
-```
-
-### 查询日志
-
-```
-GET /api/v1/logs
-```
-
-**响应示例：**
-```json
-{
-  "items": [
-    {
-      "log_id": 1,
-      "level": "INFO",
-      "module": "BACKEND",
-      "message": "Session started: 巡检任务-001 (id=1)",
-      "task_id": 1,
-      "created_at": "2025-01-15T10:30:45.123Z"
-    }
-  ]
-}
-```
-
-### 查询异常证据
-
-```
-GET /api/v1/evidence?task_id=1
-```
-
-**响应示例：**
-```json
-{
-  "items": [
-    {
-      "evidence_id": 1,
-      "task_id": 1,
-      "event_type": "THERMAL_ANOMALY",
-      "event_code": "T_MAX_EXCEEDED",
-      "severity": "CRITICAL",
-      "message": "检测到高温异常",
-      "confidence": 0.95,
-      "file_path": "/data/snapshots/2025-01-15/10-30-45.jpg",
-      "image_url": "/api/v1/evidence/1/image",
-      "gps_lat": 31.2304,
-      "gps_lon": 121.4737,
-      "created_at": "2025-01-15T10:30:45.123Z"
-    }
-  ]
-}
-```
-
-### WebSocket 遥测流
-
-```
-WS /ws/telemetry
-```
-
-**消息类型：**
-
-#### 1. TELEMETRY_UPDATE（服务端推送）
-
-```json
-{
-  "type": "TELEMETRY_UPDATE",
-  "seq": 123,
-  "timestamp": "2025-01-15T10:30:45.123Z",
-  "payload": { ... }
-}
-```
-
-#### 2. SYSTEM_EVENT（服务端推送）
-
-```json
-{
-  "type": "SYSTEM_EVENT",
-  "event": "MAVLINK_CONNECTED",
-  "timestamp": "2025-01-15T10:30:45.123Z"
-}
-```
-
-#### 3. PING（客户端发送）
-
-```json
-{
-  "type": "PING"
-}
-```
-
-**服务端响应：**
-```json
-{
-  "type": "PONG",
-  "timestamp": "2025-01-15T10:30:45.123Z"
-}
-```
-
-## 数据库
-
-### 初始化
-
-数据库表会在应用启动时自动创建（通过 `init_db()`）。
-
-数据库文件位置：`./data/botdog.db`（可在 `.env` 中配置）
-
-### 表结构
-
-详见 `docs/14_database_schema.md` 或直接查看 `backend/models.py`。
-
-## 测试
-
-### 运行测试
+### 手动验证 cam2
 
 ```bash
-# 运行所有测试
-pytest
+# 查看 C920 支持的格式
+v4l2-ctl --device=/dev/video1 --list-formats-ext
 
-# 运行测试并生成覆盖率报告
-pytest --cov=backend --cov-report=html
+# 手动推流测试
+ffmpeg -f v4l2 -input_format mjpeg -framerate 30 -video_size 1280x720 \
+  -i /dev/video1 \
+  -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p \
+  -b:v 1500k -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam2
 ```
 
-### 测试依赖
+### 验证 WHEP 流
 
-测试框架已包含在 `requirements.txt` 中：
-- `pytest`
-- `pytest-asyncio`
-- `httpx`
-- `pytest-cov`
+```bash
+# 查看 MediaMTX 路径状态
+curl http://127.0.0.1:8889/v3/paths/list | python3 -m json.tool
+
+# cam2 WHEP 地址
+# http://<OrangePi_IP>:8889/cam2/whep
+```
 
 ## 开发调试
 
-### 查看日志
+### API 文档
 
-应用使用 `loguru` 输出结构化日志：
-
-```python
-from backend.logging_config import logger
-
-logger.info("消息")
-logger.warning("警告")
-logger.error("错误")
+```
+http://localhost:8000/api/docs       # Swagger UI
+http://localhost:8000/api/openapi.json
 ```
 
-### 模拟数据源
-
-开发时默认使用模拟数据源（`MAVLINK_SOURCE=simulation`），无需连接真实 MAVLink 设备。
-
-模拟数据生成器位于 `workers_simulation.py`。
-
-### 连接真实 MAVLink 设备
-
-修改 `.env` 配置：
+### 日志查看
 
 ```bash
-MAVLINK_SOURCE=mavlink
-MAVLINK_ENDPOINT=udp:127.0.0.1:14550
+# 后端日志（标准输出）
+python run_backend.py 2>&1 | tee logs/backend.log
+
+# MediaMTX 日志
+tail -f logs/mediamtx.log
+
+# FFmpeg cam1 日志
+tail -f logs/ffmpeg.log
+
+# FFmpeg cam2 日志
+tail -f logs/ffmpeg_cam2.log
 ```
 
-确保 MAVLink 设备（如飞控、仿真器）已启动并监听指定端口。
+### 键盘控制调试脚本
 
-## 下一步
-
-当前阶段以遥测/事件/配置为主，视频链路由 MediaMTX + FFmpeg 负责，后端不再承担信令。
-
-详见 `docs/13_implementation_plan.md`。
+```bash
+# 直接用键盘控制 B2（绕过前端，调试用）
+python backend/test_keyboard_to_dog.py
+```
 
 ## 常见问题
 
-### Q: 数据库初始化失败？
+**Q: 后端启动报 `unitree sdk` 相关错误？**
 
-检查 `DATABASE_URL` 配置是否正确，确保 `data/` 目录存在且有写入权限。
+将 `CONTROL_ADAPTER_TYPE=simulation` 改为模拟模式，或确认宇树 SDK 已正确安装（参见 `arm46orangepi_bulid.md`）。
 
-### Q: MAVLink 连接失败？
+**Q: AI Worker 不推理？**
 
-1. 确认 `MAVLINK_SOURCE` 配置（开发时用 `simulation`）
-2. 确认 MAVLink 设备已启动并监听正确端口
-3. 检查防火墙设置
+1. 检查 `AI_ENABLED=true`
+2. 确认模型文件存在：`models/yolov8n.pt`
+3. 确认 `AI_RTSP_URL` 指向有效的 MediaMTX 路径
 
-### Q: WebSocket 客户端无法连接？
+**Q: cam2 画中画不显示？**
 
-1. 确认后端服务已启动
-2. 检查 CORS 配置（`CORS_ALLOW_ORIGINS`）
-3. 确认前端 WebSocket 地址正确（`ws://localhost:8000/ws/telemetry`）
+1. 确认 C920 已连接：`ls /dev/video1`
+2. 确认 FFmpeg cam2 进程在运行：`tail -f logs/ffmpeg_cam2.log`
+3. 检查 MediaMTX cam2 路径是否有流：`curl http://127.0.0.1:8889/v3/paths/list`
 
-### Q: 遥测数据未显示？
+**Q: 自动跟踪机器人乱转？**
 
-1. 检查后端日志是否有 MAVLink 报文解析记录
-2. 确认状态机状态（`/api/v1/system/health`）
-3. 使用 WebSocket 客户端工具（如 `wscat`）测试连接
+调整 `AUTO_TRACK_YAW_DEADBAND_PX`（增大死区）和 `AUTO_TRACK_YAW_PULSE_MS`（缩短脉冲），或检查 AI 检测帧率是否过低。
 
----
+**Q: WebSocket 连接断开？**
 
-## 阶段 3：媒体管线与 WHEP 播放
-
-本阶段视频由 MediaMTX + FFmpeg 负责，后端不再提供信令服务。
-
-### 新增配置项
-
-在 `.env` 中添加：
-
-```bash
-CAMERA_RTSP_URL=rtsp://192.168.144.25:8554/main.264
-```
-
-### 说明
-
-- 视频推流由 FFmpeg 将相机 RTSP(H.265) 转码并发布到 MediaMTX 的 `cam` 路径。
-- 前端通过 WHEP 直连 MediaMTX 获取视频流。
-- 后端仅保留遥测与控制相关 API。
-
-### 边缘端推流（本机 RTSP 摄像头）
-
-视频由 FFmpeg 拉取相机 RTSP 并推送到 MediaMTX：
-
-```bash
-ffmpeg -rtsp_transport tcp -i rtsp://<CAMERA_IP>:8554/main.264 \
-  -fflags nobuffer -flags low_delay -an \
-  -c:v libx264 -preset ultrafast -tune zerolatency -g 30 -keyint_min 30 \
-  -f rtsp rtsp://127.0.0.1:8554/cam
-```
-
-可通过 `CAMERA_RTSP_URL` 覆盖输入地址。
-
-### 验证环境
-
-运行环境验证：
-
-- 确认 `mediamtx.exe` 与 `ffmpeg.exe` 可在命令行中访问。
-- 使用 `ffmpeg -version` 与 `mediamtx --version` 验证安装。
-
-应看到所有关键依赖已安装（`mediamtx`、`ffmpeg`）。
-
-### 常见问题
-
-**Q: WHEP 播放失败？**
-
-1. 检查 MediaMTX 是否运行
-2. 确认 `MEDIA_MTX_WHEP_URL` 与前端 `VITE_WHEP_URL` 一致
-3. 确认浏览器控制台是否有 ICE/HTTP 错误
-
-**Q: 没有视频流？**
-
-1. 确认 FFmpeg 推流已启动
-2. 检查相机 RTSP 地址是否可达
-3. 确认 MediaMTX `cam` 路径是否有流
-
-**Q: 视频卡顿或延迟高？**
-
-1. 降低 FFmpeg 输出分辨率/码率
-2. 检查网络带宽
-3. 检查系统负载
-
-### 下一步
-
-阶段 3 当前已完成：MediaMTX + FFmpeg 推流、前端 WHEP 播放、边缘端 RTSP 接入。
-
-后续可完善：姿态仪可视化、航向指示器、自适应码率、网络波动恢复。
+1. 确认后端服务正常运行
+2. 检查 `CORS_ALLOW_ORIGINS` 是否包含前端地址
+3. OrangePi 防火墙确认 8000 端口开放
