@@ -224,6 +224,7 @@ export default function IndustrialConsoleComplete() {
     connect: connectWhep2,
     disconnect: disconnectWhep2,
   } = useWhepVideo(cam2WhepUrl);
+  const connectWhep2Ref = useRef(connectWhep2);
   // isCamSwapped: false = cam1主画面+cam2 PiP, true = cam2主画面+cam1 PiP
   const [isCamSwapped, setIsCamSwapped] = useState(false);
   // PiP 窗口状态
@@ -341,16 +342,37 @@ export default function IndustrialConsoleComplete() {
   }, [connectWhep]);
 
   useEffect(() => {
+    connectWhep2Ref.current = connectWhep2;
+  }, [connectWhep2]);
+
+  // ── App 内 tab 切换时的视频重连（cam1 + cam2）──
+  useEffect(() => {
     if (activeTab === 'console' || activeTab === 'simulate') {
       tabSwitchRef.current = true;
       const reconnectTimer = window.setTimeout(() => {
         connectWhepRef.current();
+        connectWhep2Ref.current();
       }, 300);
       return () => window.clearTimeout(reconnectTimer);
     }
     tabSwitchRef.current = true;
     void disconnectWhep();
-  }, [activeTab, disconnectWhep]);
+    void disconnectWhep2();
+  }, [activeTab, disconnectWhep, disconnectWhep2]);
+
+  // ── 浏览器标签切换恢复时重连（防止 WebRTC 被浏览器挂起）──
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible' &&
+          (activeTab === 'console' || activeTab === 'simulate')) {
+        connectWhepRef.current();
+        connectWhep2Ref.current();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [activeTab]);
+
 
   useEffect(() => {
     if (activeTab !== 'history') return;
