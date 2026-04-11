@@ -210,7 +210,11 @@ export default function IndustrialConsoleComplete() {
         const sources: VideoSource[] = data.sources || [];
         // CAM2 = 非主画面的第一个视频源
         const secondary = sources.find(s => !s.is_primary);
-        if (secondary?.whep_url) setCam2WhepUrl(secondary.whep_url);
+        if (secondary?.whep_url) {
+          // 数据库里存的可能是 127.0.0.1，从浏览器访问时需替换为 OrangePi 的实际 IP
+          const fixedUrl = secondary.whep_url.replace('127.0.0.1', window.location.hostname);
+          setCam2WhepUrl(fixedUrl);
+        }
       } catch (err) {
         console.error('获取视频源配置失败:', err);
       }
