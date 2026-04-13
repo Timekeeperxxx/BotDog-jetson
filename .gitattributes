@@ -1,0 +1,2 @@
+tools/ffmpeg/**/*.exe filter=lfs diff=lfs merge=lfs -text
+tools/mediamtx/*.exe filter=lfs diff=lfs merge=lfs -text
