@@ -28,7 +28,7 @@ fi
 
 # 修复 ARM64 下 pip cyclonedds==0.10.2 自带 C 库无法创建 Topic 的 Bug
 # 强制指向本地编译的 CycloneDDS 库路径，防止加载错误的 C 库
-export CYCLONEDDS_HOME="${CYCLONEDDS_HOME:-/usr/local}"
+export CYCLONEDDS_HOME="${CYCLONEDDS_HOME:-/home/jetson/cyclonedds-0.10x/install}"
 export LD_LIBRARY_PATH="$CYCLONEDDS_HOME/lib:${LD_LIBRARY_PATH:-}"
 echo "[INFO] CYCLONEDDS_HOME 设定为 $CYCLONEDDS_HOME, 注入了 LD_LIBRARY_PATH"
 

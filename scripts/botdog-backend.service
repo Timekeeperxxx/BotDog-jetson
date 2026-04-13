@@ -9,16 +9,16 @@ Before=botdog-pipeline.service
 
 [Service]
 Type=simple
-User=orangepi
-WorkingDirectory=/home/orangepi/Code/Project/BOTDOG/BotDog
+User=jetson
+WorkingDirectory=/home/jetson/Project/BOTDOG/BotDog
 
 # 环境变量（CycloneDDS 依赖路径）
-Environment="CYCLONEDDS_HOME=/home/orangepi/cyclonedds/install"
-Environment="LD_LIBRARY_PATH=/home/orangepi/cyclonedds/install/lib"
-Environment="PYTHONPATH=/home/orangepi/Code/Project/BOTDOG/BotDog"
+Environment="CYCLONEDDS_HOME=/home/jetson/cyclonedds-0.10x/install"
+Environment="LD_LIBRARY_PATH=/home/jetson/cyclonedds-0.10x/install/lib"
+Environment="PYTHONPATH=/home/jetson/Project/BOTDOG/BotDog"
 
 # 使用虚拟环境里的 Python 启动
-ExecStart=/home/orangepi/Code/Project/BOTDOG/BotDog/.venv/bin/python run_backend.py
+ExecStart=/home/jetson/Project/BOTDOG/BotDog/.venv/bin/python run_backend.py
 
 # 崩溃后自动重启（5 秒后）
 Restart=on-failure

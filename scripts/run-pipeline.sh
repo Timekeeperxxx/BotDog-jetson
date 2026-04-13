@@ -13,7 +13,7 @@ MEDIAMTX="${MEDIAMTX_EXE:-$ROOT_DIR/scripts/mediamtx}"
 # cam1：HM30 IP 摄像头 RTSP 地址
 CAMERA_RTSP_URL="${CAMERA_RTSP_URL:-rtsp://192.168.144.25:8554/main.264}"
 # cam2：USB 摄像头设备节点（C920 = /dev/video1）
-CAM2_DEV="${CAM2_DEV:-/dev/video1}"
+CAM2_DEV="${CAM2_DEV:-/dev/video0}"
 
 mkdir -p "$PID_DIR"
 
