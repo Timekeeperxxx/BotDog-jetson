@@ -588,6 +588,27 @@ export default function IndustrialConsoleComplete() {
               {!isCamSwapped && trackOverlay && (autoTrack.status?.enabled || guardStatus?.enabled) && (
                 <TrackOverlay data={trackOverlay} videoRef={videoRef} />
               )}
+              {/* 驱离调试指示器（不依赖 WebSocket，直接显示状态） */}
+              {guardStatus?.enabled && (
+                <div style={{
+                  position: 'absolute', bottom: '150px', left: '16px', zIndex: 50,
+                  background: 'rgba(0,0,0,0.85)', border: '2px solid #FFD700',
+                  borderRadius: '8px', padding: '8px 12px',
+                  fontFamily: 'monospace', fontSize: '11px', color: '#FFD700',
+                  pointerEvents: 'none', maxWidth: '320px',
+                }}>
+                  <div style={{fontWeight: 'bold', marginBottom: '4px'}}>🛡️ 驱离系统诊断</div>
+                  <div>状态: <span style={{color: '#0f0'}}>{guardStatus.state}</span></div>
+                  <div>入侵计数: {guardStatus.intrusion_counter}/{guardStatus.confirm_frames}</div>
+                  <div>WS overlay 数据: <span style={{color: trackOverlay ? '#0f0' : '#f44'}}>
+                    {trackOverlay ? `✓ 有 (zone=${trackOverlay.zone_bbox ? 'YES' : 'NO'})` : '✗ 无数据'}
+                  </span></div>
+                  {trackOverlay?.zone_bbox && (
+                    <div>黄区: [{trackOverlay.zone_bbox.map(Math.round).join(', ')}]</div>
+                  )}
+                  <div>persons: {trackOverlay?.persons?.length ?? '?'}</div>
+                </div>
+              )}
               {/* 禁区绘制叠层（始终挂载，active 控制交互） */}
               <ZoneDrawer
                 frameW={trackOverlay?.frame_w ?? 1280}
