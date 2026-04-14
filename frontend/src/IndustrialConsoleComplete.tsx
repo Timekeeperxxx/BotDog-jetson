@@ -14,6 +14,8 @@ import { useEventWebSocket } from './hooks/useEventWebSocket';
 import { useAutoTrack } from './hooks/useAutoTrack';
 import { AutoTrackPanel } from './components/AutoTrackPanel';
 import { TrackOverlay } from './components/TrackOverlay';
+import { GuardMissionPanel } from './components/GuardMissionPanel';
+import { ZoneDrawer } from './components/ZoneDrawer';
 import { getApiUrl } from './config/api';
 import type { VideoSource } from './types/admin';
 import {
@@ -39,6 +41,7 @@ import {
   ArrowLeftRight,
   X,
   Database,
+  PenLine,
 } from 'lucide-react';
 
 interface EvidenceItem {
@@ -241,6 +244,7 @@ export default function IndustrialConsoleComplete() {
   const [activeTab, setActiveTab] = useState<'console' | 'history' | 'simulate' | 'admin'>('console');
   const [isLogExpanded, setIsLogExpanded] = useState(false);
   const [isAiStatsExpanded, setIsAiStatsExpanded] = useState(false);
+  const [isZoneDrawing, setIsZoneDrawing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
@@ -581,6 +585,13 @@ export default function IndustrialConsoleComplete() {
               />
               {/* YOLO 检测框 + 决策区域叠层（跟随 AI 跟踪启用状态） */}
               {!isCamSwapped && autoTrack.status?.enabled && <TrackOverlay data={trackOverlay} videoRef={videoRef} />}
+              {/* 禁区绘制叠层（始终挂载，active 控制交互） */}
+              <ZoneDrawer
+                frameW={trackOverlay?.frame_w ?? 1280}
+                frameH={trackOverlay?.frame_h ?? 720}
+                active={isZoneDrawing}
+                onClose={() => setIsZoneDrawing(false)}
+              />
               {/* CAM2 video - single element */}
               <video
                 ref={videoRef2}
@@ -707,6 +718,8 @@ export default function IndustrialConsoleComplete() {
                   {/* 自动跟踪控制面板 */}
                   <div className="pointer-events-auto">
                     <AutoTrackPanel {...autoTrack} isMissionRunning={isMissionRunning} />
+                    {/* 驱离任务控制面板 */}
+                    <GuardMissionPanel />
                   </div>
 
                   <div className="bg-black/40 border border-white/10 px-3 py-2 text-[10px] font-mono text-white/80">
@@ -826,6 +839,18 @@ export default function IndustrialConsoleComplete() {
                     <div className="h-8 w-px bg-white/30" />
                     <button onClick={triggerSnapshot} className="p-2 hover:bg-white hover:text-black rounded-lg transition-all" title="拍照">
                       <Camera size={22} />
+                    </button>
+                    <div className="h-8 w-px bg-white/30" />
+                    <button
+                      onClick={() => setIsZoneDrawing(v => !v)}
+                      className={`p-2 rounded-lg transition-all ${
+                        isZoneDrawing
+                          ? 'bg-green-500 text-black'
+                          : 'hover:bg-white hover:text-black text-white'
+                      }`}
+                      title={isZoneDrawing ? '退出画禁区模式' : '画禁区'}
+                    >
+                      <PenLine size={22} />
                     </button>
                   </div>
                   <div className="flex items-center space-x-3">
