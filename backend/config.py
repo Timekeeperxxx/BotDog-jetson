@@ -94,9 +94,19 @@ class Settings(BaseSettings):
     GUARD_DEPLOY_SETTLE_S: float = 2.0         # 起立后稳定等待时间
     GUARD_RETURN_SETTLE_S: float = 2.0         # 蹲坐后稳定等待时间
     GUARD_ALERT_AUDIO_PATH: str = "assets/alert.wav"  # 警告音频文件路径
-    GUARD_CLEAR_MIN_CONF: float = 0.4          # 清空判定最小置信度（过滤误检）
-    GUARD_CLEAR_MIN_AREA: int = 2000           # 清空判定最小框面积（px）
+    GUARD_CLEAR_MIN_CONF: float = 0.4          # 清空判定最小有效置信度
+    GUARD_CLEAR_MIN_AREA: int = 2000           # 清空判定最小有效目标面积（px）
     GUARD_VISUAL_TIMEOUT_S: float = 5.0        # 视觉链路健康超时（秒）
+    
+    # ==== 新增：视觉伺服 / 锚点跟踪配置 ====
+    GUARD_ANCHOR_MIN_QUALITY: float = 0.6        # 锚点跟踪最小稳定质量限度（部分 Tracker 需要）
+    GUARD_ANCHOR_LOST_TIMEOUT_S: float = 2.0     # 连续追踪丢失多少秒则认为完全跟丢
+    GUARD_MAX_ADVANCE_TIME_S: float = 15.0       # 最大推进保护时间（撞墙防止）
+    GUARD_MAX_VIEW_RATIO: float = 0.90           # 前进贴脸保护率（目标宽/高到达屏幕尺寸90%则急刹）
+    GUARD_OVERLAP_CLEAR_RATIO: float = 0.10      # 人大面积离开锚点框判定的人框在锚点里的重叠比例上限
+    
+    GUARD_RETURN_POS_TOLERANCE_PX: int = 60      # 退时允许的 X 位移中心误差 (px)
+    GUARD_RETURN_AREA_TOLERANCE_RATIO: float = 0.15 # 退时允许的物理纵深面积误差 (0.15 代表返回到了起始大小的 115% 以内)
 
     # 阶段 7：自动跟踪配置
     # 默认禁用，由前端点击「开始巡检」时调用 /api/v1/auto-track/enable 启用

@@ -8,15 +8,29 @@ from .control_service import ControlService
 from .control_arbiter import ControlArbiter
 from .zone_service import ZoneService
 from .ws_event_broadcaster import EventBroadcaster
-from .guard_mission_types import GuardMissionState, GuardStatusDTO
-from .motion_script_runner import MotionScriptRunner
+from .guard_mission_types import GuardMissionState, GuardStatusDTO, AnchorStatusDTO
 from .tracking_types import DetectionResult as TrackDetectionResult, ControlOwner
+
+from .visual_anchor_tracker import VisualAnchorTracker
+from .visual_servo_controller import VisualServoController
 
 logger = logging.getLogger("botdog.guard_mission")
 
+def _calc_intersection_ratio(boxA, boxB):
+    # box: (x, y, w, h)
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[0] + boxA[2], boxB[0] + boxB[2])
+    yB = min(boxA[1] + boxA[3], boxB[1] + boxB[3])
+
+    interArea = max(0, xB - xA) * max(0, yB - yA)
+    if interArea == 0:
+        return 0.0
+    boxAArea = boxA[2] * boxA[3]
+    return interArea / float(boxAArea) if boxAArea > 0 else 0.0
 
 class GuardMissionService:
-    """驱离任务主服务（编排器）。"""
+    """视觉锚点防区驱离主服务（基于视觉伺服）。"""
 
     def __init__(
         self,
@@ -51,25 +65,21 @@ class GuardMissionService:
 
         self._last_mission_end_time = 0.0
         self._last_frame_time = time.monotonic()
-
-        # MotionScriptRunner
-        self._script_runner = MotionScriptRunner(
-            watchdog_timeout_s=config.CONTROL_WATCHDOG_TIMEOUT_MS / 1000.0
-        )
-        self._cancel_event = asyncio.Event()
-        self._script_task: Optional[asyncio.Task] = None
+        
         self._audio_process: Optional[asyncio.subprocess.Process] = None
+
+        # ==== 视觉伺服组件 ====
+        self._anchor_tracker = VisualAnchorTracker()
+        self._servo_controller = VisualServoController(yaw_deadband_px=40)
+        self._start_bbox: Optional[tuple] = None
+        self._curr_bbox: Optional[tuple] = None
+        self._lost_anchor_counter = 0
+        self._last_command = "stop"
+        self._command_rate_limit_ms = 100
+        self._last_cmd_send_time = 0.0
 
         # 帧数折算
         self._effective_fps = max(1.0, float(config.AI_FPS))
-        self._confirm_time_s = config.GUARD_CONFIRM_TIME_S
-        self._clear_time_s = config.GUARD_CLEAR_TIME_S
-
-        # 清空判定过滤门槛
-        self._clear_min_conf = config.GUARD_CLEAR_MIN_CONF
-        self._clear_min_area = config.GUARD_CLEAR_MIN_AREA
-
-        self._check_health_task = asyncio.create_task(self._health_check_loop())
 
     @property
     def enabled(self) -> bool:
@@ -88,14 +98,17 @@ class GuardMissionService:
 
     @property
     def _confirm_frames(self) -> int:
-        return int(self._confirm_time_s * self._effective_fps)
+        return int(self._config.GUARD_CONFIRM_TIME_S * self._effective_fps)
 
     @property
     def _clear_frames(self) -> int:
-        return int(self._clear_time_s * self._effective_fps)
+        return int(self._config.GUARD_CLEAR_TIME_S * self._effective_fps)
+
+    @property
+    def _lost_anchor_frames(self) -> int:
+        return int(self._config.GUARD_ANCHOR_LOST_TIMEOUT_S * self._effective_fps)
 
     def update_effective_fps(self, fps: float):
-        """由 AIWorker 调用，更新实际处理帧率以保持帧数折算准确。"""
         self._effective_fps = max(1.0, fps)
 
     def get_status(self) -> GuardStatusDTO:
@@ -106,44 +119,41 @@ class GuardMissionService:
             confirm_frames=self._confirm_frames,
             clear_counter=self._clear_counter,
             clear_frames=self._clear_frames,
-            guard_duration_s=time.monotonic() - self._guard_start_time if self._state == GuardMissionState.GUARDING else self._guard_total_duration_s,
+            guard_duration_s=time.monotonic() - self._guard_start_time if self._state == GuardMissionState.ADVANCING else self._guard_total_duration_s,
         )
 
-    # ─── AIWorker 回调入口 ──────────────────────────────────────────
+    # ─── 核心帧处理流 ──────────────────────────────────────────
 
     async def process_frame(self, detections: List[TrackDetectionResult], frame: bytes):
-        """每帧调用，驱动状态机。由 AIWorker 调用。"""
         if not self._enabled:
             return
 
         self._last_frame_time = time.monotonic()
 
-        # 检查人工接管
+        # 人工接管校验
         if self._control_arbiter and not self._control_arbiter.can_guard_send():
-            if self._state not in (GuardMissionState.STANDBY, GuardMissionState.MANUAL_OVERRIDE):
+            if self._state not in (GuardMissionState.STANDBY, GuardMissionState.MANUAL_OVERRIDE, GuardMissionState.FAULT, GuardMissionState.LOST_ANCHOR):
                 self._abort_mission("人工接管")
                 self._state = GuardMissionState.MANUAL_OVERRIDE
                 self._broadcast_event("GUARD_ABORTED")
             
-            # 手动释放后，MANUAL_OVERRIDE 应当恢复到 STANDBY，以便重新触发
             if self._state == GuardMissionState.MANUAL_OVERRIDE and not self._control_arbiter.is_manual_override_active():
-                 if not self._control_arbiter.is_e_stop_active():
-                     self._state = GuardMissionState.STANDBY
-                     self._reset_mission_context()
+                if not self._control_arbiter.is_e_stop_active():
+                    self._state = GuardMissionState.STANDBY
+                    self._reset_mission_context()
             return
 
-        # 根据当前状态分发处理
+        # 状态机分发
         if self._state == GuardMissionState.STANDBY:
-            self._on_standby(detections)
-        elif self._state == GuardMissionState.GUARDING:
-            self._on_guarding(detections)
-        # DEPLOYING / RETURNING 由 MotionScriptRunner 异步驱动
-        # RETURNING 即使遇到目标，也须先回位
+            await self._on_standby(detections, frame)
+        elif self._state == GuardMissionState.ADVANCING:
+            await self._on_advancing(detections, frame)
+        elif self._state == GuardMissionState.RETURNING:
+            await self._on_returning(detections, frame)
 
-    # ─── 状态机具体逻辑 ──────────────────────────────────────────────
+    # ─── 状态流转逻辑 ──────────────────────────────────────────────
 
-    def _on_standby(self, detections: List[TrackDetectionResult]):
-        """待命状态：检查系统就绪条件 + 用 ZoneService polygon 判断是否有入侵。"""
+    async def _on_standby(self, detections: List[TrackDetectionResult], frame: bytes):
         if not self._check_system_ready():
             self._intrusion_counter = 0
             return
@@ -155,26 +165,21 @@ class GuardMissionService:
             self._intrusion_counter = max(0, self._intrusion_counter - 2)
 
         if self._intrusion_counter >= self._confirm_frames:
-            logger.info("[GuardMission] 目标入侵已确认，准备出出前往驱离点。")
-            self._start_deploy(frame)
+            logger.info("[GuardMission] 目标入侵已确认，准备锁定视觉锚点！")
+            await self._lock_anchor_and_start(frame)
 
     def _check_system_ready(self) -> bool:
-        """检查系统就绪条件，全部满足才允许触发任务。"""
         if not self._control_arbiter:
             return False
-        # 1. 不在 E_STOP
         if self._control_arbiter.is_e_stop_active():
             return False
-        # 2. 没有人工接管
         if self._control_arbiter.is_manual_override_active():
             return False
-        # 3. 冷却期已过
         if time.monotonic() - self._last_mission_end_time < self._config.GUARD_COOLDOWN_S:
             return False
         return True
 
     def _check_zone_intrusion(self, detections: List[TrackDetectionResult]) -> bool:
-        """【STANDBY 专用】检查是否有 person 在 ZoneService polygon 内。"""
         for det in detections:
             if det.class_name != "person":
                 continue
@@ -184,116 +189,206 @@ class GuardMissionService:
                 return True
         return False
 
-    def _start_deploy(self, frame: bytes):
-        """进入 DEPLOYING：开始前往驱离点。"""
+    def _get_zone_bounding_box(self) -> Optional[tuple]:
+        """将绘制的 polygon 转化为 opencv 的 bbox: (x, y, w, h)"""
+        polygon = self._zone_service.polygon
+        if not polygon or len(polygon) < 3:
+            return None
+        min_x = min(p[0] for p in polygon)
+        max_x = max(p[0] for p in polygon)
+        min_y = min(p[1] for p in polygon)
+        max_y = max(p[1] for p in polygon)
+        w = max_x - min_x
+        h = max_y - min_y
+        return (min_x, min_y, w, h)
+
+    async def _lock_anchor_and_start(self, frame: bytes):
+        """进入 LOCK_ANCHOR -> ADVANCING"""
         if not self._control_arbiter.request_control(ControlOwner.GUARD_MISSION):
             logger.warning("[GuardMission] 申请控制权失败，无法出动。")
             self._intrusion_counter = 0
             return
 
-        self._state = GuardMissionState.DEPLOYING
+        zone_bbox = self._get_zone_bounding_box()
+        if not zone_bbox:
+            logger.error("[GuardMission] 尚无有效的防区形状，无法截取视觉锚点。")
+            self._intrusion_counter = 0
+            self._control_arbiter.release_control(ControlOwner.GUARD_MISSION)
+            return
+
+        # 锁定底层特征
+        ok = self._anchor_tracker.init_anchor(frame, self._frame_width, self._frame_height, zone_bbox)
+        if not ok:
+            logger.error("[GuardMission] OpenCV 特征捕捉初始化失败！可能由于防区形状不合法或依赖未安装。")
+            self._intrusion_counter = 0
+            self._control_arbiter.release_control(ControlOwner.GUARD_MISSION)
+            return
+
+        self._start_bbox = zone_bbox
+        self._curr_bbox = zone_bbox
+        
+        self._state = GuardMissionState.ADVANCING
         self._intrusion_counter = 0
+        self._lost_anchor_counter = 0
+        
+        self._guard_start_time = time.monotonic()
         self._broadcast_event("GUARD_INTRUSION_CONFIRMED")
         asyncio.create_task(self._take_snapshot_safe(frame, "intrusion_confirmed"))
+        
+        # 播音频、起立
+        asyncio.create_task(self._start_guard_audio())
+        await self._control_service.handle_command("stand")
 
-        deploy_script = [
-            ("stand", self._config.GUARD_DEPLOY_SETTLE_S),
-            ("forward", self._config.GUARD_DEPLOY_DURATION_S),
-            ("stop", 0.5),
-        ]
-        self._script_task = asyncio.create_task(
-            self._run_script_and_transition(deploy_script, GuardMissionState.GUARDING)
-        )
+    async def _on_advancing(self, detections: List[TrackDetectionResult], frame: bytes):
+        # 1. 更新视觉跟踪
+        ok, curr_bbox = self._anchor_tracker.update_anchor(frame, self._frame_width, self._frame_height)
+        if not ok or curr_bbox is None:
+            self._lost_anchor_counter += 1
+            if self._lost_anchor_counter > self._lost_anchor_frames:
+                logger.error("[GuardMission] 追击途中完全丢失视觉锚点！进入 LOST_ANCHOR")
+                await self._handle_lost_anchor()
+            else:
+                # 暂时丢失，发 stop 等待一两帧
+                await self._send_command_safe("stop")
+            return
+            
+        self._lost_anchor_counter = 0
+        self._curr_bbox = curr_bbox
+        
+        # 2. 驱离超时（防止一直卡着报错）
+        elapsed = time.monotonic() - self._guard_start_time
+        if elapsed >= self._config.GUARD_MAX_DURATION_S:
+            logger.warning("[GuardMission] 驱离已超时限制，中止前进进入返航！")
+            await self._start_returning(frame, is_timeout=True)
+            return
 
-    def _on_guarding(self, detections: List[TrackDetectionResult]):
-        """驱离状态：用全画面 person 检测判断是否已清空。"""
-        has_person_in_view = self._check_any_person_qualified(detections)
-        if not has_person_in_view:
+        # 3. 伺服控制：计算命令
+        cmd, is_edge = self._servo_controller.compute_advancing(curr_bbox, self._frame_width, self._frame_height, self._config.GUARD_MAX_VIEW_RATIO)
+        
+        if is_edge:
+            # 已经贴在目标脸上了，不再前进，只维持对质方向
+            cmd = "stop" if cmd == "forward" else cmd 
+        
+        await self._send_command_safe(cmd)
+
+        # 4. 判断人是否还在防区（重叠分析）
+        has_overlap = self._check_person_overlap(detections, curr_bbox)
+        
+        if not has_overlap:
             self._clear_counter += 1
         else:
             self._clear_counter = 0
+            
+        if self._clear_counter >= self._clear_frames and elapsed >= self._config.GUARD_MIN_DURATION_S:
+            logger.info("[GuardMission] 视觉判定人员已不占有锚点区域，开始执行视觉闭环返航！")
+            await self._start_returning(frame, is_timeout=False)
 
-        elapsed = time.monotonic() - self._guard_start_time
-        
-        # 驱离超时判断
-        if elapsed >= self._config.GUARD_MAX_DURATION_S:
-            logger.warning("[GuardMission] 驱离已超时强制返回。")
-            self._start_return(frame, is_timeout=True)
+    async def _on_returning(self, detections: List[TrackDetectionResult], frame: bytes):
+        ok, curr_bbox = self._anchor_tracker.update_anchor(frame, self._frame_width, self._frame_height)
+        if not ok or curr_bbox is None:
+            self._lost_anchor_counter += 1
+            if self._lost_anchor_counter > self._lost_anchor_frames:
+                logger.error("[GuardMission] 返航途中丢失锚点！放弃返航")
+                await self._handle_lost_anchor()
+            else:
+                await self._send_command_safe("stop")
             return
+            
+        self._lost_anchor_counter = 0
+        self._curr_bbox = curr_bbox
+        
+        cmd, is_returned = self._servo_controller.compute_returning(
+            curr_bbox=curr_bbox, 
+            start_bbox=self._start_bbox, 
+            frame_width=self._frame_width, 
+            pos_tolerance_px=self._config.GUARD_RETURN_POS_TOLERANCE_PX,
+            area_tolerance_ratio=self._config.GUARD_RETURN_AREA_TOLERANCE_RATIO
+        )
+        
+        if is_returned:
+            logger.info("[GuardMission] 返航伺服判定归位！完成任务。")
+            await self._send_command_safe("stop")
+            await asyncio.sleep(0.5)
+            await self._send_command_safe("sit")
+            self._finish_mission_and_reset(frame)
+        else:
+            await self._send_command_safe(cmd)
 
-        # 满足清空判定条件
-        if (self._clear_counter >= self._clear_frames and elapsed >= self._config.GUARD_MIN_DURATION_S):
-            logger.info("[GuardMission] 目标区域已清空，准备返回起点。")
-            self._start_return(frame, is_timeout=False)
-
-    def _check_any_person_qualified(self, detections: List[TrackDetectionResult]) -> bool:
-        """【GUARDING 专用】检查全画面中是否还有满足门槛的 person。"""
+    def _check_person_overlap(self, detections: List[TrackDetectionResult], anchor_bbox: tuple) -> bool:
+        """检查有没有人框和当前的物理锚点重叠达到一定危险门槛"""
         for det in detections:
             if det.class_name != "person":
                 continue
-            if det.confidence < self._clear_min_conf:
+            if det.confidence < self._config.GUARD_CLEAR_MIN_CONF:
                 continue
-            x1, y1, x2, y2 = det.bbox
-            area = (x2 - x1) * (y2 - y1)
-            if area < self._clear_min_area:
+            # det.bbox: (x1, y1, x2, y2)
+            person_w = det.bbox[2] - det.bbox[0]
+            person_h = det.bbox[3] - det.bbox[1]
+            if person_w * person_h < self._config.GUARD_CLEAR_MIN_AREA:
                 continue
-            return True
+                
+            # opencv tracker bbox: (x, y, w, h)
+            p_box = (det.bbox[0], det.bbox[1], person_w, person_h)
+            
+            overlap_ratio = _calc_intersection_ratio(p_box, anchor_bbox)
+            if overlap_ratio >= self._config.GUARD_OVERLAP_CLEAR_RATIO:
+                return True
         return False
 
-    def _start_return(self, frame: bytes, is_timeout: bool = False):
-        """进入 RETURNING：返回起点。"""
-        self._guard_total_duration_s = time.monotonic() - self._guard_start_time
-        asyncio.create_task(self._stop_guard_audio())
+    async def _start_returning(self, frame: bytes, is_timeout: bool = False):
         self._state = GuardMissionState.RETURNING
         self._clear_counter = 0
+        self._guard_total_duration_s = time.monotonic() - self._guard_start_time
+        asyncio.create_task(self._stop_guard_audio())
         
         if not is_timeout:
             self._broadcast_event("GUARD_ZONE_CLEARED")
             asyncio.create_task(self._take_snapshot_safe(frame, "zone_cleared"))
 
-        return_script = [
-            ("backward", self._config.GUARD_RETURN_DURATION_S),
-            ("stop", 0.5),
-            ("sit", self._config.GUARD_RETURN_SETTLE_S),
-        ]
-        self._script_task = asyncio.create_task(
-            self._run_script_and_transition(return_script, GuardMissionState.STANDBY)
-        )
+    async def _handle_lost_anchor(self):
+        """由于视觉完全失效而兜底保护"""
+        self._state = GuardMissionState.LOST_ANCHOR
+        self._broadcast_event("GUARD_LOST_ANCHOR")
+        logger.error("[GuardMission] 执行紧急刹车保护！")
+        await self._send_command_safe("stop")
+        asyncio.create_task(self._stop_guard_audio())
+        # 在真实场地，可能需要接管发送一个硬盲退或者坐下
+        await asyncio.sleep(1.0)
+        await self._send_command_safe("sit")
+        
+        if self._control_arbiter:
+            self._control_arbiter.release_control(ControlOwner.GUARD_MISSION)
+        self._reset_mission_context()
 
-    async def _run_script_and_transition(self, script, next_state: GuardMissionState):
-        """执行脚本并在成功后进入下一状态。"""
-        success = await self._script_runner.run(
-            script, self._control_service, self._cancel_event
-        )
-        if success:
-            self._state = next_state
-            if next_state == GuardMissionState.GUARDING:
-                self._broadcast_event("GUARD_ARRIVED")
-                # 记录抓拍需要用到当时的帧，如果 _run_script 里取不到最新帧，我们这里可以用 None 并在内部使用黑框图或者忽略或者不存原图。
-                # 由于这通常是一个长时任务结束触发，我们最好还是在下一帧到达 _on_guarding 或者 _on_standby 时再由 process_frame 接管画面状态比较省力，或者只留文字告警，无图。这里无图记录即可
-                asyncio.create_task(self._take_snapshot_safe(b'', "arrived"))
-                self._guard_start_time = time.monotonic()
-                asyncio.create_task(self._start_guard_audio())
-            elif next_state == GuardMissionState.STANDBY:
-                self._broadcast_event("GUARD_RETURNED")
-                asyncio.create_task(self._take_snapshot_safe(b'', "returned"))
-                self._control_arbiter.release_control(ControlOwner.GUARD_MISSION)
-                self._reset_mission_context()
-        else:
-            # 脚本因为异常被终止，如果之前没有设为 MANUAL 或 FAULT
-            if self._state not in (GuardMissionState.MANUAL_OVERRIDE, GuardMissionState.FAULT):
-                logger.error("[GuardMission] 运动脚本执行失败，进入 FAULT。")
-                self._state = GuardMissionState.FAULT
-                self._control_arbiter.release_control(ControlOwner.GUARD_MISSION)
-                self._broadcast_event("GUARD_FAULT")
+    def _finish_mission_and_reset(self, frame: bytes):
+        """正常成功回位后清理上下文"""
+        self._state = GuardMissionState.STANDBY
+        self._broadcast_event("GUARD_RETURNED")
+        asyncio.create_task(self._take_snapshot_safe(frame, "returned"))
+        asyncio.create_task(self._stop_guard_audio())
+        if self._control_arbiter:
+            self._control_arbiter.release_control(ControlOwner.GUARD_MISSION)
+        self._reset_mission_context()
+
+    async def _send_command_safe(self, cmd: str):
+        """带限频和拦截发送到底层 ControlService"""
+        now = time.monotonic()
+        if cmd == self._last_command and cmd != "stop":
+            # 持续一样的状态，避免把信道塞满，按 100ms 频率发即可
+            if (now - self._last_cmd_send_time) * 1000 < self._command_rate_limit_ms:
+                return
+                
+        self._last_cmd_send_time = now
+        self._last_command = cmd
+        try:
+            await self._control_service.handle_command(cmd)
+        except Exception as e:
+            logger.debug(f"[GuardMission] 伺服发送命令 {cmd} 异常: {e}")
 
     # ─── 异常与状态处理 ─────────────────────────────────────────────
 
     def _abort_mission(self, reason: str):
-        """中止当前任务并重置态。"""
         logger.info(f"[GuardMission] 任务中止: {reason}")
-        if self._script_task and not self._script_task.done():
-            self._cancel_event.set()
         asyncio.create_task(self._stop_guard_audio())
         asyncio.create_task(self._control_service.handle_command("stop"))
         
@@ -303,31 +398,15 @@ class GuardMissionService:
         self._reset_mission_context()
 
     def _reset_mission_context(self):
-        """完整清零任务上下文，防止残留状态导致回到 STANDBY 后误触发。"""
         self._intrusion_counter = 0
         self._clear_counter = 0
         self._guard_start_time = 0.0
-        self._script_task = None
-        self._cancel_event = asyncio.Event()  # 重建，旧的可能已被 set
-        self._last_mission_end_time = time.monotonic()  # 进入冷却期
-
-    async def _health_check_loop(self):
-        """定期检查视觉链路。"""
-        timeout = self._config.GUARD_VISUAL_TIMEOUT_S
-        while True:
-            await asyncio.sleep(2.0)
-            if not self._enabled:
-                continue
-            
-            if self._state in (GuardMissionState.DEPLOYING, GuardMissionState.GUARDING, GuardMissionState.RETURNING):
-                if time.monotonic() - self._last_frame_time > timeout:
-                    logger.error(f"[GuardMission] 视觉链路超过 {timeout}s 未更新，判定失效！")
-                    self._abort_mission("视觉链路失效")
-                    self._state = GuardMissionState.FAULT
-                    self._broadcast_event("GUARD_FAULT")
+        self._last_mission_end_time = time.monotonic()
+        self._anchor_tracker.reset()
+        self._start_bbox = None
+        self._curr_bbox = None
 
     def _broadcast_event(self, msg_type: str):
-        """简单的 WS 事件广播方法。"""
         payload = {"status": self._state.value}
         try:
             from .schemas import utc_now_iso
@@ -340,7 +419,7 @@ class GuardMissionService:
                 }
                 asyncio.create_task(self._do_broadcast(msg))
         except Exception as exc:
-            logger.debug(f"[GuardMission] 广播 {msg_type} 失败: {exc}")
+            pass
 
     async def _do_broadcast(self, msg):
         broadcaster = self._event_broadcaster
@@ -358,21 +437,17 @@ class GuardMissionService:
 
     async def _take_snapshot_safe(self, frame: bytes, label: str) -> None:
         if not frame:
-            logger.info(f"[GuardMission] 纯文字告警/节点记录（无图）: {label}")
-            image_path = ""
-            image_url = ""
-        else:
-            try:
-                from .auto_track_service import _save_snapshot_to_disk
-                image_path, image_url = await _save_snapshot_to_disk(
-                    frame=frame,
-                    snapshot_dir=self._snapshot_dir,
-                    frame_width=self._frame_width,
-                    frame_height=self._frame_height,
-                )
-            except Exception as exc:
-                logger.debug(f"[GuardMission] 抓拍磁盘写入失败: {exc}")
-                return
+            return
+        try:
+            from .auto_track_service import _save_snapshot_to_disk
+            image_path, image_url = await _save_snapshot_to_disk(
+                frame=frame,
+                snapshot_dir=self._snapshot_dir,
+                frame_width=self._frame_width,
+                frame_height=self._frame_height,
+            )
+        except Exception as exc:
+            return
             
         try:
             from .alert_service import get_alert_service
@@ -383,7 +458,7 @@ class GuardMissionService:
                         event_type="GUARD_MISSION_SNAPSHOT",
                         event_code=f"E_GUARD_{label.upper()}",
                         severity="INFO",
-                        message=f"自动驱离记录节点（{label}）",
+                        message=f"视觉拦截锚点定位抓拍（{label}）",
                         confidence=1.0,
                         file_path=str(image_path),
                         image_url=image_url,
@@ -393,14 +468,10 @@ class GuardMissionService:
                         session=session,
                     )
         except Exception as exc:
-            logger.debug(f"[GuardMission] 记录数据库告警失败: {exc}")
-
-    # ─── 音频动作 (Phase 4) ──────────────────────────────────────────
+            pass
 
     async def _start_guard_audio(self):
-        """启动警告音频循环播放。"""
         path = self._config.GUARD_ALERT_AUDIO_PATH
-        logger.info(f"[GuardMission] 开始播放驱离音频: {path}")
         try:
             self._audio_process = await asyncio.create_subprocess_exec(
                 "aplay", "-D", "plughw:1,0", "--loop", str(path),
@@ -408,8 +479,6 @@ class GuardMissionService:
                 stderr=asyncio.subprocess.DEVNULL,
             )
         except FileNotFoundError:
-            # 在没有 aplay 的环境（如 Windows）下模拟
-            logger.warning("[GuardMission] 未找到 aplay，采用模拟播放 (Python 版)。")
             self._audio_process = await asyncio.create_subprocess_exec(
                 "python", "scripts/mock_audio.py",
                 stdout=asyncio.subprocess.DEVNULL,
@@ -417,17 +486,13 @@ class GuardMissionService:
             )
 
     async def _stop_guard_audio(self):
-        """停止警告音频播放。"""
         if self._audio_process:
-            logger.info("[GuardMission] 停止驱离音频。")
             try:
                 self._audio_process.terminate()
             except ProcessLookupError:
                 pass
             self._audio_process = None
 
-
-# 全局实例
 _guard_mission_service: Optional[GuardMissionService] = None
 
 def get_guard_mission_service() -> Optional[GuardMissionService]:
