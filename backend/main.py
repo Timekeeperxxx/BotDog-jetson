@@ -541,9 +541,15 @@ def register_routes(app: FastAPI) -> None:
     @app.post("/api/v1/guard-mission/enable")
     async def enable_guard_mission():
         from .guard_mission_service import get_guard_mission_service
+        from .auto_track_service import get_auto_track_service
         gm = get_guard_mission_service()
         if gm is None:
             raise HTTPException(status_code=503, detail="驱离服务未初始化")
+        # 互斥：开启驱离时，必须关闭自动跟踪
+        at = get_auto_track_service()
+        if at is not None and at._enabled:
+            at.disable()
+            logger.info("[GuardMission] 互斥切换：已自动关闭自动跟踪")
         gm.enabled = True
         return {"success": True, "enabled": True}
 
@@ -1205,9 +1211,15 @@ def register_routes(app: FastAPI) -> None:
     async def auto_track_enable() -> dict:
         """运行时启用自动跟踪。"""
         from .auto_track_service import get_auto_track_service
+        from .guard_mission_service import get_guard_mission_service
         svc = get_auto_track_service()
         if svc is None:
             raise HTTPException(status_code=503, detail="自动跟踪服务未初始化")
+        # 互斥：开启自动跟踪时，必须关闭驱离
+        gm = get_guard_mission_service()
+        if gm is not None and gm.enabled:
+            gm.enabled = False
+            logger.info("[AutoTrack] 互斥切换：已自动关闭自动驱离")
         svc.enable()
         return {"success": True, "state": svc.get_status()["state"]}
 

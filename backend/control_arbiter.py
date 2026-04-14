@@ -35,6 +35,7 @@ class ControlArbiter:
     _PRIORITY: dict[ControlOwner, int] = {
         ControlOwner.NONE: 0,
         ControlOwner.AUTO_TRACK: 1,
+        ControlOwner.GUARD_MISSION: 1,
         ControlOwner.WEB_MANUAL: 2,
         ControlOwner.REMOTE_CONTROLLER: 3,
         ControlOwner.E_STOP: 4,
