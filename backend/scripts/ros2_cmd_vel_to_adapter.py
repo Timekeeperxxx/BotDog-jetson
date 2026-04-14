@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
 """
-ROS2 cmd_vel 到机器狗适配器的桥接器。
+ROS2 cmd_vel 到 UnitreeB2Adapter 的桥接脚本。
 
-这个脚本订阅 ROS2 的 cmd_vel 话题，并将速度命令转发给 BotDog 的 UnitreeB2Adapter。
-它使用 BotDog 的 robot_adapter 模块，支持异步速度控制。
+订阅 ROS2 的 /cmd_vel 话题，并将速度命令转发给 UnitreeB2Adapter。
+支持超时自动停止功能。
 
 使用方法：
-    python3 ros2_cmd_vel_to_adapter.py [--network-interface eno1] [--adapter unitree_b2|simulation]
-
-参数：
-    --network-interface: 网络接口名称（默认: eno1）
-    --adapter: 适配器类型（默认: unitree_b2）
+    python3 ros2_cmd_vel_to_adapter.py [--network-interface eno1] [--timeout 0.5]
 """
 
 import sys
+import os
 import argparse
-import asyncio
 import time
 import threading
+import asyncio
 from typing import Optional
 
 # 添加项目根目录到路径
-import os
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, project_root)
 
@@ -37,46 +33,59 @@ except ImportError:
     print("请安装 ROS2: sudo apt install ros-humble-desktop 或 pip install rclpy")
     sys.exit(1)
 
-# 导入 BotDog 的适配器
+# 尝试导入 BotDog 的适配器
 try:
-    from BotDog.backend.robot_adapter import create_adapter, BaseRobotAdapter
-    BOTDOG_ADAPTER_AVAILABLE = True
+    from BotDog.backend.robot_adapter import UnitreeB2Adapter
+    ADAPTER_AVAILABLE = True
 except ImportError as e:
-    BOTDOG_ADAPTER_AVAILABLE = False
-    print(f"错误: 无法导入 BotDog 适配器: {e}")
-    print(f"导入路径: {sys.path}")
+    ADAPTER_AVAILABLE = False
+    print(f"错误: 无法导入 UnitreeB2Adapter: {e}")
     sys.exit(1)
 
 
-class ROS2CmdVelToAdapter(Node):
+class CmdVelToAdapterBridge(Node):
     """
-    ROS2 cmd_vel 到适配器的桥接节点。
+    ROS2 cmd_vel 到 UnitreeB2Adapter 的桥接节点。
     
-    这个节点订阅 ROS2 的 cmd_vel 话题，并将速度命令转发给 BotDog 的适配器。
+    订阅 /cmd_vel 话题，将速度命令转发给 UnitreeB2Adapter。
+    支持超时自动停止功能。
     """
     
-    def __init__(self, adapter_type: str = "unitree_b2", network_interface: str = "eno1"):
+    def __init__(
+        self,
+        network_interface: str = "eno1",
+        timeout: float = 0.5,
+        vx_scale: float = 1.0,
+        vy_scale: float = 1.0,
+        vyaw_scale: float = 1.0
+    ):
         """
         初始化桥接节点。
         
         Args:
-            adapter_type: 适配器类型（"unitree_b2" 或 "simulation"）
-            network_interface: 网络接口名称
+            network_interface: 网络接口名称 (默认: eno1)
+            timeout: 超时时间（秒），超过此时间未收到命令则自动停止 (默认: 0.5)
+            vx_scale: x轴速度缩放因子 (默认: 1.0)
+            vy_scale: y轴速度缩放因子 (默认: 1.0)
+            vyaw_scale: 偏航角速度缩放因子 (默认: 1.0)
         """
-        super().__init__('ros2_cmd_vel_to_adapter')
+        super().__init__('cmd_vel_to_adapter_bridge')
         
-        self.adapter_type = adapter_type
         self.network_interface = network_interface
+        self.timeout = timeout
+        self.vx_scale = vx_scale
+        self.vy_scale = vy_scale
+        self.vyaw_scale = vyaw_scale
         
-        # 创建适配器
+        # 初始化适配器
+        print(f"初始化 UnitreeB2Adapter，网络接口: {network_interface}")
         try:
-            self.adapter = create_adapter(
-                adapter_type, 
-                network_interface=network_interface
-            )
-            print(f"适配器创建成功: {adapter_type} (网卡: {network_interface})")
+            self.adapter = UnitreeB2Adapter(network_interface=network_interface)
+            if not self.adapter._initialized:
+                print("错误: UnitreeB2Adapter 初始化失败")
+                sys.exit(1)
         except Exception as e:
-            print(f"创建适配器失败: {e}")
+            print(f"错误: 创建 UnitreeB2Adapter 失败: {e}")
             sys.exit(1)
         
         # 创建订阅者
@@ -87,21 +96,21 @@ class ROS2CmdVelToAdapter(Node):
             10
         )
         
-        # 超时检查定时器
+        # 记录最后收到命令的时间
         self.last_cmd_time = time.time()
-        self.timeout = 0.5  # 超时时间（秒）
+        
+        # 创建超时检查定时器
         self.timer = self.create_timer(0.1, self.timeout_check_callback)
         
-        # 异步事件循环
+        # 创建异步事件循环
         self.loop = asyncio.new_event_loop()
-        self.loop_thread = threading.Thread(target=self._run_event_loop, daemon=True)
-        self.loop_thread.start()
+        asyncio.set_event_loop(self.loop)
         
-        print(f"ROS2 cmd_vel 到适配器桥接器已启动")
-        print(f"  适配器类型: {adapter_type}")
-        print(f"  网络接口: {network_interface}")
-        print(f"  订阅话题: cmd_vel")
-        print("等待 cmd_vel 消息...")
+        print(f"ROS2 cmd_vel 到 UnitreeB2Adapter 桥接器已启动")
+        print(f"网络接口: {network_interface}")
+        print(f"超时时间: {timeout} 秒")
+        print(f"速度缩放: vx_scale={vx_scale}, vy_scale={vy_scale}, vyaw_scale={vyaw_scale}")
+        print("等待 /cmd_vel 消息...")
     
     def cmd_vel_callback(self, msg: Twist):
         """
@@ -110,147 +119,146 @@ class ROS2CmdVelToAdapter(Node):
         Args:
             msg: ROS2 Twist 消息
         """
-        vx = msg.linear.x
-        vy = msg.linear.y
-        vyaw = msg.angular.z
+        # 提取速度值
+        vx = msg.linear.x * self.vx_scale
+        vy = msg.linear.y * self.vy_scale
+        vyaw = msg.angular.z * self.vyaw_scale
         
-        # 打印接收到的命令
-        print(f"收到速度命令: vx={vx:.2f}, vy={vy:.2f}, vyaw={vyaw:.2f}")
-        
-        # 更新最后命令时间
+        # 更新最后收到命令的时间
         self.last_cmd_time = time.time()
         
-        # 检查适配器是否支持速度控制
-        if hasattr(self.adapter, 'send_velocity'):
-            # 在异步事件循环中发送速度命令
-            asyncio.run_coroutine_threadsafe(
-                self.adapter.send_velocity(vx, vy, vyaw),
-                self.loop
-            )
-        else:
-            # 适配器不支持速度控制，使用离散命令
-            print(f"警告: 适配器不支持速度控制，使用离散命令")
-            self._send_discrete_command(vx, vy, vyaw)
+        # 打印接收到的命令
+        self.get_logger().debug(
+            f"收到速度命令: vx={vx:.3f}, vy={vy:.3f}, vyaw={vyaw:.3f}"
+        )
+        
+        # 发送速度命令到适配器
+        self.send_velocity_to_adapter(vx, vy, vyaw)
     
-    def _send_discrete_command(self, vx: float, vy: float, vyaw: float):
+    def send_velocity_to_adapter(self, vx: float, vy: float, vyaw: float):
         """
-        发送离散命令（当适配器不支持速度控制时使用）。
+        发送速度命令到 UnitreeB2Adapter。
         
         Args:
-            vx: 前进/后退速度
-            vy: 横向平移速度
-            vyaw: 偏航转速
+            vx: x轴速度 (m/s)
+            vy: y轴速度 (m/s)
+            vyaw: 偏航角速度 (rad/s)
         """
-        cmd = None
-        
-        # 根据速度值选择命令
-        if abs(vx) > 0.1:
-            if vx > 0:
-                cmd = "forward"
+        try:
+            # 在异步事件循环中运行
+            if self.loop.is_running():
+                # 如果事件循环已经在运行，创建任务
+                asyncio.create_task(self.adapter.send_velocity(vx, vy, vyaw))
             else:
-                cmd = "backward"
-        elif abs(vyaw) > 0.1:
-            if vyaw > 0:
-                cmd = "left"
-            else:
-                cmd = "right"
-        elif abs(vy) > 0.1:
-            if vy > 0:
-                cmd = "strafe_left"
-            else:
-                cmd = "strafe_right"
-        else:
-            cmd = "stop"
-        
-        if cmd:
-            asyncio.run_coroutine_threadsafe(
-                self.adapter.send_command(cmd),
-                self.loop
-            )
+                # 否则运行直到完成
+                self.loop.run_until_complete(self.adapter.send_velocity(vx, vy, vyaw))
+        except Exception as e:
+            self.get_logger().error(f"发送速度命令失败: {e}")
     
     def timeout_check_callback(self):
-        """
-        超时检查回调。
-        
-        如果超过超时时间没有收到命令，则停止机器人。
-        """
-        if time.time() - self.last_cmd_time > self.timeout:
-            # 发送停止命令
-            if hasattr(self.adapter, 'send_velocity'):
-                asyncio.run_coroutine_threadsafe(
-                    self.adapter.send_velocity(0.0, 0.0, 0.0),
-                    self.loop
-                )
-            else:
-                asyncio.run_coroutine_threadsafe(
-                    self.adapter.send_command("stop"),
-                    self.loop
-                )
-            self.last_cmd_time = time.time()  # 重置避免重复停止
-    
-    def _run_event_loop(self):
-        """运行异步事件循环（在单独的线程中）。"""
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
+        """超时检查回调，如果超时则停止机器人"""
+        current_time = time.time()
+        if current_time - self.last_cmd_time > self.timeout:
+            # 超时，停止机器人
+            self.get_logger().debug("超时，停止机器人")
+            try:
+                if self.loop.is_running():
+                    asyncio.create_task(self.adapter.stop())
+                else:
+                    self.loop.run_until_complete(self.adapter.stop())
+            except Exception as e:
+                self.get_logger().error(f"停止机器人失败: {e}")
+            
+            # 重置最后命令时间，避免重复停止
+            self.last_cmd_time = current_time
     
     def shutdown(self):
-        """关闭节点和适配器。"""
-        print("正在关闭桥接器...")
-        
-        # 停止机器人
+        """关闭节点，停止机器人"""
+        print("正在关闭节点...")
         try:
-            if hasattr(self.adapter, 'send_velocity'):
-                asyncio.run_coroutine_threadsafe(
-                    self.adapter.send_velocity(0.0, 0.0, 0.0),
-                    self.loop
-                ).result(timeout=1.0)
+            # 停止机器人
+            if self.loop.is_running():
+                asyncio.create_task(self.adapter.stop())
             else:
-                asyncio.run_coroutine_threadsafe(
-                    self.adapter.send_command("stop"),
-                    self.loop
-                ).result(timeout=1.0)
-        except:
-            pass
+                self.loop.run_until_complete(self.adapter.stop())
+        except Exception as e:
+            print(f"停止机器人失败: {e}")
         
-        # 停止事件循环
-        self.loop.call_soon_threadsafe(self.loop.stop)
-        self.loop_thread.join(timeout=2.0)
+        # 关闭事件循环
+        if self.loop.is_running():
+            self.loop.stop()
         
-        print("桥接器已关闭")
+        print("节点已关闭")
 
 
 def main():
-    """主函数。"""
-    parser = argparse.ArgumentParser(description='ROS2 cmd_vel 到机器狗适配器的桥接器')
-    parser.add_argument('--network-interface', type=str, default='eno1',
-                       help='网络接口名称（默认: eno1）')
-    parser.add_argument('--adapter', type=str, default='unitree_b2',
-                       choices=['unitree_b2', 'simulation'],
-                       help='适配器类型: unitree_b2 (宇树 B2 真实硬件) 或 simulation (模拟模式)')
+    parser = argparse.ArgumentParser(
+        description='ROS2 cmd_vel 到 UnitreeB2Adapter 的桥接脚本'
+    )
+    parser.add_argument(
+        '--network-interface',
+        type=str,
+        default='eno1',
+        help='网络接口名称 (默认: eno1)'
+    )
+    parser.add_argument(
+        '--timeout',
+        type=float,
+        default=0.5,
+        help='超时时间（秒），超过此时间未收到命令则自动停止 (默认: 0.5)'
+    )
+    parser.add_argument(
+        '--vx-scale',
+        type=float,
+        default=1.0,
+        help='x轴速度缩放因子 (默认: 1.0)'
+    )
+    parser.add_argument(
+        '--vy-scale',
+        type=float,
+        default=1.0,
+        help='y轴速度缩放因子 (默认: 1.0)'
+    )
+    parser.add_argument(
+        '--vyaw-scale',
+        type=float,
+        default=1.0,
+        help='偏航角速度缩放因子 (默认: 1.0)'
+    )
+    parser.add_argument(
+        '--ros-domain-id',
+        type=int,
+        default=0,
+        help='ROS2 域 ID (默认: 0)'
+    )
     
     args = parser.parse_args()
     
-    # 检查 ROS2 是否可用
-    if not ROS2_AVAILABLE:
-        print("错误: ROS2 (rclpy) 不可用")
-        sys.exit(1)
+    # 设置 ROS 域 ID
+    os.environ['ROS_DOMAIN_ID'] = str(args.ros_domain_id)
     
-    # 检查 BotDog 适配器是否可用
-    if not BOTDOG_ADAPTER_AVAILABLE:
-        print("错误: BotDog 适配器不可用")
-        sys.exit(1)
-    
-    print(f"启动 ROS2 cmd_vel 到适配器桥接器")
-    print(f"  适配器: {args.adapter}")
-    print(f"  网络接口: {args.network_interface}")
+    print("=" * 60)
+    print("ROS2 cmd_vel 到 UnitreeB2Adapter 桥接器")
+    print("=" * 60)
+    print(f"网络接口: {args.network_interface}")
+    print(f"超时时间: {args.timeout} 秒")
+    print(f"速度缩放: vx_scale={args.vx_scale}, vy_scale={args.vy_scale}, vyaw_scale={args.vyaw_scale}")
+    print(f"ROS 域 ID: {args.ros_domain_id}")
+    print("=" * 60)
     
     # 初始化 ROS2
     rclpy.init()
     
+    # 创建节点
     node = None
     try:
-        # 创建节点
-        node = ROS2CmdVelToAdapter(args.adapter, args.network_interface)
+        node = CmdVelToAdapterBridge(
+            network_interface=args.network_interface,
+            timeout=args.timeout,
+            vx_scale=args.vx_scale,
+            vy_scale=args.vy_scale,
+            vyaw_scale=args.vyaw_scale
+        )
         
         # 运行节点
         rclpy.spin(node)
@@ -266,12 +274,9 @@ def main():
             node.destroy_node()
         
         # 关闭 ROS2
-        try:
-            rclpy.shutdown()
-        except:
-            pass
+        rclpy.shutdown()
         
-        print("程序已退出")
+        print("桥接器已关闭")
 
 
 if __name__ == '__main__':
