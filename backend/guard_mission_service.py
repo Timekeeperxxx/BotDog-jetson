@@ -36,10 +36,12 @@ ZONE_HSV_HIGH = np.array([40, 255, 255], dtype=np.uint8)
 ZONE_MIN_AREA = 800
 ZONE_MAX_AREA_RATIO = 0.5   # 占画面最多 50%
 
-# 形状过滤
-ZONE_MIN_ASPECT = 1.5       # 最小长宽比（长条形）
+# 形状过滤（专门针对铺在平地上的纯纸板）
+ZONE_MIN_ASPECT = 2.0       # 最小长宽比（趴在地上会有较强的透视形变，长条形）
 ZONE_MAX_ASPECT = 15.0      # 最大长宽比
 ZONE_MAX_TILT_DEG = 60.0    # 最大倾斜角度（度）
+ZONE_MIN_SOLIDITY = 0.65    # 饱满度（轮廓面积/最小外接矩形面积），过滤散爆拼接的杂物
+ZONE_MIN_Y_RATIO = 0.35     # 中心点必须在画面的大概中下部（地面约束）
 
 # 形态学核大小
 MORPH_KERNEL_SIZE = 7
@@ -196,10 +198,20 @@ class GuardMissionService:
                 if rw == 0 or rh == 0:
                     continue
 
+                # 位置过滤：目标一定是在地面的，中心点不能太靠上
+                if _cy < self._frame_height * ZONE_MIN_Y_RATIO:
+                    continue
+
                 long_side = max(rw, rh)
                 short_side = min(rw, rh)
                 aspect = long_side / short_side
 
+                # 几何饱满度过滤：过滤掉由好几个零散物体拼接起来、轮廓内部有一大堆空隙的形状
+                solidity = area / (rw * rh)
+                if solidity < ZONE_MIN_SOLIDITY:
+                    continue
+
+                # 长宽比过滤
                 if aspect < ZONE_MIN_ASPECT or aspect > ZONE_MAX_ASPECT:
                     continue
 
