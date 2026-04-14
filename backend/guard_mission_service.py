@@ -14,7 +14,7 @@ from .tracking_types import DetectionResult as TrackDetectionResult, ControlOwne
 from .visual_anchor_tracker import VisualAnchorTracker
 from .visual_servo_controller import VisualServoController
 
-logger = logging.getLogger("botdog.guard_mission")
+from .logging_config import logger
 
 def _calc_intersection_ratio(boxA, boxB):
     # box: (x, y, w, h)
@@ -261,20 +261,22 @@ class GuardMissionService:
         if not persons:
             return False
 
-        # 逐人检查重叠
+        # 防区入侵：只要人和防区有任何面积为正的接触，就算作入侵
         for det in persons:
             person_w = det.bbox[2] - det.bbox[0]
             person_h = det.bbox[3] - det.bbox[1]
             p_box = (det.bbox[0], det.bbox[1], person_w, person_h)
-            ratio = _calc_intersection_ratio(p_box, zone_bbox)
-            if ratio > 0:
-                logger.info(
-                    f"[GuardMission] 重叠检测: person bbox={det.bbox} conf={det.confidence:.2f} "
-                    f"zone_bbox={zone_bbox} overlap_ratio={ratio:.3f} "
-                    f"threshold={self._config.GUARD_OVERLAP_CLEAR_RATIO}"
-                )
-            if ratio >= self._config.GUARD_OVERLAP_CLEAR_RATIO:
+            
+            xA = max(p_box[0], zone_bbox[0])
+            yA = max(p_box[1], zone_bbox[1])
+            xB = min(p_box[0] + p_box[2], zone_bbox[0] + zone_bbox[2])
+            yB = min(p_box[1] + p_box[3], zone_bbox[1] + zone_bbox[3])
+            interArea = max(0, xB - xA) * max(0, yB - yA)
+
+            if interArea > 0:
+                logger.info(f"[GuardMission] 入侵接触! 重叠像素 {interArea}px, 置信度 {det.confidence:.2f}")
                 return True
+                
         return False
 
     def _get_zone_bounding_box(self) -> Optional[tuple]:
