@@ -7,7 +7,7 @@ from .config import Settings, settings
 from .control_service import ControlService
 from .control_arbiter import ControlArbiter
 from .zone_service import ZoneService
-from .ws_event_broadcaster import WSEventBroadcaster
+from .ws_event_broadcaster import EventBroadcaster
 from .guard_mission_types import GuardMissionState, GuardStatusDTO
 from .motion_script_runner import MotionScriptRunner
 from .tracking_types import DetectionResult as TrackDetectionResult, ControlOwner
@@ -24,7 +24,7 @@ class GuardMissionService:
         zone_service: ZoneService,
         control_service: ControlService,
         control_arbiter: ControlArbiter,
-        event_broadcaster: WSEventBroadcaster,
+        event_broadcaster: EventBroadcaster,
         config: Settings,
         session_factory,
         snapshot_dir,
