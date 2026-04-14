@@ -311,8 +311,9 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                         time.sleep(0.3)
                         ret_sd = client.StandDown()
                         logger.info(f"[UnitreeB2 Worker] StandDown ret={ret_sd}")
-                        if ret_sd == 0:
-                            self._current_posture = "sit"
+                        # StandDown 物理过程长于 1.5s，经常超时返回 3104。但硬件已在执行蹲下
+                        # 所以无论返回值是什么，都认为已进入坐下状态
+                        self._current_posture = "sit"
                     finally:
                         self._busy_with_posture = False
 
