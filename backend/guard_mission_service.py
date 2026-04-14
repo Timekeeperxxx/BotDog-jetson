@@ -130,33 +130,34 @@ class GuardMissionService:
 
         self._last_frame_time = time.monotonic()
 
-        # 人工接管校验
-        if self._control_arbiter and not self._control_arbiter.can_guard_send():
-            if self._state not in (GuardMissionState.STANDBY, GuardMissionState.MANUAL_OVERRIDE, GuardMissionState.FAULT, GuardMissionState.LOST_ANCHOR):
+        # ── 人工接管校验（仅在已获取控制权的活跃运动状态下检查） ──
+        if self._state in (GuardMissionState.ADVANCING, GuardMissionState.RETURNING):
+            if self._control_arbiter and not self._control_arbiter.can_guard_send():
                 self._abort_mission("人工接管")
                 self._state = GuardMissionState.MANUAL_OVERRIDE
                 self._broadcast_event("GUARD_ABORTED")
-            
-            if self._state == GuardMissionState.MANUAL_OVERRIDE and not self._control_arbiter.is_manual_override_active():
-                if not self._control_arbiter.is_e_stop_active():
+
+        # ── 手动接管恢复检测 ──
+        if self._state == GuardMissionState.MANUAL_OVERRIDE:
+            if self._control_arbiter:
+                if not self._control_arbiter.is_manual_override_active() and not self._control_arbiter.is_e_stop_active():
                     self._state = GuardMissionState.STANDBY
                     self._reset_mission_context()
-            return
-
-        # 状态机分发
-        if self._state == GuardMissionState.STANDBY:
+            # 手动接管中不执行状态机，但仍然广播 overlay
+        elif self._state == GuardMissionState.STANDBY:
             await self._on_standby(detections, frame)
         elif self._state == GuardMissionState.ADVANCING:
             await self._on_advancing(detections, frame)
         elif self._state == GuardMissionState.RETURNING:
             await self._on_returning(detections, frame)
 
-        # 把检测框和当前锚点框广播给前端，用于渲染 Canvas 叠层
+        # ── 始终广播 overlay（无论什么状态前端都能看到框） ──
         active_bbox = None
         if self._state in (GuardMissionState.ADVANCING, GuardMissionState.RETURNING) and self._curr_bbox:
             x, y, w, h = self._curr_bbox
             active_bbox = [x, y, x + w, y + h]
-        elif self._state in (GuardMissionState.STANDBY, GuardMissionState.LOST_ANCHOR, GuardMissionState.MANUAL_OVERRIDE):
+        else:
+            # 待机/故障等状态：画出防区原始范围
             z_box = self._get_zone_bounding_box()
             if z_box:
                 x, y, w, h = z_box
