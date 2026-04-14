@@ -164,24 +164,41 @@ class GuardMissionService:
             await self._on_returning(detections, frame)
 
         # ── 始终广播 overlay（无论什么状态前端都能看到框） ──
+
+        # zone_bbox：防区静态框（始终是你画的那个方框，固定不动）
+        zone_bbox = None
+        z_box = self._get_zone_bounding_box()
+        if z_box:
+            zx, zy, zw, zh = z_box
+            zone_bbox = [zx, zy, zx + zw, zy + zh]
+
+        # tracker_bbox：OpenCV Tracker 实时认为防区在哪里（前进/返航时实时漂移）
+        tracker_bbox = None
+        if self._curr_bbox:
+            tx, ty, tw, th = self._curr_bbox
+            tracker_bbox = [tx, ty, tx + tw, ty + th]
+
+        # active_bbox：给原有逻辑用（显示红色锁定框）
         active_bbox = None
         if self._state in (GuardMissionState.ADVANCING, GuardMissionState.RETURNING) and self._curr_bbox:
-            x, y, w, h = self._curr_bbox
-            active_bbox = [x, y, x + w, y + h]
+            active_bbox = tracker_bbox  # ADVANCING 时显示 tracker 实时位置
         else:
-            # 待机/故障等状态：画出防区原始范围
-            z_box = self._get_zone_bounding_box()
-            if z_box:
-                x, y, w, h = z_box
-                active_bbox = [x, y, x + w, y + h]
+            active_bbox = zone_bbox     # 待机时显示防区原始位置
 
         if dbg:
             logger.info(
-                f"[GuardMission] overlay: active_bbox={active_bbox}, persons={len(detections)}"
+                f"[GuardMission] overlay: state={self._state.value}, "
+                f"zone_bbox={zone_bbox}, tracker_bbox={tracker_bbox}, persons={len(detections)}"
             )
-        await self._broadcast_overlay(detections, active_bbox)
+        await self._broadcast_overlay(detections, active_bbox, zone_bbox, tracker_bbox)
 
-    async def _broadcast_overlay(self, detections: List[TrackDetectionResult], active_bbox: Optional[list]):
+    async def _broadcast_overlay(
+        self,
+        detections: List[TrackDetectionResult],
+        active_bbox: Optional[list],
+        zone_bbox: Optional[list] = None,
+        tracker_bbox: Optional[list] = None,
+    ):
         try:
             from .schemas import utc_now_iso
             broadcaster = self._event_broadcaster
@@ -199,6 +216,8 @@ class GuardMissionService:
                             for d in detections
                         ],
                         "active_bbox": active_bbox,
+                        "zone_bbox": zone_bbox,       # 防区静态框（黄色）
+                        "tracker_bbox": tracker_bbox, # Tracker 实时框（蓝色）
                         "command": self._last_command if active_bbox else None,
                         "reason": f"Guard: {self._state.value}",
                         "state": self._state.value,
@@ -297,7 +316,7 @@ class GuardMissionService:
         return (min_x, min_y, w, h)
 
     async def _lock_anchor_and_start(self, frame: bytes):
-        """进入 ADVANCING — 使用防区静态中心坐标作为导航航向，无需 OpenCV Tracker"""
+        """进入 LOCK_ANCHOR -> ADVANCING"""
         if not self._control_arbiter.request_control(ControlOwner.GUARD_MISSION):
             logger.warning("[GuardMission] 申请控制权失败，无法出动。")
             self._intrusion_counter = 0
@@ -305,17 +324,22 @@ class GuardMissionService:
 
         zone_bbox = self._get_zone_bounding_box()
         if not zone_bbox:
-            logger.error("[GuardMission] 尚无有效的防区形状，无法出动。")
+            logger.error("[GuardMission] 尚无有效的防区形状，无法截取视觉锚点。")
             self._intrusion_counter = 0
             self._control_arbiter.release_control(ControlOwner.GUARD_MISSION)
             return
 
-        # 记录防区静态框作为导航目标（中心 X = 方向角）
-        # 不再使用 MIL Tracker，改为静态航向控制
-        self._start_bbox = zone_bbox
-        self._curr_bbox = zone_bbox   # 不会随机器人移动变化，只用于 overlay 展示
-        self._advance_start_time = time.monotonic()
+        # 锁定底层特征
+        ok = self._anchor_tracker.init_anchor(frame, self._frame_width, self._frame_height, zone_bbox)
+        if not ok:
+            logger.error("[GuardMission] OpenCV 特征捕捉初始化失败！可能由于防区形状不合法或依赖未安装。")
+            self._intrusion_counter = 0
+            self._control_arbiter.release_control(ControlOwner.GUARD_MISSION)
+            return
 
+        self._start_bbox = zone_bbox
+        self._curr_bbox = zone_bbox
+        
         self._state = GuardMissionState.ADVANCING
         self._intrusion_counter = 0
         self._lost_anchor_counter = 0
@@ -324,82 +348,84 @@ class GuardMissionService:
         self._broadcast_event("GUARD_INTRUSION_CONFIRMED")
         asyncio.create_task(self._take_snapshot_safe(frame, "intrusion_confirmed"))
         
-        logger.info(f"[GuardMission] 开始出动！目标防区中心 X={zone_bbox[0] + zone_bbox[2]//2}，航向对准后直行 {self._config.GUARD_DEPLOY_DURATION_S}s")
         # 播音频、起立
         asyncio.create_task(self._start_guard_audio())
         await self._control_service.handle_command("stand")
 
     async def _on_advancing(self, detections: List[TrackDetectionResult], frame: bytes):
-        """使用防区静态中心 X 作为航向目标，按配置时间直线推进。"""
+        # 1. 更新视觉跟踪
+        ok, curr_bbox = self._anchor_tracker.update_anchor(frame, self._frame_width, self._frame_height)
+        if not ok or curr_bbox is None:
+            self._lost_anchor_counter += 1
+            if self._lost_anchor_counter > self._lost_anchor_frames:
+                logger.error("[GuardMission] 追击途中完全丢失视觉锚点！进入 LOST_ANCHOR")
+                await self._handle_lost_anchor()
+            else:
+                # 暂时丢失，发 stop 等待一两帧
+                await self._send_command_safe("stop")
+            return
+            
+        self._lost_anchor_counter = 0
+        self._curr_bbox = curr_bbox
+        
+        # 2. 驱离超时（防止一直卡着报错）
         elapsed = time.monotonic() - self._guard_start_time
-
-        # 1. 总体超时保护
         if elapsed >= self._config.GUARD_MAX_DURATION_S:
-            logger.warning("[GuardMission] 驱离已超时上限，强制返航！")
+            logger.warning("[GuardMission] 驱离已超时限制，中止前进进入返航！")
             await self._start_returning(frame, is_timeout=True)
             return
 
-        # 2. 推进阶段计时：到达预设前进时长后切换返航
-        advance_elapsed = time.monotonic() - self._advance_start_time
-        # 起立稳定等待完成后才开始前进计时（预留 GUARD_DEPLOY_SETTLE_S 秒给起立动作）
-        if advance_elapsed < self._config.GUARD_DEPLOY_SETTLE_S:
-            # 还在起立稳定阶段，发 stop 等待
-            await self._send_command_safe("stop")
-            return
-        advance_drive_elapsed = advance_elapsed - self._config.GUARD_DEPLOY_SETTLE_S
-        if advance_drive_elapsed >= self._config.GUARD_DEPLOY_DURATION_S:
-            logger.info(f"[GuardMission] 已前进 {self._config.GUARD_DEPLOY_DURATION_S}s，开始返航。")
-            await self._start_returning(frame, is_timeout=False)
-            return
-
-        # 3. 静态航向伺服：用防区原始中心 X 纠正机头方向，然后直走
-        #    zone_bbox 是 (x, y, w, h)，中心 X = x + w//2
-        if self._start_bbox:
-            zone_center_x = self._start_bbox[0] + self._start_bbox[2] // 2
-            error_x = zone_center_x - (self._frame_width // 2)
-            deadband = self._servo_controller._yaw_deadband_px
-            if abs(error_x) > deadband:
-                cmd = "left" if error_x < 0 else "right"
-            else:
-                cmd = "forward"
-        else:
-            cmd = "forward"
-
+        # 3. 伺服控制：计算命令
+        cmd, is_edge = self._servo_controller.compute_advancing(curr_bbox, self._frame_width, self._frame_height, self._config.GUARD_MAX_VIEW_RATIO)
+        
+        if is_edge:
+            # 已经贴在目标脸上了，不再前进，只维持对质方向
+            cmd = "stop" if cmd == "forward" else cmd 
+        
         await self._send_command_safe(cmd)
-        logger.debug(f"[GuardMission] ADVANCING cmd={cmd} drive_elapsed={advance_drive_elapsed:.1f}/{self._config.GUARD_DEPLOY_DURATION_S}s")
+
+        # 4. 判断人是否还在防区（重叠分析）
+        has_overlap = self._check_person_overlap(detections, curr_bbox)
+        
+        if not has_overlap:
+            self._clear_counter += 1
+        else:
+            self._clear_counter = 0
+            
+        if self._clear_counter >= self._clear_frames and elapsed >= self._config.GUARD_MIN_DURATION_S:
+            logger.info("[GuardMission] 视觉判定人员已不占有锚点区域，开始执行视觉闭环返航！")
+            await self._start_returning(frame, is_timeout=False)
 
     async def _on_returning(self, detections: List[TrackDetectionResult], frame: bytes):
-        """按固定时长后退返回原位，与推进完全对称，不依赖 OpecCV Tracker。"""
-        return_elapsed = time.monotonic() - self._return_start_time
-
-        # 稳定等待阶段
-        if return_elapsed < self._config.GUARD_RETURN_SETTLE_S:
-            await self._send_command_safe("stop")
+        ok, curr_bbox = self._anchor_tracker.update_anchor(frame, self._frame_width, self._frame_height)
+        if not ok or curr_bbox is None:
+            self._lost_anchor_counter += 1
+            if self._lost_anchor_counter > self._lost_anchor_frames:
+                logger.error("[GuardMission] 返航途中丢失锚点！放弃返航")
+                await self._handle_lost_anchor()
+            else:
+                await self._send_command_safe("stop")
             return
-
-        return_drive_elapsed = return_elapsed - self._config.GUARD_RETURN_SETTLE_S
-        if return_drive_elapsed >= self._config.GUARD_RETURN_DURATION_S:
-            logger.info("[GuardMission] 已后退归位，任务完成！")
+            
+        self._lost_anchor_counter = 0
+        self._curr_bbox = curr_bbox
+        
+        cmd, is_returned = self._servo_controller.compute_returning(
+            curr_bbox=curr_bbox, 
+            start_bbox=self._start_bbox, 
+            frame_width=self._frame_width, 
+            pos_tolerance_px=self._config.GUARD_RETURN_POS_TOLERANCE_PX,
+            area_tolerance_ratio=self._config.GUARD_RETURN_AREA_TOLERANCE_RATIO
+        )
+        
+        if is_returned:
+            logger.info("[GuardMission] 返航伺服判定归位！完成任务。")
             await self._send_command_safe("stop")
             await asyncio.sleep(0.5)
             await self._send_command_safe("sit")
             self._finish_mission_and_reset(frame)
-            return
-
-        # 后退时同样对准防区中心 X，保证直线退回
-        if self._start_bbox:
-            zone_center_x = self._start_bbox[0] + self._start_bbox[2] // 2
-            error_x = zone_center_x - (self._frame_width // 2)
-            deadband = self._servo_controller._yaw_deadband_px
-            if abs(error_x) > deadband:
-                cmd = "left" if error_x < 0 else "right"
-            else:
-                cmd = "backward"
         else:
-            cmd = "backward"
-
-        await self._send_command_safe(cmd)
-        logger.debug(f"[GuardMission] RETURNING cmd={cmd} drive_elapsed={return_drive_elapsed:.1f}/{self._config.GUARD_RETURN_DURATION_S}s")
+            await self._send_command_safe(cmd)
 
     def _check_person_overlap(self, detections: List[TrackDetectionResult], anchor_bbox: tuple) -> bool:
         """检查有没有人框和当前的物理锚点重叠达到一定危险门槛"""
@@ -426,7 +452,6 @@ class GuardMissionService:
         self._state = GuardMissionState.RETURNING
         self._clear_counter = 0
         self._guard_total_duration_s = time.monotonic() - self._guard_start_time
-        self._return_start_time = time.monotonic()  # 返航计时起点
         asyncio.create_task(self._stop_guard_audio())
         
         if not is_timeout:

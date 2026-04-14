@@ -14,6 +14,8 @@ import { useEffect, useRef, useCallback } from 'react';
 export interface TrackOverlayData {
   persons: { bbox: number[]; conf: number; track_id?: number; is_stranger?: boolean }[];
   active_bbox: number[] | null;
+  zone_bbox?: number[] | null;     // 防区静态框（你画的那个，固定不动）
+  tracker_bbox?: number[] | null;  // OpenCV Tracker 实时框（追踪时会漂移）
   command: string | null;
   reason: string;
   state: string;
@@ -134,7 +136,43 @@ export function TrackOverlay({ data, videoRef }: Props) {
       ctx.restore();
     }
 
-    // ─── 4. 锁定目标（红色加粗框） ──────────────────────────────────
+    // ─── 4. 防区静态框（黄色虚线，始终固定不动） ─────────────────────
+    if (data.zone_bbox) {
+      const [x1, y1, x2, y2] = data.zone_bbox;
+      const rx = x1 * sx, ry = y1 * sy;
+      const rw = (x2 - x1) * sx, rh = (y2 - y1) * sy;
+
+      ctx.save();
+      ctx.setLineDash([6, 3]);
+      ctx.strokeStyle = 'rgba(255, 220, 0, 0.9)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(rx, ry, rw, rh);
+
+      ctx.fillStyle = 'rgba(255,220,0,0.9)';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText('📍 防区', rx + 3, ry - 3);
+      ctx.restore();
+    }
+
+    // ─── 5. Tracker 实时框（蓝色实线，追踪时漂移） ──────────────────────
+    if (data.tracker_bbox) {
+      const [x1, y1, x2, y2] = data.tracker_bbox;
+      const rx = x1 * sx, ry = y1 * sy;
+      const rw = (x2 - x1) * sx, rh = (y2 - y1) * sy;
+
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.strokeStyle = 'rgba(0, 180, 255, 0.95)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(rx, ry, rw, rh);
+
+      ctx.fillStyle = 'rgba(0,180,255,0.95)';
+      ctx.font = 'bold 10px monospace';
+      ctx.fillText('🔭 Tracker', rx + 3, ry - 3);
+      ctx.restore();
+    }
+
+    // ─── 6. 锁定目标（红色加粗框） ──────────────────────────────────
     if (data.active_bbox) {
       const [x1, y1, x2, y2] = data.active_bbox;
       const rx = x1 * sx, ry = y1 * sy;
