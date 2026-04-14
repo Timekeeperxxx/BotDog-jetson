@@ -279,7 +279,11 @@ class GuardMissionService:
 
     def _get_zone_bounding_box(self) -> Optional[tuple]:
         """将绘制的 polygon 转化为 opencv 的 bbox: (x, y, w, h)"""
-        polygon = self._zone_service.polygon
+        polygons = getattr(self._zone_service, '_polygons', None)
+        if not polygons:
+            return None
+        # 取第一个多边形（防区通常只画一个）
+        polygon = polygons[0] if polygons else None
         if not polygon or len(polygon) < 3:
             return None
         min_x = min(p[0] for p in polygon)

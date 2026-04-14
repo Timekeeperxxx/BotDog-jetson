@@ -296,7 +296,12 @@ class AIWorker:
 
                 await self._update_current_task_id()
 
-                if not self._is_mission_active():
+                # 驱离模式无需巡检任务即可运行 AI 识别
+                from .guard_mission_service import get_guard_mission_service as _get_gm
+                _gm = _get_gm()
+                _guard_active = _gm is not None and _gm.enabled
+
+                if not self._is_mission_active() and not _guard_active:
                     self._reset_detection_state()
                     continue
 
