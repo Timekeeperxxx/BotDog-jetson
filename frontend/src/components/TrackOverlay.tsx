@@ -14,8 +14,9 @@ import { useEffect, useRef, useCallback } from 'react';
 export interface TrackOverlayData {
   persons: { bbox: number[]; conf: number; track_id?: number; is_stranger?: boolean }[];
   active_bbox: number[] | null;
-  zone_bbox?: number[] | null;     // 防区静态框（你画的那个，固定不动）
-  tracker_bbox?: number[] | null;  // OpenCV Tracker 实时框（追踪时会漂移）
+  zone_bbox?: number[] | null;        // 防区 bounding box [x1,y1,x2,y2]
+  zone_polygon?: number[][] | null;   // 防区旋转四边形 [[x,y],[x,y],[x,y],[x,y]]
+  tracker_bbox?: number[] | null;
   command: string | null;
   reason: string;
   state: string;
@@ -136,8 +137,32 @@ export function TrackOverlay({ data, videoRef }: Props) {
       ctx.restore();
     }
 
-    // ─── 4. 黄色区域检测框（黄色虚线，每帧颜色检测结果） ─────────────────────
-    if (data.zone_bbox) {
+    // ─── 4. 防区多边形（黄色，优先画旋转四边形） ─────────────────────
+    if (data.zone_polygon && data.zone_polygon.length >= 3) {
+      // 精确旋转四边形
+      const pts = data.zone_polygon.map(([px, py]) => [px * sx, py * sy]);
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i][0], pts[i][1]);
+      }
+      ctx.closePath();
+
+      ctx.fillStyle = 'rgba(255, 220, 0, 0.18)';
+      ctx.fill();
+
+      ctx.setLineDash([6, 3]);
+      ctx.strokeStyle = 'rgba(255, 220, 0, 0.95)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255,220,0,0.95)';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('🟡 防区(颜色检测)', pts[0][0] + 3, pts[0][1] - 5);
+      ctx.restore();
+    } else if (data.zone_bbox) {
+      // 回退：轴对齐矩形
       const [x1, y1, x2, y2] = data.zone_bbox;
       const rx = x1 * sx, ry = y1 * sy;
       const rw = (x2 - x1) * sx, rh = (y2 - y1) * sy;
@@ -147,14 +172,12 @@ export function TrackOverlay({ data, videoRef }: Props) {
       ctx.strokeStyle = 'rgba(255, 220, 0, 0.9)';
       ctx.lineWidth = 2;
       ctx.strokeRect(rx, ry, rw, rh);
-
-      // 半透明黄色填充
       ctx.fillStyle = 'rgba(255, 220, 0, 0.12)';
       ctx.fillRect(rx, ry, rw, rh);
 
       ctx.fillStyle = 'rgba(255,220,0,0.95)';
       ctx.font = 'bold 11px monospace';
-      ctx.fillText('🟡 黄区(颜色检测)', rx + 3, ry - 5);
+      ctx.fillText('🟡 防区', rx + 3, ry - 5);
       ctx.restore();
     }
 
