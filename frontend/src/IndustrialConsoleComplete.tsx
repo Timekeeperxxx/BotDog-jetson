@@ -14,7 +14,7 @@ import { useEventWebSocket } from './hooks/useEventWebSocket';
 import { useAutoTrack } from './hooks/useAutoTrack';
 import { AutoTrackPanel } from './components/AutoTrackPanel';
 import { TrackOverlay } from './components/TrackOverlay';
-import { GuardMissionPanel } from './components/GuardMissionPanel';
+import { GuardMissionPanel, GuardStatus } from './components/GuardMissionPanel';
 import { ZoneDrawer } from './components/ZoneDrawer';
 import { getApiUrl } from './config/api';
 import type { VideoSource } from './types/admin';
@@ -248,6 +248,7 @@ export default function IndustrialConsoleComplete() {
   const [searchQuery, setSearchQuery] = useState('');
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [guardStatus, setGuardStatus] = useState<GuardStatus | null>(null);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [selectedEvidence, setSelectedEvidence] = useState<Set<number>>(new Set());
   const [evidenceDeleting, setEvidenceDeleting] = useState(false);
@@ -575,16 +576,18 @@ export default function IndustrialConsoleComplete() {
                 className="absolute object-cover bg-black transition-all duration-300"
                 style={isCamSwapped ? {
                   bottom: '108px', right: '16px', top: 'auto', left: 'auto',
-                  width: isPipLarge ? '480px' : '240px',
-                  height: isPipLarge ? '270px' : '135px',
+                  width: isPipLarge ? '480px' : '270px',
+                  height: isPipLarge ? '270px' : '152px',
                   zIndex: 21, borderRadius: '8px',
                   display: isPipHidden ? 'none' : undefined,
                 } : {
                   inset: 0, width: '100%', height: '100%', zIndex: 1, borderRadius: 0,
                 }}
               />
-              {/* YOLO 检测框 + 决策区域叠层（跟随 AI 跟踪启用状态） */}
-              {!isCamSwapped && autoTrack.status?.enabled && <TrackOverlay data={trackOverlay} videoRef={videoRef} />}
+              {/* YOLO 检测框 + 决策区域叠层（跟随 AI 跟踪或驱离启用状态） */}
+              {!isCamSwapped && trackOverlay && (autoTrack.status?.enabled || guardStatus?.enabled) && (
+                <TrackOverlay data={trackOverlay} videoRef={videoRef} />
+              )}
               {/* 禁区绘制叠层（始终挂载，active 控制交互） */}
               <ZoneDrawer
                 frameW={trackOverlay?.frame_w ?? 1280}
@@ -719,7 +722,7 @@ export default function IndustrialConsoleComplete() {
                   <div className="pointer-events-auto">
                     <AutoTrackPanel {...autoTrack} isMissionRunning={isMissionRunning} />
                     {/* 驱离任务控制面板 */}
-                    <GuardMissionPanel />
+                    <GuardMissionPanel onStatusChange={setGuardStatus} />
                   </div>
 
                   <div className="bg-black/40 border border-white/10 px-3 py-2 text-[10px] font-mono text-white/80">

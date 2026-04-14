@@ -10,7 +10,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { getApiUrl } from '../config/api';
 
-interface GuardStatus {
+export interface GuardStatus {
   enabled: boolean;
   state: string;
   intrusion_counter: number;
@@ -38,7 +38,11 @@ const STATE_COLOR: Record<string, string> = {
   FAULT:           '#f44',
 };
 
-export const GuardMissionPanel: React.FC = () => {
+interface Props {
+  onStatusChange?: (status: GuardStatus | null) => void;
+}
+
+export const GuardMissionPanel: React.FC<Props> = ({ onStatusChange }) => {
   const [status, setStatus] = useState<GuardStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,11 +54,13 @@ export const GuardMissionPanel: React.FC = () => {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data: GuardStatus = await res.json();
       setStatus(data);
+      onStatusChange?.(data);
       setError(null);
     } catch (e) {
       setError('状态获取失败');
+      onStatusChange?.(null);
     }
-  }, []);
+  }, [onStatusChange]);
 
   useEffect(() => {
     void fetchStatus();
