@@ -46,13 +46,10 @@ class VisualAnchorTracker:
             frame_np = np.frombuffer(frame_bytes, dtype=np.uint8).reshape((frame_height, frame_width, 3))
             
             # opencv tracker 需要的是 (x, y, w, h)，和我们的输入一致
-            ok = self._tracker.init(frame_np, bbox)
-            self._is_initialized = ok
-            if ok:
-                logger.info(f"[VisualAnchorTracker] 锚点初始化成功: {bbox}")
-            else:
-                logger.error("[VisualAnchorTracker] 锚点跟踪器初始化失败")
-            return ok
+            self._tracker.init(frame_np, bbox)
+            self._is_initialized = True
+            logger.info(f"[VisualAnchorTracker] 锚点初始化成功: {bbox}")
+            return True
             
         except ImportError:
             logger.error("[VisualAnchorTracker] 无法导入 cv2，请确认已安装 opencv-python")
