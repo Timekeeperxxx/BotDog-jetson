@@ -193,24 +193,30 @@ class UnitreeB2Adapter(BaseRobotAdapter):
 
             # Step 1: 通过 MotionSwitcher 切换到 AI 运控模式（必须在 SportClient 之前）
             import time
-            msc = MotionSwitcherClient()
-            msc.SetTimeout(5.0)
-            msc.Init()
+            msc = None
+            try:
+                msc = MotionSwitcherClient()
+                msc.SetTimeout(5.0)
+                msc.Init()
 
-            # 查询当前模式
-            code, data = msc.CheckMode()
-            current_mode = data.get("name", "unknown") if data else "unknown"
-            logger.info(f"[UnitreeB2] 当前运控模式: {current_mode} (code={code})")
+                # 查询当前模式
+                code, data = msc.CheckMode()
+                current_mode = data.get("name", "unknown") if data else "unknown"
+                logger.info(f"[UnitreeB2] 当前运控模式: {current_mode} (code={code})")
 
-            # 如果不是 ai 模式，切换过去
-            if code == 0 and current_mode != "ai":
-                logger.info("[UnitreeB2] 切换到 AI 运控模式...")
-                sel_code, _ = msc.SelectMode("ai")
-                if sel_code == 0:
-                    logger.info("[UnitreeB2] 已切换到 ai 模式")
-                    time.sleep(2.0)  # 等待模式切换完成
-                else:
-                    logger.warning(f"[UnitreeB2] 模式切换失败 code={sel_code}，尝试继续")
+                # 如果不是 ai 模式，切换过去
+                if code == 0 and current_mode != "ai":
+                    logger.info("[UnitreeB2] 切换到 AI 运控模式...")
+                    sel_code, _ = msc.SelectMode("ai")
+                    if sel_code == 0:
+                        logger.info("[UnitreeB2] 已切换到 ai 模式")
+                        time.sleep(2.0)  # 等待模式切换完成
+                    else:
+                        logger.warning(f"[UnitreeB2] 模式切换失败 code={sel_code}，尝试继续")
+            except Exception as e:
+                logger.warning(f"[UnitreeB2] MotionSwitcherClient 初始化失败，跳过模式检查: {e}")
+                # 继续尝试初始化 SportClient，因为有些情况下 SportClient 仍然可以工作
+                msc = None  # 确保 msc 为 None，避免后续使用
 
             # Step 2: 初始化 SportClient
             self._sport_client = SportClient()
