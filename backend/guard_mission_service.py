@@ -130,6 +130,18 @@ class GuardMissionService:
 
         self._last_frame_time = time.monotonic()
 
+        # 每 60 帧打印一次诊断日志
+        if not hasattr(self, '_dbg_frame_counter'):
+            self._dbg_frame_counter = 0
+        self._dbg_frame_counter += 1
+        dbg = (self._dbg_frame_counter % 60 == 1)
+        if dbg:
+            logger.info(
+                f"[GuardMission] process_frame #{self._dbg_frame_counter}: "
+                f"state={self._state.value}, enabled={self._enabled}, "
+                f"detections={len(detections)}, intrusion_counter={self._intrusion_counter}"
+            )
+
         # ── 人工接管校验（仅在已获取控制权的活跃运动状态下检查） ──
         if self._state in (GuardMissionState.ADVANCING, GuardMissionState.RETURNING):
             if self._control_arbiter and not self._control_arbiter.can_guard_send():
@@ -162,7 +174,11 @@ class GuardMissionService:
             if z_box:
                 x, y, w, h = z_box
                 active_bbox = [x, y, x + w, y + h]
-            
+
+        if dbg:
+            logger.info(
+                f"[GuardMission] overlay: active_bbox={active_bbox}, persons={len(detections)}"
+            )
         await self._broadcast_overlay(detections, active_bbox)
 
     async def _broadcast_overlay(self, detections: List[TrackDetectionResult], active_bbox: Optional[list]):
@@ -200,15 +216,20 @@ class GuardMissionService:
     # ─── 状态流转逻辑 ──────────────────────────────────────────────
 
     async def _on_standby(self, detections: List[TrackDetectionResult], frame: bytes):
-        if not self._check_system_ready():
+        ready = self._check_system_ready()
+        if not ready:
             self._intrusion_counter = 0
             return
 
         has_intruder = self._check_zone_intrusion(detections)
         if has_intruder:
             self._intrusion_counter += 1
+            logger.info(
+                f"[GuardMission] 入侵检出! counter={self._intrusion_counter}/{self._confirm_frames}"
+            )
         else:
-            self._intrusion_counter = max(0, self._intrusion_counter - 2)
+            if self._intrusion_counter > 0:
+                self._intrusion_counter = max(0, self._intrusion_counter - 2)
 
         if self._intrusion_counter >= self._confirm_frames:
             logger.info("[GuardMission] 目标入侵已确认，准备锁定视觉锚点！")
@@ -216,23 +237,45 @@ class GuardMissionService:
 
     def _check_system_ready(self) -> bool:
         if not self._control_arbiter:
+            logger.debug("[GuardMission] system_ready=False: no arbiter")
             return False
         if self._control_arbiter.is_e_stop_active():
+            logger.debug("[GuardMission] system_ready=False: e_stop")
             return False
         if self._control_arbiter.is_manual_override_active():
+            logger.debug("[GuardMission] system_ready=False: manual_override")
             return False
-        if time.monotonic() - self._last_mission_end_time < self._config.GUARD_COOLDOWN_S:
+        cooldown_remaining = self._config.GUARD_COOLDOWN_S - (time.monotonic() - self._last_mission_end_time)
+        if cooldown_remaining > 0:
+            logger.debug(f"[GuardMission] system_ready=False: cooldown {cooldown_remaining:.1f}s")
             return False
         return True
 
     def _check_zone_intrusion(self, detections: List[TrackDetectionResult]) -> bool:
         zone_bbox = self._get_zone_bounding_box()
         if not zone_bbox:
+            logger.debug("[GuardMission] intrusion check: no zone_bbox (zone_count=%d)", self._zone_service.zone_count)
             return False
-            
-        # 只要有一点重叠（复用重叠检测逻辑），就认为发起了入侵
-        has_overlap = self._check_person_overlap(detections, zone_bbox)
-        return has_overlap
+
+        persons = [d for d in detections if d.class_name == "person"]
+        if not persons:
+            return False
+
+        # 逐人检查重叠
+        for det in persons:
+            person_w = det.bbox[2] - det.bbox[0]
+            person_h = det.bbox[3] - det.bbox[1]
+            p_box = (det.bbox[0], det.bbox[1], person_w, person_h)
+            ratio = _calc_intersection_ratio(p_box, zone_bbox)
+            if ratio > 0:
+                logger.info(
+                    f"[GuardMission] 重叠检测: person bbox={det.bbox} conf={det.confidence:.2f} "
+                    f"zone_bbox={zone_bbox} overlap_ratio={ratio:.3f} "
+                    f"threshold={self._config.GUARD_OVERLAP_CLEAR_RATIO}"
+                )
+            if ratio >= self._config.GUARD_OVERLAP_CLEAR_RATIO:
+                return True
+        return False
 
     def _get_zone_bounding_box(self) -> Optional[tuple]:
         """将绘制的 polygon 转化为 opencv 的 bbox: (x, y, w, h)"""
