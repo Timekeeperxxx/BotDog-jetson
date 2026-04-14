@@ -542,9 +542,17 @@ def register_routes(app: FastAPI) -> None:
     async def enable_guard_mission():
         from .guard_mission_service import get_guard_mission_service
         from .auto_track_service import get_auto_track_service
+        from .control_arbiter import get_control_arbiter
+        
         gm = get_guard_mission_service()
         if gm is None:
             raise HTTPException(status_code=503, detail="驱离服务未初始化")
+            
+        # 释放可能存在的人工干预锁，防止自动驱离被永远拦截
+        arbiter = get_control_arbiter()
+        if arbiter:
+            arbiter.release_manual_override()
+            
         # 互斥：开启驱离时，必须关闭自动跟踪
         at = get_auto_track_service()
         if at is not None and at._enabled:
