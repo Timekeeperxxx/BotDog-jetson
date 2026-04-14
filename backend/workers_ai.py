@@ -110,8 +110,8 @@ class _YoloDetector(_BaseDetector):
             resolved_device = device
 
         logger.info("YOLO 加载模型: %s, 设备: %s", model_path, resolved_device)
-        self._model = YOLO(model_path)
-        self._model.to(resolved_device)
+        self._model = YOLO(model_path, task='detect')
+        # self._model.to(resolved_device)
         self._device = resolved_device
 
         # 缓存模型类别名映射
@@ -148,7 +148,7 @@ class _YoloDetector(_BaseDetector):
         detections = []
         for box in results[0].boxes:
             cls_id = int(box.cls[0])
-            cls_name = self._class_names.get(cls_id, str(cls_id))
+            cls_name = "person" if cls_id == 0 else self._class_names.get(cls_id, str(cls_id))
             conf = float(box.conf[0])
 
             if cls_name not in self._target_classes:
@@ -223,7 +223,8 @@ class AIWorker:
                     frame_height=self._frame_height,
                 )
             except Exception as exc:
-                logger.warning("YOLO 模型加载失败，回退到 NullDetector: %s", exc)
+                import traceback
+                logger.warning(f"YOLO 模型加载失败，回退到 NullDetector: {exc}\n{traceback.format_exc()}")
                 self._detector = _NullDetector()
 
     async def start(self, stop_event: asyncio.Event) -> None:
