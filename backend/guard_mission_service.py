@@ -136,10 +136,13 @@ class GuardMissionService:
         self._dbg_frame_counter += 1
         dbg = (self._dbg_frame_counter % 60 == 1)
         if dbg:
+            b = self._event_broadcaster
             logger.info(
                 f"[GuardMission] process_frame #{self._dbg_frame_counter}: "
                 f"state={self._state.value}, enabled={self._enabled}, "
-                f"detections={len(detections)}, intrusion_counter={self._intrusion_counter}"
+                f"detections={len(detections)}, intrusion_counter={self._intrusion_counter}, "
+                f"broadcaster={'ok' if b else 'None'}, connections={getattr(b, 'connection_count', '?')}, "
+                f"frame_w={self._frame_width}, frame_h={self._frame_height}"
             )
 
         # ── 人工接管校验（仅在已获取控制权的活跃运动状态下检查） ──
@@ -199,38 +202,49 @@ class GuardMissionService:
         zone_bbox: Optional[list] = None,
         tracker_bbox: Optional[list] = None,
     ):
+        broadcaster = self._event_broadcaster
+        if broadcaster is None:
+            return
+        if broadcaster.connection_count == 0:
+            return
         try:
             from .schemas import utc_now_iso
-            broadcaster = self._event_broadcaster
-            if broadcaster and broadcaster.connection_count > 0:
-                msg = {
-                    "msg_type": "TRACK_OVERLAY",
-                    "timestamp": utc_now_iso(),
-                    "payload": {
-                        "persons": [
-                            {
-                                "bbox": list(d.bbox),
-                                "conf": round(d.confidence, 2),
-                                "track_id": d.track_id
-                            }
-                            for d in detections
-                        ],
-                        "active_bbox": active_bbox,
-                        "zone_bbox": zone_bbox,       # 防区静态框（黄色）
-                        "tracker_bbox": tracker_bbox, # Tracker 实时框（蓝色）
-                        "command": self._last_command if active_bbox else None,
-                        "reason": f"Guard: {self._state.value}",
-                        "state": self._state.value,
-                        "frame_w": self._frame_width,
-                        "frame_h": self._frame_height,
-                        "deadband_px": self._servo_controller._yaw_deadband_px,
-                        "anchor_y_stop_ratio": 0.0,
-                        "forward_area_ratio": 0.0,
-                    }
+            msg = {
+                "msg_type": "TRACK_OVERLAY",
+                "timestamp": utc_now_iso(),
+                "payload": {
+                    "persons": [
+                        {
+                            "bbox": list(d.bbox),
+                            "conf": round(d.confidence, 2),
+                            "track_id": d.track_id
+                        }
+                        for d in detections
+                    ],
+                    "active_bbox": active_bbox,
+                    "zone_bbox": zone_bbox,
+                    "tracker_bbox": tracker_bbox,
+                    "command": self._last_command if active_bbox else None,
+                    "reason": f"Guard: {self._state.value}",
+                    "state": self._state.value,
+                    "frame_w": self._frame_width,
+                    "frame_h": self._frame_height,
+                    "deadband_px": self._servo_controller._yaw_deadband_px,
+                    "anchor_y_stop_ratio": 0.0,
+                    "forward_area_ratio": 0.0,
                 }
-                asyncio.create_task(self._do_broadcast(msg))
-        except Exception:
-            pass
+            }
+            async with broadcaster._lock:
+                failed = []
+                for conn in broadcaster._connections:
+                    try:
+                        await conn.send_json(msg)
+                    except Exception:
+                        failed.append(conn)
+                for c in failed:
+                    broadcaster._connections.discard(c)
+        except Exception as e:
+            logger.warning(f"[GuardMission] overlay broadcast error: {e}")
 
     # ─── 状态流转逻辑 ──────────────────────────────────────────────
 
