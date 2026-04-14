@@ -25,12 +25,12 @@ from .tracking_types import DetectionResult as TrackDetectionResult, ControlOwne
 
 from .logging_config import logger
 
-# ─── HSV 黄色检测参数（可根据实际地面颜色微调） ────────────────────────
-# 宽松的黄色范围（覆盖浅黄到深黄/橙黄）
-YELLOW_HSV_LOW  = np.array([15, 80, 80], dtype=np.uint8)
-YELLOW_HSV_HIGH = np.array([35, 255, 255], dtype=np.uint8)
-# 最小有效黄色区域面积（像素），过小的噪点忽略
-YELLOW_MIN_AREA = 500
+# ─── HSV 颜色检测参数（米黄/卡其/纸板色） ────────────────────────
+# 宽松范围：覆盖纸板、浅黄、卡其色
+YELLOW_HSV_LOW  = np.array([10, 25, 80], dtype=np.uint8)
+YELLOW_HSV_HIGH = np.array([40, 255, 255], dtype=np.uint8)
+# 最小有效区域面积（像素），小于此忽略
+YELLOW_MIN_AREA = 300
 
 
 class GuardMissionService:
