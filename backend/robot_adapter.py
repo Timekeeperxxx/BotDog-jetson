@@ -252,75 +252,83 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                     continue
 
                 client = self._sport_client
-                logger.debug(f"[UnitreeB2 Worker] 执行命令: {cmd}")
                 
-                if cmd == "forward":
-                    client.Move(self._vx, 0.0, 0.0)
-                elif cmd == "backward":
-                    client.Move(-self._vx, 0.0, 0.0)
-                elif cmd == "left":
-                    client.Move(0.0, 0.0, self._vyaw)
-                elif cmd == "right":
-                    client.Move(0.0, 0.0, -self._vyaw)
-                elif cmd == "strafe_left":
-                    client.Move(0.0, self._vy, 0.0)
-                elif cmd == "strafe_right":
-                    client.Move(0.0, -self._vy, 0.0)
+                # 检查是否是速度命令（元组格式）
+                if isinstance(cmd, tuple) and len(cmd) == 4 and cmd[0] == "velocity":
+                    _, vx, vy, vyaw = cmd
+                    logger.debug(f"[UnitreeB2 Worker] 执行速度命令: vx={vx:.2f}, vy={vy:.2f}, vyaw={vyaw:.2f}")
+                    client.Move(vx, vy, vyaw)
+                else:
+                    # 处理普通命令
+                    logger.debug(f"[UnitreeB2 Worker] 执行命令: {cmd}")
+                    
+                    if cmd == "forward":
+                        client.Move(self._vx, 0.0, 0.0)
+                    elif cmd == "backward":
+                        client.Move(-self._vx, 0.0, 0.0)
+                    elif cmd == "left":
+                        client.Move(0.0, 0.0, self._vyaw)
+                    elif cmd == "right":
+                        client.Move(0.0, 0.0, -self._vyaw)
+                    elif cmd == "strafe_left":
+                        client.Move(0.0, self._vy, 0.0)
+                    elif cmd == "strafe_right":
+                        client.Move(0.0, -self._vy, 0.0)
 
-                elif cmd == "stop":
-                    ret = client.StopMove()
-                    logger.debug(f"[UnitreeB2 Worker] StopMove ret={ret}")
-                    if ret != 0:
-                        client.Move(0.0, 0.0, 0.0)
-                        logger.debug(f"[UnitreeB2 Worker] StopMove失败，备用 Move(0,0,0)")
-                    # 退出持续运动模式（SwitchMoveMode(True)），回到稳定站立。
-                    # 仅在站立/运动状态下调用；蹲坐（sit）状态下跳过，防止 watchdog 把狗强制站起来。
-                    if self._current_posture != "sit":
-                        import time as _t
-                        _t.sleep(0.1)
-                        ret_bs = client.BalanceStand()
-                        logger.debug(f"[UnitreeB2 Worker] stop→BalanceStand ret={ret_bs}")
-                    else:
-                        logger.debug("[UnitreeB2 Worker] stop：当前蹲坐状态，跳过 BalanceStand")
-                elif cmd == "stand":
-                    self._busy_with_posture = True
-                    try:
-                        import time
-                        # 直接 BalanceStand，跳过 StandUp（StandUp 是专门从坐姿起立，但会破坏模式状态）
-                        ret_bs = client.BalanceStand()
-                        logger.info(f"[UnitreeB2 Worker] BalanceStand ret={ret_bs}")
-                        time.sleep(2.0)  # 等待起立稳定
-                        for attempt in range(5):
-                            ret_mm = client.SwitchMoveMode(True)
-                            logger.info(f"[UnitreeB2 Worker] SwitchMoveMode(True) ret={ret_mm} (attempt {attempt+1})")
-                            if ret_mm == 0:
-                                break
-                            time.sleep(0.5)
-                    except Exception as e_stand:
-                        logger.error(f"[UnitreeB2 Worker] stand 失败: {e_stand}")
-                    else:
-                        self._current_posture = "stand"
-                    finally:
-                        self._busy_with_posture = False
-                elif cmd == "sit":
-                    self._busy_with_posture = True
-                    try:
-                        import time
-                        # 先停步态，再坐下
-                        client.StopMove()
-                        time.sleep(0.3)
-                        ret_sd = client.StandDown()
-                        logger.info(f"[UnitreeB2 Worker] StandDown ret={ret_sd}")
-                        # StandDown 物理过程长于 1.5s，经常超时返回 3104。但硬件已在执行蹲下
-                        # 所以无论返回值是什么，都认为已进入坐下状态
-                        self._current_posture = "sit"
-                    finally:
-                        self._busy_with_posture = False
+                    elif cmd == "stop":
+                        ret = client.StopMove()
+                        logger.debug(f"[UnitreeB2 Worker] StopMove ret={ret}")
+                        if ret != 0:
+                            client.Move(0.0, 0.0, 0.0)
+                            logger.debug(f"[UnitreeB2 Worker] StopMove失败，备用 Move(0,0,0)")
+                        # 退出持续运动模式（SwitchMoveMode(True)），回到稳定站立。
+                        # 仅在站立/运动状态下调用；蹲坐（sit）状态下跳过，防止 watchdog 把狗强制站起来。
+                        if self._current_posture != "sit":
+                            import time as _t
+                            _t.sleep(0.1)
+                            ret_bs = client.BalanceStand()
+                            logger.debug(f"[UnitreeB2 Worker] stop→BalanceStand ret={ret_bs}")
+                        else:
+                            logger.debug("[UnitreeB2 Worker] stop：当前蹲坐状态，跳过 BalanceStand")
+                    elif cmd == "stand":
+                        self._busy_with_posture = True
+                        try:
+                            import time
+                            # 直接 BalanceStand，跳过 StandUp（StandUp 是专门从坐姿起立，但会破坏模式状态）
+                            ret_bs = client.BalanceStand()
+                            logger.info(f"[UnitreeB2 Worker] BalanceStand ret={ret_bs}")
+                            time.sleep(2.0)  # 等待起立稳定
+                            for attempt in range(5):
+                                ret_mm = client.SwitchMoveMode(True)
+                                logger.info(f"[UnitreeB2 Worker] SwitchMoveMode(True) ret={ret_mm} (attempt {attempt+1})")
+                                if ret_mm == 0:
+                                    break
+                                time.sleep(0.5)
+                        except Exception as e_stand:
+                            logger.error(f"[UnitreeB2 Worker] stand 失败: {e_stand}")
+                        else:
+                            self._current_posture = "stand"
+                        finally:
+                            self._busy_with_posture = False
+                    elif cmd == "sit":
+                        self._busy_with_posture = True
+                        try:
+                            import time
+                            # 先停步态，再坐下
+                            client.StopMove()
+                            time.sleep(0.3)
+                            ret_sd = client.StandDown()
+                            logger.info(f"[UnitreeB2 Worker] StandDown ret={ret_sd}")
+                            # StandDown 物理过程长于 1.5s，经常超时返回 3104。但硬件已在执行蹲下
+                            # 所以无论返回值是什么，都认为已进入坐下状态
+                            self._current_posture = "sit"
+                        finally:
+                            self._busy_with_posture = False
 
-                logger.debug(f"[UnitreeB2 Worker] 执行完成: {cmd}")
+                logger.debug(f"[UnitreeB2 Worker] 执行完成")
             except Exception as e:
                 self._busy_with_posture = False
-                logger.error(f"[UnitreeB2 Worker] 执行异常 ({cmd}): {e}")
+                logger.error(f"[UnitreeB2 Worker] 执行异常: {e}")
 
     async def send_command(self, cmd: str) -> None:
         """
@@ -373,6 +381,46 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                 logger.debug(f"[UnitreeB2] 已放入后台队列: {cmd}")
             except queue.Full:
                 logger.warning(f"[UnitreeB2] 队列已满，丢弃命令: {cmd}")
+
+    async def send_velocity(self, vx: float, vy: float, vyaw: float) -> None:
+        """
+        发送连续速度控制命令。
+
+        Args:
+            vx: 前进/后退速度（m/s），范围 -0.6 ~ 0.6
+            vy: 横向平移速度（m/s），范围 -0.4 ~ 0.4
+            vyaw: 偏航转速（rad/s），范围 -0.8 ~ 0.8
+        """
+        if not self._initialized or self._sport_client is None:
+            logger.warning(f"[UnitreeB2] 适配器未就绪，忽略速度命令: vx={vx}, vy={vy}, vyaw={vyaw}")
+            return
+
+        # 检查是否正在执行姿态命令
+        if self._busy_with_posture:
+            logger.debug(f"[UnitreeB2] 正在执行姿态命令，忽略速度命令")
+            return
+
+        import queue
+
+        # 限制速度范围
+        vx = max(-0.6, min(0.6, vx))
+        vy = max(-0.4, min(0.4, vy))
+        vyaw = max(-0.8, min(0.8, vyaw))
+
+        try:
+            # 清空积压，始终只执行最新命令
+            while not self._cmd_queue.empty():
+                self._cmd_queue.get_nowait()
+        except queue.Empty:
+            pass
+
+        # 创建一个特殊的命令格式来传递速度参数
+        try:
+            # 使用元组格式传递速度参数
+            self._cmd_queue.put_nowait(("velocity", vx, vy, vyaw))
+            logger.debug(f"[UnitreeB2] 速度命令已放入后台队列: vx={vx:.2f}, vy={vy:.2f}, vyaw={vyaw:.2f}")
+        except queue.Full:
+            logger.warning(f"[UnitreeB2] 队列已满，丢弃速度命令")
 
 
 
