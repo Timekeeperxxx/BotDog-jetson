@@ -255,10 +255,10 @@ export const ZoneDrawer: React.FC<Props> = ({ frameW, frameH, active, onClose })
 const toolbarStyles: Record<string, React.CSSProperties> = {
   bar: {
     position: 'absolute',
-    bottom: 80,
+    bottom: 140, // 抬高，避免被主控制栏遮挡
     left: '50%',
     transform: 'translateX(-50%)',
-    zIndex: 20,
+    zIndex: 50, // 确保持续在最上层
     background: 'rgba(0,0,0,0.82)',
     border: '1px solid rgba(0,255,120,0.4)',
     borderRadius: 8,
