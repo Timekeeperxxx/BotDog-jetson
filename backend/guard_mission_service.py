@@ -153,9 +153,14 @@ class GuardMissionService:
 
         # 把检测框和当前锚点框广播给前端，用于渲染 Canvas 叠层
         active_bbox = None
-        if self._curr_bbox and self._state in (GuardMissionState.ADVANCING, GuardMissionState.RETURNING):
+        if self._state in (GuardMissionState.ADVANCING, GuardMissionState.RETURNING) and self._curr_bbox:
             x, y, w, h = self._curr_bbox
             active_bbox = [x, y, x + w, y + h]
+        elif self._state in (GuardMissionState.STANDBY, GuardMissionState.LOST_ANCHOR, GuardMissionState.MANUAL_OVERRIDE):
+            z_box = self._get_zone_bounding_box()
+            if z_box:
+                x, y, w, h = z_box
+                active_bbox = [x, y, x + w, y + h]
             
         await self._broadcast_overlay(detections, active_bbox)
 
@@ -220,14 +225,13 @@ class GuardMissionService:
         return True
 
     def _check_zone_intrusion(self, detections: List[TrackDetectionResult]) -> bool:
-        for det in detections:
-            if det.class_name != "person":
-                continue
-            x1, y1, x2, y2 = det.bbox
-            anchor = ((x1 + x2) // 2, y2)
-            if self._zone_service.is_inside_zone(anchor):
-                return True
-        return False
+        zone_bbox = self._get_zone_bounding_box()
+        if not zone_bbox:
+            return False
+            
+        # 只要有一点重叠（复用重叠检测逻辑），就认为发起了入侵
+        has_overlap = self._check_person_overlap(detections, zone_bbox)
+        return has_overlap
 
     def _get_zone_bounding_box(self) -> Optional[tuple]:
         """将绘制的 polygon 转化为 opencv 的 bbox: (x, y, w, h)"""
