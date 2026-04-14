@@ -409,6 +409,16 @@ class AIWorker:
         # AutoTrackService 路径：有活跃目标或候选目标时切高帧率
         from .auto_track_service import get_auto_track_service
         auto_track = get_auto_track_service()
+        
+        from .guard_mission_service import get_guard_mission_service
+        guard_mission = get_guard_mission_service()
+        
+        if guard_mission is not None and guard_mission.enabled:
+            # 如果驱离模式启用了，且目前并不是 STANDBY 或者处于刚确认入侵，这期间不应该是 patrol 降频，应提供更多的帧以稳定验证
+            from .guard_mission_types import GuardMissionState
+            if guard_mission.state != GuardMissionState.STANDBY or guard_mission._intrusion_counter > 0:
+                return True
+                
         if auto_track is not None and auto_track._enabled:
             return (
                 auto_track._active_target is not None
@@ -436,8 +446,31 @@ class AIWorker:
         """
         from .auto_track_service import get_auto_track_service
         auto_track = get_auto_track_service()
+        
+        from .guard_mission_service import get_guard_mission_service
+        guard_mission = get_guard_mission_service()
 
-        if auto_track is not None and auto_track._enabled:
+        # 计算实际的等效帧率
+        skip = self._suspect_skip if self._is_suspect_mode() else self._patrol_skip
+        effective_fps = settings.AI_FPS / skip if skip > 0 else settings.AI_FPS
+
+        if guard_mission is not None and guard_mission.enabled:
+            # ── 新增路径：交给 GuardMissionService ─────────────
+            track_detections = [
+                TrackDetectionResult(
+                    bbox=d.bbox or (0, 0, 1, 1),
+                    confidence=d.confidence,
+                    class_name=d.label,
+                    track_id=getattr(d, 'track_id', -1),
+                )
+                for d in detections
+                if d.bbox is not None
+            ]
+            guard_mission.update_effective_fps(effective_fps)
+            await guard_mission.process_frame(track_detections, frame)
+            return
+            
+        elif auto_track is not None and auto_track._enabled:
             # ── 优先路径：交给 AutoTrackService，传递 YOLO track_id + 计时 ─
             track_detections = [
                 TrackDetectionResult(

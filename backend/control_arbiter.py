@@ -111,6 +111,12 @@ class ControlArbiter:
         """
         return self._owner == ControlOwner.AUTO_TRACK
 
+    def can_guard_send(self) -> bool:
+        """
+        自动驱离是否允许下发控制命令。
+        """
+        return self._owner == ControlOwner.GUARD_MISSION
+
     def is_e_stop_active(self) -> bool:
         return self._owner == ControlOwner.E_STOP
 

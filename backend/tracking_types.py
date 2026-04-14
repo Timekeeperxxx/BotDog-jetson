@@ -62,6 +62,7 @@ class ControlOwner(str, Enum):
 
     NONE               = "NONE"
     AUTO_TRACK         = "AUTO_TRACK"
+    GUARD_MISSION      = "GUARD_MISSION"
     WEB_MANUAL         = "WEB_MANUAL"
     REMOTE_CONTROLLER  = "REMOTE_CONTROLLER"
     E_STOP             = "E_STOP"

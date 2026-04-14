@@ -48,6 +48,7 @@ from .ws_broadcaster import websocket_telemetry_handler, WebSocketBroadcaster
 from .ws_event_broadcaster import EventBroadcaster
 from .control_service import ControlService, set_control_service, get_control_service
 from .robot_adapter import create_adapter
+from .guard_mission_types import GuardStatusDTO
 
 
 
@@ -340,6 +341,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             f"自动跟踪服务已初始化，默认启用={settings.AUTO_TRACK_ENABLED}，"
             f"多目标模式已开启"
         )
+        
+        # 12. 初始化自动驱离主脑服务
+        from .guard_mission_service import GuardMissionService, set_guard_mission_service
+        _guard_mission_service = GuardMissionService(
+            zone_service=_zone_service,
+            control_service=_control_service,
+            control_arbiter=_arbiter,
+            event_broadcaster=_event_broadcaster,
+            config=settings,
+            session_factory=get_session_factory(),
+            snapshot_dir=snapshot_dir,
+            frame_width=settings.AI_FRAME_WIDTH,
+            frame_height=settings.AI_FRAME_HEIGHT,
+        )
+        set_guard_mission_service(_guard_mission_service)
+        logger.info(
+            f"驱离任务服务已初始化，默认启用={settings.GUARD_MISSION_ENABLED}"
+        )
 
 
         logger.info("所有后台任务已启动，应用就绪")
@@ -516,6 +535,47 @@ def register_routes(app: FastAPI) -> None:
             "rate_limit_s": svc._rate_limit_s,
             "watchdog_active": svc._watchdog_active,
         }
+
+    # ── 驱离任务端点 ────────────────────────────────────────────────────────
+    
+    @app.post("/api/v1/guard-mission/enable")
+    async def enable_guard_mission():
+        from .guard_mission_service import get_guard_mission_service
+        gm = get_guard_mission_service()
+        if gm is None:
+            raise HTTPException(status_code=503, detail="驱离服务未初始化")
+        gm.enabled = True
+        return {"success": True, "enabled": True}
+
+    @app.post("/api/v1/guard-mission/disable")
+    async def disable_guard_mission():
+        from .guard_mission_service import get_guard_mission_service
+        gm = get_guard_mission_service()
+        if gm is None:
+            raise HTTPException(status_code=503, detail="驱离服务未初始化")
+        gm.enabled = False
+        return {"success": True, "enabled": False}
+
+    @app.post("/api/v1/guard-mission/abort")
+    async def abort_guard_mission():
+        from .guard_mission_service import get_guard_mission_service
+        gm = get_guard_mission_service()
+        if gm is None:
+            raise HTTPException(status_code=503, detail="驱离服务未初始化")
+        
+        if gm.state.value not in ("STANDBY", "MANUAL_OVERRIDE"):
+            gm._abort_mission("API 手动终止")
+            from .guard_mission_types import GuardMissionState
+            gm._state = GuardMissionState.STANDBY
+        return {"success": True}
+
+    @app.get("/api/v1/guard-mission/status", response_model=GuardStatusDTO)
+    async def get_guard_status():
+        from .guard_mission_service import get_guard_mission_service
+        gm = get_guard_mission_service()
+        if gm is None:
+            raise HTTPException(status_code=503, detail="驱离服务未初始化")
+        return gm.get_status()
 
     # ── 控制命令接口 ────────────────────────────────────────────────────────
 

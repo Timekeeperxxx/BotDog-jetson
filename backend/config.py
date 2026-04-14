@@ -82,6 +82,22 @@ class Settings(BaseSettings):
     # 最小命令间隔（ms）：防止前端过快发命令（stop 命令跳过此限制）
     CONTROL_CMD_RATE_LIMIT_MS: int = 50
 
+    # 驱离任务配置
+    GUARD_MISSION_ENABLED: bool = False
+    GUARD_CONFIRM_TIME_S: float = 1.5           # 入侵确认时间（秒）
+    GUARD_CLEAR_TIME_S: float = 5.0             # 清空确认时间（秒）
+    GUARD_MIN_DURATION_S: float = 10.0          # 最短驱离持续时间
+    GUARD_DEPLOY_DURATION_S: float = 10.0       # 前往驱离点的前进时间（秒），独立于返回时长
+    GUARD_RETURN_DURATION_S: float = 10.0       # 返回起点的后退时间（秒），独立于前往时长
+    GUARD_COOLDOWN_S: float = 30.0             # 两次出动间的冷却时间
+    GUARD_MAX_DURATION_S: float = 120.0        # 单次驱离最大持续时间
+    GUARD_DEPLOY_SETTLE_S: float = 2.0         # 起立后稳定等待时间
+    GUARD_RETURN_SETTLE_S: float = 2.0         # 蹲坐后稳定等待时间
+    GUARD_ALERT_AUDIO_PATH: str = "assets/alert.wav"  # 警告音频文件路径
+    GUARD_CLEAR_MIN_CONF: float = 0.4          # 清空判定最小置信度（过滤误检）
+    GUARD_CLEAR_MIN_AREA: int = 2000           # 清空判定最小框面积（px）
+    GUARD_VISUAL_TIMEOUT_S: float = 5.0        # 视觉链路健康超时（秒）
+
     # 阶段 7：自动跟踪配置
     # 默认禁用，由前端点击「开始巡检」时调用 /api/v1/auto-track/enable 启用
     AUTO_TRACK_ENABLED: bool = False
