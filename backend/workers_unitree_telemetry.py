@@ -112,6 +112,7 @@ class UnitreeTelemetryWorker:
             logger.info("[UnitreeTelemetry] DDS 订阅者已启动，等待 B2 状态数据...")
 
             # 主循环：以 20Hz 将最新状态推送到遥测队列
+            _last_warn_time: float = 0.0  # 断连警告限速（30s 冷却）
             while not stop_event.is_set():
                 try:
                     await asyncio.sleep(0.05)  # 20Hz
@@ -120,9 +121,12 @@ class UnitreeTelemetryWorker:
                     if state is None:
                         continue
 
-                    # 超过 2 秒无更新，认为断连
+                    # 超过 2 秒无更新，认为断连（警告限速：每 30s 最多输出一次）
                     if time.time() - self._last_update_time > 2.0:
-                        logger.warning("[UnitreeTelemetry] 超过 2s 无数据，可能断连")
+                        now = time.time()
+                        if now - _last_warn_time >= 30.0:
+                            logger.warning("[UnitreeTelemetry] 超过 2s 无数据，可能断连")
+                            _last_warn_time = now
                         self._state_machine.update_heartbeat(0)  # 触发断连检测
                         continue
 

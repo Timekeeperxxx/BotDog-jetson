@@ -17,8 +17,14 @@ Environment="CYCLONEDDS_HOME=/home/jetson/cyclonedds-0.10x/install"
 Environment="LD_LIBRARY_PATH=/home/jetson/cyclonedds-0.10x/install/lib"
 Environment="PYTHONPATH=/home/jetson/Project/BOTDOG/BotDog"
 
-# 使用虚拟环境里的 Python 启动
-ExecStart=/home/jetson/Project/BOTDOG/BotDog/.venv/bin/python run_backend.py
+# + 前缀：此行以 root 执行（绕过 User=jetson 限制）
+ExecStartPre=+/bin/bash -c "ip route show | grep -q '224.0.0.0/4.*dev eno1' || ip route add 224.0.0.0/4 dev eno1"
+ExecStartPre=+/bin/bash -c "ip addr show eno1 | grep -q 192.168.123.222 || ip addr add 192.168.123.222/24 dev eno1"
+# 等待 B2 完成 DDS 初始化（开机后 B2 自身需要约 10~15s）
+ExecStartPre=/bin/sleep 15
+
+# 通过启动脚本运行（脚本内含网卡 IP / DDS 多播路由配置）
+ExecStart=/bin/bash /home/jetson/Project/BOTDOG/BotDog/scripts/start_backend.sh
 
 # 崩溃后自动重启（5 秒后）
 Restart=on-failure

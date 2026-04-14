@@ -12,6 +12,15 @@ if [ ! -f "$VENV/bin/activate" ]; then
   exit 1
 fi
 
+# 从 backend/.env 解析网卡配置，确保网卡 IP 与 .env 一致
+ENV_FILE="$ROOT_DIR/backend/.env"
+if [ -f "$ENV_FILE" ]; then
+  _iface="$(grep -E '^UNITREE_NETWORK_IFACE=' "$ENV_FILE" | head -1 | cut -d'=' -f2 | tr -d '[:space:]' || true)"
+  _ip="$(grep -E '^UNITREE_LOCAL_IP=' "$ENV_FILE" | head -1 | cut -d'=' -f2 | tr -d '[:space:]' || true)"
+  [ -n "$_iface" ] && export UNITREE_NETWORK_IFACE="$_iface"
+  [ -n "$_ip" ]    && export UNITREE_LOCAL_IP="$_ip"
+fi
+
 # 确保宇树 B2 控制网卡 IP 已配置（如 eth0，SDK 通信）
 UNITREE_IFACE="${UNITREE_NETWORK_IFACE:-eth0}"
 UNITREE_IP="${UNITREE_LOCAL_IP:-192.168.123.222}"

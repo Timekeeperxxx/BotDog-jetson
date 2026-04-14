@@ -136,7 +136,7 @@ class UnitreeB2Adapter(BaseRobotAdapter):
 
     def __init__(
         self,
-        network_interface: str = "eth0",
+        network_interface: str = "eth0",  # 占位默认值，实际由 .env UNITREE_NETWORK_IFACE 覆盖
         vx: float = 0.3,
         vy: float = 0.25,
         vyaw: float = 0.5,
@@ -161,6 +161,9 @@ class UnitreeB2Adapter(BaseRobotAdapter):
 
         # 姿态命令（stand/sit）执行期间置 True，防止被后续命令从队列挤掉
         self._busy_with_posture = False
+        # 当前姿态状态："stand"=站立/运动中，"sit"=蹲坐，"unknown"=未知
+        # stop 命令只在 stand 状态下调用 BalanceStand()，sit 状态跳过，防止 watchdog 把蹲下的狗强制站起来
+        self._current_posture: str = "unknown"
 
         # 启动单独的工作线程处理阻塞的 SDK 调用，防止耗尽 FastAPI 的线程池
         self._cmd_queue = queue.Queue(maxsize=1)
@@ -172,10 +175,20 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             from unitree_sdk2py.b2.sport.sport_client import SportClient
             from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
 
-            # 初始化 DDS 频道（如已由 main.py pre-init，会抛异常，需单独捕获，不能影响后续流程）
+            # 初始化 DDS 频道
+            # 正常情况：首次调用成功；已有实例时抛 "channel factory init error."（可忽略）
+            # 异常情况：DDS 端口被占用等导致 "create domain error"（致命，需中止）
             try:
                 ChannelFactoryInitialize(0, network_interface)
             except Exception as _dds_e:
+                err_msg = str(_dds_e).lower()
+                if "create domain error" in err_msg or "domain" in err_msg:
+                    # 真实的 DDS domain 初始化失败（通常是端口被占用或网卡不可用）
+                    raise RuntimeError(
+                        f"[UnitreeB2] CycloneDDS domain 初始化失败，"
+                        f"可能存在其他后端进程占用 DDS 端口，请先 pkill -f run_backend.py: {_dds_e}"
+                    )
+                # 其他异常视为"已由其他组件初始化"，安全跳过
                 logger.debug(f"[UnitreeB2] ChannelFactoryInitialize 跳过（已初始化）: {_dds_e}")
 
             # Step 1: 通过 MotionSwitcher 切换到 AI 运控模式（必须在 SportClient 之前）
@@ -260,6 +273,15 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                     if ret != 0:
                         client.Move(0.0, 0.0, 0.0)
                         logger.debug(f"[UnitreeB2 Worker] StopMove失败，备用 Move(0,0,0)")
+                    # 退出持续运动模式（SwitchMoveMode(True)），回到稳定站立。
+                    # 仅在站立/运动状态下调用；蹲坐（sit）状态下跳过，防止 watchdog 把狗强制站起来。
+                    if self._current_posture != "sit":
+                        import time as _t
+                        _t.sleep(0.1)
+                        ret_bs = client.BalanceStand()
+                        logger.debug(f"[UnitreeB2 Worker] stop→BalanceStand ret={ret_bs}")
+                    else:
+                        logger.debug("[UnitreeB2 Worker] stop：当前蹲坐状态，跳过 BalanceStand")
                 elif cmd == "stand":
                     self._busy_with_posture = True
                     try:
@@ -276,6 +298,8 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                             time.sleep(0.5)
                     except Exception as e_stand:
                         logger.error(f"[UnitreeB2 Worker] stand 失败: {e_stand}")
+                    else:
+                        self._current_posture = "stand"
                     finally:
                         self._busy_with_posture = False
                 elif cmd == "sit":
@@ -287,6 +311,8 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                         time.sleep(0.3)
                         ret_sd = client.StandDown()
                         logger.info(f"[UnitreeB2 Worker] StandDown ret={ret_sd}")
+                        if ret_sd == 0:
+                            self._current_posture = "sit"
                     finally:
                         self._busy_with_posture = False
 
