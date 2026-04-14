@@ -204,7 +204,18 @@ class GuardMissionService:
     ):
         broadcaster = self._event_broadcaster
         if broadcaster is None:
+            logger.warning("[GuardMission] _broadcast_overlay: broadcaster is None!")
             return
+        # 每 60 帧打一次，确认连接数
+        if not hasattr(self, '_overlay_call_counter'):
+            self._overlay_call_counter = 0
+        self._overlay_call_counter += 1
+        if self._overlay_call_counter % 60 == 1:
+            logger.info(
+                f"[GuardMission] overlay call #{self._overlay_call_counter}: "
+                f"connections={broadcaster.connection_count}, "
+                f"zone_bbox={zone_bbox}, active_bbox={active_bbox}"
+            )
         if broadcaster.connection_count == 0:
             return
         try:
