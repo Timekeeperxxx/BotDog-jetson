@@ -151,6 +151,46 @@ class GuardMissionService:
         elif self._state == GuardMissionState.RETURNING:
             await self._on_returning(detections, frame)
 
+        # 把检测框和当前锚点框广播给前端，用于渲染 Canvas 叠层
+        active_bbox = None
+        if self._curr_bbox and self._state in (GuardMissionState.ADVANCING, GuardMissionState.RETURNING):
+            x, y, w, h = self._curr_bbox
+            active_bbox = [x, y, x + w, y + h]
+            
+        await self._broadcast_overlay(detections, active_bbox)
+
+    async def _broadcast_overlay(self, detections: List[TrackDetectionResult], active_bbox: Optional[list]):
+        try:
+            from .schemas import utc_now_iso
+            broadcaster = self._event_broadcaster
+            if broadcaster and broadcaster.connection_count > 0:
+                msg = {
+                    "msg_type": "TRACK_OVERLAY",
+                    "timestamp": utc_now_iso(),
+                    "payload": {
+                        "persons": [
+                            {
+                                "bbox": list(d.bbox),
+                                "conf": round(d.confidence, 2),
+                                "track_id": d.track_id
+                            }
+                            for d in detections
+                        ],
+                        "active_bbox": active_bbox,
+                        "command": self._last_command if active_bbox else None,
+                        "reason": f"Guard: {self._state.value}",
+                        "state": self._state.value,
+                        "frame_w": self._frame_width,
+                        "frame_h": self._frame_height,
+                        "deadband_px": self._servo_controller._yaw_deadband_px,
+                        "anchor_y_stop_ratio": 0.0,
+                        "forward_area_ratio": 0.0,
+                    }
+                }
+                asyncio.create_task(self._do_broadcast(msg))
+        except Exception:
+            pass
+
     # ─── 状态流转逻辑 ──────────────────────────────────────────────
 
     async def _on_standby(self, detections: List[TrackDetectionResult], frame: bytes):
