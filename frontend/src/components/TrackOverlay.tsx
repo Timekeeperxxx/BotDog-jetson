@@ -136,7 +136,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
       ctx.restore();
     }
 
-    // ─── 4. 防区静态框（黄色虚线，始终固定不动） ─────────────────────
+    // ─── 4. 黄色区域检测框（黄色虚线，每帧颜色检测结果） ─────────────────────
     if (data.zone_bbox) {
       const [x1, y1, x2, y2] = data.zone_bbox;
       const rx = x1 * sx, ry = y1 * sy;
@@ -148,27 +148,13 @@ export function TrackOverlay({ data, videoRef }: Props) {
       ctx.lineWidth = 2;
       ctx.strokeRect(rx, ry, rw, rh);
 
-      ctx.fillStyle = 'rgba(255,220,0,0.9)';
-      ctx.font = 'bold 10px monospace';
-      ctx.fillText('📍 防区', rx + 3, ry - 3);
-      ctx.restore();
-    }
+      // 半透明黄色填充
+      ctx.fillStyle = 'rgba(255, 220, 0, 0.12)';
+      ctx.fillRect(rx, ry, rw, rh);
 
-    // ─── 5. Tracker 实时框（蓝色实线，追踪时漂移） ──────────────────────
-    if (data.tracker_bbox) {
-      const [x1, y1, x2, y2] = data.tracker_bbox;
-      const rx = x1 * sx, ry = y1 * sy;
-      const rw = (x2 - x1) * sx, rh = (y2 - y1) * sy;
-
-      ctx.save();
-      ctx.setLineDash([]);
-      ctx.strokeStyle = 'rgba(0, 180, 255, 0.95)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(rx, ry, rw, rh);
-
-      ctx.fillStyle = 'rgba(0,180,255,0.95)';
-      ctx.font = 'bold 10px monospace';
-      ctx.fillText('🔭 Tracker', rx + 3, ry - 3);
+      ctx.fillStyle = 'rgba(255,220,0,0.95)';
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('🟡 黄区(颜色检测)', rx + 3, ry - 5);
       ctx.restore();
     }
 

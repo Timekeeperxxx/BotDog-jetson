@@ -21,19 +21,21 @@ export interface GuardStatus {
 }
 
 const STATE_LABEL: Record<string, string> = {
-  STANDBY:         '待机中',
-  DEPLOYING:       '前往驱离点',
-  GUARDING:        '驱离中',
-  RETURNING:       '返回原点',
+  STANDBY:         '待机 (颜色检测中)',
+  LOCK_ANCHOR:     '锁定目标',
+  ADVANCING:       '朝黄区前进',
+  RETURNING:       '倒退返航',
+  LOST_ANCHOR:     '丢失视野',
   MANUAL_OVERRIDE: '手动接管',
   FAULT:           '故障',
 };
 
 const STATE_COLOR: Record<string, string> = {
   STANDBY:         '#528',
-  DEPLOYING:       '#f80',
-  GUARDING:        '#e44',
+  LOCK_ANCHOR:     '#f80',
+  ADVANCING:       '#f80',
   RETURNING:       '#2bd',
+  LOST_ANCHOR:     '#f44',
   MANUAL_OVERRIDE: '#c8f',
   FAULT:           '#f44',
 };
@@ -100,7 +102,7 @@ export const GuardMissionPanel: React.FC<Props> = ({ onStatusChange }) => {
   const stateLabel = STATE_LABEL[state] ?? state;
   const stateColor = STATE_COLOR[state] ?? '#666';
   const isEnabled = status?.enabled ?? false;
-  const isActive = ['DEPLOYING', 'GUARDING', 'RETURNING'].includes(state);
+  const isActive = ['ADVANCING', 'RETURNING', 'LOCK_ANCHOR'].includes(state);
 
   return (
     <div style={styles.container}>
