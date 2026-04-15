@@ -253,6 +253,26 @@ export function useWhepVideo(customWhepUrl?: string) {
     };
   }, [videoRef]);
 
+  // 当 video 元素变化时（如 Tab 切换导致重新挂载），重新绑定 srcObject
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const video = videoRef.current;
+      const pc = pcRef.current;
+      if (!video || !pc) return;
+      if (video.srcObject) return;
+
+      const receivers = pc.getReceivers();
+      if (receivers.length === 0) return;
+
+      const stream = new MediaStream(
+        receivers.map((r) => r.track).filter(Boolean)
+      );
+      video.srcObject = stream;
+    }, 500);
+
+    return () => clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     return () => {
       void cleanup();

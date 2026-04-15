@@ -82,6 +82,9 @@ Thumbs.db
 # Agent
 .agent/
 
+# Claude Code
+.claude/
+
 # Process
 .process/
 
