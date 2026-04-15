@@ -25,6 +25,10 @@ export interface TrackOverlayData {
   deadband_px: number;
   anchor_y_stop_ratio: number;
   forward_area_ratio: number;
+  zone_quality?: number;
+  zone_lost?: boolean;
+  foot_points?: Array<{ x: number; y: number; in_zone: boolean }>;
+  intrusion_confirmed?: boolean;
 }
 
 interface Props {
@@ -135,6 +139,27 @@ export function TrackOverlay({ data, videoRef }: Props) {
       }
       
       ctx.restore();
+    }
+
+    // ─── 3.5. 人的脚点记录 ──────────────────────────────────────
+    if (data.foot_points && data.foot_points.length > 0) {
+      for (const fp of data.foot_points) {
+        const fx = fp.x * sx;
+        const fy = fp.y * sy;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(fx, fy, 4, 0, Math.PI * 2);
+        ctx.fillStyle = fp.in_zone ? 'rgba(255,50,50,0.9)' : 'rgba(0,220,120,0.7)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        
+        ctx.fillStyle = fp.in_zone ? '#ff3232' : '#00dc78';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText('FOOT', fx + 6, fy + 3);
+        ctx.restore();
+      }
     }
 
     // ─── 4. 防区多边形（黄色，优先画旋转四边形） ─────────────────────

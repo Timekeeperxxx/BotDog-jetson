@@ -25,3 +25,5 @@ class GuardStatusDTO(BaseModel):
     clear_counter: int
     clear_frames: int
     guard_duration_s: float
+    zone_quality: float = 0.0    # 当前帧区域检测质量 0-1
+    zone_lost_frames: int = 0   # 连续丢失帧数

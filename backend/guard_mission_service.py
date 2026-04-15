@@ -1,13 +1,9 @@
 """
 基于颜色检测的防区驱离主服务 (v3)。
 
-检测管线：
-  1. BGR → HSV 阈值分割（木板/纸板暖色调）
-  2. 形态学闭运算填洞 + 开运算去噪
-  3. 找外轮廓
-  4. 按面积、长宽比、倾斜角过滤
-  5. 取最大合格轮廓 → minAreaRect 拟合四边形
-  6. pointPolygonTest 判定人脚是否踩入
+检测管线已迁移至独立模块 yellow_zone_detector.py（阶段 1）：
+  - YellowZoneDetector 负责所有 HSV 分割 + 几何过滤 + 黑边验证
+  - 本文件只负责状态机、运动控制、事件广播
 
 不依赖 ZoneService 画框，不依赖 OpenCV MIL Tracker。
 """
@@ -24,27 +20,9 @@ from .zone_service import ZoneService
 from .ws_event_broadcaster import EventBroadcaster
 from .guard_mission_types import GuardMissionState, GuardStatusDTO
 from .tracking_types import DetectionResult as TrackDetectionResult, ControlOwner
+from .yellow_zone_detector import YellowZoneDetector, ZoneDetection
 
 from .logging_config import logger
-
-# ─── 颜色检测参数 ────────────────────────────────────────────────
-# HSV 通道：木板/纸板的暖色调（H:10-40 覆盖橙黄-米黄）
-ZONE_HSV_LOW  = np.array([10, 25, 80], dtype=np.uint8)
-ZONE_HSV_HIGH = np.array([40, 255, 255], dtype=np.uint8)
-
-# 面积门槛（像素²）
-ZONE_MIN_AREA = 800
-ZONE_MAX_AREA_RATIO = 0.5   # 占画面最多 50%
-
-# 形状过滤（专门针对铺在平地上的纯纸板）
-ZONE_MIN_ASPECT = 2.0       # 最小长宽比（趴在地上会有较强的透视形变，长条形）
-ZONE_MAX_ASPECT = 15.0      # 最大长宽比
-ZONE_MAX_TILT_DEG = 60.0    # 最大倾斜角度（度）
-ZONE_MIN_SOLIDITY = 0.65    # 饱满度（轮廓面积/最小外接矩形面积），过滤散爆拼接的杂物
-ZONE_MIN_Y_RATIO = 0.35     # 中心点必须在画面的大概中下部（地面约束）
-
-# 形态学核大小
-MORPH_KERNEL_SIZE = 7
 
 
 class GuardMissionService:
@@ -96,9 +74,16 @@ class GuardMissionService:
         self._return_start_time = 0.0
         self._return_duration_s = 5.0
 
-        # 当前帧检测结果
+        # ── 阶段 1：独立区域检测器 ──────────────────────────────────
+        self._zone_detector = YellowZoneDetector(
+            frame_width=frame_width,
+            frame_height=frame_height,
+        )
+        # 当前帧最新检测结果（ZoneDetection 或 None）
+        self._current_zone: Optional[ZoneDetection] = None
+        # 保留旧字段兼容下游（从 _current_zone 派生，不再独立维护）
         self._detected_zone_bbox: Optional[Tuple[int, int, int, int]] = None
-        self._detected_zone_polygon: Optional[np.ndarray] = None  # shape (4, 2)
+        self._detected_zone_polygon: Optional[np.ndarray] = None
 
         # 帧数折算
         self._effective_fps = max(1.0, float(config.AI_FPS))
@@ -136,6 +121,8 @@ class GuardMissionService:
         self._effective_fps = max(1.0, fps)
 
     def get_status(self) -> GuardStatusDTO:
+        zone_q = self._current_zone.quality if self._current_zone else 0.0
+        zone_lost = getattr(self._zone_detector, '_lost_frames_count', 0)
         return GuardStatusDTO(
             enabled=self._enabled,
             state=self._state,
@@ -144,103 +131,9 @@ class GuardMissionService:
             clear_counter=self._clear_counter,
             clear_frames=self._clear_frames,
             guard_duration_s=time.monotonic() - self._guard_start_time if self._state == GuardMissionState.ADVANCING else self._guard_total_duration_s,
+            zone_quality=round(zone_q, 3),
+            zone_lost_frames=zone_lost,
         )
-
-    # ─── 颜色检测管线 ────────────────────────────────────────────
-
-    def _detect_zone(self, frame: bytes) -> Tuple[
-        Optional[Tuple[int, int, int, int]],
-        Optional[np.ndarray],
-    ]:
-        """
-        完整木板/纸板区域检测。
-
-        1. BGR→HSV 阈值分割
-        2. 形态学闭+开运算
-        3. 找外轮廓
-        4. 按面积/长宽比/倾斜角过滤
-        5. 取最大合格轮廓 → minAreaRect 拟合
-        6. 返回 (bbox, polygon_4pts) 或 (None, None)
-        """
-        try:
-            import cv2
-
-            frame_np = np.frombuffer(frame, dtype=np.uint8).reshape(
-                (self._frame_height, self._frame_width, 3)
-            )
-            frame_area = self._frame_width * self._frame_height
-
-            # 1. HSV 阈值
-            hsv = cv2.cvtColor(frame_np, cv2.COLOR_BGR2HSV)
-            mask = cv2.inRange(hsv, ZONE_HSV_LOW, ZONE_HSV_HIGH)
-
-            # 2. 形态学
-            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (MORPH_KERNEL_SIZE, MORPH_KERNEL_SIZE))
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-
-            # 3. 外轮廓
-            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if not contours:
-                return None, None
-
-            # 4. 候选筛选
-            candidates = []
-            for cnt in contours:
-                area = cv2.contourArea(cnt)
-                if area < ZONE_MIN_AREA:
-                    continue
-                if area > frame_area * ZONE_MAX_AREA_RATIO:
-                    continue
-
-                rect = cv2.minAreaRect(cnt)
-                (_cx, _cy), (rw, rh), angle = rect
-                if rw == 0 or rh == 0:
-                    continue
-
-                # 位置过滤：目标一定是在地面的，中心点不能太靠上
-                if _cy < self._frame_height * ZONE_MIN_Y_RATIO:
-                    continue
-
-                long_side = max(rw, rh)
-                short_side = min(rw, rh)
-                aspect = long_side / short_side
-
-                # 几何饱满度过滤：过滤掉由好几个零散物体拼接起来、轮廓内部有一大堆空隙的形状
-                solidity = area / (rw * rh)
-                if solidity < ZONE_MIN_SOLIDITY:
-                    continue
-
-                # 长宽比过滤
-                if aspect < ZONE_MIN_ASPECT or aspect > ZONE_MAX_ASPECT:
-                    continue
-
-                tilt = abs(angle) if abs(angle) <= 45 else abs(90 - abs(angle))
-                if tilt > ZONE_MAX_TILT_DEG:
-                    continue
-
-                candidates.append((area, cnt, rect))
-
-            if not candidates:
-                return None, None
-
-            # 5. 取面积最大
-            candidates.sort(key=lambda x: x[0], reverse=True)
-            _best_area, best_cnt, best_rect = candidates[0]
-
-            # 6. 四边形多边形
-            box_pts = cv2.boxPoints(best_rect)
-            box_pts = np.int0(box_pts)
-
-            x, y, w, h = cv2.boundingRect(best_cnt)
-            return (x, y, w, h), box_pts
-
-        except ImportError:
-            logger.error("[GuardMission] cv2 未安装")
-            return None, None
-        except Exception as e:
-            logger.debug(f"[GuardMission] 区域检测异常: {e}")
-            return None, None
 
     def _is_foot_in_zone(self, det: TrackDetectionResult) -> bool:
         """人的脚底 (bbox 底部中心) 是否在检测到的多边形内。"""
@@ -271,10 +164,16 @@ class GuardMissionService:
 
         self._last_frame_time = time.monotonic()
 
-        # 每帧检测区域
-        bbox, polygon = self._detect_zone(frame)
-        self._detected_zone_bbox = bbox
-        self._detected_zone_polygon = polygon
+        # ── 阶段 1：调用独立检测器，替代原来的 _detect_zone() ──
+        zone = self._zone_detector.detect(frame)
+        self._current_zone = zone
+        # 保持旧字段兼容性（_on_standby / _on_advancing / _is_foot_in_zone 仍在用）
+        if zone is not None:
+            self._detected_zone_bbox    = zone.bbox
+            self._detected_zone_polygon = zone.polygon
+        else:
+            self._detected_zone_bbox    = None
+            self._detected_zone_polygon = None
 
         # 诊断（每 60 帧）
         self._dbg_frame_counter += 1
@@ -313,16 +212,21 @@ class GuardMissionService:
         # overlay 广播
         zone_xyxy = None
         zone_poly_list = None
-        if bbox:
-            zx, zy, zw, zh = bbox
+        zone_quality = 0.0
+        if self._current_zone is not None:
+            zx, zy, zw, zh = self._current_zone.bbox
             zone_xyxy = [zx, zy, zx + zw, zy + zh]
-        if polygon is not None:
-            zone_poly_list = polygon.tolist()
+            zone_poly_list = self._current_zone.polygon.tolist()
+            zone_quality = round(self._current_zone.quality, 3)
 
         if dbg:
-            logger.info(f"[GuardMission] overlay: zone={zone_xyxy}, poly_pts={len(zone_poly_list) if zone_poly_list else 0}")
+            logger.info(
+                f"[GuardMission] overlay: zone={zone_xyxy}, "
+                f"poly_pts={len(zone_poly_list) if zone_poly_list else 0}, "
+                f"quality={zone_quality:.2f}"
+            )
 
-        await self._broadcast_overlay(detections, zone_xyxy, zone_xyxy, zone_poly_list)
+        await self._broadcast_overlay(detections, zone_xyxy, zone_xyxy, zone_poly_list, zone_quality)
 
     # ─── 状态流转 ───────────────────────────────────────────────
 
@@ -469,6 +373,7 @@ class GuardMissionService:
         active_bbox: Optional[list],
         zone_bbox: Optional[list] = None,
         zone_polygon: Optional[list] = None,
+        zone_quality: float = 0.0,
     ):
         broadcaster = self._event_broadcaster
         if broadcaster is None:
@@ -502,6 +407,7 @@ class GuardMissionService:
                     "active_bbox": active_bbox,
                     "zone_bbox": zone_bbox,
                     "zone_polygon": zone_polygon,
+                    "zone_quality": zone_quality,
                     "tracker_bbox": None,
                     "command": self._last_command if active_bbox else None,
                     "reason": f"Guard: {self._state.value}",
