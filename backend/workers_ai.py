@@ -296,12 +296,7 @@ class AIWorker:
 
                 await self._update_current_task_id()
 
-                # 驱离模式无需巡检任务即可运行 AI 识别
-                from .guard_mission_service import get_guard_mission_service as _get_gm
-                _gm = _get_gm()
-                _guard_active = _gm is not None and _gm.enabled
-
-                if not self._is_mission_active() and not _guard_active:
+                if not self._is_mission_active():
                     self._reset_detection_state()
                     continue
 
@@ -420,10 +415,8 @@ class AIWorker:
         guard_mission = get_guard_mission_service()
         
         if guard_mission is not None and guard_mission.enabled:
-            # 如果驱离模式启用了，且目前并不是 STANDBY 或者处于刚确认入侵，这期间不应该是 patrol 降频，应提供更多的帧以稳定验证
-            from .guard_mission_types import GuardMissionState
-            if guard_mission.state != GuardMissionState.STANDBY or guard_mission._intrusion_counter > 0:
-                return True
+            # 驱离模式启用时，始终保持高帧率检测防区颜色
+            return True
                 
         if auto_track is not None and auto_track._enabled:
             return (

@@ -68,6 +68,7 @@ scripts/logs/
 *.pth
 *.onnx
 *.tflite
+*.engine
 
 # Runtime logs
 logs/

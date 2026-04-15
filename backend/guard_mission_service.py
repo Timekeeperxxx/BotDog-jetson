@@ -180,11 +180,13 @@ class GuardMissionService:
         dbg = (self._dbg_frame_counter % 60 == 1)
         if dbg:
             b = self._event_broadcaster
+            has_zone = self._detected_zone_bbox is not None
+            has_poly = self._detected_zone_polygon is not None
             logger.info(
                 f"[GuardMission] frame #{self._dbg_frame_counter}: "
                 f"state={self._state.value}, "
-                f"zone={'YES' if bbox else 'NO'} bbox={bbox}, "
-                f"poly={'YES' if polygon is not None else 'NO'}, "
+                f"zone={'YES' if has_zone else 'NO'} bbox={self._detected_zone_bbox}, "
+                f"poly={'YES' if has_poly else 'NO'}, "
                 f"persons={len(detections)}, intrusion={self._intrusion_counter}, "
                 f"conns={getattr(b, 'connection_count', '?')}"
             )
