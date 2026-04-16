@@ -421,13 +421,31 @@ class GuardMissionService:
                 if p.class_name == "person" and p.confidence >= 0.1
             )
 
-        if not still_on_zone and elapsed >= self._config.GUARD_MIN_DURATION_S:
+        # ── 4. 清空判定：必须"主动检测到人 + 脚已离开区域"才算清空 ──
+        # 任意置信度 ≥ 0.1 的 person 都算"检测到人"
+        any_person_detected = any(
+            p.class_name == "person" and p.confidence >= 0.1
+            for p in detections
+        )
+
+        if still_on_zone:
+            # 人还在区域里 → 重置清空计数
+            self._clear_counter = 0
+        elif any_person_detected and elapsed >= self._config.GUARD_MIN_DURATION_S:
+            # 明确检测到人，但脚已不在区域 → 累积清空计数
             self._clear_counter += 1
+            logger.debug(
+                f"[GuardMission] 清空计数 {self._clear_counter}/{self._clear_frames}"
+                f"（人已离开区域）"
+            )
             if self._clear_counter >= self._clear_frames:
                 logger.info("[GuardMission] 人已离开，返航")
                 await self._start_returning()
         else:
-            self._clear_counter = 0
+            # 区域丢失 或 YOLO 未检测到人 → 保持计数，既不累积也不清零
+            # （防止近距离漏检或遮挡误触发返航）
+            pass
+
 
     async def _start_returning(self):
         self._state = GuardMissionState.RETURNING
