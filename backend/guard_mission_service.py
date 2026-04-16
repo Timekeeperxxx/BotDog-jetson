@@ -92,6 +92,10 @@ class GuardMissionService:
         )
         # 当前帧最新检测结果（ZoneDetection 或 None）
         self._current_zone: Optional[ZoneDetection] = None
+        # 区域记忆：保存上一次有效检测结果，应对人站上陷入阐住时返回 None 的问题
+        self._last_known_zone: Optional[ZoneDetection] = None
+        self._zone_memory_lost_frames: int = 0    # 连续丢失的帧数
+        self._zone_memory_limit: int = config.GUARD_ZONE_MEMORY_FRAMES
         # 保留旧字段兼容下游（从 _current_zone 派生，不再独立维护）
         self._detected_zone_bbox: Optional[Tuple[int, int, int, int]] = None
         self._detected_zone_polygon: Optional[np.ndarray] = None
@@ -217,11 +221,31 @@ class GuardMissionService:
 
         # ── 阶段 1：调用独立检测器（在线程池执行，避免阻塞 event loop）──
         zone = await asyncio.to_thread(self._zone_detector.detect, frame)
-        self._current_zone = zone
-        # 保持旧字段兼容性（_on_standby / _on_advancing / _is_foot_in_zone 仍在用）
+
+        # ── 区域记忆逻辑 ──
         if zone is not None:
-            self._detected_zone_bbox    = zone.bbox
-            self._detected_zone_polygon = zone.polygon
+            # 成功检测：更新记忆，重置丢失计数
+            self._last_known_zone      = zone
+            self._zone_memory_lost_frames = 0
+            self._current_zone         = zone
+        else:
+            self._zone_memory_lost_frames += 1
+            if self._last_known_zone is not None \
+                    and self._zone_memory_lost_frames <= self._zone_memory_limit:
+                # 在记忆限内：复用上次已知区域（人站上去黑住了黄色）
+                self._current_zone = self._last_known_zone
+                logger.debug(
+                    f"[GuardMission] 区域丢失 {self._zone_memory_lost_frames}/"
+                    f"{self._zone_memory_limit} 帧，复用上次已知位置"
+                )
+            else:
+                # 超出记忆限或从未检测过：真正归 None
+                self._current_zone = None
+
+        # 保持旧字段兼容性
+        if self._current_zone is not None:
+            self._detected_zone_bbox    = self._current_zone.bbox
+            self._detected_zone_polygon = self._current_zone.polygon
         else:
             self._detected_zone_bbox    = None
             self._detected_zone_polygon = None

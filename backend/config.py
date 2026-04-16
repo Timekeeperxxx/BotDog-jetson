@@ -135,6 +135,8 @@ class Settings(BaseSettings):
     GUARD_CLEAR_MIN_CONF: float = 0.4          # 清空判定最小有效置信度
     GUARD_CLEAR_MIN_AREA: int = 2000           # 清空判定最小有效目标面积（px）
     GUARD_VISUAL_TIMEOUT_S: float = 5.0        # 视觉链路健康超时（秒）
+    GUARD_ZONE_MEMORY_FRAMES: int = 20         # 区域丢失后最多复用上次位置的帧数（应对人站上去遮挡）
+
     
     # ==== 新增：视觉伺服 / 锚点跟踪配置 ====
     GUARD_ANCHOR_MIN_QUALITY: float = 0.6        # 锚点跟踪最小稳定质量限度（部分 Tracker 需要）
