@@ -695,11 +695,18 @@ class GuardMissionService:
         import traceback
         while True:
             try:
-                # 交给系统默认混音器进行输出，避免独占硬件和重采样不兼容问题
+                import os
+                # 为系统级守护进程 (systemd) 注入桌面用户的 PulseAudio 环境
+                env = os.environ.copy()
+                if 'XDG_RUNTIME_DIR' not in env:
+                    env['XDG_RUNTIME_DIR'] = '/run/user/1000'
+
+                # 使用 PulseAudio 专用播放器，并携带环境变量
                 proc = await asyncio.create_subprocess_exec(
-                    "aplay", path,
+                    "paplay", path,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
+                    env=env
                 )
                 self._audio_process = proc
                 await proc.wait()          # 等待本轮播放完整结束
