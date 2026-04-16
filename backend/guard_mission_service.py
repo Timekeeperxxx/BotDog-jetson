@@ -58,7 +58,8 @@ class GuardMissionService:
 
         self._intrusion_counter = 0
         self._clear_counter = 0       # 人已离开区域的连续帧计数（用于触发返航）
-        self._zone_lost_counter = 0   # 区域检测丢失的连续帧计数（用于兜底返航）
+        self._zone_lost_counter = 0   # 区域检测丢失的连续帧计数（供返航阶段使用）
+        self._advancing_zone_lost_since: float = 0.0  # ADVANCING 中区域彻底丢失的起始时刻
         self._guard_start_time = 0.0
         self._guard_total_duration_s = 0.0
 
@@ -362,6 +363,7 @@ class GuardMissionService:
         self._intrusion_counter = 0
         self._clear_counter = 0
         self._zone_lost_counter = 0
+        self._advancing_zone_lost_since = 0.0
         self._guard_start_time = time.monotonic()
 
         # 记录此刻的区域状态作为返航基准（阶段 4 使用）
@@ -383,14 +385,25 @@ class GuardMissionService:
         # 1. 获取当前区域（由 process_frame 中已检测）
         zone = self._current_zone
         if zone is None:
-            self._zone_lost_counter += 1
-            if self._zone_lost_counter > 30:
-                logger.warning("[GuardMission] 持续丢失区域，返航")
+            # 区域彻底丢失（Zone Memory 也已耗尽）
+            now = time.monotonic()
+            if self._advancing_zone_lost_since == 0.0:
+                self._advancing_zone_lost_since = now
+            lost_secs = now - self._advancing_zone_lost_since
+            if lost_secs >= self._config.GUARD_ZONE_LOST_RETURN_S:
+                logger.warning(
+                    f"[GuardMission] 区域持续丢失 {lost_secs:.1f}s"
+                    f"（超过 {self._config.GUARD_ZONE_LOST_RETURN_S}s），返航"
+                )
                 await self._start_returning()
             else:
+                logger.debug(f"[GuardMission] 区域丢失 {lost_secs:.1f}s，等待中...")
                 await self._send_command_safe("stop")
             return
-        self._zone_lost_counter = 0  # 区域重新检测到，重置丢失计数
+
+        # 区域重新出现，重置丢失计时
+        self._advancing_zone_lost_since = 0.0
+        self._zone_lost_counter = 0
 
         # 2. 调用视觉伺服控制器计算指令
         cmd, is_arrived = self._servo.compute_advancing(
@@ -411,9 +424,7 @@ class GuardMissionService:
         still_on_zone = any(self._is_foot_in_zone(p) for p in persons_valid)
 
         # 近距离保护：机器狗贴近时 YOLO 置信度可能低于阈值，
-        # 用极低置信度（0.1）补查一次脚点——只要脚还在区域里就继续驱离，
-        # 避免误判为"人已离开"。
-        # 注意：这里只检查"脚在区域内"，不阻止屏幕其他位置有人时的判定。
+        # 用极低置信度（0.1）补查一次脚点——只要脚还在区域里就继续驱离。
         if not still_on_zone:
             still_on_zone = any(
                 self._is_foot_in_zone(p)
@@ -421,30 +432,24 @@ class GuardMissionService:
                 if p.class_name == "person" and p.confidence >= 0.1
             )
 
-        # ── 4. 清空判定：必须"主动检测到人 + 脚已离开区域"才算清空 ──
-        # 任意置信度 ≥ 0.1 的 person 都算"检测到人"
-        any_person_detected = any(
-            p.class_name == "person" and p.confidence >= 0.1
-            for p in detections
-        )
-
+        # ── 4. 清空判定 ──
+        # 规则：
+        #   区域可见 + 脚在区域内              → 重置计数
+        #   区域可见 + 脚不在区域内（不管YOLO） → 累积计数（人离开或YOLO漏检都算）
+        #   区域不可见（已由上方 return 处理）   → 不会到达此处
         if still_on_zone:
-            # 人还在区域里 → 重置清空计数
             self._clear_counter = 0
-        elif any_person_detected and elapsed >= self._config.GUARD_MIN_DURATION_S:
-            # 明确检测到人，但脚已不在区域 → 累积清空计数
+        elif elapsed >= self._config.GUARD_MIN_DURATION_S:
             self._clear_counter += 1
             logger.debug(
                 f"[GuardMission] 清空计数 {self._clear_counter}/{self._clear_frames}"
-                f"（人已离开区域）"
+                f"（区域可见，脚不在区域内）"
             )
             if self._clear_counter >= self._clear_frames:
                 logger.info("[GuardMission] 人已离开，返航")
                 await self._start_returning()
-        else:
-            # 区域丢失 或 YOLO 未检测到人 → 保持计数，既不累积也不清零
-            # （防止近距离漏检或遮挡误触发返航）
-            pass
+
+
 
 
     async def _start_returning(self):
@@ -649,9 +654,11 @@ class GuardMissionService:
         self._intrusion_counter = 0
         self._clear_counter = 0
         self._guard_start_time = 0.0
+        self._advancing_zone_lost_since = 0.0
         self._last_mission_end_time = time.monotonic()
         self._detected_zone_bbox = None
         self._detected_zone_polygon = None
+
 
     def _finish_mission_and_reset(self, frame: bytes):
         self._state = GuardMissionState.STANDBY

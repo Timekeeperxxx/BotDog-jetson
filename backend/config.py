@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     GUARD_CLEAR_MIN_AREA: int = 2000           # 清空判定最小有效目标面积（px）
     GUARD_VISUAL_TIMEOUT_S: float = 5.0        # 视觉链路健康超时（秒）
     GUARD_ZONE_MEMORY_FRAMES: int = 20         # 区域丢失后最多复用上次位置的帧数（应对人站上去遮挡）
+    GUARD_ZONE_LOST_RETURN_S: float = 10.0     # ADVANCING 中区域彻底看不到超过此秒数直接返航
 
     
     # ==== 新增：视觉伺服 / 锚点跟踪配置 ====
