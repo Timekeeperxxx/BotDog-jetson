@@ -111,6 +111,14 @@ class Settings(BaseSettings):
     ZONE_W_AREA: float = 0.30
     ZONE_W_SOLID: float = 0.30
     ZONE_W_BORDER: float = 0.40
+    # 中心黑色汉字检测：中心区裁剪比例（0.5 = 取四边形内接矩形的中心 50% 面积）
+    ZONE_CENTER_CROP_RATIO: float = 0.50
+    # 汉字像素暗度阈值：V 通道低于此值才算黑色像素
+    ZONE_CENTER_BLACK_V_THRESHOLD: int = 60
+    # 中心区内暗像素占比下限，超过此比例认为有汉字
+    ZONE_CENTER_BLACK_MIN_RATIO: float = 0.05
+    # 检测到汉字时的 quality 奖励分（叠加在 0-1 质量分之上）
+    ZONE_CENTER_TEXT_BONUS: float = 0.50
 
     # 驱离任务配置
     GUARD_MISSION_ENABLED: bool = False

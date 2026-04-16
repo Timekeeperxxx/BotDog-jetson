@@ -233,11 +233,15 @@ class GuardMissionService:
             b = self._event_broadcaster
             has_zone = self._detected_zone_bbox is not None
             has_poly = self._detected_zone_polygon is not None
+            z = self._current_zone
+            z_quality_str = f"{z.quality:.3f}" if z else "N/A"
+            z_text_str    = "\u2713" if (z and z.has_center_text) else "\u2717"
             logger.info(
                 f"[GuardMission] frame #{self._dbg_frame_counter}: "
                 f"state={self._state.value}, "
                 f"zone={'YES' if has_zone else 'NO'} bbox={self._detected_zone_bbox}, "
                 f"poly={'YES' if has_poly else 'NO'}, "
+                f"quality={z_quality_str} text={z_text_str} "
                 f"persons={len(detections)}, intrusion={self._intrusion_counter}, "
                 f"conns={getattr(b, 'connection_count', '?')}"
             )
@@ -266,20 +270,22 @@ class GuardMissionService:
         zone_xyxy = None
         zone_poly_list = None
         zone_quality = 0.0
+        zone_has_text = False
         if self._current_zone is not None:
             zx, zy, zw, zh = self._current_zone.bbox
             zone_xyxy = [zx, zy, zx + zw, zy + zh]
             zone_poly_list = self._current_zone.polygon.tolist()
             zone_quality = round(self._current_zone.quality, 3)
+            zone_has_text = self._current_zone.has_center_text
 
         if dbg:
             logger.info(
                 f"[GuardMission] overlay: zone={zone_xyxy}, "
                 f"poly_pts={len(zone_poly_list) if zone_poly_list else 0}, "
-                f"quality={zone_quality:.2f}"
+                f"quality={zone_quality:.2f}, has_text={zone_has_text}"
             )
 
-        await self._broadcast_overlay(detections, zone_xyxy, zone_xyxy, zone_poly_list, zone_quality)
+        await self._broadcast_overlay(detections, zone_xyxy, zone_xyxy, zone_poly_list, zone_quality, zone_has_text)
 
     # ─── 状态流转 ───────────────────────────────────────────────
 
@@ -501,6 +507,7 @@ class GuardMissionService:
         zone_bbox: Optional[list] = None,
         zone_polygon: Optional[list] = None,
         zone_quality: float = 0.0,
+        zone_has_text: bool = False,
     ):
         broadcaster = self._event_broadcaster
         if broadcaster is None:
@@ -542,6 +549,7 @@ class GuardMissionService:
                     "zone_bbox": zone_bbox,
                     "zone_polygon": zone_polygon,
                     "zone_quality": zone_quality,
+                    "zone_has_text": zone_has_text,
                     "foot_points": foot_points,
                     "intrusion_confirmed": self._intrusion_counter >= self._confirm_frames,
                     "tracker_bbox": None,
@@ -695,18 +703,17 @@ class GuardMissionService:
         import traceback
         while True:
             try:
-                import os
-                # 为系统级守护进程 (systemd) 注入桌面用户的 PulseAudio 环境
-                env = os.environ.copy()
-                if 'XDG_RUNTIME_DIR' not in env:
-                    env['XDG_RUNTIME_DIR'] = '/run/user/1000'
-
-                # 使用 PulseAudio 专用播放器，并携带环境变量
+                import os, signal
+                from pathlib import Path as _OsPath
+                # 通过 shell 中转脚本播放，自动发现 PulseAudio 套接字
+                # start_new_session=True：让 bash 和其子进程（paplay）独占一个进程组
+                # 这样 os.killpg 可以一次性杀死整个链路，实现立即停止
+                script_path = _OsPath(__file__).resolve().parent.parent / "scripts" / "play_audio.sh"
                 proc = await asyncio.create_subprocess_exec(
-                    "paplay", path,
+                    "bash", str(script_path), path,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
-                    env=env
+                    start_new_session=True,
                 )
                 self._audio_process = proc
                 await proc.wait()          # 等待本轮播放完整结束
@@ -721,8 +728,9 @@ class GuardMissionService:
             except asyncio.CancelledError:
                 if self._audio_process:
                     try:
-                        self._audio_process.terminate()
-                    except ProcessLookupError:
+                        # 杀死整个进程组（bash + paplay/aplay 子进程），立即停止
+                        os.killpg(os.getpgid(self._audio_process.pid), signal.SIGTERM)
+                    except (ProcessLookupError, OSError):
                         pass
                     self._audio_process = None
                 raise

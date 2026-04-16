@@ -29,12 +29,14 @@ class ZoneDetection:
     center: Tuple[int, int]          # (cx, cy)  区域中心
     area: float                      # 像素面积（轮廓面积）
     angle: float                     # minAreaRect 旋转角度（度）
-    quality: float                   # 0.0 – 1.0 综合质量分
+    quality: float                   # 综合质量分（含汉字奖励后可超过 1.0）
     border_ok: bool                  # 黑边验证是否通过
+    has_center_text: bool = field(default=False)          # 中心是否检测到黑色汉字
     # 供调试的原始分量
     area_score: float = field(default=0.0, repr=False)
     solid_score: float = field(default=0.0, repr=False)
     border_score: float = field(default=0.0, repr=False)
+    center_text_score: float = field(default=0.0, repr=False)  # 中心暗像素密度
 
 
 class YellowZoneDetector:
@@ -86,6 +88,12 @@ class YellowZoneDetector:
         self._w_area   = cfg.ZONE_W_AREA
         self._w_solid  = cfg.ZONE_W_SOLID
         self._w_border = cfg.ZONE_W_BORDER
+
+        # 中心黑色汉字检测参数
+        self._center_crop_ratio        = cfg.ZONE_CENTER_CROP_RATIO
+        self._center_black_v_threshold = cfg.ZONE_CENTER_BLACK_V_THRESHOLD
+        self._center_black_min_ratio   = cfg.ZONE_CENTER_BLACK_MIN_RATIO
+        self._center_text_bonus        = cfg.ZONE_CENTER_TEXT_BONUS
 
     # ─── 公开接口 ──────────────────────────────────────────────────
 
@@ -209,6 +217,9 @@ class YellowZoneDetector:
         if not border_ok:
             return None
 
+        # ── 中心汉字检测 ──
+        has_text, text_score = self._verify_center_black_text(box_pts, hsv, cv2)
+
         # ── quality 计算 ──
         area_score  = self._score_area(area)
         solid_score = min(1.0, (solidity - self._min_solidity) / (1.0 - self._min_solidity))
@@ -217,18 +228,23 @@ class YellowZoneDetector:
             + self._w_solid  * solid_score
             + self._w_border * border_score
         )
+        # 检测到中心汉字：叠加奖励分，使带字候选天然优先（质量分可超过 1.0）
+        if has_text:
+            quality += self._center_text_bonus
 
         return ZoneDetection(
-            polygon      = box_pts,
-            bbox         = (bx, by, bw, bh),
-            center       = (int(cx), int(cy)),
-            area         = float(area),
-            angle        = float(angle),
-            quality      = float(quality),
-            border_ok    = border_ok,
-            area_score   = float(area_score),
-            solid_score  = float(solid_score),
-            border_score = float(border_score),
+            polygon           = box_pts,
+            bbox              = (bx, by, bw, bh),
+            center            = (int(cx), int(cy)),
+            area              = float(area),
+            angle             = float(angle),
+            quality           = float(quality),
+            border_ok         = border_ok,
+            has_center_text   = has_text,
+            area_score        = float(area_score),
+            solid_score       = float(solid_score),
+            border_score      = float(border_score),
+            center_text_score = float(text_score),
         )
 
     def _score_area(self, area: float) -> float:
@@ -286,3 +302,69 @@ class YellowZoneDetector:
         except Exception as exc:
             logger.debug(f"[YellowZoneDetector] 黑边验证异常: {exc}")
             return False, 0.5
+
+    def _verify_center_black_text(
+        self,
+        box_pts: np.ndarray,
+        hsv:     np.ndarray,
+        cv2,
+    ) -> Tuple[bool, float]:
+        """
+        在四边形内部中心区域检测黑色汉字像素。
+
+        策略：
+          1. 以四边形的中心点为基准，取中心 crop_ratio 比例的缩放矩形区域作为掩码；
+          2. 统计该区域内 V 通道 < black_v_threshold 的像素比例；
+          3. 比例超过 min_ratio 即认为存在黑色文字，返回 (True, 密度分)。
+
+        Returns:
+            (has_text, density_score)
+            - has_text: 是否检测到黑色汉字
+            - density_score: 暗像素密度 0.0-1.0，供调试观察
+        """
+        try:
+            h, w = hsv.shape[:2]
+
+            # ── 计算四边形中心点 ──
+            cx = float(box_pts[:, 0].mean())
+            cy = float(box_pts[:, 1].mean())
+
+            # ── 以中心点为基准，将四边形顶点向中心缩放 crop_ratio ──
+            ratio = self._center_crop_ratio
+            center_pts = np.array(
+                [
+                    [cx + (pt[0] - cx) * ratio, cy + (pt[1] - cy) * ratio]
+                    for pt in box_pts
+                ],
+                dtype=np.float32,
+            )
+            center_pts_int = np.int32(center_pts)
+
+            # ── 绘制缩小四边形掩码 ──
+            center_mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.fillPoly(center_mask, [center_pts_int], 255)
+
+            # ── 统计中心区内的暗像素 ──
+            v_channel     = hsv[:, :, 2]
+            center_pixels = v_channel[center_mask > 0]
+
+            if center_pixels.size == 0:
+                return False, 0.0
+
+            dark_count  = int(np.sum(center_pixels < self._center_black_v_threshold))
+            dark_ratio  = dark_count / center_pixels.size
+            density_score = min(1.0, dark_ratio / max(self._center_black_min_ratio, 1e-6))
+
+            has_text = dark_ratio >= self._center_black_min_ratio
+
+            if has_text:
+                logger.debug(
+                    f"[YellowZoneDetector] 中心汉字检测通过: "
+                    f"暗像素比={dark_ratio:.3f} (阈值={self._center_black_min_ratio})"
+                )
+
+            return has_text, float(density_score)
+
+        except Exception as exc:
+            logger.debug(f"[YellowZoneDetector] 中心汉字检测异常: {exc}")
+            return False, 0.0
