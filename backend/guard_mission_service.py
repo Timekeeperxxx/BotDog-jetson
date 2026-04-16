@@ -692,37 +692,51 @@ class GuardMissionService:
 
     async def _audio_loop(self, path: str):
         """asyncio 任务：每次等 aplay 完整播完后再循环，被 cancel 时干净退出。"""
+        import traceback
         while True:
             try:
+                # 不强制指定 -D plughw:3,0，让系统自动使用默认或环境变量设置的声卡
                 proc = await asyncio.create_subprocess_exec(
-                    "aplay", "-D", "plughw:3,0", path,
+                    "aplay", path,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 self._audio_process = proc
                 await proc.wait()          # 等待本轮播放完整结束
                 self._audio_process = None
-                await asyncio.sleep(0.05)  # 给设备短暂释放时间再重启
+                
+                # 如果 aplay 返回错误码意味着命令执行失败，增加等待以防止死循环爆 CPU
+                if proc.returncode != 0:
+                    logger.warning(f"[GuardMission] aplay 非正常退出(code={proc.returncode})，可能声卡被占用或文件错误。5秒后重试。")
+                    await asyncio.sleep(5.0)
+                else:
+                    await asyncio.sleep(0.05)
             except asyncio.CancelledError:
-                # 任务被取消：终止当前 aplay 子进程后退出
                 if self._audio_process:
                     try:
                         self._audio_process.terminate()
                     except ProcessLookupError:
                         pass
                     self._audio_process = None
-                raise  # 让 Task 正常以 CancelledError 结束
+                raise
+            except Exception as e:
+                logger.error(f"[GuardMission] 音频播放异常，命令或环境出现错误: {e}")
+                logger.error(traceback.format_exc())
+                await asyncio.sleep(5.0)  # 防止任务崩溃死掉，UI 会掉线
 
     async def _start_guard_audio(self):
         from pathlib import Path as _Path
         path = _Path(self._config.GUARD_ALERT_AUDIO_PATH)
         if not path.is_absolute():
             path = _Path(__file__).resolve().parent.parent / path
+            
         if not path.exists():
-            logger.warning("[GuardMission] 音频文件不存在：{}，跳过播放", path)
-            return
+            logger.error(f"[GuardMission] 严重错误：物理音频文件不存在：{path}")
+            # 不直接返回，还是启动循环，将路径喂给 aplay，让它在循环里自然报错
+            # 这样保证音频任务 Task 正在运行，前端状态就不会瞬间跳回 False
+        
         self._audio_task = asyncio.create_task(self._audio_loop(str(path)))
-        logger.info("[GuardMission] 音频循环任务已启动：{}", path)
+        logger.info(f"[GuardMission] 音频循环任务已挂载：{path}")
 
     async def _stop_guard_audio(self):
         if self._audio_task and not self._audio_task.done():
