@@ -695,9 +695,9 @@ class GuardMissionService:
         import traceback
         while True:
             try:
-                # 不强制指定 -D plughw:3,0，让系统自动使用默认或环境变量设置的声卡
+                # 指定使用用户的 USB 喇叭声卡 (card 3, device 0)
                 proc = await asyncio.create_subprocess_exec(
-                    "aplay", path,
+                    "aplay", "-D", "plughw:3,0", path,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
