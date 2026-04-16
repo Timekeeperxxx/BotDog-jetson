@@ -695,9 +695,9 @@ class GuardMissionService:
         import traceback
         while True:
             try:
-                # 指定使用用户的 USB 喇叭声卡 (card 3, device 0)
+                # 交给系统默认混音器进行输出，避免独占硬件和重采样不兼容问题
                 proc = await asyncio.create_subprocess_exec(
-                    "aplay", "-D", "plughw:3,0", path,
+                    "aplay", path,
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
