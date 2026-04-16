@@ -66,12 +66,14 @@ class ControlService:
         # 速率限制状态
         self._last_request_time: float = 0.0
 
-    async def handle_command(self, cmd: str) -> ControlAckDTO:
+    async def handle_command(self, cmd: str, *, vx: Optional[float] = None, vyaw: Optional[float] = None) -> ControlAckDTO:
         """
         处理控制命令。
 
         Args:
             cmd: 动作名（forward/backward/left/right/strafe_left/strafe_right/sit/stand/stop）
+            vx:   可选速度覆盖（m/s），传入时临时替换适配器默认速度。
+            vyaw: 可选速度覆盖（rad/s），传入时临时替换适配器默认转速。
 
         Returns:
             ControlAckDTO 应答
@@ -109,7 +111,7 @@ class ControlService:
 
         # 4. 执行命令
         try:
-            await self._adapter.send_command(cmd)
+            await self._adapter.send_command(cmd, vx=vx, vyaw=vyaw)
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"[ControlService] 适配器执行命令失败: {exc}")
             # 不向前端暴露内部错误，仍返回 ACCEPTED（保持接口稳定）

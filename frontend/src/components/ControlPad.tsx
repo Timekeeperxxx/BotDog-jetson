@@ -22,6 +22,7 @@ import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl';
 
 interface ControlPadProps {
   isDisabled?: boolean;
+  bottomCenterSlot?: React.ReactNode;
 }
 
 interface ButtonConfig {
@@ -46,7 +47,7 @@ const BUTTONS: ButtonConfig[] = [
   { cmd: 'sit',          label: '下蹲',   icon: <ChevronsDown size={14} /> },
 ];
 
-export function ControlPad({ isDisabled = false }: ControlPadProps) {
+export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadProps) {
   const { startCommand, stopCommand, isControlling, lastResult, currentCmd } =
     useRobotControl();
 
@@ -150,7 +151,11 @@ export function ControlPad({ isDisabled = false }: ControlPadProps) {
         {BUTTONS.map(({ cmd, label, icon }, idx) => {
           // 空位占位
           if (cmd === null) {
-            return <div key={`empty-${idx}`} className="h-8" />;
+            return (
+              <div key={`empty-${idx}`} className="h-8">
+                {bottomCenterSlot}
+              </div>
+            );
           }
 
           return (

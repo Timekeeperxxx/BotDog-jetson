@@ -29,6 +29,7 @@ export interface TrackOverlayData {
   zone_lost?: boolean;
   foot_points?: Array<{ x: number; y: number; in_zone: boolean }>;
   intrusion_confirmed?: boolean;
+  edge_margin_ratio?: number;  // 边缘裕量比例，来自 GUARD_ZONE_EDGE_MARGIN_RATIO
 }
 
 interface Props {
@@ -160,6 +161,40 @@ export function TrackOverlay({ data, videoRef }: Props) {
         ctx.fillText('FOOT', fx + 6, fy + 3);
         ctx.restore();
       }
+    }
+
+    // ─── 3.8. 边缘裕量保护区（红色半透明条带 + 三侧安全边界线） ──────────
+    if (data.edge_margin_ratio && data.edge_margin_ratio > 0) {
+      const mx = cw * data.edge_margin_ratio;
+      const my = ch * data.edge_margin_ratio;
+      const dangerColor = 'rgba(255, 60, 60, 0.13)';
+      const borderColor = 'rgba(255, 100, 80, 0.7)';
+
+      ctx.save();
+
+      // 三条危险边带：左 / 右 / 下
+      ctx.fillStyle = dangerColor;
+      ctx.fillRect(0, 0, mx, ch);                  // 左
+      ctx.fillRect(cw - mx, 0, mx, ch);            // 右
+      ctx.fillRect(0, ch - my, cw, my);            // 下
+
+      // 三条安全边界虚线（只画左/右/下，不画顶部避免误导）
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(mx, 0);      ctx.lineTo(mx, ch - my);       // 左边界
+      ctx.moveTo(cw - mx, 0); ctx.lineTo(cw - mx, ch - my);  // 右边界
+      ctx.moveTo(mx, ch - my); ctx.lineTo(cw - mx, ch - my); // 下边界
+      ctx.stroke();
+
+      // 标签
+      ctx.setLineDash([]);
+      ctx.fillStyle = borderColor;
+      ctx.font = '9px monospace';
+      ctx.fillText(`安全边界 ${Math.round(data.edge_margin_ratio * 100)}%`, mx + 4, ch - my - 4);
+
+      ctx.restore();
     }
 
     // ─── 4. 防区多边形（黄色，优先画旋转四边形） ─────────────────────

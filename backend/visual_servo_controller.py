@@ -14,40 +14,41 @@ class VisualServoController:
     def __init__(self, yaw_deadband_px: int = 40):
         self._yaw_deadband_px = yaw_deadband_px
 
-    def compute_advancing(self, curr_bbox: Tuple[int, int, int, int], frame_width: int, frame_height: int, max_view_ratio: float) -> Tuple[str, bool]:
+    def compute_advancing(self, curr_bbox: Tuple[int, int, int, int], frame_width: int, frame_height: int, max_view_ratio: float, edge_margin_ratio: float = 0.08) -> Tuple[str, bool]:
         """
         计算前进阶段（ADVANCING）的策略。
         :param curr_bbox: 锚点 (x, y, w, h)
         :param frame_width: 画面全宽
         :param frame_height: 画面全高
         :param max_view_ratio: 最大面积保护率 比如 0.90，一旦锚点面积占据了 90% 的边界，代表走到底了
+        :param edge_margin_ratio: 边缘裕量比例，bbox 任意边距屏幕边缘小于此比例时禁止前进只允许转向
         :return: (需要发送的动作指令, 是否到达了终点极限应该踩刹车了)
         """
         x, y, w, h = curr_bbox
         center_x = x + w // 2
-        
-        # 判断转向
-        # 计算偏离中心的距离
-        error_x = center_x - (frame_width // 2)
-        cmd = "forward"
-        
-        if abs(error_x) > self._yaw_deadband_px:
-            if error_x < 0:
-                # 锚点在左边偏出死区，我们往左微调
-                cmd = "left"
-            else:
-                # 锚点在右边，往右纠正机头
-                cmd = "right"
-                
-        # 判定是否把大门（防区）完整塞满整个屏幕了
-        # 宽或者高任意一边触达画面边界的阈值即判定为贴近终点
+
+        # 贴脸保护：宽或高任意一边触达画面边界阈值 → 急停
         if w >= frame_width * max_view_ratio or h >= frame_height * max_view_ratio:
-            is_arrived_edge = True
-            cmd = "stop"  # 即使没转正，也停止一切动作
-        else:
-            is_arrived_edge = False
-            
-        return cmd, is_arrived_edge
+            return "stop", True
+
+        # 偏航纠正：中心偏离死区则转向（优先级高于前进）
+        error_x = center_x - (frame_width // 2)
+        if abs(error_x) > self._yaw_deadband_px:
+            cmd = "left" if error_x < 0 else "right"
+            return cmd, False
+
+        # 边缘裕量保护：bbox 任意边距屏幕边缘过近时停止前进，等待转向纠正后再推进
+        margin_x = int(frame_width * edge_margin_ratio)
+        margin_y = int(frame_height * edge_margin_ratio)
+        too_close_to_edge = (
+            x < margin_x or                      # 左边缘
+            (x + w) > (frame_width - margin_x) or  # 右边缘
+            (y + h) > (frame_height - margin_y)    # 下边缘（靠近时区域向下滑）
+        )
+        if too_close_to_edge:
+            return "stop", False
+
+        return "forward", False
 
     def compute_returning(self, 
                           curr_bbox: Tuple[int, int, int, int],

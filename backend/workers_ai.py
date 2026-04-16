@@ -401,7 +401,12 @@ class AIWorker:
         # 移除对 self._state_machine.state == SystemState.IN_MISSION 的强依赖
         # 只要存在运行中的任务，且 RTSP 摄像头推流正常，AI 就会开始分析画面（即使底盘由于离线处于 DISCONNECTED）
         # 底盘失联时的移动指令丢弃由 ControlService 的 can_accept_control 代理把关。
-        return self._current_task_id is not None
+        # 驱离模式启用时，即使没有巡检任务也需要保持 AI 检测
+        if self._current_task_id is not None:
+            return True
+        from .guard_mission_service import get_guard_mission_service
+        guard_mission = get_guard_mission_service()
+        return guard_mission is not None and guard_mission.enabled
 
     def _is_suspect_mode(self) -> bool:
         # 兼容路径：旧状态判断

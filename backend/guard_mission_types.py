@@ -27,3 +27,5 @@ class GuardStatusDTO(BaseModel):
     guard_duration_s: float
     zone_quality: float = 0.0    # 当前帧区域检测质量 0-1
     zone_lost_frames: int = 0   # 连续丢失帧数
+    current_zone_bbox: list[int] | None = None  # 当前区域 bbox [x, y, w, h]
+    start_zone_bbox: list[int] | None = None    # 起始区域 bbox [x, y, w, h]（驱离开始时记录）

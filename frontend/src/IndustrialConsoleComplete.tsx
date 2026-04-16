@@ -42,6 +42,8 @@ import {
   X,
   Database,
   PenLine,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 
 interface EvidenceItem {
@@ -249,6 +251,7 @@ export default function IndustrialConsoleComplete() {
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [guardStatus, setGuardStatus] = useState<GuardStatus | null>(null);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [selectedEvidence, setSelectedEvidence] = useState<Set<number>>(new Set());
   const [evidenceDeleting, setEvidenceDeleting] = useState(false);
@@ -395,6 +398,35 @@ export default function IndustrialConsoleComplete() {
     const timer = setInterval(fetchGuardStatus, 1500);
     return () => clearInterval(timer);
   }, []);
+
+  // ── 音频状态轮询 ──
+  useEffect(() => {
+    const fetchAudioStatus = async () => {
+      try {
+        const res = await fetch(getApiUrl('/api/v1/audio/status'));
+        if (res.ok) {
+          const data = await res.json();
+          setIsAudioPlaying(data.playing);
+        }
+      } catch {}
+    };
+    fetchAudioStatus();
+    const timer = setInterval(fetchAudioStatus, 2000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const toggleAudio = useCallback(async () => {
+    try {
+      const endpoint = isAudioPlaying ? '/api/v1/audio/stop' : '/api/v1/audio/play';
+      const res = await fetch(getApiUrl(endpoint), { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setIsAudioPlaying(data.playing);
+      }
+    } catch (err) {
+      console.error('切换音频失败:', err);
+    }
+  }, [isAudioPlaying]);
 
   const toggleGuardMission = useCallback(async () => {
     try {
@@ -952,7 +984,25 @@ export default function IndustrialConsoleComplete() {
                 {/* 控制面板区 */}
                 <div className="border-t border-white/20 bg-zinc-950 shrink-0">
                   <div className="px-3 py-2">
-                    <ControlPad isDisabled={systemStatus?.status === 'E_STOP_TRIGGERED'} />
+                    <ControlPad
+                      isDisabled={systemStatus?.status === 'E_STOP_TRIGGERED'}
+                      bottomCenterSlot={
+                        <button
+                          onClick={toggleAudio}
+                          title={isAudioPlaying ? '停止音频' : '播放音频'}
+                          className={`w-full h-full flex flex-col items-center justify-center gap-0.5 rounded border font-black text-[7px] uppercase tracking-tight transition-all duration-100 cursor-pointer select-none ${
+                            isAudioPlaying
+                              ? 'bg-amber-500/20 border-amber-500/60 text-amber-400 shadow-[0_0_6px_rgba(245,158,11,0.3)]'
+                              : 'bg-zinc-800/80 text-white/60 border-white/15 hover:border-white/50 hover:text-white'
+                          }`}
+                        >
+                          {isAudioPlaying
+                            ? <Volume2 size={14} className="animate-pulse" />
+                            : <VolumeX size={14} />}
+                          <span>{isAudioPlaying ? '音频' : '音频'}</span>
+                        </button>
+                      }
+                    />
                   </div>
                 </div>
 
@@ -1064,6 +1114,8 @@ export default function IndustrialConsoleComplete() {
             onToggleEnable={toggleGuardMission}
             onEmergencyStop={abortGuardMission}
             logs={logs}
+            isAudioPlaying={isAudioPlaying}
+            onAudioToggle={toggleAudio}
           />
         ) : (
           /* 档案库页面 */

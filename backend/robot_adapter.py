@@ -38,12 +38,14 @@ class BaseRobotAdapter(ABC):
     """
 
     @abstractmethod
-    async def send_command(self, cmd: str) -> None:
+    async def send_command(self, cmd: str, *, vx: Optional[float] = None, vyaw: Optional[float] = None) -> None:
         """
         向机器狗发送控制命令。
 
         Args:
             cmd: 动作名（forward/backward/left/right/sit/stand/stop）
+            vx:   可选速度覆盖，前进/后退速度（m/s）。不传则使用适配器默认值。
+            vyaw: 可选速度覆盖，偏航转速（rad/s）。不传则使用适配器默认值。
         """
         ...
 
@@ -60,12 +62,14 @@ class SimulatedRobotAdapter(BaseRobotAdapter):
     后续换真实硬件时，替换为 MAVLinkRobotAdapter，其余代码不变。
     """
 
-    async def send_command(self, cmd: str) -> None:
+    async def send_command(self, cmd: str, *, vx: Optional[float] = None, vyaw: Optional[float] = None) -> None:
         """
         模拟执行命令，仅打印日志。
 
         Args:
             cmd: 动作名
+            vx:   可选速度覆盖（仅日志）
+            vyaw: 可选速度覆盖（仅日志）
         """
         logger.info(f"[SimulatedAdapter] 执行命令: {cmd}")
         # 模拟指令执行延迟（约 5ms）
@@ -89,12 +93,14 @@ class MAVLinkRobotAdapter(BaseRobotAdapter):
         """
         self._connection = mavlink_connection
 
-    async def send_command(self, cmd: str) -> None:
+    async def send_command(self, cmd: str, *, vx: Optional[float] = None, vyaw: Optional[float] = None) -> None:
         """
         通过 MAVLink 发送控制命令（待实现）。
 
         Args:
             cmd: 动作名
+            vx:   可选速度覆盖（待实现时使用）
+            vyaw: 可选速度覆盖（待实现时使用）
         """
         # TODO: 实现具体的 MAVLink 命令映射
         # 例如：forward -> SET_POSITION_TARGET_LOCAL_NED with vx=1.0
@@ -336,12 +342,14 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                 self._busy_with_posture = False
                 logger.error(f"[UnitreeB2 Worker] 执行异常: {e}")
 
-    async def send_command(self, cmd: str) -> None:
+    async def send_command(self, cmd: str, *, vx: Optional[float] = None, vyaw: Optional[float] = None) -> None:
         """
         通过 SportClient 发送控制命令。
 
         Args:
             cmd: 动作名（forward/backward/left/right/stop/stand/sit）
+            vx:   可选速度覆盖（m/s）。传入时覆盖适配器默认 self._vx。
+            vyaw: 可选速度覆盖（rad/s）。传入时覆盖适配器默认 self._vyaw。
         """
         if not self._initialized or self._sport_client is None:
             logger.warning(f"[UnitreeB2] 适配器未就绪，忽略命令: {cmd}")
@@ -383,8 +391,25 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             except queue.Empty:
                 pass
             try:
-                self._cmd_queue.put_nowait(cmd)
-                logger.debug(f"[UnitreeB2] 已放入后台队列: {cmd}")
+                # 若传入了速度覆盖，将命令转换为 velocity 元组格式入队
+                if vx is not None or vyaw is not None:
+                    _vx   = vx   if vx   is not None else self._vx
+                    _vyaw = vyaw if vyaw is not None else self._vyaw
+                    if cmd == "forward":
+                        entry = ("velocity", _vx, 0.0, 0.0)
+                    elif cmd == "backward":
+                        entry = ("velocity", -_vx, 0.0, 0.0)
+                    elif cmd == "left":
+                        entry = ("velocity", 0.0, 0.0, _vyaw)
+                    elif cmd == "right":
+                        entry = ("velocity", 0.0, 0.0, -_vyaw)
+                    else:
+                        entry = cmd  # stop 等命令不受速度覆盖影响
+                    self._cmd_queue.put_nowait(entry)
+                    logger.debug(f"[UnitreeB2] 速度覆盖命令入队: {entry}")
+                else:
+                    self._cmd_queue.put_nowait(cmd)
+                    logger.debug(f"[UnitreeB2] 已放入后台队列: {cmd}")
             except queue.Full:
                 logger.warning(f"[UnitreeB2] 队列已满，丢弃命令: {cmd}")
 

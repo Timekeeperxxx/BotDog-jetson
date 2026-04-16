@@ -82,18 +82,48 @@ class Settings(BaseSettings):
     # 最小命令间隔（ms）：防止前端过快发命令（stop 命令跳过此限制）
     CONTROL_CMD_RATE_LIMIT_MS: int = 50
 
+    # ==================== 黄色区域识别参数 ====================
+    # HSV 色调范围（OpenCV H: 0-180，纯黄约 25-35）
+    ZONE_YELLOW_H_LOW: int = 15
+    ZONE_YELLOW_H_HIGH: int = 40
+    # 饱和度范围（越高越排除灰白色）
+    ZONE_YELLOW_S_LOW: int = 80
+    ZONE_YELLOW_S_HIGH: int = 255
+    # 亮度范围（越高越排除暗色/阴影）
+    ZONE_YELLOW_V_LOW: int = 120
+    ZONE_YELLOW_V_HIGH: int = 255
+    # 黑边验证：外扩环形区域 V 通道 10th percentile 低于此值才算有黑边
+    ZONE_BORDER_V_THRESHOLD: int = 40
+    # 外扩采样像素宽度（只采紧邻黄色区域的黑边本身，不延伸到地毯）
+    ZONE_BORDER_EXPAND_PX: int = 3
+    # 面积约束
+    ZONE_MIN_AREA_PX: int = 800
+    ZONE_MAX_AREA_RATIO: float = 0.50
+    # 形状约束
+    ZONE_MIN_ASPECT: float = 1.5
+    ZONE_MAX_ASPECT: float = 15.0
+    ZONE_MIN_SOLIDITY: float = 0.60
+    # ROI：跳过画面顶部此比例，只处理含地面的下部（0.35 = 跳过顶 35%）
+    ZONE_ROI_TOP_RATIO: float = 0.35
+    # 形态学核大小（越大填孔越强，也越慢）
+    ZONE_MORPH_KERNEL_SIZE: int = 7
+    # quality 权重（三者之和建议为 1.0）
+    ZONE_W_AREA: float = 0.30
+    ZONE_W_SOLID: float = 0.30
+    ZONE_W_BORDER: float = 0.40
+
     # 驱离任务配置
     GUARD_MISSION_ENABLED: bool = False
     GUARD_CONFIRM_TIME_S: float = 1.5           # 入侵确认时间（秒）
     GUARD_CLEAR_TIME_S: float = 5.0             # 清空确认时间（秒）
-    GUARD_MIN_DURATION_S: float = 10.0          # 最短驱离持续时间
+    GUARD_MIN_DURATION_S: float = 3.0           # 最短驱离持续时间
     GUARD_DEPLOY_DURATION_S: float = 10.0       # 前往驱离点的前进时间（秒），独立于返回时长
     GUARD_RETURN_DURATION_S: float = 10.0       # 返回起点的后退时间（秒），独立于前往时长
     GUARD_COOLDOWN_S: float = 30.0             # 两次出动间的冷却时间
     GUARD_MAX_DURATION_S: float = 120.0        # 单次驱离最大持续时间
     GUARD_DEPLOY_SETTLE_S: float = 2.0         # 起立后稳定等待时间
     GUARD_RETURN_SETTLE_S: float = 2.0         # 蹲坐后稳定等待时间
-    GUARD_ALERT_AUDIO_PATH: str = "assets/alert.wav"  # 警告音频文件路径
+    GUARD_ALERT_AUDIO_PATH: str = "assets/13282.wav"   # 警告音频文件路径
     GUARD_CLEAR_MIN_CONF: float = 0.4          # 清空判定最小有效置信度
     GUARD_CLEAR_MIN_AREA: int = 2000           # 清空判定最小有效目标面积（px）
     GUARD_VISUAL_TIMEOUT_S: float = 5.0        # 视觉链路健康超时（秒）
@@ -103,10 +133,16 @@ class Settings(BaseSettings):
     GUARD_ANCHOR_LOST_TIMEOUT_S: float = 2.0     # 连续追踪丢失多少秒则认为完全跟丢
     GUARD_MAX_ADVANCE_TIME_S: float = 15.0       # 最大推进保护时间（撞墙防止）
     GUARD_MAX_VIEW_RATIO: float = 0.90           # 前进贴脸保护率（目标宽/高到达屏幕尺寸90%则急刹）
+    GUARD_ZONE_EDGE_MARGIN_RATIO: float = 0.08   # 区域边缘裕量：bbox 任意边距屏幕边缘小于此比例时禁止前进
     GUARD_OVERLAP_CLEAR_RATIO: float = 0.10      # 人大面积离开锚点框判定的人框在锚点里的重叠比例上限
     
     GUARD_RETURN_POS_TOLERANCE_PX: int = 60      # 退时允许的 X 位移中心误差 (px)
     GUARD_RETURN_AREA_TOLERANCE_RATIO: float = 0.15 # 退时允许的物理纵深面积误差 (0.15 代表返回到了起始大小的 115% 以内)
+    GUARD_RETURN_STABLE_FRAMES: int = 15         # 返航完成需连续满足条件的帧数
+    GUARD_RETURN_AREA_STOP_RATIO: float = 0.10   # 区域面积占屏幕比例低于此值触发停止（0.10 = 10%）
+    GUARD_RETURN_AREA_STABLE_FRAMES: int = 10    # 面积 < 阈值需连续满足的帧数才停止（防单帧误判，建议 5~20）
+    GUARD_YAW_DEADBAND_PX: int = 40              # 驱离视觉伺服偏航死区（像素）
+    GUARD_COMMAND_RATE_LIMIT_MS: int = 100       # 驱离命令发送最小间隔（ms）
 
     # 阶段 7：自动跟踪配置
     # 默认禁用，由前端点击「开始巡检」时调用 /api/v1/auto-track/enable 启用
@@ -125,6 +161,10 @@ class Settings(BaseSettings):
     UNITREE_NETWORK_IFACE: str = "eth0"       # 连接 B2 的网卡名（eth0/enp2s0/Ethernet）
     UNITREE_B2_VX: float = 0.3                # 前进/后退速度（m/s）
     UNITREE_B2_VYAW: float = 0.5              # 偏航转速（rad/s）
+
+    # 驱离模式专用速度（独立于手动遥控速度，降低以提高稳定性）
+    GUARD_VX: float = 0.15                    # 驱离前进/后退速度（m/s），默认 0.15
+    GUARD_VYAW: float = 0.25                  # 驱离偏航转速（rad/s），默认 0.25
 
 
     class Config:

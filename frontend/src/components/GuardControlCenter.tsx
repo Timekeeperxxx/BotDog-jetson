@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react';
-import { 
-  Shield, ShieldAlert, AlertTriangle, RefreshCcw, Hand, 
-  Crosshair, Activity, Clock, Settings, Camera, Octagon, Eye, Terminal
+import {
+  Shield, ShieldAlert, AlertTriangle, RefreshCcw, Hand,
+  Crosshair, Activity, Clock, Settings, Camera, Octagon, Eye, Terminal,
+  Volume2, VolumeX
 } from 'lucide-react';
 import { TrackOverlay, TrackOverlayData } from './TrackOverlay';
 
@@ -15,6 +16,8 @@ export interface GuardStatus {
   guard_duration_s: number;
   zone_quality: number;
   zone_lost_frames: number;
+  current_zone_bbox: [number, number, number, number] | null;
+  start_zone_bbox: [number, number, number, number] | null;
 }
 
 const GUARD_STATES: Record<string, any> = {
@@ -35,6 +38,8 @@ export interface GuardControlCenterProps {
   onToggleEnable: () => void;
   onEmergencyStop: () => void;
   logs: { timestamp: number; level: string; module: string; message: string }[];
+  isAudioPlaying: boolean;
+  onAudioToggle: () => void;
 }
 
 export function GuardControlCenter({
@@ -46,7 +51,9 @@ export function GuardControlCenter({
   guardStatus,
   onToggleEnable,
   onEmergencyStop,
-  logs
+  logs,
+  isAudioPlaying,
+  onAudioToggle,
 }: GuardControlCenterProps) {
   // Use safe default for status (ensure it behaves correctly if not connected)
   const safeStatus = guardStatus || {
@@ -58,7 +65,9 @@ export function GuardControlCenter({
     clear_frames: 30,
     guard_duration_s: 0,
     zone_quality: 0.0,
-    zone_lost_frames: 0
+    zone_lost_frames: 0,
+    current_zone_bbox: null,
+    start_zone_bbox: null,
   };
 
   const currentStateInfo = GUARD_STATES[safeStatus.state] || GUARD_STATES.STANDBY;
@@ -179,7 +188,7 @@ export function GuardControlCenter({
 
             {/* 一键急停按钮 */}
             {safeStatus.enabled && (
-              <button 
+              <button
                 onClick={onEmergencyStop}
                 className="mt-4 w-full py-3.5 bg-red-600/10 border border-red-600/50 hover:bg-red-600/30 hover:border-red-500 text-red-500 font-black tracking-widest uppercase rounded flex items-center justify-center gap-2 transition-all active:scale-95 text-xs shadow-[0_0_15px_rgba(220,38,38,0.1)] hover:shadow-[0_0_20px_rgba(220,38,38,0.3)]"
               >
@@ -187,6 +196,19 @@ export function GuardControlCenter({
                 急停终止 E-STOP
               </button>
             )}
+
+            {/* 音频播放按钮 */}
+            <button
+              onClick={onAudioToggle}
+              className={`mt-3 w-full py-3 border font-black tracking-widest uppercase rounded flex items-center justify-center gap-2 transition-all active:scale-95 text-xs ${
+                isAudioPlaying
+                  ? 'bg-amber-500/20 border-amber-500/60 hover:bg-amber-500/30 hover:border-amber-400 text-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.15)]'
+                  : 'bg-zinc-900 border-white/20 hover:border-white/50 hover:bg-zinc-800 text-white/60 hover:text-white'
+              }`}
+            >
+              {isAudioPlaying ? <Volume2 className="w-4 h-4 animate-pulse" /> : <VolumeX className="w-4 h-4" />}
+              {isAudioPlaying ? '停止音频' : '播放音频'}
+            </button>
           </section>
 
           {/* 战术数据监控 */}
@@ -285,9 +307,60 @@ export function GuardControlCenter({
             </div>
           </section>
 
-        </div>
+          {/* 区域坐标监控 */}
+          <section className="space-y-3">
+            <h3 className="text-[10px] font-black text-white/40 tracking-widest uppercase flex items-center gap-2">
+              <Crosshair className="w-3.5 h-3.5 text-white/30" /> 区域坐标
+            </h3>
+            <div className="bg-zinc-950 border border-white/10 rounded p-4 font-mono text-[11px] space-y-3">
+              {/* 起始坐标 */}
+              <div className="space-y-1">
+                <div className="text-[9px] text-white/40 font-black uppercase tracking-widest">起始区域（驱离开始时记录）</div>
+                {safeStatus.start_zone_bbox ? (
+                  <div className="grid grid-cols-4 gap-2">
+                    {(['X', 'Y', 'W', 'H'] as const).map((label, i) => (
+                      <div key={label} className="bg-black border border-amber-500/30 rounded px-2 py-1.5 flex flex-col items-center">
+                        <span className="text-[8px] text-amber-500/60 font-black uppercase">{label}</span>
+                        <span className="text-amber-400 font-bold text-xs">{safeStatus.start_zone_bbox![i]}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-white/20 text-[10px] italic">尚未记录（驱离开始后生效）</div>
+                )}
+              </div>
+              {/* 当前坐标 */}
+              <div className="space-y-1">
+                <div className="text-[9px] text-white/40 font-black uppercase tracking-widest">当前区域（实时）</div>
+                {safeStatus.current_zone_bbox ? (
+                  <div className="grid grid-cols-4 gap-2">
+                    {(['X', 'Y', 'W', 'H'] as const).map((label, i) => (
+                      <div key={label} className="bg-black border border-emerald-500/30 rounded px-2 py-1.5 flex flex-col items-center">
+                        <span className="text-[8px] text-emerald-500/60 font-black uppercase">{label}</span>
+                        <span className="text-emerald-400 font-bold text-xs">{safeStatus.current_zone_bbox![i]}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-white/20 text-[10px] italic">未检测到区域</div>
+                )}
+              </div>
+              {/* 面积对比（仅在驱离或返航时显示）*/}
+              {safeStatus.start_zone_bbox && safeStatus.current_zone_bbox && (
+                <div className="pt-1 border-t border-white/5 text-[10px] text-white/40 flex justify-between">
+                  <span>面积比 (当前/起始)</span>
+                  <span className="font-bold text-white/70">
+                    {(
+                      (safeStatus.current_zone_bbox[2] * safeStatus.current_zone_bbox[3]) /
+                      (safeStatus.start_zone_bbox[2] * safeStatus.start_zone_bbox[3])
+                    ).toFixed(2)}x
+                  </span>
+                </div>
+              )}
+            </div>
+          </section>
 
-        {/* 战术日志区 (固定在底部) */}
+        </div>
         <div className="h-56 border-t border-white/20 bg-zinc-950 flex flex-col shrink-0">
           <div className="px-4 py-3 border-b border-white/10 flex items-center gap-2 bg-black">
             <Terminal className="w-3.5 h-3.5 text-white/30" />

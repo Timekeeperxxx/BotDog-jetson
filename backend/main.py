@@ -591,6 +591,36 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=503, detail="驱离服务未初始化")
         return gm.get_status()
 
+    # ── 音频控制接口 ────────────────────────────────────────────────────────
+
+    @app.post("/api/v1/audio/play")
+    async def audio_play():
+        """手动触发驱离音频循环播放。"""
+        from .guard_mission_service import get_guard_mission_service
+        gm = get_guard_mission_service()
+        if gm is None:
+            raise HTTPException(status_code=503, detail="驱离服务未初始化")
+        await gm.start_audio()
+        return {"success": True, "playing": True}
+
+    @app.post("/api/v1/audio/stop")
+    async def audio_stop():
+        """手动停止驱离音频。"""
+        from .guard_mission_service import get_guard_mission_service
+        gm = get_guard_mission_service()
+        if gm is None:
+            raise HTTPException(status_code=503, detail="驱离服务未初始化")
+        await gm.stop_audio()
+        return {"success": True, "playing": False}
+
+    @app.get("/api/v1/audio/status")
+    async def audio_status():
+        """查询驱离音频是否正在播放。"""
+        from .guard_mission_service import get_guard_mission_service
+        gm = get_guard_mission_service()
+        playing = gm.is_audio_playing if gm is not None else False
+        return {"playing": playing}
+
     # ── 控制命令接口 ────────────────────────────────────────────────────────
 
     from pydantic import BaseModel as _PydanticBase
