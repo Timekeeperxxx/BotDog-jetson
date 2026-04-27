@@ -41,6 +41,7 @@ import {
   ArrowLeftRight,
   X,
   Database,
+  Map,
   PenLine,
   Volume2,
   VolumeX,
@@ -258,6 +259,10 @@ export default function IndustrialConsoleComplete() {
   const [lightboxItem, setLightboxItem] = useState<EvidenceItem | null>(null);
 
   const fullscreenRequestedRef = useRef(false);
+
+  const openNavPatrolPage = useCallback(() => {
+    window.location.href = '/nav-patrol.html';
+  }, []);
 
   const isMissionRunning = missionTaskId !== null;
 
@@ -579,6 +584,7 @@ export default function IndustrialConsoleComplete() {
           </div>
           <div className="flex-1 flex flex-col space-y-5">
             <SidebarBtn icon={<LayoutGrid size={20} />} active={activeTab === 'console'} onClick={() => setActiveTab('console')} label="控制台" />
+            <SidebarBtn icon={<Map size={20} />} active={false} onClick={openNavPatrolPage} label="导航巡逻" />
             <SidebarBtn icon={<ShieldCheck size={20} />} active={activeTab === 'guard'} onClick={() => setActiveTab('guard')} label="驱离系统" />
             <SidebarBtn icon={<History size={20} />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="档案库" />
             <SidebarBtn icon={<Database size={20} />} active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} label="后台管理" />

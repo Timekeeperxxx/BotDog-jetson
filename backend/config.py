@@ -74,6 +74,21 @@ class Settings(BaseSettings):
     # 抓拍存储目录（用于 /api/v1/static）
     SNAPSHOT_DIR: str = "data/snapshots"
 
+    # ==================== 导航巡逻 / PCD 点云地图 Demo ====================
+    PCD_MAP_ROOT: str = "/home/jetson/superlio/Super-LIO/src/super_lio/map"
+    PCD_FRAME_ID: str = "map"
+    PCD_PREVIEW_DEFAULT_POINTS: int = 100000
+    PCD_PREVIEW_MAX_POINTS: int = 200000
+    NAV_WAYPOINT_STORE_DIR: str = "./data/nav_waypoints"
+
+    # ==================== ROS2 导航状态订阅转发 ====================
+    ROS_NAV_ENABLED: bool = True
+    ROS_NAV_POSE_TOPIC: str = "/amcl_pose"
+    ROS_NAV_POSE_TYPE: str = "PoseWithCovarianceStamped"
+    ROS_NAV_FRAME_ID: str = "map"
+    ROS_NAV_BASE_FRAME_ID: str = "base_link"
+    ROS_NAV_BROADCAST_HZ: float = 10.0
+
     # 阶段 6：网页控制服务配置
     # 适配器类型：simulation（仅打印日志）| mavlink（真实硬件）
     CONTROL_ADAPTER_TYPE: str = "simulation"
@@ -189,4 +204,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-

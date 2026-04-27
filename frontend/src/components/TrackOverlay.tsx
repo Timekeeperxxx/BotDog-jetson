@@ -265,7 +265,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
 
     // ─── 5. 锁定目标（红色加粗框） ─────────────────────────
     if (data.active_bbox) {
-      const [x1, y1, x2, y2] = data.active_bbox;
+      const [x1, , x2, y2] = data.active_bbox;
       const { rx, ry, rw, rh } = mapRect(data.active_bbox);
 
       ctx.save();

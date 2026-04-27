@@ -131,4 +131,105 @@ class EStopResetResponse(BaseModel):
     state_after: str = Field(..., description="重置后的系统状态")
 
 
+class PcdBoundsDTO(BaseModel):
+    min_x: float
+    max_x: float
+    min_y: float
+    max_y: float
+    min_z: float
+    max_z: float
+
+
+class PcdMapItemDTO(BaseModel):
+    id: str
+    name: str
+    size_bytes: int
+    modified_at: str
+
+
+class PcdMapListResponse(BaseModel):
+    root: str
+    items: list[PcdMapItemDTO]
+
+
+class PcdMetadataResponse(BaseModel):
+    map_id: str
+    name: str
+    frame_id: str = "map"
+    type: str = "pcd"
+    point_count: int
+    fields: list[str]
+    data_type: str
+    bounds: PcdBoundsDTO | None = None
+    supported: bool = True
+    message: str | None = None
+
+
+class PcdPreviewResponse(BaseModel):
+    map_id: str
+    frame_id: str = "map"
+    points: list[list[float]]
+    bounds: PcdBoundsDTO
+
+
+class NavWaypointCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    x: float
+    y: float
+    z: float = 0.0
+    yaw: float = 0.0
+    frame_id: str = "map"
+
+
+class NavWaypointDTO(BaseModel):
+    id: str
+    map_id: str
+    name: str
+    x: float
+    y: float
+    z: float
+    yaw: float
+    frame_id: str
+    created_at: str
+    updated_at: str
+
+
+class NavWaypointListResponse(BaseModel):
+    items: list[NavWaypointDTO]
+
+
+class DeleteWaypointResponse(BaseModel):
+    success: bool
+
+
+class RobotPoseDTO(BaseModel):
+    x: float
+    y: float
+    z: float
+    yaw: float
+    frame_id: str
+    source: str
+    timestamp: float
+
+
+class NavigationStatusDTO(BaseModel):
+    status: str
+    target_waypoint_id: str | None = None
+    target_name: str | None = None
+    message: str
+    timestamp: float | None = None
+
+
+class LocalizationStatusDTO(BaseModel):
+    status: str
+    frame_id: str
+    source: str | None = None
+    message: str
+    timestamp: float | None = None
+
+
+class NavStateResponse(BaseModel):
+    robot_pose: RobotPoseDTO | None = None
+    navigation_status: NavigationStatusDTO
+    localization_status: LocalizationStatusDTO
 

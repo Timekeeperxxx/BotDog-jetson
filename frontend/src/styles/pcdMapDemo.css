@@ -1,0 +1,376 @@
+#nav-patrol-root {
+  min-height: 100vh;
+  background: #091014;
+  color: #e5edf2;
+}
+
+.pcd-demo-page {
+  min-height: 100vh;
+  padding: 20px;
+  background:
+    linear-gradient(180deg, rgba(6, 22, 26, 0.94), rgba(9, 16, 20, 1)),
+    #091014;
+}
+
+.pcd-demo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.pcd-demo-header h1,
+.pcd-panel h2 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.pcd-demo-header h1 {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.pcd-demo-header p,
+.pcd-panel-header p {
+  margin: 4px 0 0;
+  color: #8ea3ad;
+  font-size: 12px;
+}
+
+.pcd-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pcd-loading,
+.pcd-primary-button,
+.pcd-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.pcd-loading {
+  color: #facc15;
+  font-size: 13px;
+}
+
+.pcd-loading svg {
+  animation: videoSpin 0.9s linear infinite;
+}
+
+.pcd-primary-button,
+.pcd-icon-button,
+.pcd-file-item {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.72);
+  color: #e5edf2;
+  cursor: pointer;
+}
+
+.pcd-primary-button {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.pcd-primary-button.is-active {
+  border-color: rgba(245, 158, 11, 0.7);
+  background: rgba(146, 64, 14, 0.45);
+}
+
+.pcd-primary-button:disabled,
+.pcd-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.pcd-icon-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+}
+
+.pcd-icon-button.danger:hover {
+  border-color: rgba(248, 113, 113, 0.75);
+  color: #fecaca;
+}
+
+.pcd-demo-grid {
+  display: grid;
+  grid-template-columns: 280px minmax(420px, 1fr) 330px;
+  gap: 14px;
+  min-height: calc(100vh - 134px);
+}
+
+.pcd-panel,
+.pcd-viewer-shell,
+.pcd-log-panel {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(8, 15, 19, 0.9);
+  border-radius: 8px;
+}
+
+.pcd-panel {
+  min-width: 0;
+  padding: 14px;
+}
+
+.pcd-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.pcd-panel-header h2 {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.pcd-panel-header p {
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcd-file-panel {
+  overflow: hidden;
+}
+
+.pcd-file-list,
+.pcd-waypoint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+.pcd-file-list {
+  max-height: calc(100vh - 185px);
+}
+
+.pcd-file-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 10px;
+  border-radius: 7px;
+  text-align: left;
+}
+
+.pcd-file-item:hover,
+.pcd-file-item.is-active {
+  border-color: rgba(94, 234, 212, 0.6);
+  background: rgba(14, 116, 144, 0.2);
+}
+
+.pcd-file-item span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 700;
+}
+
+.pcd-file-item small,
+.pcd-waypoint-item span {
+  color: #8ea3ad;
+  font-size: 11px;
+}
+
+.pcd-center-stage {
+  display: grid;
+  grid-template-rows: minmax(360px, 1fr) minmax(260px, 0.72fr);
+  gap: 14px;
+  min-height: 0;
+}
+
+.pcd-viewer-shell {
+  position: relative;
+  overflow: hidden;
+  min-height: 260px;
+}
+
+.pcd-three-host,
+.pcd-canvas-host,
+.pcd-canvas-host canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.pcd-three-host canvas,
+.pcd-canvas-host canvas {
+  display: block;
+}
+
+.pcd-canvas-host canvas.is-adding {
+  cursor: crosshair;
+}
+
+.pcd-viewer-label {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  z-index: 2;
+  padding: 4px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  background: rgba(2, 6, 23, 0.72);
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.pcd-viewer-empty {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.pcd-side-stack {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+}
+
+.pcd-metadata-grid {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 8px 10px;
+  font-size: 13px;
+}
+
+.pcd-metadata-grid span {
+  color: #8ea3ad;
+}
+
+.pcd-metadata-grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.pcd-bounds,
+.pcd-warning,
+.pcd-empty {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.pcd-bounds {
+  display: grid;
+  gap: 4px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #cbd5e1;
+}
+
+.pcd-warning {
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  background: rgba(120, 53, 15, 0.26);
+  color: #fde68a;
+}
+
+.pcd-empty {
+  background: rgba(15, 23, 42, 0.55);
+  color: #8ea3ad;
+}
+
+.pcd-waypoint-panel {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.pcd-waypoint-list {
+  max-height: calc(100vh - 420px);
+}
+
+.pcd-waypoint-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.pcd-waypoint-item strong,
+.pcd-waypoint-item span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcd-log-panel {
+  display: flex;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  min-height: 40px;
+  overflow-x: auto;
+  color: #94a3b8;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.pcd-log-panel .is-error {
+  color: #fca5a5;
+}
+
+@media (max-width: 1180px) {
+  .pcd-demo-grid {
+    grid-template-columns: 240px minmax(360px, 1fr);
+  }
+
+  .pcd-side-stack {
+    grid-column: 1 / -1;
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .pcd-demo-page {
+    padding: 12px;
+  }
+
+  .pcd-demo-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .pcd-header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .pcd-demo-grid,
+  .pcd-side-stack {
+    grid-template-columns: 1fr;
+  }
+
+  .pcd-center-stage {
+    grid-template-rows: 360px 300px;
+  }
+
+  .pcd-file-list,
+  .pcd-waypoint-list {
+    max-height: 280px;
+  }
+}

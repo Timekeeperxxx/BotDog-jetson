@@ -148,6 +148,39 @@ class EventBroadcaster:
 
         return success_count
 
+    async def broadcast_event(self, event_type: str, data: dict[str, Any]) -> int:
+        """
+        广播标准业务事件。
+
+        nav.* 事件使用 {type, data} 结构，避免把 ROS2 原始消息暴露给前端。
+        """
+        if not self._connections:
+            logger.debug("没有活跃的 WebSocket 连接，跳过事件广播: {}", event_type)
+            return 0
+
+        message = {
+            "type": event_type,
+            "data": data,
+            "timestamp": utc_now_iso(),
+        }
+
+        success_count = 0
+        failed_connections = []
+
+        async with self._lock:
+            for connection in self._connections:
+                try:
+                    await connection.send_json(message)
+                    success_count += 1
+                except Exception as exc:
+                    logger.warning(f"发送事件消息失败: {event_type}, {exc}")
+                    failed_connections.append(connection)
+
+            for failed_conn in failed_connections:
+                self._connections.discard(failed_conn)
+
+        return success_count
+
     async def handle_connection(self, websocket: WebSocket) -> None:
         """
         处理 WebSocket 连接的生命周期。

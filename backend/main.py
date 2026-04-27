@@ -22,12 +22,20 @@ from .database import get_db, init_db, get_session_factory
 from .logging_config import logger, setup_logging
 from .schemas import (
     ControlAckDTO,
+    DeleteWaypointResponse,
     EStopResetResponse,
     EStopResponse,
     EvidenceBulkDeleteRequest,
     EvidenceDeleteResponse,
     EvidenceListResponse,
     LogsPage,
+    NavWaypointCreateRequest,
+    NavWaypointDTO,
+    NavWaypointListResponse,
+    NavStateResponse,
+    PcdMapListResponse,
+    PcdMetadataResponse,
+    PcdPreviewResponse,
     SessionStartRequest,
     SessionStartResponse,
     SessionStopRequest,
@@ -63,6 +71,7 @@ _persistence_worker: TelemetryPersistenceWorker | None = None
 _event_broadcaster: EventBroadcaster | None = None
 _ai_worker: Any | None = None
 _control_service: ControlService | None = None
+_ros_nav_bridge: Any | None = None
 
 
 def _get_state_machine() -> StateMachine | None:
@@ -89,6 +98,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     - 遥测落盘 Worker（数据库写入）
 
     """
+
+    global _ros_nav_bridge
 
     # Startup
     setup_logging()
@@ -230,6 +241,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         set_global_event_broadcaster(_event_broadcaster)  # 设置全局单例
         logger.info("事件广播器已初始化")
 
+        # 8.1 初始化 ROS2 导航状态订阅转发（可选）
+        if settings.ROS_NAV_ENABLED:
+            from .services_ros_nav import RosNavBridge
+
+            _ros_nav_bridge = RosNavBridge(
+                broadcaster=_event_broadcaster,
+                loop=asyncio.get_running_loop(),
+            )
+            _ros_nav_bridge.start()
+            logger.info(
+                "ROS2 导航状态订阅转发已请求启动: topic={}, type={}",
+                settings.ROS_NAV_POSE_TOPIC,
+                settings.ROS_NAV_POSE_TYPE,
+            )
+        else:
+            logger.info("ROS2 导航状态订阅转发已禁用")
+
         # 8. 初始化告警服务并注入 broadcaster
         alert_service_instance = AlertService(event_broadcaster=_event_broadcaster)
         set_alert_service(alert_service_instance)
@@ -370,6 +398,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("BotDog backend shutting down (lifespan)...")
         stop_event.set()
 
+        if _ros_nav_bridge is not None:
+            _ros_nav_bridge.stop()
+            _ros_nav_bridge = None
+
         # 取消所有任务
         for task in tasks:
             task.cancel()
@@ -472,6 +504,89 @@ def register_routes(app: FastAPI) -> None:
     - 只组织路由，不引入具体业务实现，以降低 main.py 与领域逻辑的耦合度。
     - 后续可拆分为多个 router 模块（system / telemetry / session 等）在此集中挂载。
     """
+
+    # ── 导航巡逻 / PCD 点云地图 Demo ─────────────────────────────────────
+
+    @app.get("/api/v1/nav/pcd-maps", response_model=PcdMapListResponse)
+    async def nav_list_pcd_maps():
+        from .services_pcd_maps import PcdMapError, list_pcd_maps
+
+        try:
+            return list_pcd_maps()
+        except PcdMapError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/v1/nav/state", response_model=NavStateResponse)
+    async def nav_get_state():
+        from .services_nav_state import get_nav_state
+
+        return get_nav_state()
+
+    @app.get("/api/v1/nav/pcd-maps/{map_id}/metadata", response_model=PcdMetadataResponse)
+    async def nav_get_pcd_metadata(map_id: str):
+        from .services_pcd_maps import PcdMapError, get_pcd_metadata
+
+        try:
+            return get_pcd_metadata(map_id)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
+        except PcdMapError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/v1/nav/pcd-maps/{map_id}/preview", response_model=PcdPreviewResponse)
+    async def nav_get_pcd_preview(map_id: str, max_points: int | None = None):
+        from .services_pcd_maps import PcdMapError, get_pcd_preview
+
+        try:
+            return get_pcd_preview(map_id, max_points=max_points)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
+        except PcdMapError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/api/v1/nav/pcd-maps/{map_id}/waypoints", response_model=NavWaypointListResponse)
+    async def nav_list_waypoints(map_id: str):
+        from .services_pcd_maps import PcdMapError
+        from .services_nav_waypoints import list_waypoints
+
+        try:
+            return list_waypoints(map_id)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
+        except PcdMapError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/api/v1/nav/pcd-maps/{map_id}/waypoints", response_model=NavWaypointDTO)
+    async def nav_create_waypoint(map_id: str, body: NavWaypointCreateRequest):
+        from .services_nav_waypoints import create_waypoint
+        from .services_pcd_maps import PcdMapError
+
+        try:
+            return create_waypoint(map_id, body.model_dump())
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
+        except (PcdMapError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.delete(
+        "/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}",
+        response_model=DeleteWaypointResponse,
+    )
+    async def nav_delete_waypoint(map_id: str, waypoint_id: str):
+        from .services_nav_waypoints import delete_waypoint
+        from .services_pcd_maps import PcdMapError
+
+        try:
+            ok = delete_waypoint(map_id, waypoint_id)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
+        except PcdMapError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        if not ok:
+            raise HTTPException(status_code=404, detail=f"导航点不存在: {waypoint_id}")
+
+        return {"success": True}
 
     @app.get("/api/v1/system/health", response_model=SystemHealthResponse)
     async def system_health() -> SystemHealthResponse:
@@ -1649,4 +1764,3 @@ def register_routes(app: FastAPI) -> None:
 
 
 app = create_app()
-
