@@ -483,7 +483,7 @@ class GuardMissionService:
             if self._return_zone_lost_since == 0.0:
                 self._return_zone_lost_since = now
                 await self._send_command_safe("backward")
-            elif now - self._return_zone_lost_since >= 2.0:
+            elif now - self._return_zone_lost_since >= 2.1:
                 logger.info("[GuardMission] 返航中区域丢失超过 2 秒，视为已到起点")
                 await self._send_command_safe("stop")
                 self._finish_mission_and_reset(frame)

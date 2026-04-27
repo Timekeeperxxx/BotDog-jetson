@@ -13,7 +13,7 @@ import { ControlPad } from './components/ControlPad';
 import { useEventWebSocket } from './hooks/useEventWebSocket';
 import { useAutoTrack } from './hooks/useAutoTrack';
 import { AutoTrackPanel } from './components/AutoTrackPanel';
-import { TrackOverlay } from './components/TrackOverlay';
+import { TrackOverlay } from './components/TrackOverlay1';
 import { GuardControlCenter, GuardStatus } from './components/GuardControlCenter';
 import { ZoneDrawer } from './components/ZoneDrawer';
 import { getApiUrl } from './config/api';

@@ -139,7 +139,6 @@ class YellowZoneDetector:
         low  = np.array([self._h_low,  self._s_low,  self._v_low],  dtype=np.uint8)
         high = np.array([self._h_high, self._s_high, self._v_high], dtype=np.uint8)
         mask = cv2.inRange(hsv, low, high)
-
         # ── 3. 形态学闭+开运算 ──
         k = self._morph_kernel_size
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k, k))
@@ -214,11 +213,17 @@ class YellowZoneDetector:
 
         # ── 黑边验证 ──
         border_ok, border_score = self._verify_black_border(box_pts, hsv, cv2)
-        if not border_ok:
-            return None
+        # if not border_ok:
+        #     return None
 
         # ── 中心汉字检测 ──
         has_text, text_score = self._verify_center_black_text(box_pts, hsv, cv2)
+
+        #得分限制
+        MIN_BORDER_SCORE = 0.20
+        MIN_TEXT_SOORE = 0.30
+        if border_ok and not has_center_text:
+            return None
 
         # ── quality 计算 ──
         area_score  = self._score_area(area)
@@ -230,7 +235,7 @@ class YellowZoneDetector:
         )
         # 检测到中心汉字：叠加奖励分，使带字候选天然优先（质量分可超过 1.0）
         if has_text:
-            quality += self._center_text_bonus
+            quality += self._center_text_bonus * min(1.0, text_score)
 
         return ZoneDetection(
             polygon           = box_pts,
@@ -275,7 +280,7 @@ class YellowZoneDetector:
             inner_mask = np.zeros((h, w), dtype=np.uint8)
             cv2.fillPoly(inner_mask, [box_pts], 255)
 
-            exp_px = max(3, self._border_expand_px)
+            exp_px = max(1, self._border_expand_px)
             dil_kernel = cv2.getStructuringElement(
                 cv2.MORPH_RECT, (exp_px * 2 + 1, exp_px * 2 + 1)
             )

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getWsUrl } from '../config/api';
 import type { AlertEvent, AIStatus, EventWebSocketStatus, AutoTrackStatus } from '../types/event';
 import type { TrackDecision } from './useAutoTrack';
-import type { TrackOverlayData } from '../components/TrackOverlay';
+import type { TrackOverlayData } from '../components/TrackOverlay1';
 
 export interface EventHookState {
   status: EventWebSocketStatus;

@@ -125,8 +125,8 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         vyaw: [-0.8 ~ 0.8]  rad/s
 
     初始化序列（必须按顺序）：
-        ChannelFactoryInitialize → Init() → BalanceStand()（解锁）
-        → ClassicWalk(True)（进入经典步态）→ SwitchMoveMode(True)（持续响应）
+        ChannelFactoryInitialize → MotionSwitcher(ai) → SportClient.Init()
+        后端启动时不发送 BalanceStand()，避免改变机器狗当前姿态。
 
     命令映射：
         forward      → Move(vx, 0, 0)
@@ -229,20 +229,10 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             self._sport_client.SetTimeout(1.5)  # RPC 超时：1.5s（原 5s，减少界面卡顿）
             self._sport_client.Init()
 
-            # Step 3: 解锁运动模式（必须，否则 Move() 命令被硬件层忽略）
-            # BalanceStand() → 切换到平衡站立（解除阻尼/静止锁定）
-            # SwitchMoveMode(True) → 进入持续响应 Move 的运动模式
-            import time as _time
-            _ret_bs = self._sport_client.BalanceStand()
-            logger.info(f"[UnitreeB2] BalanceStand ret={_ret_bs}")
-            _time.sleep(0.5)
-            _ret_mm = self._sport_client.SwitchMoveMode(True)
-            logger.info(f"[UnitreeB2] SwitchMoveMode(True) ret={_ret_mm}")
-
             self._initialized = True
             logger.info(
                 f"[UnitreeB2] 初始化成功（网卡={network_interface}, "
-                f"vx={vx} m/s, vyaw={vyaw} rad/s）"
+                f"vx={vx} m/s, vyaw={vyaw} rad/s，未发送起立指令）"
             )
         except ImportError:
             logger.error(

@@ -4,7 +4,7 @@ import {
   Crosshair, Activity, Clock, Settings, Camera, Octagon, Eye, Terminal,
   Volume2, VolumeX
 } from 'lucide-react';
-import { TrackOverlay, TrackOverlayData } from './TrackOverlay';
+import { TrackOverlay, TrackOverlayData } from './TrackOverlay1';
 
 export interface GuardStatus {
   enabled: boolean;
