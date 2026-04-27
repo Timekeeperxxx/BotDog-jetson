@@ -49,6 +49,13 @@ class BaseRobotAdapter(ABC):
         """
         ...
 
+    @abstractmethod
+    def is_ready(self) -> bool:
+        """
+        检查适配器是否就绪（已连接或已初始化）。
+        """
+        ...
+
     async def stop(self) -> None:
         """快捷停止方法，供 Watchdog 调用。"""
         await self.send_command("stop")
@@ -61,6 +68,10 @@ class SimulatedRobotAdapter(BaseRobotAdapter):
     仅打印日志，不发送真实指令。
     后续换真实硬件时，替换为 MAVLinkRobotAdapter，其余代码不变。
     """
+
+    def is_ready(self) -> bool:
+        """模拟适配器始终就绪。"""
+        return True
 
     async def send_command(self, cmd: str, *, vx: Optional[float] = None, vyaw: Optional[float] = None) -> None:
         """
@@ -92,6 +103,10 @@ class MAVLinkRobotAdapter(BaseRobotAdapter):
             mavlink_connection: pymavlink 连接对象（可选，接入真实硬件时必填）
         """
         self._connection = mavlink_connection
+
+    def is_ready(self) -> bool:
+        """MAVLink 适配器尚未实现真实控制，返回 False。"""
+        return False
 
     async def send_command(self, cmd: str, *, vx: Optional[float] = None, vyaw: Optional[float] = None) -> None:
         """
@@ -241,6 +256,10 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             )
         except Exception as e:
             logger.error(f"[UnitreeB2] 初始化失败: {e}")
+
+    def is_ready(self) -> bool:
+        """宇树 B2 适配器就绪状态。"""
+        return self._initialized
 
     def _command_worker(self):
         """后台专用的工作线程：消费队列并调用阻断的 SDK。"""

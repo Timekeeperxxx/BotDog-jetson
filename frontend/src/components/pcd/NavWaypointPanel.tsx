@@ -1,12 +1,14 @@
-import { Trash2 } from 'lucide-react'
+import { Navigation, Trash2 } from 'lucide-react'
 import type { NavWaypoint } from '../../types/pcdMap'
 
 type Props = {
   waypoints: NavWaypoint[]
+  navigatingWaypointId: string | null
+  onGoTo: (waypointId: string) => void
   onDelete: (waypointId: string) => void
 }
 
-export function NavWaypointPanel({ waypoints, onDelete }: Props) {
+export function NavWaypointPanel({ waypoints, navigatingWaypointId, onGoTo, onDelete }: Props) {
   return (
     <section className="pcd-panel pcd-waypoint-panel">
       <div className="pcd-panel-header">
@@ -25,16 +27,29 @@ export function NavWaypointPanel({ waypoints, onDelete }: Props) {
               <div>
                 <strong>{point.name}</strong>
                 <span>
-                  x {point.x.toFixed(3)} · y {point.y.toFixed(3)} · yaw {point.yaw.toFixed(2)}
+                  x {point.x.toFixed(3)} · y {point.y.toFixed(3)} · z {point.z.toFixed(3)}
+                </span>
+                <span>
+                  yaw {point.yaw.toFixed(3)} rad
                 </span>
               </div>
-              <button
-                className="pcd-icon-button danger"
-                onClick={() => onDelete(point.id)}
-                title="删除导航点"
-              >
-                <Trash2 size={15} />
-              </button>
+              <div className="pcd-waypoint-actions">
+                <button
+                  className="pcd-icon-button"
+                  onClick={() => onGoTo(point.id)}
+                  disabled={navigatingWaypointId === point.id}
+                  title="导航到该点"
+                >
+                  <Navigation size={15} />
+                </button>
+                <button
+                  className="pcd-icon-button danger"
+                  onClick={() => onDelete(point.id)}
+                  title="删除导航点"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
             </div>
           ))
         )}

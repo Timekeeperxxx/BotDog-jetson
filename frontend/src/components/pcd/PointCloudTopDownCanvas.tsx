@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import type { NavWaypoint, PcdBounds } from '../../types/pcdMap'
 import type { RobotPose } from '../../types/navState'
@@ -10,8 +10,9 @@ type Props = {
   waypoints: NavWaypoint[]
   robotPose: RobotPose | null
   addMode: boolean
+  waypointZ: number
   onMouseMapPositionChange: (pos: { x: number; y: number } | null) => void
-  onAddWaypoint: (pos: { x: number; y: number }) => void
+  onAddWaypoint: (pos: { x: number; y: number; z: number; yaw: number }) => void
 }
 
 const PADDING = 34
@@ -22,11 +23,18 @@ export function PointCloudTopDownCanvas({
   waypoints,
   robotPose,
   addMode,
+  waypointZ,
   onMouseMapPositionChange,
   onAddWaypoint,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const [pendingWaypoint, setPendingWaypoint] = useState<{
+    x: number
+    y: number
+    z: number
+    yaw: number
+  } | null>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -111,7 +119,51 @@ export function PointCloudTopDownCanvas({
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         ctx.fillText(String(index + 1), pos.x, pos.y)
+
+        const yawLength = 22
+        const yawTipX = pos.x + Math.cos(waypoint.yaw) * yawLength
+        const yawTipY = pos.y - Math.sin(waypoint.yaw) * yawLength
+        ctx.strokeStyle = '#fbbf24'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(pos.x, pos.y)
+        ctx.lineTo(yawTipX, yawTipY)
+        ctx.stroke()
       })
+
+      if (pendingWaypoint) {
+        const pos = mapToCanvas(pendingWaypoint.x, pendingWaypoint.y, bounds, width, height, PADDING)
+        const arrowLength = 32
+        const tipX = pos.x + Math.cos(pendingWaypoint.yaw) * arrowLength
+        const tipY = pos.y - Math.sin(pendingWaypoint.yaw) * arrowLength
+        const headLength = 10
+        const headAngle = Math.atan2(tipY - pos.y, tipX - pos.x)
+
+        ctx.save()
+        ctx.fillStyle = '#22c55e'
+        ctx.strokeStyle = '#86efac'
+        ctx.lineWidth = 3
+        ctx.beginPath()
+        ctx.arc(pos.x, pos.y, 7, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.beginPath()
+        ctx.moveTo(pos.x, pos.y)
+        ctx.lineTo(tipX, tipY)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(tipX, tipY)
+        ctx.lineTo(
+          tipX - headLength * Math.cos(headAngle - Math.PI / 6),
+          tipY - headLength * Math.sin(headAngle - Math.PI / 6),
+        )
+        ctx.lineTo(
+          tipX - headLength * Math.cos(headAngle + Math.PI / 6),
+          tipY - headLength * Math.sin(headAngle + Math.PI / 6),
+        )
+        ctx.closePath()
+        ctx.fill()
+        ctx.restore()
+      }
 
       if (robotPose) {
         const pos = mapToCanvas(robotPose.x, robotPose.y, bounds, width, height, PADDING)
@@ -161,7 +213,7 @@ export function PointCloudTopDownCanvas({
     draw()
 
     return () => resizeObserver.disconnect()
-  }, [bounds, points, robotPose, waypoints])
+  }, [bounds, pendingWaypoint, points, robotPose, waypoints])
 
   const readMapPosition = (event: MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
@@ -179,12 +231,36 @@ export function PointCloudTopDownCanvas({
         <canvas
           ref={canvasRef}
           className={addMode ? 'is-adding' : ''}
-          onMouseMove={(event) => onMouseMapPositionChange(readMapPosition(event))}
-          onMouseLeave={() => onMouseMapPositionChange(null)}
-          onClick={(event) => {
+          onMouseDown={(event) => {
             if (!addMode) return
             const position = readMapPosition(event)
-            if (position) onAddWaypoint(position)
+            if (!position) return
+            setPendingWaypoint({
+              x: position.x,
+              y: position.y,
+              z: waypointZ,
+              yaw: 0,
+            })
+          }}
+          onMouseMove={(event) => {
+            const position = readMapPosition(event)
+            onMouseMapPositionChange(position)
+            if (!addMode || !position || !pendingWaypoint) return
+            setPendingWaypoint((current) => {
+              if (!current) return current
+              const dx = position.x - current.x
+              const dy = position.y - current.y
+              const yaw = Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001
+                ? current.yaw
+                : Math.atan2(dy, dx)
+              return { ...current, yaw }
+            })
+          }}
+          onMouseLeave={() => onMouseMapPositionChange(null)}
+          onMouseUp={() => {
+            if (!addMode || !pendingWaypoint) return
+            onAddWaypoint(pendingWaypoint)
+            setPendingWaypoint(null)
           }}
         />
       </div>

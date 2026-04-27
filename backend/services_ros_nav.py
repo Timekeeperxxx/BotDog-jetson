@@ -22,6 +22,16 @@ def quaternion_to_yaw(x: float, y: float, z: float, w: float) -> float:
     return math.atan2(siny_cosp, cosy_cosp)
 
 
+def yaw_to_quaternion(yaw: float) -> dict[str, float]:
+    half_yaw = yaw / 2.0
+    return {
+        "x": 0.0,
+        "y": 0.0,
+        "z": math.sin(half_yaw),
+        "w": math.cos(half_yaw),
+    }
+
+
 def _stamp_to_seconds(stamp: Any) -> float:
     sec = float(getattr(stamp, "sec", 0.0))
     nanosec = float(getattr(stamp, "nanosec", 0.0))
@@ -56,6 +66,9 @@ class RosNavBridge:
         self._rclpy: Any | None = None
         self._tf_buffer: Any | None = None
         self._tf_listener: Any | None = None
+        self._goal_publisher: Any | None = None
+        self._estop_publisher: Any | None = None
+        self._publisher_lock = threading.RLock()
         self._last_broadcast_at = 0.0
         self._last_localization_broadcast_at = 0.0
         self._last_tf_lookup_error_at = 0.0
@@ -111,6 +124,7 @@ class RosNavBridge:
         try:
             rclpy.init(args=None)
             self._node = rclpy.create_node("botdog_nav_state_bridge")
+            self._setup_publishers()
 
             if self._use_tf_pose():
                 self._setup_tf_listener()
@@ -184,6 +198,77 @@ class RosNavBridge:
             except Exception:
                 pass
             logger.info("ROS2 导航订阅线程已退出")
+
+    def _setup_publishers(self) -> None:
+        try:
+            from geometry_msgs.msg import PoseStamped
+            from std_msgs.msg import Bool
+        except Exception as exc:
+            raise RuntimeError(f"导航发布消息类型不可用: {exc}") from exc
+
+        self._goal_publisher = self._node.create_publisher(
+            PoseStamped,
+            settings.ROS_NAV_GOAL_TOPIC,
+            10,
+        )
+        self._estop_publisher = self._node.create_publisher(
+            Bool,
+            settings.ROS_NAV_ESTOP_TOPIC,
+            10,
+        )
+        logger.info(
+            "ROS2 导航发布器已启动: goal_topic={}, estop_topic={}",
+            settings.ROS_NAV_GOAL_TOPIC,
+            settings.ROS_NAV_ESTOP_TOPIC,
+        )
+
+    def publish_navigation_goal(self, waypoint: dict[str, Any]) -> dict[str, Any]:
+        if self._node is None or self._goal_publisher is None:
+            raise RuntimeError("ROS2 导航发布器未就绪")
+
+        from geometry_msgs.msg import PoseStamped
+
+        msg = PoseStamped()
+        msg.header.stamp = self._node.get_clock().now().to_msg()
+        msg.header.frame_id = str(waypoint.get("frame_id") or settings.ROS_NAV_FRAME_ID)
+        msg.pose.position.x = float(waypoint["x"])
+        msg.pose.position.y = float(waypoint["y"])
+        msg.pose.position.z = float(waypoint.get("z", 0.0))
+        orientation = yaw_to_quaternion(float(waypoint.get("yaw", 0.0)))
+        msg.pose.orientation.x = orientation["x"]
+        msg.pose.orientation.y = orientation["y"]
+        msg.pose.orientation.z = orientation["z"]
+        msg.pose.orientation.w = orientation["w"]
+
+        with self._publisher_lock:
+            self._goal_publisher.publish(msg)
+
+        return {
+            "success": True,
+            "topic": settings.ROS_NAV_GOAL_TOPIC,
+            "waypoint_id": waypoint.get("id"),
+            "x": msg.pose.position.x,
+            "y": msg.pose.position.y,
+            "z": msg.pose.position.z,
+            "yaw": float(waypoint.get("yaw", 0.0)),
+            "frame_id": msg.header.frame_id,
+        }
+
+    def publish_emergency_stop(self) -> dict[str, Any]:
+        if self._node is None or self._estop_publisher is None:
+            raise RuntimeError("ROS2 急停发布器未就绪")
+
+        from std_msgs.msg import Bool
+
+        msg = Bool()
+        msg.data = True
+        with self._publisher_lock:
+            self._estop_publisher.publish(msg)
+
+        return {
+            "success": True,
+            "topic": settings.ROS_NAV_ESTOP_TOPIC,
+        }
 
     def _use_tf_pose(self) -> bool:
         return settings.ROS_NAV_POSE_TYPE.strip().lower() in (

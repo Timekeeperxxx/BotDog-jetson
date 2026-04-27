@@ -25,6 +25,8 @@ RESULT_ACCEPTED = "ACCEPTED"
 RESULT_REJECTED_E_STOP = "REJECTED_E_STOP"
 RESULT_REJECTED_INVALID_CMD = "REJECTED_INVALID_CMD"
 RESULT_RATE_LIMITED = "RATE_LIMITED"
+RESULT_REJECTED_ADAPTER_NOT_READY = "REJECTED_ADAPTER_NOT_READY"
+RESULT_REJECTED_ADAPTER_ERROR = "REJECTED_ADAPTER_ERROR"
 
 
 class ControlService:
@@ -98,7 +100,24 @@ class ControlService:
                 latency_ms=_elapsed_ms(start_ts),
             )
 
-        # 3. 速率限制（stop/stand/sit 跳过限制：stop 需立即响应，stand/sit 是一次性姿态命令）
+        # 3. 检查适配器就绪状态
+        if self._adapter is None:
+            logger.warning(f"[ControlService] 适配器未配置，拒绝命令: {cmd}")
+            return ControlAckDTO(
+                ack_cmd=cmd,
+                result=RESULT_REJECTED_ADAPTER_NOT_READY,
+                latency_ms=_elapsed_ms(start_ts),
+            )
+        
+        if not self._adapter.is_ready():
+            logger.warning(f"[ControlService] 适配器未就绪，拒绝命令: {cmd}")
+            return ControlAckDTO(
+                ack_cmd=cmd,
+                result=RESULT_REJECTED_ADAPTER_NOT_READY,
+                latency_ms=_elapsed_ms(start_ts),
+            )
+
+        # 4. 速率限制（stop/stand/sit 跳过限制：stop 需立即响应，stand/sit 是一次性姿态命令）
         POSTURE_COMMANDS = frozenset({"stop", "stand", "sit"})
         now = time.monotonic()
         if cmd not in POSTURE_COMMANDS and (now - self._last_request_time) < self._rate_limit_s:
@@ -109,14 +128,18 @@ class ControlService:
             )
         self._last_request_time = now
 
-        # 4. 执行命令
+        # 5. 执行命令
         try:
             await self._adapter.send_command(cmd, vx=vx, vyaw=vyaw)
         except Exception as exc:  # noqa: BLE001
             logger.exception(f"[ControlService] 适配器执行命令失败: {exc}")
-            # 不向前端暴露内部错误，仍返回 ACCEPTED（保持接口稳定）
+            return ControlAckDTO(
+                ack_cmd=cmd,
+                result=RESULT_REJECTED_ADAPTER_ERROR,
+                latency_ms=_elapsed_ms(start_ts),
+            )
 
-        # 5. 更新 Watchdog 状态
+        # 6. 更新 Watchdog 状态
         # 只有持续运动命令（forward/backward/left/right）激活 Watchdog；
         # stand/sit 是一次性姿态命令，不需要周期性续命，发完即可。
         MOTION_COMMANDS = frozenset({"forward", "backward", "left", "right", "strafe_left", "strafe_right"})
@@ -202,6 +225,6 @@ def get_control_service() -> Optional[ControlService]:
 
 
 def set_control_service(service: ControlService) -> None:
-    """注入控制服务实例（供初始化和测试使用）。"""
+    """注入控制服务实例（供初始化 and 测试使用）。"""
     global _control_service
     _control_service = service

@@ -76,3 +76,22 @@ export function deleteWaypoint(
     { method: 'DELETE' },
   )
 }
+
+export function goToWaypoint(
+  mapId: string,
+  waypointId: string,
+): Promise<{ success: boolean; topic: string; waypoint_id: string }> {
+  return requestJson(
+    getApiUrl(
+      `/api/v1/nav/pcd-maps/${encodeURIComponent(mapId)}/waypoints/${encodeURIComponent(waypointId)}/go-to`,
+    ),
+    { method: 'POST' },
+  )
+}
+
+export function triggerNavEmergencyStop(): Promise<{ success: boolean; topic: string }> {
+  return requestJson(
+    getApiUrl('/api/v1/nav/e-stop'),
+    { method: 'POST' },
+  )
+}

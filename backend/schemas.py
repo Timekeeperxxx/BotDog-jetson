@@ -108,7 +108,7 @@ class ControlAckDTO(BaseModel):
     后端回复前端控制指令的确认消息。
     """
     ack_cmd: str = Field(..., description="确认的指令类型")
-    result: str = Field(..., description="结果：ACCEPTED/REJECTED_LOW_BATTERY/REJECTED_E_STOP/RATE_LIMITED")
+    result: str = Field(..., description="结果：ACCEPTED/REJECTED_LOW_BATTERY/REJECTED_E_STOP/RATE_LIMITED/REJECTED_ADAPTER_NOT_READY/REJECTED_ADAPTER_ERROR")
     latency_ms: float = Field(..., description="处理延迟（毫秒）")
 
 

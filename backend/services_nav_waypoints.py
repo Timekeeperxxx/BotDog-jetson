@@ -37,6 +37,14 @@ def list_waypoints(map_id: str) -> dict[str, Any]:
     return {"items": data.get("items", [])}
 
 
+def get_waypoint(map_id: str, waypoint_id: str) -> dict[str, Any]:
+    for item in list_waypoints(map_id)["items"]:
+        if item.get("id") == waypoint_id:
+            return item
+
+    raise KeyError(waypoint_id)
+
+
 def _write_waypoints(map_id: str, items: list[dict[str, Any]]) -> None:
     path = _safe_waypoint_file(map_id)
     payload = {"map_id": map_id, "items": items}

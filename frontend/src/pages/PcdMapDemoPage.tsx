@@ -4,10 +4,12 @@ import { getNavState } from '../api/navApi'
 import {
   createWaypoint,
   deleteWaypoint,
+  goToWaypoint,
   getPcdMetadata,
   getPcdPreview,
   listPcdMaps,
   listWaypoints,
+  triggerNavEmergencyStop,
 } from '../api/pcdMapApi'
 import { NavWaypointPanel } from '../components/pcd/NavWaypointPanel'
 import { PcdFileListPanel } from '../components/pcd/PcdFileListPanel'
@@ -36,6 +38,9 @@ export function PcdMapDemoPage() {
   const [waypoints, setWaypoints] = useState<NavWaypoint[]>([])
   const [loading, setLoading] = useState(false)
   const [addMode, setAddMode] = useState(false)
+  const [waypointZ, setWaypointZ] = useState(-0.83)
+  const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
+  const [estopSending, setEstopSending] = useState(false)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
   const navWs = useNavWebSocket()
@@ -93,7 +98,7 @@ export function PcdMapDemoPage() {
     }
   }, [addLog])
 
-  const handleAddWaypoint = useCallback(async (pos: { x: number; y: number }) => {
+  const handleAddWaypoint = useCallback(async (pos: { x: number; y: number; z: number; yaw: number }) => {
     if (!selectedMapId) return
 
     const defaultName = `巡检点${waypoints.length + 1}`
@@ -105,14 +110,16 @@ export function PcdMapDemoPage() {
         name,
         x: pos.x,
         y: pos.y,
-        z: 0,
-        yaw: 0,
+        z: pos.z,
+        yaw: pos.yaw,
         frame_id: 'map',
       })
       const nextWaypoints = await listWaypoints(selectedMapId)
       setWaypoints(nextWaypoints.items)
       setAddMode(false)
-      addLog(`已保存导航点 ${name}: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}`)
+      addLog(
+        `已保存导航点 ${name}: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${pos.z.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
+      )
     } catch (error) {
       addLog(error instanceof Error ? error.message : '保存导航点失败', 'error')
     }
@@ -130,6 +137,33 @@ export function PcdMapDemoPage() {
       addLog(error instanceof Error ? error.message : '删除导航点失败', 'error')
     }
   }, [addLog, selectedMapId])
+
+  const handleGoToWaypoint = useCallback(async (waypointId: string) => {
+    if (!selectedMapId) return
+
+    setNavigatingWaypointId(waypointId)
+    try {
+      const result = await goToWaypoint(selectedMapId, waypointId)
+      const waypoint = waypoints.find((item) => item.id === waypointId)
+      addLog(`已发布导航目标 ${waypoint?.name || waypointId} 到 ${result.topic}`)
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '发布导航目标失败', 'error')
+    } finally {
+      setNavigatingWaypointId(null)
+    }
+  }, [addLog, selectedMapId, waypoints])
+
+  const handleEmergencyStop = useCallback(async () => {
+    setEstopSending(true)
+    try {
+      const result = await triggerNavEmergencyStop()
+      addLog(`已发布导航急停到 ${result.topic}`, 'error')
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '发布导航急停失败', 'error')
+    } finally {
+      setEstopSending(false)
+    }
+  }, [addLog])
 
   useEffect(() => {
     void refreshMaps()
@@ -177,6 +211,16 @@ export function PcdMapDemoPage() {
               <Loader2 size={16} /> 加载中
             </span>
           ) : null}
+          <label className="pcd-z-control">
+            <span>Z</span>
+            <input
+              type="number"
+              step="0.05"
+              value={waypointZ}
+              disabled={!preview}
+              onChange={(event) => setWaypointZ(Number(event.target.value) || 0)}
+            />
+          </label>
           <button
             className={`pcd-primary-button ${addMode ? 'is-active' : ''}`}
             disabled={!preview}
@@ -210,6 +254,7 @@ export function PcdMapDemoPage() {
             waypoints={waypoints}
             robotPose={robotPose}
             addMode={addMode}
+            waypointZ={waypointZ}
             onMouseMapPositionChange={setMouseMapPosition}
             onAddWaypoint={handleAddWaypoint}
           />
@@ -251,7 +296,12 @@ export function PcdMapDemoPage() {
               </div>
             ) : null}
           </section>
-          <NavWaypointPanel waypoints={waypoints} onDelete={handleDeleteWaypoint} />
+          <NavWaypointPanel
+            waypoints={waypoints}
+            navigatingWaypointId={navigatingWaypointId}
+            onGoTo={handleGoToWaypoint}
+            onDelete={handleDeleteWaypoint}
+          />
         </aside>
       </div>
 
@@ -265,6 +315,16 @@ export function PcdMapDemoPage() {
             </span>
           ))
         )}
+      </section>
+
+      <section className="pcd-bottom-command-bar">
+        <button
+          className="pcd-estop-button"
+          onClick={handleEmergencyStop}
+          disabled={estopSending}
+        >
+          {estopSending ? '急停发送中' : '导航急停'}
+        </button>
       </section>
     </main>
   )
