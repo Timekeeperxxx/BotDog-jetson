@@ -54,8 +54,11 @@ class RosNavBridge:
         self._thread: threading.Thread | None = None
         self._node: Any | None = None
         self._rclpy: Any | None = None
+        self._tf_buffer: Any | None = None
+        self._tf_listener: Any | None = None
         self._last_broadcast_at = 0.0
         self._last_localization_broadcast_at = 0.0
+        self._last_tf_lookup_error_at = 0.0
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -108,35 +111,55 @@ class RosNavBridge:
         try:
             rclpy.init(args=None)
             self._node = rclpy.create_node("botdog_nav_state_bridge")
-            msg_type = self._resolve_msg_type(
-                pose_type=settings.ROS_NAV_POSE_TYPE,
-                pose_with_covariance_cls=PoseWithCovarianceStamped,
-                pose_stamped_cls=PoseStamped,
-                odometry_cls=Odometry,
-            )
 
-            self._node.create_subscription(
-                msg_type,
-                settings.ROS_NAV_POSE_TOPIC,
-                self._handle_pose_message,
-                10,
-            )
-            update_localization_status(
-                {
-                    "status": "initializing",
-                    "frame_id": settings.ROS_NAV_FRAME_ID,
-                    "source": settings.ROS_NAV_POSE_TOPIC,
-                    "message": "ROS2 位姿订阅已启动，等待定位数据",
-                }
-            )
-            logger.info(
-                "ROS2 导航订阅已启动: topic={}, type={}",
-                settings.ROS_NAV_POSE_TOPIC,
-                settings.ROS_NAV_POSE_TYPE,
-            )
+            if self._use_tf_pose():
+                self._setup_tf_listener()
+                source = self._tf_source()
+                update_localization_status(
+                    {
+                        "status": "initializing",
+                        "frame_id": settings.ROS_NAV_FRAME_ID,
+                        "source": source,
+                        "message": "ROS2 TF 查询已启动，等待坐标变换",
+                    }
+                )
+                logger.info(
+                    "ROS2 TF 导航查询已启动: target_frame={}, source_frame={}",
+                    settings.ROS_NAV_FRAME_ID,
+                    settings.ROS_NAV_BASE_FRAME_ID,
+                )
+            else:
+                msg_type = self._resolve_msg_type(
+                    pose_type=settings.ROS_NAV_POSE_TYPE,
+                    pose_with_covariance_cls=PoseWithCovarianceStamped,
+                    pose_stamped_cls=PoseStamped,
+                    odometry_cls=Odometry,
+                )
+
+                self._node.create_subscription(
+                    msg_type,
+                    settings.ROS_NAV_POSE_TOPIC,
+                    self._handle_pose_message,
+                    10,
+                )
+                update_localization_status(
+                    {
+                        "status": "initializing",
+                        "frame_id": settings.ROS_NAV_FRAME_ID,
+                        "source": settings.ROS_NAV_POSE_TOPIC,
+                        "message": "ROS2 位姿订阅已启动，等待定位数据",
+                    }
+                )
+                logger.info(
+                    "ROS2 导航订阅已启动: topic={}, type={}",
+                    settings.ROS_NAV_POSE_TOPIC,
+                    settings.ROS_NAV_POSE_TYPE,
+                )
 
             while not self._stop_event.is_set():
                 rclpy.spin_once(self._node, timeout_sec=0.1)
+                if self._use_tf_pose():
+                    self._update_pose_from_tf_if_needed()
                 self._broadcast_latest_if_needed()
 
         except Exception as exc:
@@ -162,6 +185,94 @@ class RosNavBridge:
                 pass
             logger.info("ROS2 导航订阅线程已退出")
 
+    def _use_tf_pose(self) -> bool:
+        return settings.ROS_NAV_POSE_TYPE.strip().lower() in (
+            "tf",
+            "tf2",
+            "transform",
+            "transformstamped",
+        )
+
+    def _tf_source(self) -> str:
+        return f"tf:{settings.ROS_NAV_FRAME_ID}->{settings.ROS_NAV_BASE_FRAME_ID}"
+
+    def _setup_tf_listener(self) -> None:
+        try:
+            from tf2_ros import Buffer, TransformListener
+        except Exception as exc:
+            raise RuntimeError(f"tf2_ros 不可用: {exc}") from exc
+
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self._node)
+
+    def _update_pose_from_tf_if_needed(self) -> None:
+        now = time.monotonic()
+        min_interval = 1.0 / max(0.1, settings.ROS_NAV_BROADCAST_HZ)
+        if now - self._last_broadcast_at < min_interval:
+            return
+
+        try:
+            pose = self._lookup_tf_pose()
+        except Exception as exc:
+            if now - self._last_tf_lookup_error_at >= 1.0:
+                self._last_tf_lookup_error_at = now
+                message = (
+                    f"等待 TF 变换 {settings.ROS_NAV_FRAME_ID} -> "
+                    f"{settings.ROS_NAV_BASE_FRAME_ID}: {exc}"
+                )
+                update_localization_status(
+                    {
+                        "status": "initializing",
+                        "frame_id": settings.ROS_NAV_FRAME_ID,
+                        "source": self._tf_source(),
+                        "message": message,
+                    }
+                )
+                logger.debug(message)
+            return
+
+        update_robot_pose(pose)
+        update_localization_status(
+            {
+                "status": "ok",
+                "frame_id": settings.ROS_NAV_FRAME_ID,
+                "source": self._tf_source(),
+                "message": "TF 定位正常",
+                "timestamp": pose["timestamp"],
+            }
+        )
+
+    def _lookup_tf_pose(self) -> dict[str, Any]:
+        if self._tf_buffer is None or self._rclpy is None:
+            raise RuntimeError("TF buffer 未初始化")
+
+        from rclpy.time import Time
+
+        transform_stamped = self._tf_buffer.lookup_transform(
+            settings.ROS_NAV_FRAME_ID,
+            settings.ROS_NAV_BASE_FRAME_ID,
+            Time(),
+        )
+        transform = transform_stamped.transform
+        translation = transform.translation
+        rotation = transform.rotation
+        header = transform_stamped.header
+
+        return {
+            "x": float(translation.x),
+            "y": float(translation.y),
+            "z": float(translation.z),
+            "yaw": quaternion_to_yaw(
+                float(rotation.x),
+                float(rotation.y),
+                float(rotation.z),
+                float(rotation.w),
+            ),
+            "frame_id": settings.ROS_NAV_FRAME_ID,
+            "source": self._tf_source(),
+            "timestamp": _stamp_to_seconds(header.stamp),
+        }
+
     def _resolve_msg_type(
         self,
         pose_type: str,
@@ -176,6 +287,8 @@ class RosNavBridge:
             return pose_stamped_cls
         if normalized in ("odometry", "nav_msgs/msg/odometry"):
             return odometry_cls
+        if self._use_tf_pose():
+            return None
         raise ValueError(f"不支持的 ROS_NAV_POSE_TYPE: {pose_type}")
 
     def _handle_pose_message(self, msg: Any) -> None:

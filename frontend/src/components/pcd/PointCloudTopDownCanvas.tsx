@@ -118,6 +118,10 @@ export function PointCloudTopDownCanvas({
         const arrowLength = 28
         const arrowX = Math.cos(robotPose.yaw) * arrowLength
         const arrowY = -Math.sin(robotPose.yaw) * arrowLength
+        const tipX = pos.x + arrowX
+        const tipY = pos.y + arrowY
+        const headLength = 10
+        const headAngle = Math.atan2(arrowY, arrowX)
 
         ctx.save()
         ctx.fillStyle = robotPose.frame_id === 'map' ? '#38bdf8' : '#ef4444'
@@ -128,11 +132,22 @@ export function PointCloudTopDownCanvas({
         ctx.fill()
         ctx.beginPath()
         ctx.moveTo(pos.x, pos.y)
-        ctx.lineTo(pos.x + arrowX, pos.y + arrowY)
+        ctx.lineTo(tipX, tipY)
         ctx.stroke()
+
         ctx.beginPath()
-        ctx.arc(pos.x + arrowX, pos.y + arrowY, 3.5, 0, Math.PI * 2)
+        ctx.moveTo(tipX, tipY)
+        ctx.lineTo(
+          tipX - headLength * Math.cos(headAngle - Math.PI / 6),
+          tipY - headLength * Math.sin(headAngle - Math.PI / 6),
+        )
+        ctx.lineTo(
+          tipX - headLength * Math.cos(headAngle + Math.PI / 6),
+          tipY - headLength * Math.sin(headAngle + Math.PI / 6),
+        )
+        ctx.closePath()
         ctx.fill()
+
         ctx.font = 'bold 11px system-ui'
         ctx.textAlign = 'left'
         ctx.textBaseline = 'bottom'

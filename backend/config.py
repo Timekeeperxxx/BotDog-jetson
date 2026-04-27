@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     # ==================== ROS2 导航状态订阅转发 ====================
     ROS_NAV_ENABLED: bool = True
     ROS_NAV_POSE_TOPIC: str = "/amcl_pose"
-    ROS_NAV_POSE_TYPE: str = "PoseWithCovarianceStamped"
+    ROS_NAV_POSE_TYPE: str = "TF"
     ROS_NAV_FRAME_ID: str = "map"
     ROS_NAV_BASE_FRAME_ID: str = "base_link"
     ROS_NAV_BROADCAST_HZ: float = 10.0

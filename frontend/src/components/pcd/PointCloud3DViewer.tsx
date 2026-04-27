@@ -61,13 +61,14 @@ export function PointCloud3DViewer({ points, waypoints, robotPose }: Props) {
     body.position.y = 0.09
     robotGroup.add(body)
 
-    const direction = new THREE.Mesh(
-      new THREE.ConeGeometry(0.12, 0.34, 18),
-      new THREE.MeshBasicMaterial({ color: 0xf97316 }),
+    const direction = new THREE.ArrowHelper(
+      new THREE.Vector3(1, 0, 0),
+      new THREE.Vector3(0, 0.18, 0),
+      0.62,
+      0xf97316,
+      0.22,
+      0.12,
     )
-    direction.rotation.x = Math.PI / 2
-    direction.position.z = -0.28
-    direction.position.y = 0.16
     robotGroup.add(direction)
     robotGroupRef.current = robotGroup
     scene.add(robotGroup)
@@ -115,6 +116,15 @@ export function PointCloud3DViewer({ points, waypoints, robotPose }: Props) {
           const childMaterial = child.material
           if (Array.isArray(childMaterial)) childMaterial.forEach((item) => item.dispose())
           else childMaterial.dispose()
+        } else if (child instanceof THREE.ArrowHelper) {
+          child.line.geometry.dispose()
+          child.cone.geometry.dispose()
+          const lineMaterial = child.line.material
+          if (Array.isArray(lineMaterial)) lineMaterial.forEach((item) => item.dispose())
+          else lineMaterial.dispose()
+          const coneMaterial = child.cone.material
+          if (Array.isArray(coneMaterial)) coneMaterial.forEach((item) => item.dispose())
+          else coneMaterial.dispose()
         }
       })
       renderer.dispose()
