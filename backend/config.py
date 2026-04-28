@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from pydantic import AnyUrl
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -197,9 +197,10 @@ class Settings(BaseSettings):
     GUARD_VYAW: float = 0.25                  # 驱离偏航转速（rad/s），默认 0.25
 
 
-    class Config:
-        env_file = str(Path(__file__).resolve().parent / ".env")
-        env_file_encoding = "utf-8"
+    model_config = SettingsConfigDict(
+        env_file=str(Path(__file__).resolve().parent / ".env"),
+        env_file_encoding="utf-8",
+    )
 
 
 @lru_cache(maxsize=1)
