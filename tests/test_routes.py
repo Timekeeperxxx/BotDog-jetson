@@ -70,6 +70,33 @@ CONTROL_DEBUG_ROUTES = [
     ("GET", "/api/v1/control/debug"),
 ]
 
+CONFIG_ROUTES = [
+    ("GET", "/api/v1/config"),
+    ("POST", "/api/v1/config"),
+    ("GET", "/api/v1/config/history"),
+]
+
+VIDEO_SOURCE_ROUTES = [
+    ("GET", "/api/v1/video-sources"),
+    ("GET", "/api/v1/video-sources/active"),
+    ("POST", "/api/v1/video-sources"),
+    ("PUT", "/api/v1/video-sources/{source_id}"),
+    ("DELETE", "/api/v1/video-sources/{source_id}"),
+]
+
+NETWORK_INTERFACE_ROUTES = [
+    ("GET", "/api/v1/network-interfaces"),
+    ("POST", "/api/v1/network-interfaces"),
+    ("PUT", "/api/v1/network-interfaces/{iface_id}"),
+    ("DELETE", "/api/v1/network-interfaces/{iface_id}"),
+]
+
+AUDIO_ROUTES = [
+    ("POST", "/api/v1/audio/play"),
+    ("POST", "/api/v1/audio/stop"),
+    ("GET", "/api/v1/audio/status"),
+]
+
 
 @pytest.mark.parametrize("method,path", NAV_ROUTES)
 def test_nav_route_registered(route_index: dict, method: str, path: str) -> None:
@@ -116,4 +143,36 @@ def test_control_debug_route_registered(route_index: dict, method: str, path: st
     """control debug 路由拆分后必须保持 method 与 path 不变。"""
     assert (method, path) in route_index, (
         f"{method} {path} 未注册 ── control debug 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", CONFIG_ROUTES)
+def test_config_route_registered(route_index: dict, method: str, path: str) -> None:
+    """config 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── config 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", VIDEO_SOURCE_ROUTES)
+def test_video_source_route_registered(route_index: dict, method: str, path: str) -> None:
+    """video_sources 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── video_sources 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", NETWORK_INTERFACE_ROUTES)
+def test_network_interface_route_registered(route_index: dict, method: str, path: str) -> None:
+    """network_interfaces 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── network_interfaces 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", AUDIO_ROUTES)
+def test_audio_route_registered(route_index: dict, method: str, path: str) -> None:
+    """audio 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── audio 路由可能在拆分中丢失"
     )

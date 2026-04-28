@@ -17,14 +17,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
-from .app_runtime_state import APP_START_MONO
 from .database import get_db, init_db, get_session_factory
 from .logging_config import logger, setup_logging
 from .schemas import (
     ControlAckDTO,
     EStopResetResponse,
     EStopResponse,
-    SystemHealthResponse,
     utc_now_iso,
 )
 from .services_logs import write_log
@@ -496,15 +494,23 @@ def register_routes(app: FastAPI) -> None:
 
     # ── 导航巡逻 / PCD 点云地图 ─────────────────────────────────────────────
     from .api.routes import nav as _nav_routes
+    from .api.routes import audio as _audio_routes
+    from .api.routes import config as _config_routes
     from .api.routes import control_debug as _control_debug_routes
     from .api.routes import evidence as _evidence_routes
     from .api.routes import logs as _logs_routes
+    from .api.routes import network_interfaces as _network_interface_routes
     from .api.routes import session as _session_routes
     from .api.routes import system as _system_routes
+    from .api.routes import video_sources as _video_source_routes
     app.include_router(_nav_routes.router)
     app.include_router(_system_routes.router)
     app.include_router(_control_debug_routes.router)
+    app.include_router(_audio_routes.router)
+    app.include_router(_config_routes.router)
     app.include_router(_evidence_routes.router)
+    app.include_router(_video_source_routes.router)
+    app.include_router(_network_interface_routes.router)
     app.include_router(_session_routes.router)
     app.include_router(_logs_routes.router)
 
@@ -562,36 +568,6 @@ def register_routes(app: FastAPI) -> None:
         if gm is None:
             raise HTTPException(status_code=503, detail="驱离服务未初始化")
         return gm.get_status()
-
-    # ── 音频控制接口 ────────────────────────────────────────────────────────
-
-    @app.post("/api/v1/audio/play")
-    async def audio_play():
-        """手动触发驱离音频循环播放。"""
-        from .guard_mission_service import get_guard_mission_service
-        gm = get_guard_mission_service()
-        if gm is None:
-            raise HTTPException(status_code=503, detail="驱离服务未初始化")
-        await gm.start_audio()
-        return {"success": True, "playing": True}
-
-    @app.post("/api/v1/audio/stop")
-    async def audio_stop():
-        """手动停止驱离音频。"""
-        from .guard_mission_service import get_guard_mission_service
-        gm = get_guard_mission_service()
-        if gm is None:
-            raise HTTPException(status_code=503, detail="驱离服务未初始化")
-        await gm.stop_audio()
-        return {"success": True, "playing": False}
-
-    @app.get("/api/v1/audio/status")
-    async def audio_status():
-        """查询驱离音频是否正在播放。"""
-        from .guard_mission_service import get_guard_mission_service
-        gm = get_guard_mission_service()
-        playing = gm.is_audio_playing if gm is not None else False
-        return {"playing": playing}
 
     # ── 控制命令接口 ────────────────────────────────────────────────────────
 
@@ -796,127 +772,6 @@ def register_routes(app: FastAPI) -> None:
                 "event_code": evidence.event_code,
                 "message": evidence.message,
             }
-        }
-
-    @app.get("/api/v1/config")
-    async def get_system_config(
-        category: Optional[str] = None,
-        db=Depends(get_db),
-    ):
-        """
-        获取系统配置。
-
-        查询参数:
-            category: 配置类别过滤 (backend/frontend/storage)
-
-        Returns:
-            配置字典
-        """
-        from .services_config import get_config_service
-
-        config_service = get_config_service()
-        all_configs = await config_service.get_all_configs(db)
-
-        # 按类别过滤
-        if category:
-            all_configs = {
-                k: v for k, v in all_configs.items()
-                if v.get("category") == category
-            }
-
-        return {
-            "configs": all_configs,
-            "total": len(all_configs),
-        }
-
-    @app.post("/api/v1/config")
-    async def update_system_config(
-        request: dict,
-        db=Depends(get_db),
-    ):
-        """
-        更新系统配置。
-
-        请求体:
-            key: 配置键
-            value: 新值
-            changed_by: 修改者（可选，默认 admin）
-            reason: 修改原因（可选）
-
-        Returns:
-            更新后的配置
-        """
-        from .services_config import get_config_service
-
-        config_service = get_config_service()
-
-        key = request.get('key')
-        value = request.get('value')
-        changed_by = request.get('changed_by', 'admin')
-        reason = request.get('reason', '')
-
-        if not key or value is None:
-            raise HTTPException(
-                status_code=400,
-                detail="缺少必要参数: key, value"
-            )
-
-        try:
-            config = await config_service.update_config(
-                session=db,
-                key=key,
-                value=value,
-                changed_by=changed_by,
-                reason=reason,
-            )
-
-            # 热更新自动跟踪参数
-            if key.startswith("auto_track_"):
-                from .auto_track_service import get_auto_track_service
-                _at = get_auto_track_service()
-                if _at:
-                    _at.update_params(key, value)
-
-            return {
-                "success": True,
-                "message": f"配置 {key} 已更新",
-                "config": config.to_dict(),
-            }
-
-        except ValueError as e:
-            raise HTTPException(
-                status_code=400,
-                detail=str(e),
-            )
-
-    @app.get("/api/v1/config/history")
-    async def get_config_history(
-        key: Optional[str] = None,
-        limit: int = 50,
-        db=Depends(get_db),
-    ):
-        """
-        获取配置变更历史。
-
-        查询参数:
-            key: 配置键过滤
-            limit: 最大返回数量
-
-        Returns:
-            变更历史列表
-        """
-        from .services_config import get_config_service
-
-        config_service = get_config_service()
-        history = await config_service.get_config_history(
-            session=db,
-            key=key,
-            limit=limit,
-        )
-
-        return {
-            "history": history,
-            "total": len(history),
         }
 
     # ── 重点区 CRUD API ────────────────────────────────────────────────────────
@@ -1196,166 +1051,6 @@ def register_routes(app: FastAPI) -> None:
             "known_ids": policy.get_known_ids(),
             "total": policy.known_count,
         }
-
-    # ── 视频源管理 API ─────────────────────────────────────────────────────────
-
-    from pydantic import BaseModel as _PydanticBaseVS
-
-    class VideoSourceRequest(_PydanticBaseVS):
-        """视频源请求体。"""
-        name: str
-        label: str
-        source_type: str = "whep"
-        whep_url: Optional[str] = None
-        rtsp_url: Optional[str] = None
-        enabled: bool = True
-        is_primary: bool = False
-        is_ai_source: bool = False
-        sort_order: int = 0
-
-    class VideoSourceResponse(_PydanticBaseVS):
-        """视频源响应体。"""
-        source_id: int
-        name: str
-        label: str
-        source_type: str
-        whep_url: Optional[str] = None
-        rtsp_url: Optional[str] = None
-        enabled: bool
-        is_primary: bool
-        is_ai_source: bool
-        sort_order: int
-        created_at: str
-        updated_at: str
-
-    @app.get("/api/v1/video-sources")
-    async def list_video_sources(db=Depends(get_db)) -> dict:
-        """获取所有视频源列表。"""
-        from .services_video_sources import get_video_source_service
-        svc = get_video_source_service()
-        sources = await svc.list_all(db)
-        return {"sources": sources, "total": len(sources)}
-
-    @app.get("/api/v1/video-sources/active")
-    async def list_active_video_sources(db=Depends(get_db)) -> dict:
-        """获取所有已启用的视频源（供前端视频播放器消费）。"""
-        from .services_video_sources import get_video_source_service
-        svc = get_video_source_service()
-        sources = await svc.list_active(db)
-        return {"sources": sources, "total": len(sources)}
-
-    @app.post("/api/v1/video-sources", status_code=201)
-    async def create_video_source(
-        body: VideoSourceRequest,
-        db=Depends(get_db),
-    ) -> dict:
-        """新增视频源。"""
-        from .services_video_sources import get_video_source_service
-        svc = get_video_source_service()
-        try:
-            source = await svc.create(db, body.model_dump())
-            return {"success": True, "source": source}
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-    @app.put("/api/v1/video-sources/{source_id}")
-    async def update_video_source(
-        source_id: int,
-        body: VideoSourceRequest,
-        db=Depends(get_db),
-    ) -> dict:
-        """更新视频源。"""
-        from .services_video_sources import get_video_source_service
-        svc = get_video_source_service()
-        result = await svc.update(db, source_id, body.model_dump())
-        if result is None:
-            raise HTTPException(status_code=404, detail=f"视频源 id={source_id} 不存在")
-        return {"success": True, "source": result}
-
-    @app.delete("/api/v1/video-sources/{source_id}")
-    async def delete_video_source(
-        source_id: int,
-        db=Depends(get_db),
-    ) -> dict:
-        """删除视频源。"""
-        from .services_video_sources import get_video_source_service
-        svc = get_video_source_service()
-        deleted = await svc.delete(db, source_id)
-        if not deleted:
-            raise HTTPException(status_code=404, detail=f"视频源 id={source_id} 不存在")
-        return {"success": True, "deleted_source_id": source_id}
-
-    # ── 网口管理 API ───────────────────────────────────────────────────────────
-
-    class NetworkInterfaceRequest(_PydanticBaseVS):
-        """网口配置请求体。"""
-        name: str
-        label: str
-        iface_name: str
-        ip_address: Optional[str] = None
-        purpose: str = "other"
-        enabled: bool = True
-
-    class NetworkInterfaceResponse(_PydanticBaseVS):
-        """网口配置响应体。"""
-        iface_id: int
-        name: str
-        label: str
-        iface_name: str
-        ip_address: Optional[str] = None
-        purpose: str
-        enabled: bool
-        created_at: str
-        updated_at: str
-
-    @app.get("/api/v1/network-interfaces")
-    async def list_network_interfaces(db=Depends(get_db)) -> dict:
-        """获取所有网口配置。"""
-        from .services_video_sources import get_network_interface_service
-        svc = get_network_interface_service()
-        ifaces = await svc.list_all(db)
-        return {"interfaces": ifaces, "total": len(ifaces)}
-
-    @app.post("/api/v1/network-interfaces", status_code=201)
-    async def create_network_interface(
-        body: NetworkInterfaceRequest,
-        db=Depends(get_db),
-    ) -> dict:
-        """新增网口配置。"""
-        from .services_video_sources import get_network_interface_service
-        svc = get_network_interface_service()
-        try:
-            iface = await svc.create(db, body.model_dump())
-            return {"success": True, "interface": iface}
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
-
-    @app.put("/api/v1/network-interfaces/{iface_id}")
-    async def update_network_interface(
-        iface_id: int,
-        body: NetworkInterfaceRequest,
-        db=Depends(get_db),
-    ) -> dict:
-        """更新网口配置。"""
-        from .services_video_sources import get_network_interface_service
-        svc = get_network_interface_service()
-        result = await svc.update(db, iface_id, body.model_dump())
-        if result is None:
-            raise HTTPException(status_code=404, detail=f"网口 id={iface_id} 不存在")
-        return {"success": True, "interface": result}
-
-    @app.delete("/api/v1/network-interfaces/{iface_id}")
-    async def delete_network_interface(
-        iface_id: int,
-        db=Depends(get_db),
-    ) -> dict:
-        """删除网口配置。"""
-        from .services_video_sources import get_network_interface_service
-        svc = get_network_interface_service()
-        deleted = await svc.delete(db, iface_id)
-        if not deleted:
-            raise HTTPException(status_code=404, detail=f"网口 id={iface_id} 不存在")
-        return {"success": True, "deleted_iface_id": iface_id}
 
     # ── 系统硬件信息（只读）──────────────────────────────────────────────────────
 
