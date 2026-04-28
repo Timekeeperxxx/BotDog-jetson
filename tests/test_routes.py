@@ -104,6 +104,13 @@ GUARD_MISSION_ROUTES = [
     ("GET", "/api/v1/guard-mission/status"),
 ]
 
+CONTROL_ROUTES = [
+    ("POST", "/api/v1/control/command"),
+    ("POST", "/api/v1/control/stop"),
+    ("POST", "/api/v1/control/e-stop"),
+    ("POST", "/api/v1/control/e-stop/reset"),
+]
+
 
 @pytest.mark.parametrize("method,path", NAV_ROUTES)
 def test_nav_route_registered(route_index: dict, method: str, path: str) -> None:
@@ -190,4 +197,12 @@ def test_guard_mission_route_registered(route_index: dict, method: str, path: st
     """guard_mission 路由拆分后必须保持 method 与 path 不变。"""
     assert (method, path) in route_index, (
         f"{method} {path} 未注册 ── guard_mission 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", CONTROL_ROUTES)
+def test_control_route_registered(route_index: dict, method: str, path: str) -> None:
+    """control 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── control 路由可能在拆分中丢失"
     )
