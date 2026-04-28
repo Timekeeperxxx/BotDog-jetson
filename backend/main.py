@@ -522,6 +522,16 @@ def register_routes(app: FastAPI) -> None:
 
         return get_nav_state()
 
+    @app.post("/api/v1/nav/page-open")
+    async def nav_page_open():
+        if _ros_nav_bridge is None:
+            raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
+
+        try:
+            return _ros_nav_bridge.publish_navigation_page_open()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
     @app.get("/api/v1/nav/pcd-maps/{map_id}/metadata", response_model=PcdMetadataResponse)
     async def nav_get_pcd_metadata(map_id: str):
         from .services_pcd_maps import PcdMapError, get_pcd_metadata
@@ -568,6 +578,7 @@ def register_routes(app: FastAPI) -> None:
         except (PcdMapError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
+    @app.post("/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}")
     @app.post("/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to")
     async def nav_go_to_waypoint(map_id: str, waypoint_id: str):
         from .services_nav_state import update_navigation_status
@@ -579,6 +590,7 @@ def register_routes(app: FastAPI) -> None:
 
         try:
             waypoint = get_waypoint(map_id, waypoint_id)
+            start_result = _ros_nav_bridge.publish_navigation_start()
             result = _ros_nav_bridge.publish_navigation_goal(waypoint)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
@@ -594,10 +606,16 @@ def register_routes(app: FastAPI) -> None:
                 "status": "navigating",
                 "target_waypoint_id": waypoint["id"],
                 "target_name": waypoint["name"],
-                "message": f"已发布导航目标: {waypoint['name']}",
+                "message": f"已发布导航开始信号并发送目标: {waypoint['name']}",
             }
         )
-        return result
+        return {
+            "success": True,
+            "topic": result["topic"],
+            "waypoint_id": result["waypoint_id"],
+            "start": start_result,
+            "goal": result,
+        }
 
     @app.post("/api/v1/nav/e-stop")
     async def nav_emergency_stop():

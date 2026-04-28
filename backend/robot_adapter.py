@@ -150,7 +150,7 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         right        → Move(0, 0, -vyaw)
         strafe_left  → Move(0, +vy, 0)       # 正值 = 向左平移
         strafe_right → Move(0, -vy, 0)
-        stop         → StopMove() + BalanceStand()（停止但保持解锁）
+        stop         → StopMove()（停止运动，不改变当前姿态）
         stand        → StandUp()（从蹲下起立）/ RecoveryStand()（倒地紧急恢复，作兜底）
         sit          → StandDown()
     """
@@ -302,15 +302,9 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                         if ret != 0:
                             client.Move(0.0, 0.0, 0.0)
                             logger.debug(f"[UnitreeB2 Worker] StopMove失败，备用 Move(0,0,0)")
-                        # 退出持续运动模式（SwitchMoveMode(True)），回到稳定站立。
-                        # 仅在站立/运动状态下调用；蹲坐（sit）状态下跳过，防止 watchdog 把狗强制站起来。
-                        if self._current_posture != "sit":
-                            import time as _t
-                            _t.sleep(0.1)
-                            ret_bs = client.BalanceStand()
-                            logger.debug(f"[UnitreeB2 Worker] stop→BalanceStand ret={ret_bs}")
-                        else:
-                            logger.debug("[UnitreeB2 Worker] stop：当前蹲坐状态，跳过 BalanceStand")
+                        # 只停止运动，不主动切换姿态。
+                        # 这样页面切换 / 控制松手时不会把机器狗从当前状态强制拉到站立。
+                        logger.debug("[UnitreeB2 Worker] stop：已停止运动，保持当前姿态不变")
                     elif cmd == "stand":
                         self._busy_with_posture = True
                         try:

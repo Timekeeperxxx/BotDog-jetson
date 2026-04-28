@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
+import { LocateFixed, ZoomIn, ZoomOut } from 'lucide-react'
 import type { NavWaypoint, PcdBounds } from '../../types/pcdMap'
 import type { RobotPose } from '../../types/navState'
 import { canvasToMap, mapToCanvas } from '../../utils/topDownCoordinate'
@@ -16,6 +17,12 @@ type Props = {
 }
 
 const PADDING = 34
+const MIN_ZOOM = 0.6
+const MAX_ZOOM = 5
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
 
 export function PointCloudTopDownCanvas({
   points,
@@ -29,17 +36,38 @@ export function PointCloudTopDownCanvas({
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const panStartRef = useRef<{
+    pointerX: number
+    pointerY: number
+    panX: number
+    panY: number
+  } | null>(null)
   const [pendingWaypoint, setPendingWaypoint] = useState<{
     x: number
     y: number
     z: number
     yaw: number
   } | null>(null)
+  const [view, setView] = useState({ zoom: 1, panX: 0, panY: 0 })
+  const [isPanning, setIsPanning] = useState(false)
+
+  useEffect(() => {
+    setView({ zoom: 1, panX: 0, panY: 0 })
+  }, [bounds, points.length])
 
   useEffect(() => {
     const canvas = canvasRef.current
     const host = hostRef.current
     if (!canvas || !host) return
+
+    const applyView = (x: number, y: number, width: number, height: number) => {
+      const centerX = width / 2
+      const centerY = height / 2
+      return {
+        x: (x - centerX) * view.zoom + centerX + view.panX,
+        y: (y - centerY) * view.zoom + centerY + view.panY,
+      }
+    }
 
     const draw = () => {
       const rect = host.getBoundingClientRect()
@@ -84,32 +112,48 @@ export function PointCloudTopDownCanvas({
       const stride = Math.max(1, Math.floor(points.length / 45000))
       for (let index = 0; index < points.length; index += stride) {
         const point = points[index]
-        const pos = mapToCanvas(point[0], point[1], bounds, width, height, PADDING)
+        const basePos = mapToCanvas(point[0], point[1], bounds, width, height, PADDING)
+        const pos = applyView(basePos.x, basePos.y, width, height)
         ctx.fillRect(pos.x, pos.y, 1.4, 1.4)
       }
 
       ctx.strokeStyle = 'rgba(59, 130, 246, 0.75)'
       ctx.lineWidth = 1.5
-      ctx.strokeRect(PADDING, PADDING, width - PADDING * 2, height - PADDING * 2)
+      const topLeft = applyView(PADDING, PADDING, width, height)
+      const topRight = applyView(width - PADDING, PADDING, width, height)
+      const bottomRight = applyView(width - PADDING, height - PADDING, width, height)
+      const bottomLeft = applyView(PADDING, height - PADDING, width, height)
+      ctx.beginPath()
+      ctx.moveTo(topLeft.x, topLeft.y)
+      ctx.lineTo(topRight.x, topRight.y)
+      ctx.lineTo(bottomRight.x, bottomRight.y)
+      ctx.lineTo(bottomLeft.x, bottomLeft.y)
+      ctx.closePath()
+      ctx.stroke()
 
       ctx.strokeStyle = 'rgba(248, 113, 113, 0.85)'
       ctx.beginPath()
-      const x0 = mapToCanvas(0, bounds.min_y, bounds, width, height, PADDING)
-      const x1 = mapToCanvas(0, bounds.max_y, bounds, width, height, PADDING)
+      const x0Base = mapToCanvas(0, bounds.min_y, bounds, width, height, PADDING)
+      const x1Base = mapToCanvas(0, bounds.max_y, bounds, width, height, PADDING)
+      const x0 = applyView(x0Base.x, x0Base.y, width, height)
+      const x1 = applyView(x1Base.x, x1Base.y, width, height)
       ctx.moveTo(x0.x, x0.y)
       ctx.lineTo(x1.x, x1.y)
       ctx.stroke()
 
       ctx.strokeStyle = 'rgba(34, 197, 94, 0.85)'
       ctx.beginPath()
-      const y0 = mapToCanvas(bounds.min_x, 0, bounds, width, height, PADDING)
-      const y1 = mapToCanvas(bounds.max_x, 0, bounds, width, height, PADDING)
+      const y0Base = mapToCanvas(bounds.min_x, 0, bounds, width, height, PADDING)
+      const y1Base = mapToCanvas(bounds.max_x, 0, bounds, width, height, PADDING)
+      const y0 = applyView(y0Base.x, y0Base.y, width, height)
+      const y1 = applyView(y1Base.x, y1Base.y, width, height)
       ctx.moveTo(y0.x, y0.y)
       ctx.lineTo(y1.x, y1.y)
       ctx.stroke()
 
       waypoints.forEach((waypoint, index) => {
-        const pos = mapToCanvas(waypoint.x, waypoint.y, bounds, width, height, PADDING)
+        const basePos = mapToCanvas(waypoint.x, waypoint.y, bounds, width, height, PADDING)
+        const pos = applyView(basePos.x, basePos.y, width, height)
         ctx.fillStyle = '#f59e0b'
         ctx.beginPath()
         ctx.arc(pos.x, pos.y, 6, 0, Math.PI * 2)
@@ -132,7 +176,8 @@ export function PointCloudTopDownCanvas({
       })
 
       if (pendingWaypoint) {
-        const pos = mapToCanvas(pendingWaypoint.x, pendingWaypoint.y, bounds, width, height, PADDING)
+        const basePos = mapToCanvas(pendingWaypoint.x, pendingWaypoint.y, bounds, width, height, PADDING)
+        const pos = applyView(basePos.x, basePos.y, width, height)
         const arrowLength = 32
         const tipX = pos.x + Math.cos(pendingWaypoint.yaw) * arrowLength
         const tipY = pos.y - Math.sin(pendingWaypoint.yaw) * arrowLength
@@ -166,7 +211,8 @@ export function PointCloudTopDownCanvas({
       }
 
       if (robotPose) {
-        const pos = mapToCanvas(robotPose.x, robotPose.y, bounds, width, height, PADDING)
+        const basePos = mapToCanvas(robotPose.x, robotPose.y, bounds, width, height, PADDING)
+        const pos = applyView(basePos.x, basePos.y, width, height)
         const arrowLength = 28
         const arrowX = Math.cos(robotPose.yaw) * arrowLength
         const arrowY = -Math.sin(robotPose.yaw) * arrowLength
@@ -213,26 +259,85 @@ export function PointCloudTopDownCanvas({
     draw()
 
     return () => resizeObserver.disconnect()
-  }, [bounds, pendingWaypoint, points, robotPose, waypoints])
+  }, [bounds, pendingWaypoint, points, robotPose, view, waypoints])
 
   const readMapPosition = (event: MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas || !bounds) return null
     const rect = canvas.getBoundingClientRect()
-    const canvasX = event.clientX - rect.left
-    const canvasY = event.clientY - rect.top
-    return canvasToMap(canvasX, canvasY, bounds, rect.width, rect.height, PADDING)
+    const screenX = event.clientX - rect.left
+    const screenY = event.clientY - rect.top
+    const centerX = rect.width / 2
+    const centerY = rect.height / 2
+    const baseX = (screenX - centerX - view.panX) / view.zoom + centerX
+    const baseY = (screenY - centerY - view.panY) / view.zoom + centerY
+    return canvasToMap(baseX, baseY, bounds, rect.width, rect.height, PADDING)
   }
 
   return (
     <div className="pcd-viewer-shell pcd-topdown-shell">
       <div className="pcd-viewer-label">2D 俯视投影</div>
+      <div className="pcd-topdown-toolbar">
+        <button
+          className="pcd-icon-button"
+          onClick={() => setView((current) => ({ ...current, zoom: clamp(current.zoom * 1.18, MIN_ZOOM, MAX_ZOOM) }))}
+          title="放大"
+        >
+          <ZoomIn size={15} />
+        </button>
+        <button
+          className="pcd-icon-button"
+          onClick={() => setView((current) => ({ ...current, zoom: clamp(current.zoom / 1.18, MIN_ZOOM, MAX_ZOOM) }))}
+          title="缩小"
+        >
+          <ZoomOut size={15} />
+        </button>
+        <button
+          className="pcd-icon-button"
+          onClick={() => setView({ zoom: 1, panX: 0, panY: 0 })}
+          title="复位视图"
+        >
+          <LocateFixed size={15} />
+        </button>
+      </div>
       <div className="pcd-canvas-host" ref={hostRef}>
         <canvas
           ref={canvasRef}
-          className={addMode ? 'is-adding' : ''}
+          className={addMode ? 'is-adding' : isPanning ? 'is-panning' : 'is-draggable'}
+          onWheel={(event) => {
+            if (!bounds) return
+            event.preventDefault()
+            const canvas = canvasRef.current
+            if (!canvas) return
+            const rect = canvas.getBoundingClientRect()
+            const cursorX = event.clientX - rect.left
+            const cursorY = event.clientY - rect.top
+            const centerX = rect.width / 2
+            const centerY = rect.height / 2
+            const nextZoom = clamp(
+              view.zoom * (event.deltaY < 0 ? 1.12 : 0.9),
+              MIN_ZOOM,
+              MAX_ZOOM,
+            )
+            const baseX = (cursorX - centerX - view.panX) / view.zoom + centerX
+            const baseY = (cursorY - centerY - view.panY) / view.zoom + centerY
+            setView({
+              zoom: nextZoom,
+              panX: cursorX - ((baseX - centerX) * nextZoom + centerX),
+              panY: cursorY - ((baseY - centerY) * nextZoom + centerY),
+            })
+          }}
           onMouseDown={(event) => {
-            if (!addMode) return
+            if (!addMode) {
+              panStartRef.current = {
+                pointerX: event.clientX,
+                pointerY: event.clientY,
+                panX: view.panX,
+                panY: view.panY,
+              }
+              setIsPanning(true)
+              return
+            }
             const position = readMapPosition(event)
             if (!position) return
             setPendingWaypoint({
@@ -245,6 +350,20 @@ export function PointCloudTopDownCanvas({
           onMouseMove={(event) => {
             const position = readMapPosition(event)
             onMouseMapPositionChange(position)
+            if (!addMode && panStartRef.current) {
+              const dx = event.clientX - panStartRef.current.pointerX
+              const dy = event.clientY - panStartRef.current.pointerY
+              setView((current) => {
+                const panStart = panStartRef.current
+                if (!panStart) return current
+                return {
+                  ...current,
+                  panX: panStart.panX + dx,
+                  panY: panStart.panY + dy,
+                }
+              })
+              return
+            }
             if (!addMode || !position || !pendingWaypoint) return
             setPendingWaypoint((current) => {
               if (!current) return current
@@ -256,9 +375,18 @@ export function PointCloudTopDownCanvas({
               return { ...current, yaw }
             })
           }}
-          onMouseLeave={() => onMouseMapPositionChange(null)}
+          onMouseLeave={() => {
+            onMouseMapPositionChange(null)
+            panStartRef.current = null
+            setIsPanning(false)
+          }}
           onMouseUp={() => {
-            if (!addMode || !pendingWaypoint) return
+            if (!addMode) {
+              panStartRef.current = null
+              setIsPanning(false)
+              return
+            }
+            if (!pendingWaypoint) return
             onAddWaypoint(pendingWaypoint)
             setPendingWaypoint(null)
           }}

@@ -17,6 +17,7 @@ import {
   ChevronsUp,
   ArrowLeftFromLine,
   ArrowRightFromLine,
+  AlertCircle,
 } from 'lucide-react';
 import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl';
 
@@ -48,7 +49,7 @@ const BUTTONS: ButtonConfig[] = [
 ];
 
 export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadProps) {
-  const { startCommand, stopCommand, isControlling, lastResult, currentCmd } =
+  const { startCommand, stopCommand, isControlling, lastResult, currentCmd, resultMessage } =
     useRobotControl();
 
   const handlePointerDown = useCallback(
@@ -127,7 +128,7 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
   const resultColor =
     lastResult?.result === 'ACCEPTED'
       ? 'text-emerald-400'
-      : lastResult?.result === 'REJECTED_E_STOP'
+      : lastResult?.result === 'REJECTED_E_STOP' || lastResult?.result === 'REJECTED_ADAPTER_ERROR'
       ? 'text-red-400'
       : 'text-yellow-400';
 
@@ -185,16 +186,24 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
       </div>
 
       {/* 状态栏 */}
-      <div className="mt-1.5 flex items-center justify-between text-[8px] font-mono">
-        {lastResult ? (
-          <>
-            <span className="text-white/30">{lastResult.ack_cmd}</span>
-            <span className={resultColor}>{lastResult.result}</span>
-            <span className="text-white/30">{lastResult.latency_ms}ms</span>
-          </>
-        ) : (
-          <span className="text-white/20 w-full text-center">按住按钮控制机器狗</span>
+      <div className="mt-1.5 min-h-[12px] flex flex-col gap-0.5 font-mono">
+        {resultMessage && (
+          <div className={`flex items-center gap-1 text-[8px] font-black italic ${resultColor}`}>
+            <AlertCircle size={8} />
+            <span>{resultMessage}</span>
+          </div>
         )}
+        <div className="flex items-center justify-between text-[8px]">
+          {lastResult ? (
+            <>
+              <span className="text-white/30">{lastResult.ack_cmd}</span>
+              <span className={`${resultColor} font-black opacity-80`}>{lastResult.result}</span>
+              <span className="text-white/30">{lastResult.latency_ms}ms</span>
+            </>
+          ) : (
+            <span className="text-white/20 w-full text-center tracking-tighter">按住按钮控制机器狗 (WASD/QE)</span>
+          )}
+        </div>
       </div>
     </div>
   );

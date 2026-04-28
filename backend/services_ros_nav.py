@@ -66,6 +66,8 @@ class RosNavBridge:
         self._rclpy: Any | None = None
         self._tf_buffer: Any | None = None
         self._tf_listener: Any | None = None
+        self._page_open_publisher: Any | None = None
+        self._start_publisher: Any | None = None
         self._goal_publisher: Any | None = None
         self._estop_publisher: Any | None = None
         self._publisher_lock = threading.RLock()
@@ -206,6 +208,16 @@ class RosNavBridge:
         except Exception as exc:
             raise RuntimeError(f"导航发布消息类型不可用: {exc}") from exc
 
+        self._page_open_publisher = self._node.create_publisher(
+            Bool,
+            settings.ROS_NAV_PAGE_OPEN_TOPIC,
+            10,
+        )
+        self._start_publisher = self._node.create_publisher(
+            Bool,
+            settings.ROS_NAV_START_TOPIC,
+            10,
+        )
         self._goal_publisher = self._node.create_publisher(
             PoseStamped,
             settings.ROS_NAV_GOAL_TOPIC,
@@ -213,14 +225,50 @@ class RosNavBridge:
         )
         self._estop_publisher = self._node.create_publisher(
             Bool,
-            settings.ROS_NAV_ESTOP_TOPIC,
+            settings.ROS_NAV_STOP_TOPIC,
             10,
         )
         logger.info(
-            "ROS2 导航发布器已启动: goal_topic={}, estop_topic={}",
+            "ROS2 导航发布器已启动: page_open_topic={}, start_topic={}, goal_topic={}, stop_topic={}",
+            settings.ROS_NAV_PAGE_OPEN_TOPIC,
+            settings.ROS_NAV_START_TOPIC,
             settings.ROS_NAV_GOAL_TOPIC,
-            settings.ROS_NAV_ESTOP_TOPIC,
+            settings.ROS_NAV_STOP_TOPIC,
         )
+
+    def publish_navigation_page_open(self) -> dict[str, Any]:
+        if self._node is None or self._page_open_publisher is None:
+            raise RuntimeError("ROS2 导航页面启动发布器未就绪")
+
+        from std_msgs.msg import Bool
+
+        msg = Bool()
+        msg.data = True
+        with self._publisher_lock:
+            self._page_open_publisher.publish(msg)
+
+        return {
+            "success": True,
+            "topic": settings.ROS_NAV_PAGE_OPEN_TOPIC,
+            "data": True,
+        }
+
+    def publish_navigation_start(self) -> dict[str, Any]:
+        if self._node is None or self._start_publisher is None:
+            raise RuntimeError("ROS2 导航开始发布器未就绪")
+
+        from std_msgs.msg import Bool
+
+        msg = Bool()
+        msg.data = True
+        with self._publisher_lock:
+            self._start_publisher.publish(msg)
+
+        return {
+            "success": True,
+            "topic": settings.ROS_NAV_START_TOPIC,
+            "data": True,
+        }
 
     def publish_navigation_goal(self, waypoint: dict[str, Any]) -> dict[str, Any]:
         if self._node is None or self._goal_publisher is None:
@@ -267,7 +315,7 @@ class RosNavBridge:
 
         return {
             "success": True,
-            "topic": settings.ROS_NAV_ESTOP_TOPIC,
+            "topic": settings.ROS_NAV_STOP_TOPIC,
         }
 
     def _use_tf_pose(self) -> bool:

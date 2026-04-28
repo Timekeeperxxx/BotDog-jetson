@@ -5,18 +5,25 @@ import type { NavWaypoint } from '../../types/pcdMap'
 import type { RobotPose } from '../../types/navState'
 import { mapToThree } from '../../utils/pointCloudTransform'
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
+
 type Props = {
   points: [number, number, number][]
   waypoints: NavWaypoint[]
   robotPose: RobotPose | null
+  followRobot?: boolean
 }
 
-export function PointCloud3DViewer({ points, waypoints, robotPose }: Props) {
+export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot = false }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const sceneRef = useRef<THREE.Scene | null>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const controlsRef = useRef<OrbitControls | null>(null)
+  const followOffsetRef = useRef<THREE.Vector3 | null>(null)
+  const gridRef = useRef<THREE.GridHelper | null>(null)
   const cloudRef = useRef<THREE.Points | null>(null)
   const waypointGroupRef = useRef<THREE.Group | null>(null)
   const robotGroupRef = useRef<THREE.Group | null>(null)
@@ -44,7 +51,8 @@ export function PointCloud3DViewer({ points, waypoints, robotPose }: Props) {
     controls.dampingFactor = 0.08
     controlsRef.current = controls
 
-    const grid = new THREE.GridHelper(20, 20, 0x33515a, 0x1d333a)
+    const grid = new THREE.GridHelper(80, 40, 0x33515a, 0x1d333a)
+    gridRef.current = grid
     scene.add(grid)
     scene.add(new THREE.AmbientLight(0xffffff, 0.85))
 
@@ -136,6 +144,7 @@ export function PointCloud3DViewer({ points, waypoints, robotPose }: Props) {
     const scene = sceneRef.current
     const camera = cameraRef.current
     const controls = controlsRef.current
+    const grid = gridRef.current
     if (!scene || !camera || !controls) return
 
     if (cloudRef.current) {
@@ -147,7 +156,15 @@ export function PointCloud3DViewer({ points, waypoints, robotPose }: Props) {
       cloudRef.current = null
     }
 
-    if (points.length === 0) return
+    if (points.length === 0) {
+      controls.target.set(0, 0, 0)
+      camera.position.set(18, 12, 18)
+      camera.near = 0.01
+      camera.far = 10000
+      camera.updateProjectionMatrix()
+      controls.update()
+      return
+    }
 
     const positions = new Float32Array(points.length * 3)
     points.forEach(([x, y, z], index) => {
@@ -159,11 +176,13 @@ export function PointCloud3DViewer({ points, waypoints, robotPose }: Props) {
 
     const geometry = new THREE.BufferGeometry()
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geometry.computeBoundingBox()
     geometry.computeBoundingSphere()
 
+    const box = geometry.boundingBox
     const material = new THREE.PointsMaterial({
       color: 0x5eead4,
-      size: 0.035,
+      size: 0.05,
       sizeAttenuation: true,
     })
 
@@ -171,15 +190,32 @@ export function PointCloud3DViewer({ points, waypoints, robotPose }: Props) {
     cloudRef.current = cloud
     scene.add(cloud)
 
-    const sphere = geometry.boundingSphere
-    if (sphere) {
-      controls.target.copy(sphere.center)
-      const radius = Math.max(2, sphere.radius)
-      camera.position.set(sphere.center.x + radius, sphere.center.y + radius * 0.8, sphere.center.z + radius)
-      camera.near = Math.max(0.01, radius / 1000)
-      camera.far = Math.max(1000, radius * 10)
+    if (box) {
+      const size = box.getSize(new THREE.Vector3())
+      const center = box.getCenter(new THREE.Vector3())
+      const horizontalSpan = Math.max(size.x, size.z, 1)
+      const verticalSpan = Math.max(size.y, 0.8)
+      const fitHeightDistance = verticalSpan / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2))
+      const fitWidthDistance = horizontalSpan / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * Math.max(camera.aspect, 0.75))
+      const distance = Math.max(fitHeightDistance, fitWidthDistance) * 1.22
+      const direction = new THREE.Vector3(1, 0.18, 1).normalize()
+
+      controls.target.copy(center)
+      camera.position.copy(center.clone().add(direction.multiplyScalar(distance)))
+      camera.near = Math.max(0.01, distance / 500)
+      camera.far = Math.max(1000, distance * 30)
       camera.updateProjectionMatrix()
+      controls.minDistance = Math.max(0.5, distance * 0.2)
+      controls.maxDistance = Math.max(10, distance * 8)
       controls.update()
+
+      if (grid) {
+        const gridSize = clamp(Math.ceil(horizontalSpan * 1.6), 20, 240)
+        const divisions = clamp(Math.ceil(gridSize / 3), 10, 80)
+        grid.geometry.dispose()
+        grid.geometry = new THREE.GridHelper(gridSize, divisions, 0x33515a, 0x1d333a).geometry
+        grid.position.set(center.x, Math.min(box.min.y, 0), center.z)
+      }
     }
   }, [points])
 
@@ -213,7 +249,9 @@ export function PointCloud3DViewer({ points, waypoints, robotPose }: Props) {
 
   useEffect(() => {
     const robotGroup = robotGroupRef.current
-    if (!robotGroup) return
+    const camera = cameraRef.current
+    const controls = controlsRef.current
+    if (!robotGroup || !camera || !controls) return
 
     if (!robotPose) {
       robotGroup.visible = false
@@ -224,7 +262,20 @@ export function PointCloud3DViewer({ points, waypoints, robotPose }: Props) {
     robotGroup.visible = true
     robotGroup.position.set(pos.x, pos.y, pos.z)
     robotGroup.rotation.y = robotPose.yaw
-  }, [robotPose])
+
+    if (followRobot) {
+      const currentTarget = controls.target.clone()
+      const currentOffset = camera.position.clone().sub(currentTarget)
+      if (followOffsetRef.current === null) {
+        followOffsetRef.current = currentOffset
+      }
+      controls.target.set(pos.x, pos.y, pos.z)
+      camera.position.copy(new THREE.Vector3(pos.x, pos.y, pos.z).add(followOffsetRef.current))
+      controls.update()
+    } else {
+      followOffsetRef.current = null
+    }
+  }, [followRobot, robotPose])
 
   return (
     <div className="pcd-viewer-shell">

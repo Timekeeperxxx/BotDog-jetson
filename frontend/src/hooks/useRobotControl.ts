@@ -30,10 +30,19 @@ export type RobotCommand =
   | 'stand'
   | 'stop';
 
+// 后端结果码
+export type ControlResult =
+  | 'ACCEPTED'
+  | 'REJECTED_E_STOP'
+  | 'REJECTED_INVALID_CMD'
+  | 'RATE_LIMITED'
+  | 'REJECTED_ADAPTER_NOT_READY'
+  | 'REJECTED_ADAPTER_ERROR';
+
 // 后端响应
 export interface ControlAck {
   ack_cmd: string;
-  result: 'ACCEPTED' | 'REJECTED_E_STOP' | 'REJECTED_INVALID_CMD' | 'RATE_LIMITED';
+  result: ControlResult;
   latency_ms: number;
 }
 
@@ -55,6 +64,8 @@ export interface UseRobotControlReturn {
   lastResult: ControlAck | null;
   /** 当前正在执行的命令 */
   currentCmd: RobotCommand | null;
+  /** 命令结果对应的中文提示 */
+  resultMessage: string | null;
 }
 
 export function useRobotControl(): UseRobotControlReturn {
@@ -64,6 +75,28 @@ export function useRobotControl(): UseRobotControlReturn {
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isSendingRef = useRef(false); // 防止并发发送
+
+  // 根据结果码获取中文提示
+  const getResultMessage = (result: ControlResult): string | null => {
+    switch (result) {
+      case 'ACCEPTED':
+        return null;
+      case 'REJECTED_ADAPTER_NOT_READY':
+        return '机器人控制适配器未就绪';
+      case 'REJECTED_ADAPTER_ERROR':
+        return '机器人控制命令发送失败';
+      case 'REJECTED_E_STOP':
+        return '急停状态，控制命令已拒绝';
+      case 'REJECTED_INVALID_CMD':
+        return '非法控制命令';
+      case 'RATE_LIMITED':
+        return '命令过快';
+      default:
+        return null;
+    }
+  };
+
+  const resultMessage = lastResult ? getResultMessage(lastResult.result) : null;
 
   // ── 发送单次命令 ──────────────────────────────────────────────────────────
 
@@ -86,9 +119,21 @@ export function useRobotControl(): UseRobotControlReturn {
       if (res.ok) {
         const ack: ControlAck = await res.json();
         setLastResult(ack);
+      } else {
+        // HTTP 错误也视为适配器错误
+        setLastResult({
+          ack_cmd: cmd,
+          result: 'REJECTED_ADAPTER_ERROR',
+          latency_ms: 0,
+        });
       }
     } catch {
-      // 网络错误静默忽略（Watchdog 会超时保底）
+      // 网络错误视为适配器错误
+      setLastResult({
+        ack_cmd: cmd,
+        result: 'REJECTED_ADAPTER_ERROR',
+        latency_ms: 0,
+      });
     } finally {
       isSendingRef.current = false;
     }
@@ -162,5 +207,6 @@ export function useRobotControl(): UseRobotControlReturn {
     isControlling,
     lastResult,
     currentCmd,
+    resultMessage,
   };
 }
