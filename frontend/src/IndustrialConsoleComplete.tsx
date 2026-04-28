@@ -4,7 +4,7 @@
  * 采用新布局：左侧导航 + 顶部状态栏 + 中央视频(HUD) + 右侧栏(日志+AI)
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useBotDogWebSocket } from './hooks/useBotDogWebSocket';
 import { useWhepVideo } from './hooks/useWhepVideo';
 import { ConfigPanel } from './components/ConfigPanel';
@@ -17,157 +17,29 @@ import { TrackOverlay } from './components/TrackOverlay1';
 import { GuardControlCenter, GuardStatus } from './components/GuardControlCenter';
 import { ZoneDrawer } from './components/ZoneDrawer';
 import { getApiUrl } from './config/api';
+import { useEvidence } from './hooks/useEvidence';
+import { Sidebar, type SidebarTab } from './components/layout/Sidebar';
+import { TopHeader } from './components/layout/TopHeader';
+import { EvidencePanel } from './components/evidence/EvidencePanel';
+import { LogPanel } from './components/logs/LogPanel';
+import { DetectionAlert } from './components/alerts/DetectionAlert';
+import { StatusWidgets } from './components/status/StatusWidgets';
 import type { VideoSource } from './types/admin';
 import {
-  Activity,
-  Battery,
-  Wifi,
   Camera,
-  Thermometer,
-  LayoutGrid,
-  History,
-  Bell,
-  Terminal,
-  ChevronDown,
-  ChevronUp,
   Play,
   Square,
   Maximize2,
   Minimize2,
   ShieldCheck,
-  Settings,
-  Search,
-  Clock,
+  ChevronDown,
+  ChevronUp,
   ArrowLeftRight,
   X,
-  Database,
-  Map,
   PenLine,
   Volume2,
   VolumeX,
 } from 'lucide-react';
-
-interface EvidenceItem {
-  evidence_id: number;
-  task_id: number;
-  event_type: string;
-  event_code?: string | null;
-  severity: 'INFO' | 'WARNING' | 'CRITICAL';
-  message?: string | null;
-  confidence?: number | null;
-  file_path: string;
-  image_url?: string | null;
-  gps_lat?: number | null;
-  gps_lon?: number | null;
-  created_at: string;
-}
-
-// ==================== 侧边导航按钮 ====================
-function SidebarBtn({ icon, active, onClick, label, dot }: {
-  icon: React.ReactNode;
-  active: boolean;
-  onClick?: () => void;
-  label: string;
-  dot?: boolean;
-}) {
-  return (
-    <div
-      onClick={onClick}
-      className={`relative p-3 rounded-lg cursor-pointer transition-all duration-200 group ${
-        active
-          ? 'bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.3)]'
-          : 'text-slate-400 hover:text-white hover:bg-zinc-900'
-      }`}
-    >
-      {icon}
-      {dot && <div className="absolute top-2 right-2 w-2 h-2 bg-red-600 rounded-full border-2 border-black" />}
-      <div className="absolute left-16 opacity-0 group-hover:opacity-100 pointer-events-none bg-white text-black border-2 border-white px-3 py-1.5 rounded text-[10px] uppercase font-black whitespace-nowrap transition-all transform group-hover:translate-x-1 z-[100]">
-        {label}
-      </div>
-    </div>
-  );
-}
-
-// ==================== 顶部状态指标 ====================
-function TopStatus({ icon, value, label }: { icon: React.ReactNode; value: string; label: string }) {
-  return (
-    <div className="flex items-center space-x-3">
-      <div className="p-2 rounded-sm bg-zinc-900 text-white border border-white/10">
-        {icon}
-      </div>
-      <div className="flex flex-col -space-y-1">
-        <span className="text-[9px] uppercase font-black text-slate-500 tracking-tighter">{label}</span>
-        <span className="text-[11px] font-mono font-black text-white">{value}</span>
-      </div>
-    </div>
-  );
-}
-
-// ==================== 顶部数据点 ====================
-function DataPointHeader({ label, value, unit }: { label: string; value: string; unit: string }) {
-  return (
-    <div className="flex items-baseline space-x-2 group">
-      <span className="text-[9px] uppercase font-black text-slate-500 tracking-tighter group-hover:text-white">{label}</span>
-      <span className="text-lg font-mono font-black text-white">{value}</span>
-      <span className="text-[10px] font-mono font-bold text-slate-400">{unit}</span>
-    </div>
-  );
-}
-
-// ==================== AI 检测卡片 ====================
-function getImageUrl(imageUrl?: string | null): string | null {
-  if (!imageUrl) return null;
-  if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-    return imageUrl;
-  }
-  return getApiUrl(imageUrl);
-}
-
-function DetectionAlert({ data }: {
-  data: { severity: string; message: string; confidence?: number; timestamp: string; image_url?: string };
-}) {
-  const isStranger = data.severity === 'CRITICAL';
-  const imageSrc = getImageUrl(data.image_url);
-  const severityLabel: Record<string, string> = {
-    CRITICAL: '紧急告警',
-    WARNING: '警告',
-    INFO: '提示',
-  };
-  const displaySeverity = severityLabel[data.severity] ?? data.severity;
-  return (
-    <div className="group bg-zinc-900 border-2 border-white/10 p-3 rounded-xl shadow-2xl hover:border-white transition-all cursor-pointer">
-      <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2">
-        <div className="flex items-center space-x-2">
-          <div className={`w-2 h-2 rounded-full ${isStranger ? 'bg-red-500 animate-pulse' : 'bg-orange-500'}`} />
-          <span className="text-[10px] font-black tracking-widest text-white">
-            {displaySeverity}
-          </span>
-        </div>
-        <span className="text-[10px] font-mono font-black text-slate-400">
-          {new Date(data.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}
-        </span>
-      </div>
-      <div className="flex space-x-4 items-center">
-        {imageSrc && (
-          <div className="w-14 h-14 rounded-lg overflow-hidden border-2 border-white/20 bg-black shadow-inner shrink-0">
-            <img src={imageSrc} className="w-full h-full object-cover opacity-90 group-hover:scale-110 transition-transform" />
-          </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <p className="text-[12px] font-black text-white truncate leading-tight tracking-wide">{data.message}</p>
-          {data.confidence !== undefined && (
-            <div className="flex items-center space-x-2 mt-2">
-              <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden border border-white/5">
-                <div className="h-full bg-white" style={{ width: `${data.confidence * 100}%` }} />
-              </div>
-              <p className="text-[10px] text-white font-mono font-black">{(data.confidence * 100).toFixed(0)}%</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ==================== 主应用 ====================
 export default function IndustrialConsoleComplete() {
@@ -244,21 +116,16 @@ export default function IndustrialConsoleComplete() {
   const [isUiFullscreen, setIsUiFullscreen] = useState(false);
   const [showConfigPanel, setShowConfigPanel] = useState(false);
   const [missionTaskId, setMissionTaskId] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<'console' | 'history' | 'simulate' | 'admin' | 'guard'>('console');
+  const [activeTab, setActiveTab] = useState<SidebarTab>('console');
   const [isLogExpanded, setIsLogExpanded] = useState(false);
   const [isAiStatsExpanded, setIsAiStatsExpanded] = useState(false);
   const [isZoneDrawing, setIsZoneDrawing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
-  const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [guardStatus, setGuardStatus] = useState<GuardStatus | null>(null);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-  const [evidenceError, setEvidenceError] = useState<string | null>(null);
-  const [selectedEvidence, setSelectedEvidence] = useState<Set<number>>(new Set());
-  const [evidenceDeleting, setEvidenceDeleting] = useState(false);
-  const [lightboxItem, setLightboxItem] = useState<EvidenceItem | null>(null);
 
   const fullscreenRequestedRef = useRef(false);
+  const evidence = useEvidence();
+  const { fetchEvidence } = evidence;
 
   const openNavPatrolPage = useCallback(() => {
     window.location.href = '/nav-patrol.html';
@@ -298,57 +165,6 @@ export default function IndustrialConsoleComplete() {
   const triggerSnapshot = useCallback(() => {
     addLog('手动拍照请求已发送', 'info', 'SNAPSHOT');
   }, [addLog]);
-
-  const fetchEvidence = useCallback(async () => {
-    setEvidenceLoading(true);
-    setEvidenceError(null);
-    try {
-      const res = await fetch(getApiUrl('/api/v1/evidence'));
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      setEvidenceItems(data.items || []);
-      setSelectedEvidence(new Set());
-    } catch (err) {
-      setEvidenceError(err instanceof Error ? err.message : '加载失败');
-    } finally {
-      setEvidenceLoading(false);
-    }
-  }, []);
-
-  const deleteEvidenceByIds = useCallback(async (ids: number[]) => {
-    if (ids.length === 0) return;
-    setEvidenceDeleting(true);
-    setEvidenceError(null);
-    try {
-      const res = await fetch(getApiUrl('/api/v1/evidence/bulk-delete'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ evidence_ids: ids }),
-      });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error('删除失败');
-      }
-      await fetchEvidence();
-    } catch (err) {
-      setEvidenceError(err instanceof Error ? err.message : '删除失败');
-    } finally {
-      setEvidenceDeleting(false);
-    }
-  }, [fetchEvidence]);
-
-  const deleteEvidenceSingle = useCallback((id: number) => {
-    void deleteEvidenceByIds([id]);
-  }, [deleteEvidenceByIds]);
-
-  const deleteEvidenceSelected = useCallback(() => {
-    void deleteEvidenceByIds(Array.from(selectedEvidence));
-  }, [deleteEvidenceByIds, selectedEvidence]);
 
   // WebSocket 连接
   useEffect(() => { connectWs(); return () => { disconnectWs(); }; }, []);
@@ -527,13 +343,6 @@ export default function IndustrialConsoleComplete() {
     };
   }, []);
 
-  // 自动滚动日志
-  useEffect(() => {
-    if (isLogExpanded) sidebarLogEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs, isLogExpanded]);
-
-  const logRecentStatus = useMemo(() => logs.slice(-5).map(l => l.level), [logs]);
-
   const resolutionChip = videoResolution.height ? `${videoResolution.height}p` : '--';
 
   const whepConfig: Record<string, { color: string; text: string }> = {
@@ -544,94 +353,26 @@ export default function IndustrialConsoleComplete() {
   };
   const currentWhep = whepConfig[whepStatus.status] || whepConfig.disconnected;
 
-  const filteredEvidence = useMemo(() => {
-    if (!searchQuery) return evidenceItems;
-    return evidenceItems.filter(item => (item.message || '').includes(searchQuery) || item.severity.includes(searchQuery));
-  }, [evidenceItems, searchQuery]);
-
-  const toggleEvidenceSelected = (id: number) => {
-    setSelectedEvidence((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  };
-
-  const toggleAllEvidence = () => {
-    if (filteredEvidence.length === 0) return;
-    const allSelected = filteredEvidence.every((item) => selectedEvidence.has(item.evidence_id));
-    if (allSelected) {
-      setSelectedEvidence(new Set());
-      return;
-    }
-    const next = new Set<number>();
-    filteredEvidence.forEach((item) => next.add(item.evidence_id));
-    setSelectedEvidence(next);
-  };
-
   return (
     <div className="flex h-screen w-full bg-[#050506] text-white font-sans overflow-hidden antialiased selection:bg-white selection:text-black">
-
-      {/* 侧边导航 */}
-      {!isUiFullscreen && (
-        <nav className="w-14 flex flex-col items-center py-6 bg-black border-r border-white/20 z-50 shadow-2xl">
-          <div className="w-9 h-9 border-2 border-white rounded-sm flex items-center justify-center mb-10 group cursor-pointer hover:bg-white transition-all">
-            <Activity size={18} className="text-white group-hover:text-black" />
-          </div>
-          <div className="flex-1 flex flex-col space-y-5">
-            <SidebarBtn icon={<LayoutGrid size={20} />} active={activeTab === 'console'} onClick={() => setActiveTab('console')} label="控制台" />
-            <SidebarBtn icon={<Map size={20} />} active={false} onClick={openNavPatrolPage} label="导航巡逻" />
-            <SidebarBtn icon={<ShieldCheck size={20} />} active={activeTab === 'guard'} onClick={() => setActiveTab('guard')} label="驱离系统" />
-            <SidebarBtn icon={<History size={20} />} active={activeTab === 'history'} onClick={() => setActiveTab('history')} label="档案库" />
-            <SidebarBtn icon={<Database size={20} />} active={activeTab === 'admin'} onClick={() => setActiveTab('admin')} label="后台管理" />
-          </div>
-          <div className="mt-auto space-y-5 pt-4 border-t border-white/10">
-            <SidebarBtn icon={<Settings size={20} />} active={false} onClick={() => setShowConfigPanel(true)} label="设置" />
-            <SidebarBtn icon={<Bell size={20} />} active={false} dot={!!latestAlert} label="告警" />
-          </div>
-        </nav>
-      )}
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        onOpenNavPatrolPage={openNavPatrolPage}
+        onOpenConfig={() => setShowConfigPanel(true)}
+        latestAlert={latestAlert}
+        isUiFullscreen={isUiFullscreen}
+      />
 
       {/* 主视图 */}
       <main className="flex-1 flex flex-col min-w-0 relative">
-
-        {/* 顶部页眉 */}
-        {!isUiFullscreen && (
-          <header className="h-12 bg-black backdrop-blur-md border-b border-white/20 flex items-center justify-between px-6 z-40">
-            <div className="flex items-center space-x-6">
-              <div className="flex items-center space-x-3">
-                <span className="text-[11px] font-black text-white uppercase tracking-widest">BotDog</span>
-                <div className="h-4 w-px bg-white/30" />
-                <span className="text-[10px] font-mono text-slate-300 font-bold tracking-tight">V5.0-核心终端</span>
-              </div>
-              {isMissionRunning && (
-                <div className="flex items-center space-x-2 px-2.5 py-1 bg-white rounded-sm border border-white shadow-[0_0_10px_rgba(255,255,255,0.2)]">
-                  <div className="w-1.5 h-1.5 bg-black rounded-full animate-pulse" />
-                  <span className="text-[9px] font-black text-black uppercase tracking-tighter">Active</span>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center space-x-10">
-              <div className="hidden lg:flex items-center space-x-8 pr-8 border-r border-white/20 font-bold">
-                <DataPointHeader label="速度" value={telemetry?.position.groundspeed != null ? telemetry.position.groundspeed.toFixed(1) : '--'} unit="m/s" />
-                <DataPointHeader label="航向" value={telemetry ? (telemetry.attitude.yaw || 0).toFixed(0) : '--'} unit="°" />
-                <DataPointHeader label="延迟" value={videoLatencyMs !== null ? `${videoLatencyMs}` : '--'} unit="ms" />
-              </div>
-              <div className="flex items-center space-x-6">
-                <TopStatus icon={<Wifi size={16} />} value={isConnected ? '在线' : '离线'} label="链路" />
-                <TopStatus icon={<Battery size={16} />} value={telemetry?.battery_pct != null ? `${telemetry.battery_pct.toFixed(0)}%` : '--'} label="电量" />
-                <TopStatus icon={<Thermometer size={16} />} value={telemetry?.core_temp_c != null ? `${telemetry.core_temp_c.toFixed(0)}°C` : '--'} label="温度" />
-              </div>
-              <div className="text-[11px] font-mono font-black text-white pl-6 border-l border-white/20">
-                {new Date().toLocaleTimeString('zh-CN', { hour12: false })}
-              </div>
-            </div>
-          </header>
-        )}
+        <TopHeader
+          isUiFullscreen={isUiFullscreen}
+          isMissionRunning={isMissionRunning}
+          telemetry={telemetry}
+          isConnected={isConnected}
+          videoLatencyMs={videoLatencyMs}
+        />
 
         {activeTab === 'console' ? (
           <div className="flex-1 flex min-h-0 relative">
@@ -726,48 +467,15 @@ export default function IndustrialConsoleComplete() {
                 </div>
               )}
 
-              {/* 左上角信息 */}
-              <div className="absolute top-4 left-4 z-10">
-                <div className="bg-black/25 border-l-2 border-blue-500 px-3 py-2.5 font-mono text-[10px] flex flex-col gap-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-white/40 uppercase">清晰度:</span>
-                    <span className="text-slate-200 font-bold">{resolutionChip}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-white/40 uppercase">视频流:</span>
-                    <span className={`font-bold ${currentWhep.color}`}>{currentWhep.text}</span>
-                  </div>
-                  <div className="pt-1.5 border-t border-white/10 text-white/35 uppercase">
-                    信号: {telemetry ? `${telemetry.rssi_dbm} dBm` : '--'}
-                  </div>
-                </div>
-                {isUiFullscreen && (
-                  <div className="mt-2 bg-white/5 text-slate-400 px-2 py-1 rounded text-[9px] font-bold">
-                    按 ESC 退出全屏
-                  </div>
-                )}
-              </div>
-
-              {/* 左下角 AI 帧数统计 */}
-              <div className="absolute bottom-20 left-4 z-10 font-mono text-[10px]">
-                <div className="bg-black/50 border-l-2 border-emerald-500/60 px-2.5 py-1.5 flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-white/40 uppercase">AI帧</span>
-                    <span className={`font-black ${aiStatus ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {aiStatus?.frames_processed ?? 0}
-                    </span>
-                    {!aiStatus && <span className="text-red-400/80">无数据</span>}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-white/40 uppercase">检出</span>
-                    <span className="font-black text-amber-400">{aiStatus?.detections_count ?? 0}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-white/40 uppercase">跟踪帧</span>
-                    <span className="font-black text-cyan-400">{autoTrack.status?.frames_processed ?? 0}</span>
-                  </div>
-                </div>
-              </div>
+              <StatusWidgets
+                resolutionChip={resolutionChip}
+                whepStatusText={currentWhep.text}
+                whepStatusColor={currentWhep.color}
+                telemetry={telemetry}
+                isUiFullscreen={isUiFullscreen}
+                aiStatus={aiStatus}
+                autoTrackFrames={autoTrack.status?.frames_processed ?? 0}
+              />
 
               {activeTab === 'console' && !isUiFullscreen && (
                 <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
@@ -951,41 +659,12 @@ export default function IndustrialConsoleComplete() {
             {!isUiFullscreen && activeTab === 'console' && (
               <aside className="w-64 bg-black flex flex-col shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
                 {/* 可折叠日志区 */}
-                <div className={`flex flex-col border-b border-white/20 transition-all duration-300 ${isLogExpanded ? 'h-1/3' : 'h-10'}`}>
-                  <div
-                    onClick={() => setIsLogExpanded(!isLogExpanded)}
-                    className="flex items-center justify-between px-4 h-10 bg-white/10 cursor-pointer hover:bg-white hover:text-black transition-all group shrink-0"
-                  >
-                    <div className="flex items-center space-x-3 font-bold">
-                      <Terminal size={14} />
-                      <span className="text-[10px] uppercase tracking-widest font-black">终端状态</span>
-                      <div className="flex space-x-1.5 ml-2">
-                        {logRecentStatus.map((level, i) => (
-                          <div key={i} className={`w-2 h-2 rounded-full border border-black/20 ${level === 'error' ? 'bg-red-500 shadow-[0_0_8px_red]' : level === 'warning' ? 'bg-orange-500' : 'bg-white'}`} />
-                        ))}
-                      </div>
-                    </div>
-                    {isLogExpanded ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
-                  </div>
-                  {isLogExpanded && (
-                    <div className="flex-1 overflow-y-auto p-4 font-mono text-[10px] bg-black custom-scrollbar border-t border-white/5">
-                      {logs.slice(-30).map((log, index) => (
-                        <div key={`${log.timestamp}-${index}`} className="flex space-x-3 mb-2 border-b border-white/[0.05] pb-1">
-                          <span className="text-slate-500 whitespace-nowrap">
-                            [{new Date(log.timestamp * 1000).toLocaleTimeString([], { hour12: false, minute: '2-digit', second: '2-digit' })}]
-                          </span>
-                          <span className={
-                            log.level === 'error' ? 'text-red-500 font-black' :
-                            log.level === 'warning' ? 'text-orange-500 font-black' :
-                            'text-slate-200 font-bold'
-                          }>{log.level.charAt(0).toUpperCase()}</span>
-                          <span className="text-slate-100 truncate leading-relaxed font-medium">[{log.module}] {log.message}</span>
-                        </div>
-                      ))}
-                      <div ref={sidebarLogEndRef} />
-                    </div>
-                  )}
-                </div>
+                <LogPanel
+                  logs={logs}
+                  isExpanded={isLogExpanded}
+                  onToggle={() => setIsLogExpanded(!isLogExpanded)}
+                  sidebarLogEndRef={sidebarLogEndRef}
+                />
 
                 {/* 控制面板区 */}
                 <div className="border-t border-white/20 bg-zinc-950 shrink-0">
@@ -1077,10 +756,10 @@ export default function IndustrialConsoleComplete() {
                     </button>
                   </div>
                   <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-zinc-900/20">
-                    {alerts.length === 0 ? (
-                      <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3">
-                        <ShieldCheck size={40} className="text-white/20" />
-                        <p className="text-[10px] uppercase font-black tracking-widest text-white/30">监测运行中...</p>
+                      {alerts.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3">
+                          <ShieldCheck size={40} className="text-white/20" />
+                          <p className="text-[10px] uppercase font-black tracking-widest text-white/30">监测运行中...</p>
                         {(whepStatus.status !== 'connected' || !isConnected) && (
                           <button
                             onClick={() => {
@@ -1093,11 +772,11 @@ export default function IndustrialConsoleComplete() {
                           </button>
                         )}
                       </div>
-                    ) : (
-                      alerts.slice(0, 15).map((a, i) => (
-                        <DetectionAlert key={`${a.timestamp}-${i}`} data={a} />
-                      ))
-                    )}
+                      ) : (
+                        alerts.slice(0, 15).map((a, i) => (
+                          <DetectionAlert key={`${a.timestamp}-${i}`} data={a} />
+                        ))
+                      )}
                   </div>
                 </div>
               </aside>
@@ -1124,192 +803,9 @@ export default function IndustrialConsoleComplete() {
             onAudioToggle={toggleAudio}
           />
         ) : (
-          /* 档案库页面 */
-          <div className="flex-1 flex flex-col bg-black overflow-hidden p-8">
-            <header className="flex flex-wrap items-end justify-between gap-4 mb-10 border-b border-white/20 pb-8">
-              <div>
-                <h1 className="text-4xl font-black tracking-tighter text-white mb-2 uppercase">数据档案库</h1>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Digital Evidence & Analytics</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="relative">
-                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                  <input
-                    type="text"
-                    placeholder="搜索告警..."
-                    className="bg-zinc-900 border-2 border-white/20 rounded-lg py-3 pl-12 pr-6 text-sm font-bold text-white focus:outline-none focus:border-white transition-all w-80 placeholder:text-zinc-700"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                  />
-                </div>
-                <button
-                  onClick={toggleAllEvidence}
-                  className="px-4 py-3 text-[10px] font-black uppercase tracking-widest border-2 border-white/20 text-white hover:border-white transition-all"
-                >
-                  {filteredEvidence.length > 0 && filteredEvidence.every((item) => selectedEvidence.has(item.evidence_id)) ? '取消全选' : '全选'}
-                </button>
-                <button
-                  onClick={deleteEvidenceSelected}
-                  disabled={selectedEvidence.size === 0 || evidenceDeleting}
-                  className={`px-4 py-3 text-[10px] font-black uppercase tracking-widest border-2 transition-all ${selectedEvidence.size === 0 || evidenceDeleting ? 'border-white/10 text-white/30 cursor-not-allowed' : 'border-red-500/60 text-red-300 hover:border-red-400 hover:text-red-200'}`}
-                >
-                  {evidenceDeleting ? '删除中' : `删除选中(${selectedEvidence.size})`}
-                </button>
-              </div>
-            </header>
-            <div className="flex-1 overflow-y-auto custom-scrollbar pb-10">
-              {evidenceLoading ? (
-                <div className="flex flex-col items-center justify-center h-full text-slate-500 space-y-4">
-                  <ShieldCheck size={64} className="text-white/10" />
-                  <p className="text-sm font-black uppercase tracking-widest text-white/20">加载中...</p>
-                </div>
-              ) : evidenceError ? (
-                <div className="flex flex-col items-center justify-center h-full text-slate-500 space-y-4">
-                  <ShieldCheck size={64} className="text-white/10" />
-                  <p className="text-sm font-black uppercase tracking-widest text-white/20">加载失败</p>
-                  <p className="text-xs text-red-400">{evidenceError}</p>
-                </div>
-              ) : filteredEvidence.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-slate-500 space-y-4">
-                  <ShieldCheck size={64} className="text-white/10" />
-                  <p className="text-sm font-black uppercase tracking-widest text-white/20">暂无告警记录</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-10">
-                  {filteredEvidence.map((item, i) => {
-                    const imageSrc = getImageUrl(item.image_url || undefined);
-                    const confidence = item.confidence ?? undefined;
-                    const timestamp = item.created_at || '';
-                    return (
-                      <div key={`${item.evidence_id}-${i}`} onClick={() => setLightboxItem(item)} className="group bg-zinc-900 border-2 border-white/10 hover:border-white transition-all duration-500 rounded-2xl overflow-hidden flex flex-col shadow-[0_30px_60px_-12px_rgba(0,0,0,0.8)] cursor-pointer">
-                        {/* 顶部图片区域：始终渲染，无图时显示占位图标 */}
-                        <div className="relative h-48 bg-black shrink-0">
-                          {imageSrc ? (
-                            <img src={imageSrc} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 group-hover:scale-105 transition-all duration-700" />
-                          ) : (
-                            <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800/60">
-                              <Thermometer size={36} className="text-white/20 mb-1" />
-                              <span className="text-[9px] uppercase tracking-widest text-white/20 font-black">无截图</span>
-                            </div>
-                          )}
-                          {/* 严重性徽标 — 始终显示 */}
-                          <div className="absolute top-5 left-5">
-                            <span className={`px-3 py-1.5 rounded-sm font-black text-[10px] uppercase tracking-widest border-2 shadow-2xl ${
-                              item.severity === 'CRITICAL' ? 'bg-red-600 border-red-400 text-white' : 'bg-black border-white text-white'
-                            }`}>
-                              {item.severity}
-                            </span>
-                          </div>
-                          {/* 删除按钮 — 始终显示 */}
-                          <div className="absolute top-5 right-5">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); deleteEvidenceSingle(item.evidence_id); }}
-                              className="px-2 py-1 text-[9px] font-black uppercase tracking-widest border border-red-500/60 text-red-300 hover:border-red-400 hover:text-red-200 bg-black/60"
-                            >
-                              删除
-                            </button>
-                          </div>
-                          {/* 复选框 — 始终显示，修复无图证据无法批量删除的问题 */}
-                          <div className="absolute bottom-4 right-4">
-                            <input
-                              type="checkbox"
-                              checked={selectedEvidence.has(item.evidence_id)}
-                              onChange={(e) => { e.stopPropagation(); toggleEvidenceSelected(item.evidence_id); }}
-                              onClick={(e) => e.stopPropagation()}
-                              className="w-4 h-4 accent-white cursor-pointer"
-                            />
-                          </div>
-                        </div>
-                        <div className="p-6 flex-1 flex flex-col bg-zinc-900">
-                          <h4 className="text-sm font-black text-white tracking-wide uppercase mb-4">{item.message || item.event_code || 'AI 告警'}</h4>
-                          {confidence !== undefined && (
-                            <div className="space-y-2 mb-4">
-                              <div className="flex items-center justify-between text-[11px] font-black">
-                                <span className="text-slate-500 uppercase tracking-widest">置信度</span>
-                                <span className="font-mono text-white">{(confidence * 100).toFixed(1)}%</span>
-                              </div>
-                              <div className="h-2 bg-black rounded-full overflow-hidden border border-white/10">
-                                <div className="h-full bg-white shadow-[0_0_15px_white]" style={{ width: `${confidence * 100}%` }} />
-                              </div>
-                            </div>
-                          )}
-                          <div className="pt-4 border-t border-white/10 flex items-center text-[10px] text-white font-black mt-auto">
-                            <Clock size={14} className="mr-2 text-slate-500" />
-                            <span>{timestamp ? new Date(timestamp).toLocaleString('zh-CN', { hour12: false }) : '--'}</span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
+          <EvidencePanel evidence={evidence} />
         )}
       </main>
-
-      {/* 证据灯箱 Modal */}
-      {lightboxItem && (() => {
-        const lb = lightboxItem;
-        const lbImg = getImageUrl(lb.image_url || undefined);
-        const lbConf = lb.confidence ?? undefined;
-        return (
-          <div
-            className="fixed inset-0 z-[1100] bg-black/95 backdrop-blur-sm flex items-center justify-center"
-            onClick={() => setLightboxItem(null)}
-          >
-            <div
-              className="relative flex flex-col max-w-4xl w-full mx-6 bg-zinc-900 border border-white/20 rounded-2xl overflow-hidden shadow-[0_40px_100px_rgba(0,0,0,1)]"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* 顶部工具栏 */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-white/10">
-                <div className="flex items-center space-x-3">
-                  <span className={`px-3 py-1.5 rounded-sm font-black text-[11px] uppercase tracking-widest border-2 ${
-                    lb.severity === 'CRITICAL' ? 'bg-red-600 border-red-400 text-white' : 'bg-black border-white text-white'
-                  }`}>{lb.severity}</span>
-                  <span className="text-white font-black text-sm tracking-wide">{lb.message || lb.event_code || 'AI 告警'}</span>
-                </div>
-                <button
-                  onClick={() => setLightboxItem(null)}
-                  className="text-white/40 hover:text-white hover:bg-white/10 p-2 rounded-lg transition-all"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-              {/* 大图 */}
-              <div className="bg-black flex items-center justify-center" style={{ minHeight: '420px' }}>
-                {lbImg ? (
-                  <img src={lbImg} className="max-w-full max-h-[60vh] object-contain" />
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-24 text-white/20">
-                    <Thermometer size={64} className="mb-4" />
-                    <span className="text-xs uppercase tracking-widest font-black">无截图</span>
-                  </div>
-                )}
-              </div>
-              {/* 底部元数据 */}
-              <div className="px-6 py-5 border-t border-white/10 grid grid-cols-3 gap-6">
-                {lbConf !== undefined && (
-                  <div className="col-span-2">
-                    <div className="flex items-center justify-between text-[11px] font-black mb-2">
-                      <span className="text-slate-500 uppercase tracking-widest">置信度</span>
-                      <span className="font-mono text-white">{(lbConf * 100).toFixed(1)}%</span>
-                    </div>
-                    <div className="h-2 bg-black rounded-full overflow-hidden border border-white/10">
-                      <div className="h-full bg-white shadow-[0_0_15px_white]" style={{ width: `${lbConf * 100}%` }} />
-                    </div>
-                  </div>
-                )}
-                <div className="flex items-center col-span-1 text-[11px] text-white/60 font-black">
-                  <Clock size={14} className="mr-2 text-slate-500 shrink-0" />
-                  <span>{lb.created_at ? new Date(lb.created_at).toLocaleString('zh-CN', { hour12: false }) : '--'}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
 
       {/* 配置面板模态框 */}
       {showConfigPanel && (
