@@ -6,7 +6,7 @@
 """
 
 import pytest
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, APIWebSocketRoute
 
 from backend.main import create_app
 
@@ -21,6 +21,17 @@ def route_index() -> dict[tuple[str, str], APIRoute]:
             for method in route.methods or []:
                 index[(method.upper(), route.path)] = route
     return index
+
+
+@pytest.fixture(scope="module")
+def websocket_paths() -> set[str]:
+    """收集已注册 WebSocket 路径。"""
+    app = create_app()
+    paths: set[str] = set()
+    for route in app.routes:
+        if isinstance(route, APIWebSocketRoute):
+            paths.add(route.path)
+    return paths
 
 
 # ── 必须注册的 nav 路由（method, path）───────────────────────────────────────
@@ -109,6 +120,11 @@ CONTROL_ROUTES = [
     ("POST", "/api/v1/control/stop"),
     ("POST", "/api/v1/control/e-stop"),
     ("POST", "/api/v1/control/e-stop/reset"),
+]
+
+WEBSOCKET_ROUTES = [
+    "/ws/telemetry",
+    "/ws/event",
 ]
 
 
@@ -205,4 +221,12 @@ def test_control_route_registered(route_index: dict, method: str, path: str) -> 
     """control 路由拆分后必须保持 method 与 path 不变。"""
     assert (method, path) in route_index, (
         f"{method} {path} 未注册 ── control 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("path", WEBSOCKET_ROUTES)
+def test_websocket_route_registered(websocket_paths: set[str], path: str) -> None:
+    """WebSocket 路由拆分后必须保持 path 不变。"""
+    assert path in websocket_paths, (
+        f"{path} 未注册 ── WebSocket 路由可能在拆分中丢失"
     )

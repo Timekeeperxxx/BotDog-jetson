@@ -30,6 +30,7 @@ from .telemetry_queue import TelemetryQueueManager, set_telemetry_queue_manager
 from .workers_telemetry import TelemetryPersistenceWorker
 from .ws_broadcaster import websocket_telemetry_handler, WebSocketBroadcaster
 from .ws_event_broadcaster import EventBroadcaster
+from .ws_runtime_state import clear_ws_runtime, set_ws_runtime
 from .control_service import ControlService, set_control_service
 from .robot_adapter import create_adapter
 
@@ -215,6 +216,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         global _event_broadcaster
         _event_broadcaster = EventBroadcaster()
         set_global_event_broadcaster(_event_broadcaster)  # 设置全局单例
+        set_ws_runtime(_queue_manager, _state_machine, _event_broadcaster)
         logger.info("事件广播器已初始化")
 
         # 8.1 初始化 ROS2 导航状态订阅转发（可选）
@@ -374,6 +376,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("BotDog backend shutting down (lifespan)...")
         stop_event.set()
         set_state_machine(None)
+        clear_ws_runtime()
         _state_machine = None
 
         if _ros_nav_bridge is not None:
@@ -498,6 +501,7 @@ def register_routes(app: FastAPI) -> None:
     from .api.routes import session as _session_routes
     from .api.routes import system as _system_routes
     from .api.routes import video_sources as _video_source_routes
+    from .api.routes import websocket as _websocket_routes
     app.include_router(_nav_routes.router)
     app.include_router(_system_routes.router)
     app.include_router(_control_debug_routes.router)
@@ -510,39 +514,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(_network_interface_routes.router)
     app.include_router(_session_routes.router)
     app.include_router(_logs_routes.router)
-
-    @app.websocket("/ws/telemetry")
-    async def telemetry_ws(websocket: WebSocket) -> None:
-        """
-        遥测 WebSocket 端点（阶段 1 增强）。
-
-        功能：
-        - 接受客户端连接
-        - 通过 WebSocketBroadcaster 广播遥测数据
-        - 管理客户端连接池
-        - 结构严格遵守 `06_backend_protocol_schema.md`
-        """
-
-        state_machine = _get_state_machine()
-        await websocket_telemetry_handler(websocket, _queue_manager, state_machine)
-
-    @app.websocket("/ws/event")
-    async def event_ws(websocket: WebSocket) -> None:
-        """
-        事件 WebSocket 端点（阶段 4）。
-
-        功能：
-        - 接受客户端连接
-        - 广播告警事件
-        - 推送实时通知
-        """
-
-        if _event_broadcaster is None:
-            await websocket.close(code=1011, reason="事件广播服务未初始化")
-            return
-
-        # 使用 main.py 中的实例
-        await _event_broadcaster.handle_connection(websocket)
+    app.include_router(_websocket_routes.router)
 
     @app.post("/api/v1/test/alert")
     async def trigger_test_alert(
