@@ -97,6 +97,13 @@ AUDIO_ROUTES = [
     ("GET", "/api/v1/audio/status"),
 ]
 
+GUARD_MISSION_ROUTES = [
+    ("POST", "/api/v1/guard-mission/enable"),
+    ("POST", "/api/v1/guard-mission/disable"),
+    ("POST", "/api/v1/guard-mission/abort"),
+    ("GET", "/api/v1/guard-mission/status"),
+]
+
 
 @pytest.mark.parametrize("method,path", NAV_ROUTES)
 def test_nav_route_registered(route_index: dict, method: str, path: str) -> None:
@@ -175,4 +182,12 @@ def test_audio_route_registered(route_index: dict, method: str, path: str) -> No
     """audio 路由拆分后必须保持 method 与 path 不变。"""
     assert (method, path) in route_index, (
         f"{method} {path} 未注册 ── audio 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", GUARD_MISSION_ROUTES)
+def test_guard_mission_route_registered(route_index: dict, method: str, path: str) -> None:
+    """guard_mission 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── guard_mission 路由可能在拆分中丢失"
     )
