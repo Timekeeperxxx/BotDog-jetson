@@ -24,20 +24,11 @@ from .schemas import (
     ControlAckDTO,
     EStopResetResponse,
     EStopResponse,
-    EvidenceBulkDeleteRequest,
-    EvidenceDeleteResponse,
-    EvidenceListResponse,
-    LogsPage,
-    SessionStartRequest,
-    SessionStartResponse,
-    SessionStopRequest,
-    SessionStopResponse,
     SystemHealthResponse,
     utc_now_iso,
 )
-from .services_evidence import list_evidence, delete_evidence_by_ids
-from .services_logs import list_logs, write_log
-from .services_tasks import create_task, stop_task, cleanup_stale_tasks
+from .services_logs import write_log
+from .services_tasks import cleanup_stale_tasks
 from .alert_service import AlertService
 from .mavlink_gateway import MAVLinkGateway
 
@@ -506,7 +497,13 @@ def register_routes(app: FastAPI) -> None:
 
     # ── 导航巡逻 / PCD 点云地图 ─────────────────────────────────────────────
     from .api.routes import nav as _nav_routes
+    from .api.routes import evidence as _evidence_routes
+    from .api.routes import logs as _logs_routes
+    from .api.routes import session as _session_routes
     app.include_router(_nav_routes.router)
+    app.include_router(_evidence_routes.router)
+    app.include_router(_session_routes.router)
+    app.include_router(_logs_routes.router)
 
     @app.get("/api/v1/system/health", response_model=SystemHealthResponse)
     async def system_health() -> SystemHealthResponse:
@@ -693,146 +690,6 @@ def register_routes(app: FastAPI) -> None:
         #     arbiter.release_manual_override()
 
         return await svc.handle_command("stop")
-
-    @app.post("/api/v1/session/start", response_model=SessionStartResponse)
-    async def session_start(
-        body: SessionStartRequest,
-        db=Depends(get_db),
-    ) -> SessionStartResponse:
-        """
-        启动新巡检任务（Session）。
-
-        当前阶段：
-        - 不做用户鉴权与并发 Session 限制；
-        - 每次调用都会新建一条任务记录。
-        """
-
-        task = await create_task(db, task_name=body.task_name)
-        await write_log(
-            db,
-            level="INFO",
-            module="BACKEND",
-            message=f"Session started: {task.task_name} (id={task.task_id})",
-            task_id=task.task_id,
-        )
-
-        # 更新状态机的任务状态
-        state_machine = _get_state_machine()
-        state_machine.update_mission_status(True)
-
-        return SessionStartResponse(
-            task_id=task.task_id,
-            task_name=task.task_name,
-            status=task.status,
-            started_at=task.started_at,
-            ended_at=task.ended_at,
-        )
-
-    @app.post("/api/v1/session/stop", response_model=SessionStopResponse)
-    async def session_stop(
-        body: SessionStopRequest,
-        db=Depends(get_db),
-    ) -> SessionStopResponse:
-        """
-        停止指定任务。
-        """
-
-        task = await stop_task(db, task_id=body.task_id)
-        if task is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"task_id={body.task_id} not found",
-            )
-
-        await write_log(
-            db,
-            level="INFO",
-            module="BACKEND",
-            message=f"Session stopped: {task.task_name} (id={task.task_id})",
-            task_id=task.task_id,
-        )
-
-        # 更新状态机的任务状态
-        state_machine = _get_state_machine()
-        state_machine.update_mission_status(False)
-
-        return SessionStopResponse(
-            task_id=task.task_id,
-            task_name=task.task_name,
-            status=task.status,
-            started_at=task.started_at,
-            ended_at=task.ended_at,
-        )
-
-    @app.get("/api/v1/logs", response_model=LogsPage)
-    async def get_logs(db=Depends(get_db)) -> LogsPage:
-        """
-        简单日志查询：返回最近 N 条日志（默认 50 条）。
-        """
-
-        rows = await list_logs(db, limit=50)
-        return LogsPage(
-            items=[
-                {
-                    "log_id": row.log_id,
-                    "level": row.level,
-                    "module": row.module,
-                    "message": row.message,
-                    "task_id": row.task_id,
-                    "created_at": row.created_at,
-                }
-                for row in rows
-            ]
-        )
-
-    @app.get("/api/v1/evidence", response_model=EvidenceListResponse)
-    async def get_evidence(
-        task_id: int | None = None,
-        db=Depends(get_db),
-    ) -> EvidenceListResponse:
-        """
-        查询异常证据链列表。
-
-        - 若提供 `task_id`，则仅返回对应任务的证据记录；
-        - 默认按照 `created_at` 倒序，最多返回 100 条。
-        """
-
-        rows = await list_evidence(db, task_id=task_id, limit=100)
-        return EvidenceListResponse(
-            items=[
-                {
-                    "evidence_id": row.evidence_id,
-                    "task_id": row.task_id,
-                    "event_type": row.event_type,
-                    "event_code": row.event_code,
-                    "severity": row.severity,
-                    "message": row.message,
-                    "confidence": row.confidence,
-                    "file_path": row.file_path,
-                    "image_url": row.image_url,
-                    "gps_lat": row.gps_lat,
-                    "gps_lon": row.gps_lon,
-                    "created_at": row.created_at,
-                }
-                for row in rows
-            ]
-        )
-
-    @app.delete("/api/v1/evidence/{evidence_id}", response_model=EvidenceDeleteResponse)
-    async def delete_evidence(
-        evidence_id: int,
-        db=Depends(get_db),
-    ) -> EvidenceDeleteResponse:
-        result = await delete_evidence_by_ids(db, evidence_ids=[evidence_id])
-        return EvidenceDeleteResponse(success=True, **result)
-
-    @app.post("/api/v1/evidence/bulk-delete", response_model=EvidenceDeleteResponse)
-    async def bulk_delete_evidence(
-        request: EvidenceBulkDeleteRequest,
-        db=Depends(get_db),
-    ) -> EvidenceDeleteResponse:
-        result = await delete_evidence_by_ids(db, evidence_ids=request.evidence_ids)
-        return EvidenceDeleteResponse(success=True, **result)
 
     @app.websocket("/ws/telemetry")
     async def telemetry_ws(websocket: WebSocket) -> None:
