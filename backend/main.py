@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     setup_logging()
     logger.info("BotDog backend starting up (lifespan)...")
-    logger.info("Config loaded from {}", settings.Config.env_file)
+    logger.info("Config loaded from {}", Path(__file__).resolve().parent / ".env")
     logger.info("THERMAL_THRESHOLD={}°C", settings.THERMAL_THRESHOLD)
     await init_db()
     logger.info("Database initialized.")
