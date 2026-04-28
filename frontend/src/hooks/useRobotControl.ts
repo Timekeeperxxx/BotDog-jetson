@@ -3,7 +3,7 @@
  *
  * 功能：
  * - 封装 POST /api/v1/control/command 调用
- * - 长按时以 100ms 间隔持续发送命令
+ * - 长按时以 500ms 间隔持续发送命令
  * - 松手 / 失焦 / 页面卸载时自动发 stop（安全底座）
  *
  * 使用方式：
@@ -74,7 +74,10 @@ export function useRobotControl(): UseRobotControlReturn {
   const [currentCmd, setCurrentCmd] = useState<RobotCommand | null>(null);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const isSendingRef = useRef(false); // 防止并发发送
+  // 普通运动命令的发送锁：防止 forward/backward/... 请求在上一个未完成时堆积
+  const normalSendingRef = useRef(false);
+  // stop 命令的独立发送锁：只防止 stop 自身并发，与 normalSendingRef 完全隔离
+  const stopSendingRef = useRef(false);
 
   // 根据结果码获取中文提示
   const getResultMessage = (result: ControlResult): string | null => {
@@ -98,47 +101,6 @@ export function useRobotControl(): UseRobotControlReturn {
 
   const resultMessage = lastResult ? getResultMessage(lastResult.result) : null;
 
-  // ── 发送单次命令 ──────────────────────────────────────────────────────────
-
-  const sendCommand = useCallback(async (cmd: RobotCommand | 'stop') => {
-    if (isSendingRef.current) return;
-    isSendingRef.current = true;
-
-    try {
-      const url = cmd === 'stop' ? STOP_URL : CONTROL_URL;
-      const body = cmd === 'stop' ? undefined : JSON.stringify({ cmd });
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: body ? { 'Content-Type': 'application/json' } : undefined,
-        body,
-        // 短超时，防止请求积压
-        signal: AbortSignal.timeout(1000),
-      });
-
-      if (res.ok) {
-        const ack: ControlAck = await res.json();
-        setLastResult(ack);
-      } else {
-        // HTTP 错误也视为适配器错误
-        setLastResult({
-          ack_cmd: cmd,
-          result: 'REJECTED_ADAPTER_ERROR',
-          latency_ms: 0,
-        });
-      }
-    } catch {
-      // 网络错误视为适配器错误
-      setLastResult({
-        ack_cmd: cmd,
-        result: 'REJECTED_ADAPTER_ERROR',
-        latency_ms: 0,
-      });
-    } finally {
-      isSendingRef.current = false;
-    }
-  }, []);
-
   // ── 清理 interval ──────────────────────────────────────────────────────────
 
   const clearInterval_ = useCallback(() => {
@@ -148,34 +110,83 @@ export function useRobotControl(): UseRobotControlReturn {
     }
   }, []);
 
+  // ── 发送普通运动命令（受 normalSendingRef 保护，防止请求堆积）──────────────
+
+  const sendNormalCommand = useCallback(async (cmd: RobotCommand) => {
+    if (normalSendingRef.current) return;
+    normalSendingRef.current = true;
+
+    try {
+      const res = await fetch(CONTROL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cmd }),
+        signal: AbortSignal.timeout(1000),
+      });
+
+      if (res.ok) {
+        const ack: ControlAck = await res.json();
+        setLastResult(ack);
+      } else {
+        setLastResult({ ack_cmd: cmd, result: 'REJECTED_ADAPTER_ERROR', latency_ms: 0 });
+      }
+    } catch {
+      setLastResult({ ack_cmd: cmd, result: 'REJECTED_ADAPTER_ERROR', latency_ms: 0 });
+    } finally {
+      normalSendingRef.current = false;
+    }
+  }, []);
+
+  // ── 发送 stop 命令（独立锁，绝不被 normalSendingRef 阻塞）────────────────
+
+  const sendStopCommand = useCallback(async () => {
+    if (stopSendingRef.current) return;
+    stopSendingRef.current = true;
+
+    try {
+      const res = await fetch(STOP_URL, {
+        method: 'POST',
+        signal: AbortSignal.timeout(1000),
+      });
+
+      if (res.ok) {
+        const ack: ControlAck = await res.json();
+        setLastResult(ack);
+      } else {
+        setLastResult({ ack_cmd: 'stop', result: 'REJECTED_ADAPTER_ERROR', latency_ms: 0 });
+      }
+    } catch {
+      setLastResult({ ack_cmd: 'stop', result: 'REJECTED_ADAPTER_ERROR', latency_ms: 0 });
+    } finally {
+      stopSendingRef.current = false;
+    }
+  }, []);
+
   // ── startCommand：长按开始持续发送 ────────────────────────────────────────
 
   const startCommand = useCallback((cmd: RobotCommand) => {
-    // 清理旧 interval（防止重复触发）
     clearInterval_();
 
     setIsControlling(true);
     setCurrentCmd(cmd);
 
-    // 立即发一次
-    sendCommand(cmd);
+    sendNormalCommand(cmd);
 
-    // 持续发送
     intervalRef.current = setInterval(() => {
-      sendCommand(cmd);
+      sendNormalCommand(cmd);
     }, SEND_INTERVAL_MS);
-  }, [sendCommand, clearInterval_]);
+  }, [sendNormalCommand, clearInterval_]);
 
-  // ── stopCommand：松手立即 stop ────────────────────────────────────────────
+  // ── stopCommand：松手立即 stop（interval 同步清理，stop 不受普通命令锁影响）
 
   const stopCommand = useCallback(() => {
     clearInterval_();
     setIsControlling(false);
     setCurrentCmd(null);
-    sendCommand('stop');
-  }, [sendCommand, clearInterval_]);
+    sendStopCommand();
+  }, [sendStopCommand, clearInterval_]);
 
-  // ── 安全底座：失焦 / 页面卸载时自动 stop ─────────────────────────────────
+  // ── 安全底座：失焦 / 页面卸载 / 组件卸载时自动 stop ──────────────────────
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -185,7 +196,7 @@ export function useRobotControl(): UseRobotControlReturn {
     };
 
     const handleBeforeUnload = () => {
-      // 使用 sendBeacon 保证页面卸载时能发出请求
+      // sendBeacon 保证页面卸载时请求能发出
       navigator.sendBeacon(STOP_URL);
     };
 
@@ -195,11 +206,10 @@ export function useRobotControl(): UseRobotControlReturn {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      // 组件卸载时停止
       clearInterval_();
-      sendCommand('stop');
+      sendStopCommand();
     };
-  }, [stopCommand, sendCommand, clearInterval_]);
+  }, [stopCommand, sendStopCommand, clearInterval_]);
 
   return {
     startCommand,
