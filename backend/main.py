@@ -7,28 +7,26 @@
 """
 
 import asyncio
-import contextlib
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, AsyncIterator, Optional
+from typing import Any, AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
-from .database import get_db, init_db, get_session_factory
+from .database import init_db, get_session_factory
 from .logging_config import logger, setup_logging
-from .schemas import utc_now_iso
 from .services_tasks import cleanup_stale_tasks
-from .state_machine_state import get_state_machine as _shared_get_state_machine, set_state_machine
+from .state_machine_state import set_state_machine
 from .alert_service import AlertService
 from .mavlink_gateway import MAVLinkGateway
 
-from .state_machine import StateMachine, SystemState
+from .state_machine import StateMachine
 from .telemetry_queue import TelemetryQueueManager, set_telemetry_queue_manager
 from .workers_telemetry import TelemetryPersistenceWorker
-from .ws_broadcaster import websocket_telemetry_handler, WebSocketBroadcaster
+from .ws_broadcaster import WebSocketBroadcaster
 from .ws_event_broadcaster import EventBroadcaster
 from .ws_runtime_state import clear_ws_runtime, set_ws_runtime
 from .control_service import ControlService, set_control_service
@@ -44,18 +42,6 @@ _event_broadcaster: EventBroadcaster | None = None
 _ai_worker: Any | None = None
 _control_service: ControlService | None = None
 _ros_nav_bridge: Any | None = None
-
-
-def _get_state_machine() -> StateMachine | None:
-    """
-    获取状态机实例。
-
-    Returns:
-        状态机实例，如果未初始化则返回 None
-    """
-    return _shared_get_state_machine()
-
-
 def get_ros_nav_bridge():
     """返回当前 ROS 导航桥实例（供 nav router 通过 nav_bridge_state 访问）。"""
     return _ros_nav_bridge
@@ -89,7 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config_service = get_config_service()
     async with get_session_factory()() as _session:
         await config_service.initialize_defaults(_session)
-        db_configs = await config_service.get_all_configs(_session)
+        await config_service.get_all_configs(_session)
     logger.info("系统配置服务已初始化加载")
 
     # 初始化视频源和网口默认数据
