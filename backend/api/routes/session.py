@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...database import get_db
+from ...logging_config import logger
 from ...schemas import (
     SessionStartRequest,
     SessionStartResponse,
@@ -11,6 +12,7 @@ from ...schemas import (
 )
 from ...services_logs import write_log
 from ...services_tasks import create_task, stop_task
+from ...state_machine_state import get_state_machine
 
 router = APIRouter(prefix="/api/v1/session", tags=["session"])
 
@@ -37,10 +39,11 @@ async def session_start(
         task_id=task.task_id,
     )
 
-    from ...main import _get_state_machine
-
-    state_machine = _get_state_machine()
-    state_machine.update_mission_status(True)
+    state_machine = get_state_machine()
+    if state_machine is not None:
+        state_machine.update_mission_status(True)
+    else:
+        logger.warning("Session start succeeded but StateMachine is not initialized")
 
     return SessionStartResponse(
         task_id=task.task_id,
@@ -75,10 +78,11 @@ async def session_stop(
         task_id=task.task_id,
     )
 
-    from ...main import _get_state_machine
-
-    state_machine = _get_state_machine()
-    state_machine.update_mission_status(False)
+    state_machine = get_state_machine()
+    if state_machine is not None:
+        state_machine.update_mission_status(False)
+    else:
+        logger.warning("Session stop succeeded but StateMachine is not initialized")
 
     return SessionStopResponse(
         task_id=task.task_id,

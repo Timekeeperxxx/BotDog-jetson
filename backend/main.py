@@ -29,6 +29,7 @@ from .schemas import (
 )
 from .services_logs import write_log
 from .services_tasks import cleanup_stale_tasks
+from .state_machine_state import get_state_machine as _shared_get_state_machine, set_state_machine
 from .alert_service import AlertService
 from .mavlink_gateway import MAVLinkGateway
 
@@ -64,8 +65,7 @@ def _get_state_machine() -> StateMachine | None:
     Returns:
         状态机实例，如果未初始化则返回 None
     """
-    global _state_machine
-    return _state_machine
+    return _shared_get_state_machine()
 
 
 def get_ros_nav_bridge():
@@ -137,6 +137,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _state_machine = StateMachine(
             heartbeat_timeout=settings.HEARTBEAT_TIMEOUT,
         )
+        set_state_machine(_state_machine)
         tasks.append(asyncio.create_task(_state_machine.start_heartbeat_monitor()))
         logger.info("状态机已启动")
 
@@ -385,6 +386,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Shutdown
         logger.info("BotDog backend shutting down (lifespan)...")
         stop_event.set()
+        set_state_machine(None)
+        _state_machine = None
 
         if _ros_nav_bridge is not None:
             _ros_nav_bridge.stop()
