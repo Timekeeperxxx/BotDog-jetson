@@ -12,10 +12,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { ControlPad } from './components/ControlPad';
 import { useEventWebSocket } from './hooks/useEventWebSocket';
 import { useAutoTrack } from './hooks/useAutoTrack';
-import { AutoTrackPanel } from './components/AutoTrackPanel';
-import { TrackOverlay } from './components/TrackOverlay1';
 import { GuardControlCenter, GuardStatus } from './components/GuardControlCenter';
-import { ZoneDrawer } from './components/ZoneDrawer';
 import { getApiUrl } from './config/api';
 import { useEvidence } from './hooks/useEvidence';
 import { Sidebar, type SidebarTab } from './components/layout/Sidebar';
@@ -23,20 +20,13 @@ import { TopHeader } from './components/layout/TopHeader';
 import { EvidencePanel } from './components/evidence/EvidencePanel';
 import { LogPanel } from './components/logs/LogPanel';
 import { DetectionAlert } from './components/alerts/DetectionAlert';
-import { StatusWidgets } from './components/status/StatusWidgets';
+import { VideoStage } from './components/video/VideoStage';
 import type { VideoSource } from './types/admin';
 import {
   Camera,
-  Play,
-  Square,
-  Maximize2,
-  Minimize2,
   ShieldCheck,
   ChevronDown,
   ChevronUp,
-  ArrowLeftRight,
-  X,
-  PenLine,
   Volume2,
   VolumeX,
 } from 'lucide-react';
@@ -375,285 +365,41 @@ export default function IndustrialConsoleComplete() {
         />
 
         {activeTab === 'console' ? (
-          <div className="flex-1 flex min-h-0 relative">
-            {/* 视频监控区 */}
-            <div className={`flex-1 bg-black relative overflow-hidden transition-all duration-300 ${isUiFullscreen ? 'fixed inset-0 z-[100]' : 'border-r border-white/20'}`}>
-              {/* CAM1 video - single element, CSS determines main vs PiP position */}
-              <video
-                ref={videoRef}
-                autoPlay playsInline muted
-                className="absolute object-cover bg-black transition-all duration-300"
-                style={isCamSwapped ? {
-                  bottom: '108px', right: '16px', top: 'auto', left: 'auto',
-                  width: isPipLarge ? '480px' : '270px',
-                  height: isPipLarge ? '270px' : '152px',
-                  zIndex: 21, borderRadius: '8px',
-                  display: isPipHidden ? 'none' : undefined,
-                } : {
-                  inset: 0, width: '100%', height: '100%', zIndex: 1, borderRadius: 0,
-                }}
-              />
-              {/* YOLO 检测框 + 决策区域叠层（跟随 AI 跟踪或驱离启用状态） */}
-              {!isCamSwapped && trackOverlay && (autoTrack.status?.enabled || guardStatus?.enabled) && (
-                <TrackOverlay data={trackOverlay} videoRef={videoRef} />
-              )}
-              {/* 禁区绘制叠层（始终挂载，active 控制交互） */}
-              <ZoneDrawer
-                frameW={trackOverlay?.frame_w ?? 1280}
-                frameH={trackOverlay?.frame_h ?? 720}
-                active={isZoneDrawing}
-                onClose={() => setIsZoneDrawing(false)}
-              />
-              {/* CAM2 video - single element */}
-              <video
-                ref={videoRef2}
-                autoPlay playsInline muted
-                className="absolute object-cover bg-black transition-all duration-300"
-                style={isCamSwapped ? {
-                  inset: 0, width: '100%', height: '100%', zIndex: 1, borderRadius: 0,
-                } : {
-                  bottom: '108px', right: '16px', top: 'auto', left: 'auto',
-                  width: isPipLarge ? '480px' : '240px',
-                  height: isPipLarge ? '270px' : '135px',
-                  zIndex: 21, borderRadius: '8px',
-                  display: isPipHidden ? 'none' : undefined,
-                }}
-              />
-
-              {/* Main area disconnect overlay */}
-              {(() => {
-                const mainStatus = isCamSwapped ? whepStatus2 : whepStatus;
-                const mainConnect = isCamSwapped ? connectWhep2 : connectWhep;
-                if (mainStatus.status === 'connected') return null;
-                return (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/88 z-5">
-                    <div className="text-5xl mb-4 opacity-50">
-                      {mainStatus.status === 'connecting' ? (
-                        <div className="w-12 h-12 rounded-full border-4 border-slate-200/20 border-t-slate-200 mx-auto" style={{ animation: 'videoSpin 1s linear infinite' }} />
-                      ) : mainStatus.status === 'error' ? (
-                        <span className="text-red-400 font-bold">x</span>
-                      ) : (
-                        <Camera size={48} className="text-white/30" />
-                      )}
-                    </div>
-                    <div className="text-lg font-bold text-slate-200 mb-2">视频流 {mainStatus.status === 'connecting' ? '连接中...' : mainStatus.error || '未连接'}</div>
-                    {mainStatus.error && (
-                      <div className="text-sm text-red-500 mb-4 px-4 py-2 bg-red-500/10 rounded">{mainStatus.error}</div>
-                    )}
-                    <div className="text-xs text-slate-500">{isConnected ? '等待WHEP连接...' : '等待后端连接...'}</div>
-                    <button onClick={mainConnect} className="mt-4 px-4 py-2 text-[10px] font-black uppercase tracking-widest border border-white/20 text-white/80 hover:text-white hover:border-white/60 transition-all">重新连接</button>
-                  </div>
-                );
-              })()}
-
-
-              {/* HUD 叠加 */}
-              {activeTab === 'console' && (
-                <div className="absolute inset-0 pointer-events-none p-6">
-                  <div className="h-full flex flex-col justify-between items-center relative">
-                    <div className="w-full flex justify-between">
-                      <div className="w-6 h-6 border-t-2 border-l-2 border-white/40" />
-                      <div className="w-6 h-6 border-t-2 border-r-2 border-white/40" />
-                    </div>
-                    <div className="w-40 h-40 border border-white/20 rounded-full flex items-center justify-center">
-                      <div className="w-8 h-[1px] bg-white/50" />
-                      <div className="w-[1px] h-8 bg-white/50 absolute" />
-                    </div>
-                    <div className="w-full flex justify-between">
-                      <div className="w-6 h-6 border-b-2 border-l-2 border-white/40" />
-                      <div className="w-6 h-6 border-b-2 border-r-2 border-white/40" />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <StatusWidgets
-                resolutionChip={resolutionChip}
-                whepStatusText={currentWhep.text}
-                whepStatusColor={currentWhep.color}
-                telemetry={telemetry}
-                isUiFullscreen={isUiFullscreen}
-                aiStatus={aiStatus}
-                autoTrackFrames={autoTrack.status?.frames_processed ?? 0}
-              />
-
-              {activeTab === 'console' && !isUiFullscreen && (
-                <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
-                  <div className="bg-black/40 border border-white/10 px-3 py-2 text-[10px] font-mono text-white/80">
-                    <div className="uppercase tracking-widest text-white/40 mb-1">WHEP</div>
-                    <div className="flex items-center gap-2">
-                      <span className={`font-black ${currentWhep.color}`}>{currentWhep.text}</span>
-                      {whepStatus.status !== 'connected' && (
-                        <button
-                          onClick={connectWhep}
-                          className="text-[9px] font-black uppercase tracking-widest border border-white/20 text-white/70 px-2 py-0.5 hover:text-white hover:border-white/60 transition-all"
-                        >
-                          重连
-                        </button>
-                      )}
-                    </div>
-                    <div className="mt-1 text-white/50">延迟: {videoLatencyMs !== null ? `${videoLatencyMs}ms` : '--'}</div>
-                  </div>
-                  {/* 自动跟踪控制面板 */}
-                  <div className="pointer-events-auto">
-                    <AutoTrackPanel {...autoTrack} isMissionRunning={isMissionRunning} />
-                  </div>
-
-                  <div className="bg-black/40 border border-white/10 px-3 py-2 text-[10px] font-mono text-white/80">
-                    <div className="uppercase tracking-widest text-white/40 mb-1">系统状态</div>
-                    <div className="flex items-center gap-2">
-                      <span className={`font-black ${isConnected ? 'text-emerald-400' : 'text-red-400'}`}>{isConnected ? '链路在线' : '链路离线'}</span>
-                      {!isConnected && (
-                        <span className="text-[9px] uppercase tracking-widest text-red-300">检查后端</span>
-                      )}
-                    </div>
-                    {!isConnected && (
-                      <button
-                        onClick={connectWs}
-                        className="mt-2 text-[9px] font-black uppercase tracking-widest border border-white/20 text-white/70 px-2 py-0.5 hover:text-white hover:border-white/60 transition-all"
-                      >
-                        重新连接
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* PiP overlay: border, badges, masks, controls */}
-              {activeTab === 'console' && !isUiFullscreen && (() => {
-                const pipStatus = isCamSwapped ? whepStatus : whepStatus2;
-                const pipLabel = isCamSwapped ? 'CAM1' : 'CAM2';
-                const pipW = isPipLarge ? 480 : 240;
-                const pipH = isPipLarge ? 270 : 135;
-
-                // Collapsed state: show a small restore button
-                if (isPipHidden) {
-                  return (
-                    <div
-                      className="absolute z-30 flex items-center justify-center cursor-pointer group/pip-restore"
-                      style={{ bottom: '108px', right: '16px', width: '48px', height: '48px' }}
-                      onClick={() => setIsPipHidden(false)}
-                      title="恢复画中画"
-                    >
-                      <div className="w-full h-full rounded-xl bg-black/80 border-2 border-white/20 group-hover/pip-restore:border-white/60 flex items-center justify-center transition-all shadow-lg">
-                        <Camera size={20} className="text-white/60 group-hover/pip-restore:text-white transition-colors" />
-                      </div>
-                      <div className={`absolute top-1 right-1 w-2 h-2 rounded-full ${
-                        pipStatus.status === 'connected' ? 'bg-emerald-500' :
-                        pipStatus.status === 'connecting' ? 'bg-amber-500 animate-pulse' : 'bg-red-500'
-                      }`} />
-                    </div>
-                  );
-                }
-
-                return (
-                  <div
-                    className="absolute z-30 cursor-pointer group/pip transition-all duration-300"
-                    style={{ bottom: '108px', right: '16px', width: `${pipW}px`, height: `${pipH}px` }}
-                    onClick={() => setIsPipLarge(v => !v)}
-                    title={isPipLarge ? '缩小画中画' : '放大画中画'}
-                  >
-                    {/* visible border */}
-                    <div className="absolute inset-0 rounded-lg border-2 border-white/25 group-hover/pip:border-white/60 shadow-[0_4px_30px_rgba(0,0,0,0.8)] transition-colors pointer-events-none" />
-
-                    {/* status badge (top-left) */}
-                    <div className="absolute top-1.5 left-1.5 flex items-center space-x-1.5 bg-black/65 px-2 py-0.5 rounded text-[8px] font-mono font-black uppercase tracking-wider pointer-events-none">
-                      <div className={`w-1.5 h-1.5 rounded-full ${
-                        pipStatus.status === 'connected' ? 'bg-emerald-500' :
-                        pipStatus.status === 'connecting' ? 'bg-amber-500 animate-pulse' : 'bg-red-500'
-                      }`} />
-                      <span className="text-white/75">{pipLabel}</span>
-                    </div>
-
-                    {/* hide button (top-right) */}
-                    <button
-                      className="absolute top-1.5 right-1.5 w-5 h-5 flex items-center justify-center bg-black/60 hover:bg-white/20 rounded transition-colors z-10"
-                      onClick={(e) => { e.stopPropagation(); setIsPipHidden(true); }}
-                      title="隐藏画中画"
-                    >
-                      <X size={10} className="text-white/75" />
-                    </button>
-
-                    {/* size indicator (center-bottom, on hover) */}
-                    <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 opacity-0 group-hover/pip:opacity-100 transition-opacity bg-black/60 px-1.5 py-0.5 rounded pointer-events-none">
-                      <span className="text-[8px] font-mono text-white/60">{isPipLarge ? '480×270' : '240×135'}</span>
-                    </div>
-
-                    {/* swap button (bottom-right) */}
-                    <button
-                      className="absolute bottom-1.5 right-1.5 w-5 h-5 flex items-center justify-center bg-black/60 hover:bg-white/20 rounded transition-colors z-10"
-                      onClick={(e) => { e.stopPropagation(); setIsCamSwapped(v => !v); }}
-                      title="互换主画面与画中画"
-                    >
-                      <ArrowLeftRight size={10} className="text-white/75" />
-                    </button>
-
-                    {/* disconnect mask */}
-                    {pipStatus.status !== 'connected' && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 rounded-lg pointer-events-none">
-                        {pipStatus.status === 'connecting' ? (
-                          <div className="w-6 h-6 rounded-full border-2 border-white/20 border-t-white" style={{ animation: 'videoSpin 1s linear infinite' }} />
-                        ) : <Camera size={20} className="text-white/30" />}
-                        <span className="text-[9px] mt-1.5 font-bold text-white/40">
-                          {pipStatus.status === 'connecting' ? '连接中' : pipStatus.error || '未连接'}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-
-
-
-              {/* 底部浮动控制栏 */}
-              {(activeTab === 'console' || activeTab === 'simulate') && (
-                <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-lg px-6 z-30 pointer-events-auto">
-                  <div className="bg-black border-2 border-white/30 p-3 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,1)] flex items-center justify-between px-8">
-                  <div className="flex items-center space-x-5 text-white">
-                    <button onClick={toggleFullscreen} className="p-2 hover:bg-white hover:text-black rounded-lg transition-all" title={isUiFullscreen ? '退出全屏' : '全屏'}>
-                      {isUiFullscreen ? <Minimize2 size={22} /> : <Maximize2 size={22} />}
-                    </button>
-                    <div className="h-8 w-px bg-white/30" />
-                    <button onClick={triggerSnapshot} className="p-2 hover:bg-white hover:text-black rounded-lg transition-all" title="拍照">
-                      <Camera size={22} />
-                    </button>
-                    <div className="h-8 w-px bg-white/30" />
-                    <button
-                      onClick={() => setIsZoneDrawing(v => !v)}
-                      className={`p-2 rounded-lg transition-all ${
-                        isZoneDrawing
-                          ? 'bg-green-500 text-black'
-                          : 'hover:bg-white hover:text-black text-white'
-                      }`}
-                      title={isZoneDrawing ? '退出画禁区模式' : '画禁区'}
-                    >
-                      <PenLine size={22} />
-                    </button>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded border ${
-                      isMissionRunning
-                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                        : 'bg-white/5 text-slate-400 border-white/10'
-                    }`}>
-                      {isMissionRunning ? '巡检中' : '待命'}
-                    </span>
-                    <button
-                      onClick={toggleMission}
-                      disabled={!isConnected}
-                      className={`flex items-center space-x-4 px-12 py-3 rounded-lg font-black text-xs uppercase transition-all transform active:scale-95 shadow-xl disabled:opacity-40 disabled:cursor-not-allowed ${
-                        isMissionRunning
-                          ? 'bg-white text-black border-2 border-white'
-                          : 'bg-white text-black ring-4 ring-white/20'
-                      }`}
-                    >
-                      {isMissionRunning ? <><Square size={14} fill="black" /><span>终止任务</span></> : <><Play size={14} fill="black" /><span>开始巡检</span></>}
-                    </button>
-                  </div>
-                </div>
-              </div>
-              )}
-            </div>
+          <>
+            <VideoStage
+              videoRef={videoRef}
+              videoRef2={videoRef2}
+              isCamSwapped={isCamSwapped}
+              onSwapCamera={() => setIsCamSwapped(v => !v)}
+              isPipLarge={isPipLarge}
+              onTogglePipSize={() => setIsPipLarge(v => !v)}
+              isPipHidden={isPipHidden}
+              onTogglePipHidden={() => setIsPipHidden(v => !v)}
+              isUiFullscreen={isUiFullscreen}
+              toggleFullscreen={toggleFullscreen}
+              trackOverlay={trackOverlay}
+              autoTrackEnabled={autoTrack.status?.enabled ?? false}
+              guardEnabled={guardStatus?.enabled ?? false}
+              isZoneDrawing={isZoneDrawing}
+              onToggleZoneDrawing={() => setIsZoneDrawing(v => !v)}
+              whepStatus={whepStatus}
+              whepStatus2={whepStatus2}
+              currentWhep={currentWhep}
+              videoLatencyMs={videoLatencyMs}
+              videoResolution={videoResolution}
+              resolutionChip={resolutionChip}
+              telemetry={telemetry}
+              isConnected={isConnected}
+              aiStatus={aiStatus}
+              autoTrackFrames={autoTrack.status?.frames_processed ?? 0}
+              autoTrack={autoTrack}
+              connectWs={connectWs}
+              connectWhep={connectWhep}
+              connectWhep2={connectWhep2}
+              isMissionRunning={isMissionRunning}
+              triggerSnapshot={triggerSnapshot}
+              toggleMission={toggleMission}
+            />
 
             {/* 右侧栏 (日志 + AI 检测) */}
             {!isUiFullscreen && activeTab === 'console' && (
@@ -756,10 +502,10 @@ export default function IndustrialConsoleComplete() {
                     </button>
                   </div>
                   <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-zinc-900/20">
-                      {alerts.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3">
-                          <ShieldCheck size={40} className="text-white/20" />
-                          <p className="text-[10px] uppercase font-black tracking-widest text-white/30">监测运行中...</p>
+                    {alerts.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3">
+                        <ShieldCheck size={40} className="text-white/20" />
+                        <p className="text-[10px] uppercase font-black tracking-widest text-white/30">监测运行中...</p>
                         {(whepStatus.status !== 'connected' || !isConnected) && (
                           <button
                             onClick={() => {
@@ -772,17 +518,16 @@ export default function IndustrialConsoleComplete() {
                           </button>
                         )}
                       </div>
-                      ) : (
-                        alerts.slice(0, 15).map((a, i) => (
-                          <DetectionAlert key={`${a.timestamp}-${i}`} data={a} />
-                        ))
-                      )}
+                    ) : (
+                      alerts.slice(0, 15).map((a, i) => (
+                        <DetectionAlert key={`${a.timestamp}-${i}`} data={a} />
+                      ))
+                    )}
                   </div>
                 </div>
               </aside>
             )}
-
-          </div>
+          </>
         ) : activeTab === 'admin' ? (
           /* 后台管理页面 */
           <div className="flex-1 flex flex-col bg-black overflow-hidden">
