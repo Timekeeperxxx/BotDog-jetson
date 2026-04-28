@@ -38,12 +38,13 @@ export function useEventWebSocket(): EventHookState {
   const connectionIdRef = useRef(0);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    const rs = wsRef.current?.readyState;
+    if (rs === WebSocket.OPEN || rs === WebSocket.CONNECTING) {
       return;
     }
 
     if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
-      wsRef.current.close();
+      wsRef.current.close(1000);
       wsRef.current = null;
     }
 
@@ -151,12 +152,13 @@ export function useEventWebSocket(): EventHookState {
   }, []);
 
   const disconnect = useCallback(() => {
+    connectionIdRef.current += 1;
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
     if (wsRef.current) {
-      wsRef.current.close();
+      wsRef.current.close(1000);
       wsRef.current = null;
     }
     setStatus({ status: 'disconnected', error: null });

@@ -30,10 +30,11 @@ export function useNavWebSocket() {
   const connectionIdRef = useRef(0)
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
+    const rs = wsRef.current?.readyState
+    if (rs === WebSocket.OPEN || rs === WebSocket.CONNECTING) return
 
     if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
-      wsRef.current.close()
+      wsRef.current.close(1000)
       wsRef.current = null
     }
 

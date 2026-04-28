@@ -76,15 +76,16 @@ export function useBotDogWebSocket() {
 
   // 连接WebSocket
   const connect = useCallback(() => {
-    if (telemetryWsRef.current?.readyState === WebSocket.OPEN) {
-      console.log('WebSocket已连接，跳过重复连接');
+    const rs = telemetryWsRef.current?.readyState;
+    if (rs === WebSocket.OPEN || rs === WebSocket.CONNECTING) {
+      console.log('WebSocket已连接或正在连接，跳过重复连接');
       return;
     }
 
-    // 关闭旧连接
+    // 关闭处于 CLOSING 状态的旧连接
     if (telemetryWsRef.current && telemetryWsRef.current.readyState !== WebSocket.CLOSED) {
       console.log('关闭旧WebSocket连接');
-      telemetryWsRef.current.close();
+      telemetryWsRef.current.close(1000);
       telemetryWsRef.current = null;
     }
 
@@ -220,11 +221,13 @@ export function useBotDogWebSocket() {
 
   // 断开连接
   const disconnect = useCallback(() => {
+    connectionIdRef.current += 1;
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
     }
     if (telemetryWsRef.current) {
-      telemetryWsRef.current.close();
+      telemetryWsRef.current.close(1000);
       telemetryWsRef.current = null;
     }
     setIsConnected(false);
