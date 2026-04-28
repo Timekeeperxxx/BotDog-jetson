@@ -147,6 +147,10 @@ TEST_ALERT_ROUTES = [
     ("POST", "/api/v1/test/alert"),
 ]
 
+SYSTEM_INFO_ROUTES = [
+    ("GET", "/api/v1/system-info"),
+]
+
 WEBSOCKET_ROUTES = [
     "/ws/telemetry",
     "/ws/event",
@@ -270,6 +274,14 @@ def test_test_alert_route_registered(route_index: dict, method: str, path: str) 
     """test alert 路由拆分后必须保持 method 与 path 不变。"""
     assert (method, path) in route_index, (
         f"{method} {path} 未注册 ── test alert 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", SYSTEM_INFO_ROUTES)
+def test_system_info_route_registered(route_index: dict, method: str, path: str) -> None:
+    """system_info 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── system_info 路由可能在拆分中丢失"
     )
 
 
