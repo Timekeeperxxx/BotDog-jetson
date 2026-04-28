@@ -4,25 +4,25 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { getWsUrl } from '../config/api';
+import { getWsUrl, getApiUrl } from '../config/api';
 
 // ==================== 类型定义 ====================
 export interface TelemetryData {
   timestamp: number;
-  latency_ms: number;
-  rssi_dbm: number;
-  core_temp_c: number;
-  battery_pct: number;
+  latency_ms: number | null;
+  rssi_dbm: number | null;
+  core_temp_c: number | null;
+  battery_pct: number | null;
   attitude: {
     pitch: number;
     roll: number;
     yaw: number;
   };
   position: {
-    alt: number;
-    groundspeed: number;
-    lat: number;
-    lon: number;
+    groundspeed: number | null;
+    lat: number | null;
+    lon: number | null;
+    alt: number | null;
   };
   motors: Array<{
     name: string;
@@ -55,21 +55,24 @@ export interface SystemStatus {
 // ==================== WebSocket连接Hook ====================
 export function useBotDogWebSocket() {
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
-  // @ts-ignore - 暂时未使用，等待后端实现抓拍功能
-  const [snapshots, setSnapshots] = useState<SnapshotData[]>([]);
-  // @ts-ignore - 暂时未使用，等待后端实现日志功能
+  // setSnapshots 暂留但不调用——等待后端实现抓拍功能
+  const [snapshots, _setSnapshots] = useState<SnapshotData[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     status: 'DISCONNECTED',
     uptime: '00:00:00',
   });
   const [isConnected, setIsConnected] = useState(false);
+  const [lastTelemetryAt, setLastTelemetryAt] = useState<number | null>(null);
+  const [telemetryStale, setTelemetryStale] = useState(false);
 
   const telemetryWsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const startTimeRef = useRef<number>(Date.now());
   const connectionIdRef = useRef(0); // 连接实例ID，防止旧连接回调干扰
+  // Ref 版 lastTelemetryAt，供 stale 检测 interval 使用（避免 stale closure）
+  const lastTelemetryAtRef = useRef<number | null>(null);
 
   // 连接WebSocket
   const connect = useCallback(() => {
@@ -101,7 +104,6 @@ export function useBotDogWebSocket() {
       telemetryWsRef.current = ws;
 
       ws.onopen = () => {
-        // 检查是否是最新的连接
         if (currentConnectionId !== connectionIdRef.current) {
           console.log('忽略旧连接的onopen回调');
           return;
@@ -113,48 +115,60 @@ export function useBotDogWebSocket() {
       };
 
       ws.onmessage = (event) => {
-        // 检查是否是最新的连接
         if (currentConnectionId !== connectionIdRef.current) {
           console.log('忽略旧连接的消息');
           return;
         }
 
         try {
-          const message = JSON.parse(event.data);
-          // 仅在调试模式下打印消息，避免日志刷屏
-          // console.log('收到WebSocket消息:', message);
+          const message = JSON.parse(event.data) as Record<string, unknown>;
 
-          // 处理不同类型的消息
           if (message.msg_type === 'TELEMETRY_UPDATE') {
-            const payload = message.payload;
+            const payload = message.payload as Record<string, unknown>;
 
-            // 转换为前端数据格式
+            // 记录本次遥测时间，无论字段是否完整
+            const now = Date.now();
+            lastTelemetryAtRef.current = now;
+            setLastTelemetryAt(now);
+            setTelemetryStale(false);
+
+            // 按字段类型提取，缺失时使用 null 或安全零值（不伪造有意义的假数据）
+            const rawBattery = payload.battery as Record<string, unknown> | undefined;
+            const rawPosition = payload.position as Record<string, unknown> | undefined;
+            const rawAttitude = payload.attitude as { pitch: number; roll: number; yaw: number } | undefined;
+
             const telemetryData: TelemetryData = {
-              timestamp: message.timestamp || Date.now() / 1000,
-              latency_ms: message.latency_ms || 20,
-              rssi_dbm: message.rssi_dbm || -60,
-              core_temp_c: message.core_temp_c || 42, // 模拟温度
-              battery_pct: payload.battery?.remaining_pct || 85, // 使用真实电池数据
-              attitude: payload.attitude || {
-                pitch: 0,
-                roll: 0,
-                yaw: 0,
-              },
+              timestamp: typeof message.timestamp === 'number'
+                ? message.timestamp
+                : Date.now() / 1000,
+              latency_ms: typeof message.latency_ms === 'number' ? message.latency_ms : null,
+              rssi_dbm: typeof message.rssi_dbm === 'number' ? message.rssi_dbm : null,
+              core_temp_c: typeof message.core_temp_c === 'number' ? message.core_temp_c : null,
+              battery_pct: typeof rawBattery?.remaining_pct === 'number'
+                ? rawBattery.remaining_pct as number
+                : null,
+              attitude: rawAttitude ?? { pitch: 0, roll: 0, yaw: 0 },
               position: {
-                alt: payload.position?.alt || 1.2,
-                groundspeed: payload.position?.groundspeed || 0.8,
-                lat: payload.position?.lat || 39.91,
-                lon: payload.position?.lon || 116.40,
+                groundspeed: typeof rawPosition?.groundspeed === 'number'
+                  ? rawPosition.groundspeed as number
+                  : null,
+                lat: typeof rawPosition?.lat === 'number' ? rawPosition.lat as number : null,
+                lon: typeof rawPosition?.lon === 'number' ? rawPosition.lon as number : null,
+                alt: typeof rawPosition?.alt === 'number' ? rawPosition.alt as number : null,
               },
-              motors: [], // 后端暂不提供电机数据，使用空数组
+              motors: [],
             };
 
             setTelemetry(telemetryData);
 
             // 更新系统状态
-            if (payload.system) {
-              const newStatus = payload.system.armed ? 'IN_MISSION' : 'STANDBY';
-              setSystemStatus(prev => ({ ...prev, status: newStatus as any }));
+            const rawSystem = payload.system as { armed?: boolean } | undefined;
+            if (rawSystem) {
+              const newStatus = rawSystem.armed ? 'IN_MISSION' : 'STANDBY';
+              setSystemStatus(prev => ({
+                ...prev,
+                status: newStatus as SystemStatus['status'],
+              }));
             }
           }
         } catch (error) {
@@ -163,7 +177,6 @@ export function useBotDogWebSocket() {
       };
 
       ws.onerror = (error) => {
-        // 检查是否是最新的连接
         if (currentConnectionId !== connectionIdRef.current) {
           return;
         }
@@ -172,7 +185,6 @@ export function useBotDogWebSocket() {
       };
 
       ws.onclose = (event) => {
-        // 检查是否是最新的连接
         if (currentConnectionId !== connectionIdRef.current) {
           console.log('忽略旧连接的onclose回调');
           return;
@@ -182,16 +194,13 @@ export function useBotDogWebSocket() {
         setIsConnected(false);
         setSystemStatus(prev => ({ ...prev, status: 'DISCONNECTED' }));
 
-        // 避免正常关闭时重连
         if (event.code === 1000) {
           console.log('WebSocket正常关闭，不重连');
           return;
         }
 
         // 指数退避重连：前 10 次加速上升，之后重置计数以 10s 间隔持续重试
-        // 后端重启后无需刷新页面即可自动恢复
         if (reconnectAttemptsRef.current >= 10) {
-          // 达到上限后重置，以最大间隔无限持续重试
           reconnectAttemptsRef.current = 0;
           console.log('🔄 WebSocket重连计数已重置，继续以10s间隔持续重试');
         }
@@ -232,18 +241,34 @@ export function useBotDogWebSocket() {
     setLogs(prev => [...prev, newLog].slice(-40));
   }, []);
 
-  // 触发急停
-  const triggerEmergencyStop = useCallback(() => {
-    // TODO: 通过WebSocket发送急停指令到后端
-    setSystemStatus({ status: 'E_STOP_TRIGGERED', uptime: systemStatus.uptime });
-    addLog('紧急停止已触发', 'error', 'SYSTEM');
+  // 触发急停：调用后端真实接口，systemStatus 由后端 WebSocket 更新，不在前端本地伪造
+  const triggerEmergencyStop = useCallback(async () => {
+    try {
+      const res = await fetch(getApiUrl('/api/v1/control/e-stop'), {
+        method: 'POST',
+      });
+      if (res.ok) {
+        addLog('紧急停止已触发', 'error', 'SYSTEM');
+      } else {
+        addLog('紧急停止请求失败', 'error', 'SYSTEM');
+      }
+    } catch {
+      addLog('紧急停止请求失败', 'error', 'SYSTEM');
+    }
+  }, [addLog]);
 
-    // 3秒后恢复
-    setTimeout(() => {
-      setSystemStatus({ status: 'STANDBY', uptime: systemStatus.uptime });
-      addLog('系统已恢复待机状态', 'info', 'SYSTEM');
-    }, 3000);
-  }, [systemStatus.uptime, addLog]);
+  // 遥测数据新鲜度检测：超过 3s 未收到 TELEMETRY_UPDATE 则标记为 stale
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (
+        lastTelemetryAtRef.current !== null &&
+        Date.now() - lastTelemetryAtRef.current > 3000
+      ) {
+        setTelemetryStale(true);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // 计算运行时间
   useEffect(() => {
@@ -267,16 +292,12 @@ export function useBotDogWebSocket() {
     };
   }, [connect, disconnect]);
 
-  // 等待后端实现抓拍功能
-  // TODO: 从后端WebSocket接收真实的抓拍事件数据
-
-  // 等待后端实现日志功能
-  // TODO: 从后端WebSocket接收真实的系统日志数据
-
   return {
     // 遥测数据
     telemetry,
     isConnected,
+    lastTelemetryAt,
+    telemetryStale,
     // 快照列表
     snapshots,
     // 系统日志

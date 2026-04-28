@@ -617,14 +617,14 @@ export default function IndustrialConsoleComplete() {
             </div>
             <div className="flex items-center space-x-10">
               <div className="hidden lg:flex items-center space-x-8 pr-8 border-r border-white/20 font-bold">
-                <DataPointHeader label="速度" value={telemetry ? telemetry.position.groundspeed.toFixed(1) : '--'} unit="m/s" />
+                <DataPointHeader label="速度" value={telemetry?.position.groundspeed != null ? telemetry.position.groundspeed.toFixed(1) : '--'} unit="m/s" />
                 <DataPointHeader label="航向" value={telemetry ? (telemetry.attitude.yaw || 0).toFixed(0) : '--'} unit="°" />
                 <DataPointHeader label="延迟" value={videoLatencyMs !== null ? `${videoLatencyMs}` : '--'} unit="ms" />
               </div>
               <div className="flex items-center space-x-6">
                 <TopStatus icon={<Wifi size={16} />} value={isConnected ? '在线' : '离线'} label="链路" />
-                <TopStatus icon={<Battery size={16} />} value={telemetry ? `${telemetry.battery_pct.toFixed(0)}%` : '--'} label="电量" />
-                <TopStatus icon={<Thermometer size={16} />} value={telemetry ? `${telemetry.core_temp_c.toFixed(0)}°C` : '--'} label="温度" />
+                <TopStatus icon={<Battery size={16} />} value={telemetry?.battery_pct != null ? `${telemetry.battery_pct.toFixed(0)}%` : '--'} label="电量" />
+                <TopStatus icon={<Thermometer size={16} />} value={telemetry?.core_temp_c != null ? `${telemetry.core_temp_c.toFixed(0)}°C` : '--'} label="温度" />
               </div>
               <div className="text-[11px] font-mono font-black text-white pl-6 border-l border-white/20">
                 {new Date().toLocaleTimeString('zh-CN', { hour12: false })}
