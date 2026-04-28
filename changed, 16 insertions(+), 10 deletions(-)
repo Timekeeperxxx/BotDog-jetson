@@ -1,0 +1,40 @@
+[1mdiff --git a/frontend/src/hooks/useBotDogWebSocket.ts b/frontend/src/hooks/useBotDogWebSocket.ts[m
+[1mindex a653411..2a44dd1 100644[m
+[1m--- a/frontend/src/hooks/useBotDogWebSocket.ts[m
+[1m+++ b/frontend/src/hooks/useBotDogWebSocket.ts[m
+[36m@@ -76,15 +76,16 @@[m [mexport function useBotDogWebSocket() {[m
+ [m
+   // 连接WebSocket[m
+   const connect = useCallback(() => {[m
+[31m-    if (telemetryWsRef.current?.readyState === WebSocket.OPEN) {[m
+[31m-      console.log('WebSocket已连接，跳过重复连接');[m
+[32m+[m[32m    const rs = telemetryWsRef.current?.readyState;[m
+[32m+[m[32m    if (rs === WebSocket.OPEN || rs === WebSocket.CONNECTING) {[m
+[32m+[m[32m      console.log('WebSocket已连接或正在连接，跳过重复连接');[m
+       return;[m
+     }[m
+ [m
+[31m-    // 关闭旧连接[m
+[32m+[m[32m    // 关闭处于 CLOSING 状态的旧连接[m
+     if (telemetryWsRef.current && telemetryWsRef.current.readyState !== WebSocket.CLOSED) {[m
+       console.log('关闭旧WebSocket连接');[m
+[31m-      telemetryWsRef.current.close();[m
+[32m+[m[32m      telemetryWsRef.current.close(1000);[m
+       telemetryWsRef.current = null;[m
+     }[m
+ [m
+[36m@@ -220,11 +221,13 @@[m [mexport function useBotDogWebSocket() {[m
+ [m
+   // 断开连接[m
+   const disconnect = useCallback(() => {[m
+[32m+[m[32m    connectionIdRef.current += 1;[m
+     if (reconnectTimeoutRef.current) {[m
+       clearTimeout(reconnectTimeoutRef.current);[m
+[32m+[m[32m      reconnectTimeoutRef.current = null;[m
+     }[m
+     if (telemetryWsRef.current) {[m
+[31m-      telemetryWsRef.current.close();[m
+[32m+[m[32m      telemetryWsRef.current.close(1000);[m
+       telemetryWsRef.current = null;[m
+     }[m
+     setIsConnected(false);[m

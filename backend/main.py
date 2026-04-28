@@ -22,20 +22,12 @@ from .database import get_db, init_db, get_session_factory
 from .logging_config import logger, setup_logging
 from .schemas import (
     ControlAckDTO,
-    DeleteWaypointResponse,
     EStopResetResponse,
     EStopResponse,
     EvidenceBulkDeleteRequest,
     EvidenceDeleteResponse,
     EvidenceListResponse,
     LogsPage,
-    NavWaypointCreateRequest,
-    NavWaypointDTO,
-    NavWaypointListResponse,
-    NavStateResponse,
-    PcdMapListResponse,
-    PcdMetadataResponse,
-    PcdPreviewResponse,
     SessionStartRequest,
     SessionStartResponse,
     SessionStopRequest,
@@ -83,6 +75,11 @@ def _get_state_machine() -> StateMachine | None:
     """
     global _state_machine
     return _state_machine
+
+
+def get_ros_nav_bridge():
+    """返回当前 ROS 导航桥实例（供 nav router 通过 nav_bridge_state 访问）。"""
+    return _ros_nav_bridge
 
 
 @asynccontextmanager
@@ -250,6 +247,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 loop=asyncio.get_running_loop(),
             )
             _ros_nav_bridge.start()
+            from .nav_bridge_state import set_ros_nav_bridge as _set_nav_bridge
+            _set_nav_bridge(_ros_nav_bridge)
             logger.info(
                 "ROS2 导航状态订阅转发已请求启动: topic={}, type={}",
                 settings.ROS_NAV_POSE_TOPIC,
@@ -398,6 +397,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         if _ros_nav_bridge is not None:
             _ros_nav_bridge.stop()
+            from .nav_bridge_state import set_ros_nav_bridge as _set_nav_bridge
+            _set_nav_bridge(None)
             _ros_nav_bridge = None
 
         # 取消所有任务
@@ -503,159 +504,9 @@ def register_routes(app: FastAPI) -> None:
     - 后续可拆分为多个 router 模块（system / telemetry / session 等）在此集中挂载。
     """
 
-    # ── 导航巡逻 / PCD 点云地图 Demo ─────────────────────────────────────
-
-    @app.get("/api/v1/nav/pcd-maps", response_model=PcdMapListResponse)
-    async def nav_list_pcd_maps():
-        from .services_pcd_maps import PcdMapError, list_pcd_maps
-
-        try:
-            return list_pcd_maps()
-        except PcdMapError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-    @app.get("/api/v1/nav/state", response_model=NavStateResponse)
-    async def nav_get_state():
-        from .services_nav_state import get_nav_state
-
-        return get_nav_state()
-
-    @app.post("/api/v1/nav/page-open")
-    async def nav_page_open():
-        if _ros_nav_bridge is None:
-            raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
-
-        try:
-            return _ros_nav_bridge.publish_navigation_page_open()
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
-
-    @app.get("/api/v1/nav/pcd-maps/{map_id}/metadata", response_model=PcdMetadataResponse)
-    async def nav_get_pcd_metadata(map_id: str):
-        from .services_pcd_maps import PcdMapError, get_pcd_metadata
-
-        try:
-            return get_pcd_metadata(map_id)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
-        except PcdMapError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-    @app.get("/api/v1/nav/pcd-maps/{map_id}/preview", response_model=PcdPreviewResponse)
-    async def nav_get_pcd_preview(map_id: str, max_points: int | None = None):
-        from .services_pcd_maps import PcdMapError, get_pcd_preview
-
-        try:
-            return get_pcd_preview(map_id, max_points=max_points)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
-        except PcdMapError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-    @app.get("/api/v1/nav/pcd-maps/{map_id}/waypoints", response_model=NavWaypointListResponse)
-    async def nav_list_waypoints(map_id: str):
-        from .services_pcd_maps import PcdMapError
-        from .services_nav_waypoints import list_waypoints
-
-        try:
-            return list_waypoints(map_id)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
-        except PcdMapError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-    @app.post("/api/v1/nav/pcd-maps/{map_id}/waypoints", response_model=NavWaypointDTO)
-    async def nav_create_waypoint(map_id: str, body: NavWaypointCreateRequest):
-        from .services_nav_waypoints import create_waypoint
-        from .services_pcd_maps import PcdMapError
-
-        try:
-            return create_waypoint(map_id, body.model_dump())
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
-        except (PcdMapError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-    @app.post("/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}")
-    @app.post("/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to")
-    async def nav_go_to_waypoint(map_id: str, waypoint_id: str):
-        from .services_nav_state import update_navigation_status
-        from .services_nav_waypoints import get_waypoint
-        from .services_pcd_maps import PcdMapError
-
-        if _ros_nav_bridge is None:
-            raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
-
-        try:
-            waypoint = get_waypoint(map_id, waypoint_id)
-            start_result = _ros_nav_bridge.publish_navigation_start()
-            result = _ros_nav_bridge.publish_navigation_goal(waypoint)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"导航点不存在: {waypoint_id}")
-        except PcdMapError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
-
-        update_navigation_status(
-            {
-                "status": "navigating",
-                "target_waypoint_id": waypoint["id"],
-                "target_name": waypoint["name"],
-                "message": f"已发布导航开始信号并发送目标: {waypoint['name']}",
-            }
-        )
-        return {
-            "success": True,
-            "topic": result["topic"],
-            "waypoint_id": result["waypoint_id"],
-            "start": start_result,
-            "goal": result,
-        }
-
-    @app.post("/api/v1/nav/e-stop")
-    async def nav_emergency_stop():
-        from .services_nav_state import update_navigation_status
-
-        if _ros_nav_bridge is None:
-            raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
-
-        try:
-            result = _ros_nav_bridge.publish_emergency_stop()
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
-
-        update_navigation_status(
-            {
-                "status": "cancelled",
-                "target_waypoint_id": None,
-                "target_name": None,
-                "message": "已发布导航急停",
-            }
-        )
-        return result
-
-    @app.delete(
-        "/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}",
-        response_model=DeleteWaypointResponse,
-    )
-    async def nav_delete_waypoint(map_id: str, waypoint_id: str):
-        from .services_nav_waypoints import delete_waypoint
-        from .services_pcd_maps import PcdMapError
-
-        try:
-            ok = delete_waypoint(map_id, waypoint_id)
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
-        except PcdMapError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-        if not ok:
-            raise HTTPException(status_code=404, detail=f"导航点不存在: {waypoint_id}")
-
-        return {"success": True}
+    # ── 导航巡逻 / PCD 点云地图 ─────────────────────────────────────────────
+    from .api.routes import nav as _nav_routes
+    app.include_router(_nav_routes.router)
 
     @app.get("/api/v1/system/health", response_model=SystemHealthResponse)
     async def system_health() -> SystemHealthResponse:
