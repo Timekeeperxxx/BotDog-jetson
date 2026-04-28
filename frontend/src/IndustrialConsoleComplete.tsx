@@ -9,27 +9,20 @@ import { useBotDogWebSocket } from './hooks/useBotDogWebSocket';
 import { useWhepVideo } from './hooks/useWhepVideo';
 import { ConfigPanel } from './components/ConfigPanel';
 import { AdminPanel } from './components/AdminPanel';
-import { ControlPad } from './components/ControlPad';
 import { useEventWebSocket } from './hooks/useEventWebSocket';
 import { useAutoTrack } from './hooks/useAutoTrack';
-import { GuardControlCenter, GuardStatus } from './components/GuardControlCenter';
+import { GuardControlCenter } from './components/GuardControlCenter';
 import { getApiUrl } from './config/api';
 import { useEvidence } from './hooks/useEvidence';
+import { useMissionControl } from './hooks/useMissionControl';
+import { useAudioControl } from './hooks/useAudioControl';
+import { useGuardMissionControl } from './hooks/useGuardMissionControl';
 import { Sidebar, type SidebarTab } from './components/layout/Sidebar';
 import { TopHeader } from './components/layout/TopHeader';
 import { EvidencePanel } from './components/evidence/EvidencePanel';
-import { LogPanel } from './components/logs/LogPanel';
-import { DetectionAlert } from './components/alerts/DetectionAlert';
 import { VideoStage } from './components/video/VideoStage';
+import { ConsoleRightPanel } from './components/console/ConsoleRightPanel';
 import type { VideoSource } from './types/admin';
-import {
-  Camera,
-  ShieldCheck,
-  ChevronDown,
-  ChevronUp,
-  Volume2,
-  VolumeX,
-} from 'lucide-react';
 
 // ==================== 主应用 ====================
 export default function IndustrialConsoleComplete() {
@@ -105,52 +98,21 @@ export default function IndustrialConsoleComplete() {
 
   const [isUiFullscreen, setIsUiFullscreen] = useState(false);
   const [showConfigPanel, setShowConfigPanel] = useState(false);
-  const [missionTaskId, setMissionTaskId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<SidebarTab>('console');
   const [isLogExpanded, setIsLogExpanded] = useState(false);
   const [isAiStatsExpanded, setIsAiStatsExpanded] = useState(false);
   const [isZoneDrawing, setIsZoneDrawing] = useState(false);
-  const [guardStatus, setGuardStatus] = useState<GuardStatus | null>(null);
-  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
   const fullscreenRequestedRef = useRef(false);
   const evidence = useEvidence();
   const { fetchEvidence } = evidence;
+  const { isMissionRunning, toggleMission } = useMissionControl(addLog);
+  const { isAudioPlaying, toggleAudio } = useAudioControl();
+  const { guardStatus, toggleGuardMission, abortGuardMission } = useGuardMissionControl();
 
   const openNavPatrolPage = useCallback(() => {
     window.location.href = '/nav-patrol.html';
   }, []);
-
-  const isMissionRunning = missionTaskId !== null;
-
-  const toggleMission = useCallback(async () => {
-    try {
-      if (missionTaskId) {
-        // 停止巡检 → 立即禁用 AI 跟踪
-        await fetch(getApiUrl('/api/v1/auto-track/disable'), { method: 'POST' })
-          .catch(err => console.error('停用跟踪失败', err));
-        await fetch(getApiUrl('/api/v1/session/stop'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ task_id: missionTaskId }),
-        });
-        setMissionTaskId(null);
-        addLog('任务已停止，AI 跟踪已禁用', 'info', 'MISSION');
-      } else {
-        // 开始巡检 → 仅启动任务，AI 跟踪保持禁用，等用户手动点击「启用」
-        const res = await fetch(getApiUrl('/api/v1/session/start'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ task_name: `巡检_${new Date().toLocaleTimeString([], { hour12: false })}` }),
-        });
-        const data = await res.json();
-        setMissionTaskId(data.task_id);
-        addLog(`任务已启动: ${data.task_name}`, 'info', 'MISSION');
-      }
-    } catch (err) {
-      addLog(`任务操作失败: ${err}`, 'error', 'MISSION');
-    }
-  }, [missionTaskId, addLog]);
 
   const triggerSnapshot = useCallback(() => {
     addLog('手动拍照请求已发送', 'info', 'SNAPSHOT');
@@ -196,65 +158,6 @@ export default function IndustrialConsoleComplete() {
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [activeTab]);
-
-  // ── GuardStatus 轮询与操作 ──
-  useEffect(() => {
-    const fetchGuardStatus = async () => {
-      try {
-        const res = await fetch(getApiUrl('/api/v1/guard-mission/status'));
-        if (res.ok) setGuardStatus(await res.json());
-      } catch {}
-    };
-    fetchGuardStatus();
-    const timer = setInterval(fetchGuardStatus, 1500);
-    return () => clearInterval(timer);
-  }, []);
-
-  // ── 音频状态轮询 ──
-  useEffect(() => {
-    const fetchAudioStatus = async () => {
-      try {
-        const res = await fetch(getApiUrl('/api/v1/audio/status'));
-        if (res.ok) {
-          const data = await res.json();
-          setIsAudioPlaying(data.playing);
-        }
-      } catch {}
-    };
-    fetchAudioStatus();
-    const timer = setInterval(fetchAudioStatus, 2000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const toggleAudio = useCallback(async () => {
-    try {
-      const endpoint = isAudioPlaying ? '/api/v1/audio/stop' : '/api/v1/audio/play';
-      const res = await fetch(getApiUrl(endpoint), { method: 'POST' });
-      if (res.ok) {
-        const data = await res.json();
-        setIsAudioPlaying(data.playing);
-      }
-    } catch (err) {
-      console.error('切换音频失败:', err);
-    }
-  }, [isAudioPlaying]);
-
-  const toggleGuardMission = useCallback(async () => {
-    try {
-      const endpoint = guardStatus?.enabled ? '/disable' : '/enable';
-      await fetch(getApiUrl(`/api/v1/guard-mission${endpoint}`), { method: 'POST' });
-    } catch (err) {
-      console.error('切换自动驱离失败:', err);
-    }
-  }, [guardStatus?.enabled]);
-
-  const abortGuardMission = useCallback(async () => {
-    try {
-      await fetch(getApiUrl('/api/v1/guard-mission/abort'), { method: 'POST' });
-    } catch (err) {
-      console.error('中止驱离失败:', err);
-    }
-  }, []);
 
   useEffect(() => {
     if (activeTab !== 'history') return;
@@ -365,7 +268,7 @@ export default function IndustrialConsoleComplete() {
         />
 
         {activeTab === 'console' ? (
-          <>
+          <div className="flex-1 flex min-h-0 relative">
             <VideoStage
               videoRef={videoRef}
               videoRef2={videoRef2}
@@ -401,133 +304,28 @@ export default function IndustrialConsoleComplete() {
               toggleMission={toggleMission}
             />
 
-            {/* 右侧栏 (日志 + AI 检测) */}
-            {!isUiFullscreen && activeTab === 'console' && (
-              <aside className="w-64 bg-black flex flex-col shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
-                {/* 可折叠日志区 */}
-                <LogPanel
-                  logs={logs}
-                  isExpanded={isLogExpanded}
-                  onToggle={() => setIsLogExpanded(!isLogExpanded)}
-                  sidebarLogEndRef={sidebarLogEndRef}
-                />
-
-                {/* 控制面板区 */}
-                <div className="border-t border-white/20 bg-zinc-950 shrink-0">
-                  <div className="px-3 py-2">
-                    <ControlPad
-                      isDisabled={systemStatus?.status === 'E_STOP_TRIGGERED'}
-                      bottomCenterSlot={
-                        <button
-                          onClick={toggleAudio}
-                          title={isAudioPlaying ? '停止音频' : '播放音频'}
-                          className={`w-full h-full flex flex-col items-center justify-center gap-0.5 rounded border font-black text-[7px] uppercase tracking-tight transition-all duration-100 cursor-pointer select-none ${
-                            isAudioPlaying
-                              ? 'bg-amber-500/20 border-amber-500/60 text-amber-400 shadow-[0_0_6px_rgba(245,158,11,0.3)]'
-                              : 'bg-zinc-800/80 text-white/60 border-white/15 hover:border-white/50 hover:text-white'
-                          }`}
-                        >
-                          {isAudioPlaying
-                            ? <Volume2 size={14} className="animate-pulse" />
-                            : <VolumeX size={14} />}
-                          <span>{isAudioPlaying ? '音频' : '音频'}</span>
-                        </button>
-                      }
-                    />
-                  </div>
-                </div>
-
-                {/* AI 检测区 */}
-                <div className="flex-1 flex flex-col overflow-hidden">
-                  <div className="p-4 border-b border-white/20 flex items-center justify-between bg-black shrink-0">
-                    <div className="flex items-center space-x-3 font-black text-white">
-                      <Camera size={16} />
-                      <span className="text-[11px] uppercase tracking-widest">AI 识别</span>
-                    </div>
-                    {aiStatus && (
-                      <span className={`text-[9px] px-2 py-0.5 font-black rounded uppercase tracking-tighter ${
-                        aiStatus.mode === 'alert' ? 'bg-red-600 text-white' :
-                        aiStatus.mode === 'suspect' ? 'bg-amber-500 text-black' :
-                        aiStatus.mode === 'patrol' ? 'bg-blue-500 text-white' :
-                        'bg-white text-black'
-                      }`}>
-                        {{ idle: '待机', patrol: '巡逻', suspect: '疑似', alert: '告警' }[aiStatus.mode] || aiStatus.mode}
-                      </span>
-                    )}
-                  </div>
-                  {/* AI 统计，可折叠，默认收起 */}
-                  <div
-                    className="px-4 py-2 border-b border-white/10 bg-black/80 flex items-center justify-between cursor-pointer hover:bg-white/5 transition-all"
-                    onClick={() => setIsAiStatsExpanded(v => !v)}
-                  >
-                    <span className="text-[9px] font-black uppercase tracking-widest text-white/40">统计数据</span>
-                    {isAiStatsExpanded ? <ChevronDown size={12} className="text-white/40" /> : <ChevronUp size={12} className="text-white/40" />}
-                  </div>
-                  {isAiStatsExpanded && (
-                    <div className="px-4 py-3 border-b border-white/10 bg-black/80">
-                      <div className="grid grid-cols-2 gap-3 text-[10px] font-mono text-white/80">
-                        <div className="flex items-center justify-between">
-                          <span className="text-white/50">处理帧</span>
-                          <span>{aiStatus ? aiStatus.frames_processed : '--'}</span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-white/50">检测数</span>
-                          <span>{aiStatus ? aiStatus.detections_count : '--'}</span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-white/50">命中</span>
-                          <span>{aiStatus ? aiStatus.hits : '--'}</span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-white/50">稳定阈值</span>
-                          <span>{aiStatus ? aiStatus.stable_hits : '--'}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  <div className="px-4 py-3 border-b border-white/10 bg-black/60 flex items-center justify-between">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-white/70">
-                      任务控制
-                    </div>
-                    <button
-                      onClick={toggleMission}
-                      disabled={!isConnected}
-                      className={`px-3 py-1 text-[9px] font-black uppercase tracking-widest rounded border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
-                        isMissionRunning
-                          ? 'border-white text-white hover:bg-white hover:text-black'
-                          : 'border-white/40 text-white/70 hover:border-white hover:text-white'
-                      }`}
-                    >
-                      {isMissionRunning ? '终止任务' : '开始巡检'}
-                    </button>
-                  </div>
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-zinc-900/20">
-                    {alerts.length === 0 ? (
-                      <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3">
-                        <ShieldCheck size={40} className="text-white/20" />
-                        <p className="text-[10px] uppercase font-black tracking-widest text-white/30">监测运行中...</p>
-                        {(whepStatus.status !== 'connected' || !isConnected) && (
-                          <button
-                            onClick={() => {
-                              if (!isConnected) connectWs();
-                              connectWhep();
-                            }}
-                            className="mt-2 px-3 py-1.5 text-[9px] font-black uppercase tracking-widest border border-white/20 text-white/80 hover:text-white hover:border-white/60 transition-all"
-                          >
-                            重连所有链路
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      alerts.slice(0, 15).map((a, i) => (
-                        <DetectionAlert key={`${a.timestamp}-${i}`} data={a} />
-                      ))
-                    )}
-                  </div>
-                </div>
-              </aside>
+            {!isUiFullscreen && (
+              <ConsoleRightPanel
+                logs={logs}
+                isLogExpanded={isLogExpanded}
+                onToggleLogExpanded={() => setIsLogExpanded(!isLogExpanded)}
+                sidebarLogEndRef={sidebarLogEndRef}
+                systemStatus={systemStatus}
+                isAudioPlaying={isAudioPlaying}
+                toggleAudio={toggleAudio}
+                aiStatus={aiStatus}
+                isAiStatsExpanded={isAiStatsExpanded}
+                onToggleAiStatsExpanded={() => setIsAiStatsExpanded(v => !v)}
+                isMissionRunning={isMissionRunning}
+                toggleMission={toggleMission}
+                isConnected={isConnected}
+                whepStatus={whepStatus}
+                alerts={alerts}
+                connectWs={connectWs}
+                connectWhep={connectWhep}
+              />
             )}
-          </>
+          </div>
         ) : activeTab === 'admin' ? (
           /* 后台管理页面 */
           <div className="flex-1 flex flex-col bg-black overflow-hidden">
