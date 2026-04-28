@@ -8,7 +8,6 @@
 
 import asyncio
 import contextlib
-import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, AsyncIterator, Optional
@@ -18,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
+from .app_runtime_state import APP_START_MONO
 from .database import get_db, init_db, get_session_factory
 from .logging_config import logger, setup_logging
 from .schemas import (
@@ -41,10 +41,6 @@ from .ws_event_broadcaster import EventBroadcaster
 from .control_service import ControlService, set_control_service, get_control_service
 from .robot_adapter import create_adapter
 from .guard_mission_types import GuardStatusDTO
-
-
-
-APP_START_MONO = time.monotonic()
 
 # 全局组件（在 lifespan 中初始化）
 _state_machine: StateMachine | None = None
@@ -500,62 +496,17 @@ def register_routes(app: FastAPI) -> None:
 
     # ── 导航巡逻 / PCD 点云地图 ─────────────────────────────────────────────
     from .api.routes import nav as _nav_routes
+    from .api.routes import control_debug as _control_debug_routes
     from .api.routes import evidence as _evidence_routes
     from .api.routes import logs as _logs_routes
     from .api.routes import session as _session_routes
+    from .api.routes import system as _system_routes
     app.include_router(_nav_routes.router)
+    app.include_router(_system_routes.router)
+    app.include_router(_control_debug_routes.router)
     app.include_router(_evidence_routes.router)
     app.include_router(_session_routes.router)
     app.include_router(_logs_routes.router)
-
-    @app.get("/api/v1/system/health", response_model=SystemHealthResponse)
-    async def system_health() -> SystemHealthResponse:
-        """
-        返回系统健康状态。
-
-        阶段 1 更新：
-        - status 根据 state_machine 状态映射（healthy/degraded/offline）
-        - mavlink_connected 从 state_machine 读取（如果已初始化）
-        - uptime 为进程启动以来的秒数
-        """
-
-        state_machine = _get_state_machine()
-        uptime = time.monotonic() - APP_START_MONO
-
-        # 状态映射（如果状态机未初始化，默认为 offline）
-        if state_machine is None:
-            status = "offline"
-            mavlink_connected = False
-        else:
-            state = state_machine.state
-            if state == SystemState.DISCONNECTED:
-                status = "degraded" if uptime > 10 else "offline"
-            elif state == SystemState.E_STOP_TRIGGERED:
-                status = "degraded"
-            else:
-                status = "healthy"
-            mavlink_connected = state_machine.is_connected
-
-        return SystemHealthResponse(
-            status=status,
-            mavlink_connected=mavlink_connected,
-            uptime=round(uptime, 3),
-        )
-
-    # ── 控制诊断端点 ──────────────────────────────────────────────────────────
-
-    @app.get("/api/v1/control/debug")
-    async def control_debug() -> dict:
-        """诊断端点：返回当前控制服务和适配器的详细状态。"""
-        svc = get_control_service()
-        if svc is None:
-            return {"error": "控制服务未初始化"}
-        return {
-            "adapter": svc.get_adapter_status(),
-            "watchdog_timeout_s": svc._watchdog_timeout_s,
-            "rate_limit_s": svc._rate_limit_s,
-            "watchdog_active": svc._watchdog_active,
-        }
 
     # ── 驱离任务端点 ────────────────────────────────────────────────────────
     

@@ -1,0 +1,119 @@
+"""
+路由回归检查。
+
+只调用 create_app() 读取注册的路由表，不启动 lifespan，
+不连接数据库、ROS、AI、B2 适配器。
+"""
+
+import pytest
+from fastapi.routing import APIRoute
+
+from backend.main import create_app
+
+
+@pytest.fixture(scope="module")
+def route_index() -> dict[tuple[str, str], APIRoute]:
+    """构建 (METHOD, path) → APIRoute 索引，仅用于断言路由注册情况。"""
+    app = create_app()
+    index: dict[tuple[str, str], APIRoute] = {}
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            for method in route.methods or []:
+                index[(method.upper(), route.path)] = route
+    return index
+
+
+# ── 必须注册的 nav 路由（method, path）───────────────────────────────────────
+NAV_ROUTES = [
+    # 地图列表
+    ("GET",    "/api/v1/nav/pcd-maps"),
+    # 导航状态
+    ("GET",    "/api/v1/nav/state"),
+    # 页面打开通知
+    ("POST",   "/api/v1/nav/page-open"),
+    # 地图元数据
+    ("GET",    "/api/v1/nav/pcd-maps/{map_id}/metadata"),
+    # 地图预览点云
+    ("GET",    "/api/v1/nav/pcd-maps/{map_id}/preview"),
+    # 导航点列表（GET）和新建（POST）— 同 path 不同 method
+    ("GET",    "/api/v1/nav/pcd-maps/{map_id}/waypoints"),
+    ("POST",   "/api/v1/nav/pcd-maps/{map_id}/waypoints"),
+    # 导航到指定点（两条路径注册同一 handler）
+    ("POST",   "/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}"),
+    ("POST",   "/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to"),
+    # 删除导航点
+    ("DELETE", "/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}"),
+    # 导航急停
+    ("POST",   "/api/v1/nav/e-stop"),
+]
+
+SESSION_ROUTES = [
+    ("POST", "/api/v1/session/start"),
+    ("POST", "/api/v1/session/stop"),
+]
+
+LOGS_ROUTES = [
+    ("GET", "/api/v1/logs"),
+]
+
+EVIDENCE_ROUTES = [
+    ("GET", "/api/v1/evidence"),
+    ("DELETE", "/api/v1/evidence/{evidence_id}"),
+    ("POST", "/api/v1/evidence/bulk-delete"),
+]
+
+SYSTEM_ROUTES = [
+    ("GET", "/api/v1/system/health"),
+]
+
+CONTROL_DEBUG_ROUTES = [
+    ("GET", "/api/v1/control/debug"),
+]
+
+
+@pytest.mark.parametrize("method,path", NAV_ROUTES)
+def test_nav_route_registered(route_index: dict, method: str, path: str) -> None:
+    """每条 nav 路由必须以正确的 HTTP method 注册，拆分后不能丢失。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", SESSION_ROUTES)
+def test_session_route_registered(route_index: dict, method: str, path: str) -> None:
+    """session 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── session 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", LOGS_ROUTES)
+def test_logs_route_registered(route_index: dict, method: str, path: str) -> None:
+    """logs 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── logs 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", EVIDENCE_ROUTES)
+def test_evidence_route_registered(route_index: dict, method: str, path: str) -> None:
+    """evidence 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── evidence 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", SYSTEM_ROUTES)
+def test_system_route_registered(route_index: dict, method: str, path: str) -> None:
+    """system 诊断路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── system 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", CONTROL_DEBUG_ROUTES)
+def test_control_debug_route_registered(route_index: dict, method: str, path: str) -> None:
+    """control debug 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── control debug 路由可能在拆分中丢失"
+    )
