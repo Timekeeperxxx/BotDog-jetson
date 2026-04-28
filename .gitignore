@@ -60,7 +60,6 @@ scripts/logs/
 
 # Files
 /tools/
-/tests/
 /edge/
 
 # AI Model weights (large files, distribute separately)
