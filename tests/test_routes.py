@@ -122,6 +122,31 @@ CONTROL_ROUTES = [
     ("POST", "/api/v1/control/e-stop/reset"),
 ]
 
+FOCUS_ZONE_ROUTES = [
+    ("GET", "/api/v1/focus-zones"),
+    ("POST", "/api/v1/focus-zones"),
+    ("PUT", "/api/v1/focus-zones/{zone_id}"),
+    ("DELETE", "/api/v1/focus-zones/{zone_id}"),
+]
+
+AUTO_TRACK_ROUTES = [
+    ("GET", "/api/v1/auto-track/debug"),
+    ("POST", "/api/v1/auto-track/enable"),
+    ("POST", "/api/v1/auto-track/disable"),
+    ("POST", "/api/v1/auto-track/pause"),
+    ("POST", "/api/v1/auto-track/resume"),
+    ("POST", "/api/v1/auto-track/manual-override"),
+    ("POST", "/api/v1/auto-track/release-override"),
+    ("GET", "/api/v1/auto-track/arbiter"),
+    ("POST", "/api/v1/auto-track/mark-known/{track_id}"),
+    ("POST", "/api/v1/auto-track/unmark-known/{track_id}"),
+    ("GET", "/api/v1/auto-track/known-list"),
+]
+
+TEST_ALERT_ROUTES = [
+    ("POST", "/api/v1/test/alert"),
+]
+
 WEBSOCKET_ROUTES = [
     "/ws/telemetry",
     "/ws/event",
@@ -221,6 +246,30 @@ def test_control_route_registered(route_index: dict, method: str, path: str) -> 
     """control 路由拆分后必须保持 method 与 path 不变。"""
     assert (method, path) in route_index, (
         f"{method} {path} 未注册 ── control 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", FOCUS_ZONE_ROUTES)
+def test_focus_zone_route_registered(route_index: dict, method: str, path: str) -> None:
+    """focus_zones 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── focus_zones 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", AUTO_TRACK_ROUTES)
+def test_auto_track_route_registered(route_index: dict, method: str, path: str) -> None:
+    """auto_track 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── auto_track 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", TEST_ALERT_ROUTES)
+def test_test_alert_route_registered(route_index: dict, method: str, path: str) -> None:
+    """test alert 路由拆分后必须保持 method 与 path 不变。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── test alert 路由可能在拆分中丢失"
     )
 
 
