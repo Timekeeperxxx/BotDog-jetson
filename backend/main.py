@@ -42,9 +42,6 @@ _event_broadcaster: EventBroadcaster | None = None
 _ai_worker: Any | None = None
 _control_service: ControlService | None = None
 _ros_nav_bridge: Any | None = None
-def get_ros_nav_bridge():
-    """返回当前 ROS 导航桥实例（供 nav router 通过 nav_bridge_state 访问）。"""
-    return _ros_nav_bridge
 
 
 @asynccontextmanager
@@ -471,7 +468,7 @@ def register_routes(app: FastAPI) -> None:
 
     注意：
     - 只组织路由，不引入具体业务实现，以降低 main.py 与领域逻辑的耦合度。
-    - 后续可拆分为多个 router 模块（system / telemetry / session 等）在此集中挂载。
+    - 负责集中注册已拆分的 router 模块。
     """
 
     # ── 导航巡逻 / PCD 点云地图 ─────────────────────────────────────────────
