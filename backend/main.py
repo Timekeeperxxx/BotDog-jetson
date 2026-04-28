@@ -274,12 +274,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             }
 
         if settings.CONTROL_ADAPTER_TYPE == "unitree_b2":
-            # UnitreeB2Adapter.__init__ 含同步阻塞 SDK 调用（约 20s），
-            # 用 SimulatedRobotAdapter 占位先启动服务，后台完成后热替换。
-            from .robot_adapter import SimulatedRobotAdapter
-            _placeholder_adapter = SimulatedRobotAdapter()
+            # UnitreeB2Adapter.__init__ 含同步阻塞 SDK 调用（约 20s）。
+            # 先以 adapter=None 启动 ControlService；后台初始化成功后热替换。
+            # 初始化期间控制命令返回 REJECTED_ADAPTER_NOT_READY，语义正确。
             _control_service = ControlService(
-                adapter=_placeholder_adapter,
+                adapter=None,
                 state_machine=_state_machine,
                 watchdog_timeout_ms=settings.CONTROL_WATCHDOG_TIMEOUT_MS,
                 cmd_rate_limit_ms=settings.CONTROL_CMD_RATE_LIMIT_MS,
@@ -287,18 +286,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             set_control_service(_control_service)
             tasks.append(asyncio.create_task(_control_service.run_watchdog(stop_event)))
             logger.info(
-                f"控制服务已启动（临时模拟模式），B2 适配器后台初始化中..."
+                "控制服务已启动（B2 适配器初始化中，控制命令暂时被拒绝）..."
             )
 
             async def _init_b2_adapter_background() -> None:
                 """后台初始化 B2 适配器，完成后热替换到 ControlService。"""
                 try:
                     real_adapter = create_adapter("unitree_b2", **_adapter_kwargs)
-                    
-                    _control_service._adapter = real_adapter
+                    _control_service.set_adapter(real_adapter)
                     logger.info("[B2Init] UnitreeB2Adapter 初始化完成，已热替换控制适配器")
                 except Exception as exc:
-                    logger.error(f"[B2Init] UnitreeB2Adapter 初始化失败，保持模拟模式: {exc}")
+                    logger.error(f"[B2Init] B2 适配器初始化失败，控制命令将被拒绝: {exc}")
 
             tasks.append(asyncio.create_task(_init_b2_adapter_background()))
         else:
@@ -701,22 +699,8 @@ def register_routes(app: FastAPI) -> None:
         svc = get_control_service()
         if svc is None:
             return {"error": "控制服务未初始化"}
-        adapter = svc._adapter
-        adapter_info = {
-            "type": type(adapter).__name__,
-            "module": type(adapter).__module__,
-        }
-        # 如果是 UnitreeB2Adapter，附加更多信息
-        if hasattr(adapter, '_initialized'):
-            adapter_info["initialized"] = adapter._initialized
-        if hasattr(adapter, '_sport_client'):
-            adapter_info["sport_client_exists"] = adapter._sport_client is not None
-        if hasattr(adapter, '_worker_thread'):
-            adapter_info["worker_thread_alive"] = adapter._worker_thread.is_alive()
-        if hasattr(adapter, '_cmd_queue'):
-            adapter_info["cmd_queue_size"] = adapter._cmd_queue.qsize()
         return {
-            "adapter": adapter_info,
+            "adapter": svc.get_adapter_status(),
             "watchdog_timeout_s": svc._watchdog_timeout_s,
             "rate_limit_s": svc._rate_limit_s,
             "watchdog_active": svc._watchdog_active,

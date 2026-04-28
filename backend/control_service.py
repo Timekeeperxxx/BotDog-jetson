@@ -41,7 +41,7 @@ class ControlService:
 
     def __init__(
         self,
-        adapter: BaseRobotAdapter,
+        adapter: BaseRobotAdapter | None,
         state_machine=None,
         watchdog_timeout_ms: int = 500,
         cmd_rate_limit_ms: int = 50,
@@ -50,7 +50,7 @@ class ControlService:
         初始化控制服务。
 
         Args:
-            adapter: 机器狗适配器实例
+            adapter: 机器狗适配器实例，可为 None（适配器未就绪时命令将被拒绝）
             state_machine: 系统状态机（可选，用于 E_STOP 检查）
             watchdog_timeout_ms: Watchdog 超时时间（毫秒）
             cmd_rate_limit_ms: 最小命令间隔（毫秒）
@@ -185,16 +185,42 @@ class ControlService:
                         f"[Watchdog] 超时 ({elapsed * 1000:.0f}ms)，自动执行 stop"
                     )
                     self._watchdog_active = False
-                    try:
-                        await self._adapter.stop()
-                    except Exception as exc:  # noqa: BLE001
-                        logger.exception(f"[Watchdog] 执行 stop 失败: {exc}")
+                    if self._adapter is not None and self._adapter.is_ready():
+                        try:
+                            await self._adapter.stop()
+                        except Exception as exc:  # noqa: BLE001
+                            logger.exception(f"[Watchdog] 执行 stop 失败: {exc}")
+                    else:
+                        logger.warning("[Watchdog] 适配器不可用，跳过 stop")
 
             except asyncio.CancelledError:
                 logger.info("[Watchdog] 已停止")
                 break
             except Exception as exc:  # noqa: BLE001
                 logger.exception(f"[Watchdog] 异常: {exc}")
+
+    def set_adapter(self, adapter: BaseRobotAdapter | None) -> None:
+        """替换适配器实例（供后台热切换使用，adapter=None 表示不可用）。"""
+        self._adapter = adapter
+
+    def get_adapter_status(self) -> dict:
+        """返回适配器状态摘要，供调试端点使用。"""
+        if self._adapter is None:
+            return {"type": None, "ready": False}
+        info: dict = {
+            "type": type(self._adapter).__name__,
+            "module": type(self._adapter).__module__,
+            "ready": self._adapter.is_ready(),
+        }
+        if hasattr(self._adapter, "_initialized"):
+            info["initialized"] = self._adapter._initialized
+        if hasattr(self._adapter, "_sport_client"):
+            info["sport_client_exists"] = self._adapter._sport_client is not None
+        if hasattr(self._adapter, "_worker_thread"):
+            info["worker_thread_alive"] = self._adapter._worker_thread.is_alive()
+        if hasattr(self._adapter, "_cmd_queue"):
+            info["cmd_queue_size"] = self._adapter._cmd_queue.qsize()
+        return info
 
     def _is_e_stop_active(self) -> bool:
         """检查 E_STOP 是否激活。"""

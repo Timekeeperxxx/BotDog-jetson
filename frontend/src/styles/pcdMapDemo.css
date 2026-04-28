@@ -202,7 +202,9 @@
 }
 
 .pcd-main-viewer {
+  height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .pcd-viewer-shell {
@@ -211,11 +213,12 @@
   border-radius: 8px;
 }
 
-.pcd-main-stage > .pcd-viewer-shell {
+.pcd-main-viewer > .pcd-viewer-shell {
   height: 100%;
 }
 
 .pcd-three-host,
+.pcd-three-host canvas,
 .pcd-canvas-host,
 .pcd-canvas-host canvas {
   width: 100%;

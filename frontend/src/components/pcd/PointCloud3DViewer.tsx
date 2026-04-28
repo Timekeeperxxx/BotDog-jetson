@@ -198,7 +198,7 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
       const fitHeightDistance = verticalSpan / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2))
       const fitWidthDistance = horizontalSpan / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * Math.max(camera.aspect, 0.75))
       const distance = Math.max(fitHeightDistance, fitWidthDistance) * 1.22
-      const direction = new THREE.Vector3(1, 0.18, 1).normalize()
+      const direction = new THREE.Vector3(1, 0.75, 1).normalize()
 
       controls.target.copy(center)
       camera.position.copy(center.clone().add(direction.multiplyScalar(distance)))
