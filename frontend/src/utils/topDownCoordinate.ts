@@ -13,7 +13,7 @@ export function getTopDownScale(
   const rangeX = Math.max(MIN_RANGE, bounds.max_x - bounds.min_x)
   const rangeY = Math.max(MIN_RANGE, bounds.max_y - bounds.min_y)
 
-  return Math.min(usableWidth / rangeX, usableHeight / rangeY)
+  return Math.min(usableWidth / rangeY, usableHeight / rangeX)
 }
 
 export function mapToCanvas(
@@ -27,8 +27,8 @@ export function mapToCanvas(
   const scale = getTopDownScale(bounds, canvasWidth, canvasHeight, padding)
 
   return {
-    x: padding + (x - bounds.min_x) * scale,
-    y: canvasHeight - padding - (y - bounds.min_y) * scale,
+    x: padding + (y - bounds.min_y) * scale,
+    y: canvasHeight - padding - (x - bounds.min_x) * scale,
   }
 }
 
@@ -43,7 +43,7 @@ export function canvasToMap(
   const scale = getTopDownScale(bounds, canvasWidth, canvasHeight, padding)
 
   return {
-    x: bounds.min_x + (canvasX - padding) / scale,
-    y: bounds.min_y + (canvasHeight - padding - canvasY) / scale,
+    x: bounds.min_x + (canvasHeight - padding - canvasY) / scale,
+    y: bounds.min_y + (canvasX - padding) / scale,
   }
 }

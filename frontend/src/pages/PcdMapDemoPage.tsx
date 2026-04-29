@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ArrowLeft,
   Boxes,
   ChevronDown,
   ChevronUp,
@@ -367,13 +366,6 @@ export function PcdMapDemoPage() {
     <main className="pcd-demo-page">
       <header className="pcd-demo-header">
         <div className="pcd-title-row">
-          <button
-            className="pcd-back-button"
-            onClick={() => { window.location.href = '/' }}
-            title="返回主界面"
-          >
-            <ArrowLeft size={18} />
-          </button>
           <div className="pcd-title-block">
             <h1>BotDog 导航巡逻</h1>
             <p>PCD 预览、标点、导航、位姿和日志统一压缩到单屏工作区</p>

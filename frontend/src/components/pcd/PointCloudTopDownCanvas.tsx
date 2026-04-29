@@ -69,6 +69,65 @@ export function PointCloudTopDownCanvas({
       }
     }
 
+    const drawYawArrow = (
+      ctx: CanvasRenderingContext2D,
+      originMapX: number,
+      originMapY: number,
+      yaw: number,
+      bounds: PcdBounds,
+      width: number,
+      height: number,
+      lengthPx: number,
+      color: string,
+      lineWidth: number,
+    ) => {
+      const originBase = mapToCanvas(originMapX, originMapY, bounds, width, height, PADDING)
+      const tipBase = mapToCanvas(
+        originMapX + Math.cos(yaw),
+        originMapY + Math.sin(yaw),
+        bounds,
+        width,
+        height,
+        PADDING,
+      )
+      const origin = applyView(originBase.x, originBase.y, width, height)
+      const tipDirection = {
+        x: tipBase.x - originBase.x,
+        y: tipBase.y - originBase.y,
+      }
+      const directionLength = Math.hypot(tipDirection.x, tipDirection.y) || 1
+      const unit = {
+        x: tipDirection.x / directionLength,
+        y: tipDirection.y / directionLength,
+      }
+      const tip = {
+        x: origin.x + unit.x * lengthPx,
+        y: origin.y + unit.y * lengthPx,
+      }
+      const headLength = 10
+      const headAngle = Math.atan2(unit.y, unit.x)
+
+      ctx.strokeStyle = color
+      ctx.fillStyle = color
+      ctx.lineWidth = lineWidth
+      ctx.beginPath()
+      ctx.moveTo(origin.x, origin.y)
+      ctx.lineTo(tip.x, tip.y)
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(tip.x, tip.y)
+      ctx.lineTo(
+        tip.x - headLength * Math.cos(headAngle - Math.PI / 6),
+        tip.y - headLength * Math.sin(headAngle - Math.PI / 6),
+      )
+      ctx.lineTo(
+        tip.x - headLength * Math.cos(headAngle + Math.PI / 6),
+        tip.y - headLength * Math.sin(headAngle + Math.PI / 6),
+      )
+      ctx.closePath()
+      ctx.fill()
+    }
+
     const draw = () => {
       const rect = host.getBoundingClientRect()
       const ratio = Math.min(window.devicePixelRatio || 1, 2)
@@ -164,87 +223,33 @@ export function PointCloudTopDownCanvas({
         ctx.textBaseline = 'middle'
         ctx.fillText(String(index + 1), pos.x, pos.y)
 
-        const yawLength = 22
-        const yawTipX = pos.x + Math.cos(waypoint.yaw) * yawLength
-        const yawTipY = pos.y - Math.sin(waypoint.yaw) * yawLength
-        ctx.strokeStyle = '#fbbf24'
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        ctx.moveTo(pos.x, pos.y)
-        ctx.lineTo(yawTipX, yawTipY)
-        ctx.stroke()
+        drawYawArrow(ctx, waypoint.x, waypoint.y, waypoint.yaw, bounds, width, height, 22, '#fbbf24', 2)
       })
 
       if (pendingWaypoint) {
         const basePos = mapToCanvas(pendingWaypoint.x, pendingWaypoint.y, bounds, width, height, PADDING)
         const pos = applyView(basePos.x, basePos.y, width, height)
-        const arrowLength = 32
-        const tipX = pos.x + Math.cos(pendingWaypoint.yaw) * arrowLength
-        const tipY = pos.y - Math.sin(pendingWaypoint.yaw) * arrowLength
-        const headLength = 10
-        const headAngle = Math.atan2(tipY - pos.y, tipX - pos.x)
 
         ctx.save()
         ctx.fillStyle = '#22c55e'
-        ctx.strokeStyle = '#86efac'
-        ctx.lineWidth = 3
         ctx.beginPath()
         ctx.arc(pos.x, pos.y, 7, 0, Math.PI * 2)
         ctx.fill()
-        ctx.beginPath()
-        ctx.moveTo(pos.x, pos.y)
-        ctx.lineTo(tipX, tipY)
-        ctx.stroke()
-        ctx.beginPath()
-        ctx.moveTo(tipX, tipY)
-        ctx.lineTo(
-          tipX - headLength * Math.cos(headAngle - Math.PI / 6),
-          tipY - headLength * Math.sin(headAngle - Math.PI / 6),
-        )
-        ctx.lineTo(
-          tipX - headLength * Math.cos(headAngle + Math.PI / 6),
-          tipY - headLength * Math.sin(headAngle + Math.PI / 6),
-        )
-        ctx.closePath()
-        ctx.fill()
+        drawYawArrow(ctx, pendingWaypoint.x, pendingWaypoint.y, pendingWaypoint.yaw, bounds, width, height, 32, '#86efac', 3)
         ctx.restore()
       }
 
       if (robotPose) {
         const basePos = mapToCanvas(robotPose.x, robotPose.y, bounds, width, height, PADDING)
         const pos = applyView(basePos.x, basePos.y, width, height)
-        const arrowLength = 28
-        const arrowX = Math.cos(robotPose.yaw) * arrowLength
-        const arrowY = -Math.sin(robotPose.yaw) * arrowLength
-        const tipX = pos.x + arrowX
-        const tipY = pos.y + arrowY
-        const headLength = 10
-        const headAngle = Math.atan2(arrowY, arrowX)
+        const robotColor = robotPose.frame_id === 'map' ? '#7dd3fc' : '#fca5a5'
 
         ctx.save()
         ctx.fillStyle = robotPose.frame_id === 'map' ? '#38bdf8' : '#ef4444'
-        ctx.strokeStyle = robotPose.frame_id === 'map' ? '#7dd3fc' : '#fca5a5'
-        ctx.lineWidth = 3
         ctx.beginPath()
         ctx.arc(pos.x, pos.y, 8, 0, Math.PI * 2)
         ctx.fill()
-        ctx.beginPath()
-        ctx.moveTo(pos.x, pos.y)
-        ctx.lineTo(tipX, tipY)
-        ctx.stroke()
-
-        ctx.beginPath()
-        ctx.moveTo(tipX, tipY)
-        ctx.lineTo(
-          tipX - headLength * Math.cos(headAngle - Math.PI / 6),
-          tipY - headLength * Math.sin(headAngle - Math.PI / 6),
-        )
-        ctx.lineTo(
-          tipX - headLength * Math.cos(headAngle + Math.PI / 6),
-          tipY - headLength * Math.sin(headAngle + Math.PI / 6),
-        )
-        ctx.closePath()
-        ctx.fill()
+        drawYawArrow(ctx, robotPose.x, robotPose.y, robotPose.yaw, bounds, width, height, 28, robotColor, 3)
 
         ctx.font = 'bold 11px system-ui'
         ctx.textAlign = 'left'

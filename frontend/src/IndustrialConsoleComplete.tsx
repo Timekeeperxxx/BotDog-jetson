@@ -82,7 +82,7 @@ export default function IndustrialConsoleComplete() {
   const { isUiFullscreen, toggleFullscreen } = useFullscreenControl();
 
   const openNavPatrolPage = useCallback(() => {
-    window.location.href = '/nav-patrol.html';
+    window.open('/nav-patrol.html', '_blank', 'noopener,noreferrer');
   }, []);
 
   const triggerSnapshot = useCallback(() => {

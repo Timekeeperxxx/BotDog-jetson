@@ -9,6 +9,63 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
 
+function disposeObject3D(object: THREE.Object3D) {
+  if (object instanceof THREE.Mesh) {
+    object.geometry.dispose()
+    const material = object.material
+    if (Array.isArray(material)) material.forEach((item) => item.dispose())
+    else material.dispose()
+    return
+  }
+
+  if (object instanceof THREE.Sprite) {
+    const material = object.material
+    material.map?.dispose()
+    material.dispose()
+    return
+  }
+}
+
+function createWaypointLabelSprite(text: string) {
+  const canvas = document.createElement('canvas')
+  const width = 256
+  const height = 64
+  canvas.width = width
+  canvas.height = height
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+
+  ctx.clearRect(0, 0, width, height)
+  ctx.fillStyle = 'rgba(7, 14, 20, 0.88)'
+  ctx.strokeStyle = 'rgba(251, 191, 36, 0.45)'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.roundRect(2, 2, width - 4, height - 4, 12)
+  ctx.fill()
+  ctx.stroke()
+
+  ctx.fillStyle = '#f8fafc'
+  ctx.font = 'bold 26px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, width / 2, height / 2)
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.minFilter = THREE.LinearFilter
+  texture.magFilter = THREE.LinearFilter
+
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+  })
+  const sprite = new THREE.Sprite(material)
+  sprite.scale.set(1.8, 0.45, 1)
+  sprite.renderOrder = 10
+  return sprite
+}
+
 type Props = {
   points: [number, number, number][]
   waypoints: NavWaypoint[]
@@ -110,14 +167,7 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
       const material = cloudRef.current?.material
       if (Array.isArray(material)) material.forEach((item) => item.dispose())
       else material?.dispose()
-      waypointGroup.children.forEach((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.geometry.dispose()
-          const childMaterial = child.material
-          if (Array.isArray(childMaterial)) childMaterial.forEach((item) => item.dispose())
-          else childMaterial.dispose()
-        }
-      })
+      waypointGroup.children.forEach(disposeObject3D)
       robotGroup.children.forEach((child) => {
         if (child instanceof THREE.Mesh) {
           child.geometry.dispose()
@@ -223,14 +273,7 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
     const group = waypointGroupRef.current
     if (!group) return
 
-    group.children.forEach((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose()
-        const material = child.material
-        if (Array.isArray(material)) material.forEach((item) => item.dispose())
-        else material.dispose()
-      }
-    })
+    group.children.forEach(disposeObject3D)
     group.clear()
 
     const geometry = new THREE.SphereGeometry(0.16, 16, 12)
@@ -240,6 +283,12 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
       const sphere = new THREE.Mesh(geometry.clone(), material)
       sphere.position.set(pos.x, pos.y + 0.12, pos.z)
       group.add(sphere)
+
+      const label = createWaypointLabelSprite(waypoint.name)
+      if (label) {
+        label.position.set(pos.x, pos.y + 0.58, pos.z)
+        group.add(label)
+      }
     })
 
     return () => {
