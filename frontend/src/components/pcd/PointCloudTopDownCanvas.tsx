@@ -10,10 +10,11 @@ type Props = {
   bounds: PcdBounds | null
   waypoints: NavWaypoint[]
   robotPose: RobotPose | null
-  addMode: boolean
+  mode: 'none' | 'waypoint' | 'pose'
   waypointZ: number
   onMouseMapPositionChange: (pos: { x: number; y: number } | null) => void
   onAddWaypoint: (pos: { x: number; y: number; z: number; yaw: number }) => void
+  onSetPose: (pos: { x: number; y: number; yaw: number }) => void
 }
 
 const PADDING = 34
@@ -29,10 +30,11 @@ export function PointCloudTopDownCanvas({
   bounds,
   waypoints,
   robotPose,
-  addMode,
+  mode,
   waypointZ,
   onMouseMapPositionChange,
   onAddWaypoint,
+  onSetPose,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -308,7 +310,7 @@ export function PointCloudTopDownCanvas({
       <div className="pcd-canvas-host" ref={hostRef}>
         <canvas
           ref={canvasRef}
-          className={addMode ? 'is-adding' : isPanning ? 'is-panning' : 'is-draggable'}
+          className={mode !== 'none' ? 'is-adding' : isPanning ? 'is-panning' : 'is-draggable'}
           onWheel={(event) => {
             if (!bounds) return
             event.preventDefault()
@@ -333,7 +335,7 @@ export function PointCloudTopDownCanvas({
             })
           }}
           onMouseDown={(event) => {
-            if (!addMode) {
+            if (mode === 'none') {
               panStartRef.current = {
                 pointerX: event.clientX,
                 pointerY: event.clientY,
@@ -348,14 +350,14 @@ export function PointCloudTopDownCanvas({
             setPendingWaypoint({
               x: position.x,
               y: position.y,
-              z: waypointZ,
+              z: mode === 'waypoint' ? waypointZ : 0,
               yaw: 0,
             })
           }}
           onMouseMove={(event) => {
             const position = readMapPosition(event)
             onMouseMapPositionChange(position)
-            if (!addMode && panStartRef.current) {
+            if (mode === 'none' && panStartRef.current) {
               const dx = event.clientX - panStartRef.current.pointerX
               const dy = event.clientY - panStartRef.current.pointerY
               setView((current) => {
@@ -369,7 +371,7 @@ export function PointCloudTopDownCanvas({
               })
               return
             }
-            if (!addMode || !position || !pendingWaypoint) return
+            if (mode === 'none' || !position || !pendingWaypoint) return
             setPendingWaypoint((current) => {
               if (!current) return current
               const dx = position.x - current.x
@@ -386,13 +388,21 @@ export function PointCloudTopDownCanvas({
             setIsPanning(false)
           }}
           onMouseUp={() => {
-            if (!addMode) {
+            if (mode === 'none') {
               panStartRef.current = null
               setIsPanning(false)
               return
             }
             if (!pendingWaypoint) return
-            onAddWaypoint(pendingWaypoint)
+            if (mode === 'waypoint') {
+              onAddWaypoint(pendingWaypoint)
+            } else {
+              onSetPose({
+                x: pendingWaypoint.x,
+                y: pendingWaypoint.y,
+                yaw: pendingWaypoint.yaw,
+              })
+            }
             setPendingWaypoint(null)
           }}
         />

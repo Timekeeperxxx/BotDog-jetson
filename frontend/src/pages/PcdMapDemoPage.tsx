@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Boxes,
   ChevronDown,
@@ -19,15 +19,19 @@ import {
   listPcdMaps,
   listWaypoints,
   notifyNavPageOpen,
+  setLocalizationPose,
   triggerNavEmergencyStop,
 } from '../api/pcdMapApi'
 import { NavWaypointPanel } from '../components/pcd/NavWaypointPanel'
 import { PcdFileListPanel } from '../components/pcd/PcdFileListPanel'
 import { PointCloud3DViewer } from '../components/pcd/PointCloud3DViewer'
 import { PointCloudTopDownCanvas } from '../components/pcd/PointCloudTopDownCanvas'
+import { TaskCreatorDrawer } from '../components/pcd/TaskCreatorDrawer'
+import { TaskDrawerPanel } from '../components/pcd/TaskDrawerPanel'
 import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import type { NavWaypoint, PcdMapItem, PcdMetadata, PcdPreview } from '../types/pcdMap'
+import type { TaskDefinition, TaskDraft, TaskDraftStep, WorkflowStep } from '../types/taskWorkflow'
 
 type LogItem = {
   id: number
@@ -37,6 +41,22 @@ type LogItem = {
 
 function nowText() {
   return new Date().toLocaleTimeString()
+}
+
+const TASK_STORAGE_KEY = 'botdog-nav-workflows'
+
+const emptyTaskDraft: TaskDraft = {
+  name: '',
+  mapId: '',
+  steps: [],
+}
+
+function createEmptyDraftStep(): TaskDraftStep {
+  return {
+    type: 'relocalize',
+    relocalizeMode: 'auto',
+    waypointId: '',
+  }
 }
 
 export function PcdMapDemoPage() {
@@ -49,7 +69,12 @@ export function PcdMapDemoPage() {
   const [waypoints, setWaypoints] = useState<NavWaypoint[]>([])
   const [loading, setLoading] = useState(false)
   const [addMode, setAddMode] = useState(false)
-  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [tasks, setTasks] = useState<TaskDefinition[]>([])
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  const [creatingTask, setCreatingTask] = useState(false)
+  const [taskEditorMode, setTaskEditorMode] = useState<'create' | 'edit' | null>(null)
+  const [taskDraft, setTaskDraft] = useState<TaskDraft>(emptyTaskDraft)
+  const [activeDrawer, setActiveDrawer] = useState<'task' | 'map' | null>(null)
   const [infoOpen, setInfoOpen] = useState(true)
   const [followRobot, setFollowRobot] = useState(false)
   const [toolMode, setToolMode] = useState<'none' | 'obstacle' | 'pose'>('none')
@@ -74,6 +99,11 @@ export function PcdMapDemoPage() {
       { id: Date.now() + Math.random(), level, message: `${nowText()} ${message}` },
       ...items,
     ].slice(0, 30))
+  }, [])
+
+  const persistTasks = useCallback((nextTasks: TaskDefinition[]) => {
+    setTasks(nextTasks)
+    window.localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(nextTasks))
   }, [])
 
   const refreshMaps = useCallback(async () => {
@@ -155,6 +185,26 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, selectedMapId, waypoints.length])
 
+  const handleSetPose = useCallback(async (pos: { x: number; y: number; yaw: number }) => {
+    if (!selectedMapId) return
+
+    try {
+      await setLocalizationPose({
+        map_id: selectedMapId,
+        x: pos.x,
+        y: pos.y,
+        yaw: pos.yaw,
+        frame_id: 'map',
+      })
+      setToolMode('none')
+      addLog(
+        `已保存重定位位姿并发送重定位信号: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
+      )
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '设置重定位位姿失败', 'error')
+    }
+  }, [addLog, selectedMapId])
+
   const handleDeleteWaypoint = useCallback(async (waypointId: string) => {
     if (!selectedMapId) return
 
@@ -200,9 +250,29 @@ export function PcdMapDemoPage() {
   }, [refreshMaps])
 
   useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(TASK_STORAGE_KEY)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as TaskDefinition[]
+      setTasks(Array.isArray(parsed) ? parsed : [])
+    } catch {
+      addLog('任务工作流缓存读取失败', 'error')
+    }
+  }, [addLog])
+
+  useEffect(() => {
     if (selectedMapId || maps.length === 0) return
     void selectMap(maps[0].id)
   }, [maps, selectedMapId, selectMap])
+
+  useEffect(() => {
+    if (!selectedTaskId && tasks.length > 0) {
+      setSelectedTaskId(tasks[0].id)
+    }
+    if (selectedTaskId && !tasks.some((task) => task.id === selectedTaskId)) {
+      setSelectedTaskId(tasks[0]?.id ?? null)
+    }
+  }, [selectedTaskId, tasks])
 
   useEffect(() => {
     let cancelled = false
@@ -351,6 +421,9 @@ export function PcdMapDemoPage() {
   const handleToolMode = useCallback((nextMode: 'obstacle' | 'pose') => {
     setToolMode((current) => {
       const resolved = current === nextMode ? 'none' : nextMode
+      if (resolved !== 'none') {
+        setAddMode(false)
+      }
       addLog(
         resolved === 'none'
           ? '已退出工具模式'
@@ -361,6 +434,224 @@ export function PcdMapDemoPage() {
       return resolved
     })
   }, [addLog])
+
+  const handleToggleWaypointMode = useCallback(() => {
+    setAddMode((value) => {
+      const nextValue = !value
+      if (nextValue) {
+        setToolMode('none')
+      }
+      addLog(nextValue ? '已切换到添加导航点模式' : '已退出标点')
+      return nextValue
+    })
+  }, [addLog])
+
+  const interactionMode: 'none' | 'waypoint' | 'pose' =
+    addMode ? 'waypoint' : (toolMode === 'pose' ? 'pose' : 'none')
+
+  const selectedTask = useMemo(
+    () => tasks.find((task) => task.id === selectedTaskId) ?? null,
+    [selectedTaskId, tasks],
+  )
+
+  const mapOptions = useMemo(
+    () => maps.map((map) => ({ id: map.id, name: map.name })),
+    [maps],
+  )
+
+  const selectedMapWaypoints = useMemo(
+    () => waypoints.map((waypoint) => ({ id: waypoint.id, name: waypoint.name })),
+    [waypoints],
+  )
+
+  const handleTaskDraftChange = useCallback((patch: Partial<TaskDraft>) => {
+    setTaskDraft((current) => ({
+      ...current,
+      ...patch,
+      steps: patch.mapId && patch.mapId !== current.mapId ? [] : (patch.steps ?? current.steps),
+    }))
+    if (patch.mapId && patch.mapId !== selectedMapId) {
+      void selectMap(patch.mapId)
+    }
+  }, [selectedMapId, selectMap])
+
+  const handleAddDraftWaypoint = useCallback(() => {
+    setTaskDraft((current) => ({
+      ...current,
+      steps: [...current.steps, createEmptyDraftStep()],
+    }))
+  }, [])
+
+  const handleRemoveDraftWaypoint = useCallback((index: number) => {
+    setTaskDraft((current) => ({
+      ...current,
+      steps: current.steps.filter((_, itemIndex) => itemIndex !== index),
+    }))
+  }, [])
+
+  const handleDraftWaypointChange = useCallback((index: number, patch: Partial<TaskDraftStep>) => {
+    setTaskDraft((current) => ({
+      ...current,
+      steps: current.steps.map((item, itemIndex) => (
+        itemIndex === index
+          ? {
+              ...item,
+              ...patch,
+              waypointId: patch.type === 'relocalize' ? '' : (patch.waypointId ?? item.waypointId),
+              relocalizeMode: patch.type === 'navigate_waypoint' ? item.relocalizeMode : (patch.relocalizeMode ?? item.relocalizeMode),
+            }
+          : item
+      )),
+    }))
+  }, [])
+
+  const handleStartCreateTask = useCallback(async () => {
+    if (!selectedMapId && maps[0]?.id) {
+      setTaskDraft({
+        ...emptyTaskDraft,
+        mapId: maps[0].id,
+      })
+    } else {
+      setTaskDraft({
+        ...emptyTaskDraft,
+        mapId: selectedMapId ?? '',
+      })
+    }
+    setCreatingTask(true)
+    setTaskEditorMode('create')
+    setActiveDrawer('task')
+  }, [maps, selectedMapId])
+
+  const handleStartEditTask = useCallback((taskId: string) => {
+    const task = tasks.find((item) => item.id === taskId)
+    if (!task) return
+    const nextDraft: TaskDraft = {
+      name: task.name,
+      mapId: task.mapId,
+      steps: task.steps
+        .filter((step) => step.type !== 'select_map')
+        .map((step) => (
+          step.type === 'relocalize'
+            ? { type: 'relocalize', relocalizeMode: step.mode, waypointId: '' }
+            : { type: 'navigate_waypoint', relocalizeMode: 'auto', waypointId: step.waypointId }
+        )),
+    }
+    setSelectedTaskId(task.id)
+    setTaskDraft(nextDraft)
+    setCreatingTask(true)
+    setTaskEditorMode('edit')
+    setActiveDrawer('task')
+    if (task.mapId !== selectedMapId) {
+      void selectMap(task.mapId)
+    }
+  }, [selectedMapId, selectMap, tasks])
+
+  const handleCancelCreateTask = useCallback(() => {
+    setCreatingTask(false)
+    setTaskEditorMode(null)
+    setTaskDraft(emptyTaskDraft)
+  }, [])
+
+  const handleCreateTask = useCallback(() => {
+    const name = taskDraft.name.trim()
+    if (!name) {
+      addLog('任务名称不能为空', 'error')
+      return
+    }
+    if (!taskDraft.mapId) {
+      addLog('任务必须先绑定地图', 'error')
+      return
+    }
+
+    const map = maps.find((item) => item.id === taskDraft.mapId)
+    if (!map) {
+      addLog('任务关联地图不存在', 'error')
+      return
+    }
+
+    if (taskDraft.steps.length === 0) {
+      addLog('任务流程至少需要一个步骤', 'error')
+      return
+    }
+
+    const waypointSource = taskDraft.mapId === selectedMapId ? waypoints : []
+    const workflowSteps: WorkflowStep[] = []
+    taskDraft.steps.forEach((step) => {
+      if (step.type === 'relocalize') {
+        workflowSteps.push({
+          type: 'relocalize' as const,
+          label:
+            step.relocalizeMode === 'auto'
+              ? '自动重定位'
+              : step.relocalizeMode === 'manual'
+                ? '手动确认重定位'
+                : '跳过重定位',
+          mode: step.relocalizeMode,
+        })
+        return
+      }
+
+      if (!step.waypointId.trim()) return
+      const waypoint = waypointSource.find((item) => item.id === step.waypointId)
+      if (!waypoint) return
+      workflowSteps.push({
+        type: 'navigate_waypoint' as const,
+        label: `导航到 ${waypoint.name}`,
+        waypointId: waypoint.id,
+        waypointName: waypoint.name,
+      })
+    })
+
+    if (workflowSteps.length === 0) {
+      addLog('任务流程至少需要一个有效步骤', 'error')
+      return
+    }
+
+    const nextTask: TaskDefinition = {
+      id: taskEditorMode === 'edit' && selectedTaskId ? selectedTaskId : `task-${Date.now()}`,
+      name,
+      mapId: map.id,
+      mapName: map.name,
+      createdAt:
+        taskEditorMode === 'edit'
+          ? tasks.find((item) => item.id === selectedTaskId)?.createdAt || new Date().toISOString()
+          : new Date().toISOString(),
+      steps: [
+        { type: 'select_map', label: `选择地图 ${map.name}`, mapId: map.id },
+        ...workflowSteps,
+      ],
+    }
+
+    const nextTasks =
+      taskEditorMode === 'edit' && selectedTaskId
+        ? tasks.map((item) => (item.id === selectedTaskId ? nextTask : item))
+        : [nextTask, ...tasks]
+    persistTasks(nextTasks)
+    setSelectedTaskId(nextTask.id)
+    setCreatingTask(false)
+    setTaskEditorMode(null)
+    setTaskDraft(emptyTaskDraft)
+    setActiveDrawer('task')
+    addLog(taskEditorMode === 'edit' ? `已更新任务 ${name}` : `已创建任务工作流 ${name}`)
+  }, [addLog, maps, persistTasks, selectedMapId, selectedTaskId, taskDraft, taskEditorMode, tasks, waypoints])
+
+  const handleDeleteTask = useCallback(() => {
+    if (!selectedTask) return
+    const nextTasks = tasks.filter((task) => task.id !== selectedTask.id)
+    persistTasks(nextTasks)
+    addLog(`已删除任务 ${selectedTask.name}`)
+  }, [addLog, persistTasks, selectedTask, tasks])
+
+  const handleExecuteTask = useCallback(async () => {
+    if (!selectedTask) return
+    if (selectedTask.mapId !== selectedMapId) {
+      await selectMap(selectedTask.mapId)
+    }
+    addLog(`开始执行任务 ${selectedTask.name}`)
+    selectedTask.steps.forEach((step, index) => {
+      addLog(`步骤 ${index + 1}: ${step.label}`)
+    })
+  }, [addLog, selectedMapId, selectedTask, selectMap])
 
   return (
     <main className="pcd-demo-page">
@@ -390,7 +681,7 @@ export function PcdMapDemoPage() {
           <button
             className={`pcd-primary-button ${addMode ? 'is-active' : ''}`}
             disabled={!preview}
-            onClick={() => setAddMode((value) => !value)}
+            onClick={handleToggleWaypointMode}
           >
             <Crosshair size={16} />
             {addMode ? '退出标点' : '添加导航点'}
@@ -408,24 +699,69 @@ export function PcdMapDemoPage() {
               followRobot={followRobot}
             />
           </div>
-          <div className={`pcd-drawer ${drawerOpen ? 'is-open' : 'is-closed'}`}>
-            <button
-              className="pcd-drawer-toggle"
-              onClick={() => setDrawerOpen((value) => !value)}
-              title={drawerOpen ? '收起地图选择' : '展开地图选择'}
-            >
-              <span>地图选择</span>
-            </button>
-            <div className="pcd-drawer-body">
-              <PcdFileListPanel
-                maps={maps}
-                root={root}
-                selectedMapId={selectedMapId}
-                loading={loading}
-                onRefresh={refreshMaps}
-                onSelect={selectMap}
-              />
+          <div className="pcd-drawer-cluster">
+            <div className="pcd-drawer-rail">
+              <button
+                className={`pcd-drawer-toggle ${activeDrawer === 'task' ? 'is-active' : ''}`}
+                onClick={() => {
+                  const next = activeDrawer === 'task' ? null : 'task'
+                  setActiveDrawer(next)
+                }}
+                title={activeDrawer === 'task' ? '收起任务选择' : '展开任务选择'}
+              >
+                <span>任务选择</span>
+              </button>
+              <button
+                className={`pcd-drawer-toggle ${activeDrawer === 'map' ? 'is-active' : ''}`}
+                onClick={() => {
+                  const next = activeDrawer === 'map' ? null : 'map'
+                  setActiveDrawer(next)
+                }}
+                title={activeDrawer === 'map' ? '收起地图选择' : '展开地图选择'}
+              >
+                <span>地图选择</span>
+              </button>
             </div>
+            <div className={`pcd-drawer-body pcd-shared-drawer-body ${activeDrawer ? 'is-open' : 'is-closed'}`}>
+              {activeDrawer === 'task' ? (
+                <TaskDrawerPanel
+                  tasks={tasks}
+                  selectedTaskId={selectedTaskId}
+                  onSelectTask={setSelectedTaskId}
+                  onEditTask={handleStartEditTask}
+                  onExecuteTask={() => void handleExecuteTask()}
+                  onDeleteTask={handleDeleteTask}
+                  onStartCreate={() => void handleStartCreateTask()}
+                />
+              ) : null}
+              {activeDrawer === 'map' ? (
+                <PcdFileListPanel
+                  maps={maps}
+                  root={root}
+                  selectedMapId={selectedMapId}
+                  loading={loading}
+                  onRefresh={refreshMaps}
+                  onSelect={selectMap}
+                />
+              ) : null}
+            </div>
+            {creatingTask ? (
+              <div className="pcd-task-creator-drawer">
+                <TaskCreatorDrawer
+                  mode={taskEditorMode || 'create'}
+                  draft={taskDraft}
+                  maps={mapOptions}
+                  selectedMapId={selectedMapId}
+                  selectedMapWaypoints={selectedMapWaypoints}
+                  onDraftChange={handleTaskDraftChange}
+                  onAddDraftWaypoint={handleAddDraftWaypoint}
+                  onRemoveDraftWaypoint={handleRemoveDraftWaypoint}
+                  onDraftWaypointChange={handleDraftWaypointChange}
+                  onCancelCreate={handleCancelCreateTask}
+                  onCreateTask={handleCreateTask}
+                />
+              </div>
+            ) : null}
           </div>
 
           <div className="pcd-overlay-stack">
@@ -539,10 +875,11 @@ export function PcdMapDemoPage() {
             bounds={preview?.bounds || metadata?.bounds || null}
             waypoints={waypoints}
             robotPose={robotPose}
-            addMode={addMode}
+            mode={interactionMode}
             waypointZ={waypointZ}
             onMouseMapPositionChange={setMouseMapPosition}
             onAddWaypoint={handleAddWaypoint}
+            onSetPose={handleSetPose}
           />
           <NavWaypointPanel
             waypoints={waypoints}

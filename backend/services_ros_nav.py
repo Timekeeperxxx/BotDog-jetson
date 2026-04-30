@@ -70,6 +70,7 @@ class RosNavBridge:
         self._start_publisher: Any | None = None
         self._goal_publisher: Any | None = None
         self._estop_publisher: Any | None = None
+        self._set_pose_publisher: Any | None = None
         self._publisher_lock = threading.RLock()
         self._last_broadcast_at = 0.0
         self._last_localization_broadcast_at = 0.0
@@ -228,12 +229,18 @@ class RosNavBridge:
             settings.ROS_NAV_STOP_TOPIC,
             10,
         )
+        self._set_pose_publisher = self._node.create_publisher(
+            Bool,
+            settings.ROS_NAV_SET_POSE_TOPIC,
+            10,
+        )
         logger.info(
-            "ROS2 导航发布器已启动: page_open_topic={}, start_topic={}, goal_topic={}, stop_topic={}",
+            "ROS2 导航发布器已启动: page_open_topic={}, start_topic={}, goal_topic={}, stop_topic={}, set_pose_topic={}",
             settings.ROS_NAV_PAGE_OPEN_TOPIC,
             settings.ROS_NAV_START_TOPIC,
             settings.ROS_NAV_GOAL_TOPIC,
             settings.ROS_NAV_STOP_TOPIC,
+            settings.ROS_NAV_SET_POSE_TOPIC,
         )
 
     def publish_navigation_page_open(self) -> dict[str, Any]:
@@ -316,6 +323,23 @@ class RosNavBridge:
         return {
             "success": True,
             "topic": settings.ROS_NAV_STOP_TOPIC,
+        }
+
+    def publish_set_pose(self) -> dict[str, Any]:
+        if self._node is None or self._set_pose_publisher is None:
+            raise RuntimeError("ROS2 重定位发布器未就绪")
+
+        from std_msgs.msg import Bool
+
+        msg = Bool()
+        msg.data = True
+        with self._publisher_lock:
+            self._set_pose_publisher.publish(msg)
+
+        return {
+            "success": True,
+            "topic": settings.ROS_NAV_SET_POSE_TOPIC,
+            "data": True,
         }
 
     def _use_tf_pose(self) -> bool:

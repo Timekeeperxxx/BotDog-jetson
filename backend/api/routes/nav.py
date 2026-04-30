@@ -8,6 +8,8 @@ from fastapi import APIRouter, HTTPException
 
 from ...schemas import (
     DeleteWaypointResponse,
+    LocalizationPoseDTO,
+    LocalizationPoseSetRequest,
     NavWaypointCreateRequest,
     NavWaypointDTO,
     NavWaypointListResponse,
@@ -48,6 +50,40 @@ async def nav_page_open():
         return bridge.publish_navigation_page_open()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+
+@router.post("/localization/set-pose", response_model=LocalizationPoseDTO)
+async def nav_set_localization_pose(body: LocalizationPoseSetRequest):
+    from ...services_nav_localization import save_localization_pose
+    from ...services_nav_state import update_localization_status
+    from ...services_pcd_maps import PcdMapError
+
+    bridge = get_ros_nav_bridge()
+    if bridge is None:
+        raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
+
+    try:
+        pose = save_localization_pose(body.model_dump())
+        result = bridge.publish_set_pose()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {body.map_id}")
+    except (PcdMapError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    update_localization_status(
+        {
+            "status": "initializing",
+            "frame_id": pose["frame_id"],
+            "source": result["topic"],
+            "message": (
+                f"已保存重定位位姿并发布重定位信号: "
+                f"x={pose['x']:.3f}, y={pose['y']:.3f}, yaw={pose['yaw']:.3f}"
+            ),
+        }
+    )
+    return pose
 
 
 @router.get("/pcd-maps/{map_id}/metadata", response_model=PcdMetadataResponse)

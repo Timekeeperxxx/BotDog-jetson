@@ -202,6 +202,23 @@ class DeleteWaypointResponse(BaseModel):
     success: bool
 
 
+class LocalizationPoseSetRequest(BaseModel):
+    map_id: str = Field(..., min_length=1)
+    x: float
+    y: float
+    yaw: float = 0.0
+    frame_id: str = "map"
+
+
+class LocalizationPoseDTO(BaseModel):
+    map_id: str
+    x: float
+    y: float
+    yaw: float
+    frame_id: str
+    updated_at: str
+
+
 class RobotPoseDTO(BaseModel):
     x: float
     y: float
@@ -232,4 +249,3 @@ class NavStateResponse(BaseModel):
     robot_pose: RobotPoseDTO | None = None
     navigation_status: NavigationStatusDTO
     localization_status: LocalizationStatusDTO
-

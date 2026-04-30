@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     PCD_PREVIEW_DEFAULT_POINTS: int = 100000
     PCD_PREVIEW_MAX_POINTS: int = 200000
     NAV_WAYPOINT_STORE_DIR: str = "./data/nav_waypoints"
+    NAV_LOCALIZATION_STORE_DIR: str = "./data/nav_localization"
 
     # ==================== ROS2 导航状态订阅转发 ====================
     ROS_NAV_ENABLED: bool = True
@@ -92,6 +93,7 @@ class Settings(BaseSettings):
     ROS_NAV_START_TOPIC: str = "/nav_start"
     ROS_NAV_GOAL_TOPIC: str = "/goal_pose"
     ROS_NAV_STOP_TOPIC: str = "/nav_stop"
+    ROS_NAV_SET_POSE_TOPIC: str = "/initialpose_start"
 
     # 阶段 6：网页控制服务配置
     # 适配器类型：simulation（仅打印日志）| mavlink（真实硬件）

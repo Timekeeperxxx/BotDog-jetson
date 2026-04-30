@@ -60,3 +60,20 @@ export type NavWaypointCreatePayload = {
   yaw: number
   frame_id: 'map'
 }
+
+export type LocalizationPosePayload = {
+  map_id: string
+  x: number
+  y: number
+  yaw: number
+  frame_id: 'map'
+}
+
+export type LocalizationPose = {
+  map_id: string
+  x: number
+  y: number
+  yaw: number
+  frame_id: string
+  updated_at: string
+}

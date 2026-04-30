@@ -27,12 +27,12 @@ export function PcdFileListPanel({
 }: Props) {
   return (
     <aside className="pcd-panel pcd-file-panel">
-      <div className="pcd-panel-header">
-        <div>
+      <div className="pcd-panel-header pcd-panel-header-compact">
+        <div className="pcd-panel-header-main">
           <h2>PCD 文件</h2>
           <p title={root}>{root || '尚未读取目录'}</p>
         </div>
-        <button className="pcd-icon-button" onClick={onRefresh} disabled={loading} title="刷新">
+        <button className="pcd-icon-button pcd-file-refresh" onClick={onRefresh} disabled={loading} title="刷新">
           <RefreshCw size={16} />
         </button>
       </div>

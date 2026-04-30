@@ -1,5 +1,7 @@
 import { getApiUrl } from '../config/api'
 import type {
+  LocalizationPose,
+  LocalizationPosePayload,
   NavWaypoint,
   NavWaypointCreatePayload,
   PcdMapListResponse,
@@ -93,6 +95,19 @@ export function goToWaypoint(
       `/api/v1/nav/pcd-maps/${encodeURIComponent(mapId)}/waypoints/${encodeURIComponent(waypointId)}/go-to`,
     ),
     { method: 'POST' },
+  )
+}
+
+export function setLocalizationPose(
+  payload: LocalizationPosePayload,
+): Promise<LocalizationPose> {
+  return requestJson(
+    getApiUrl('/api/v1/nav/localization/set-pose'),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
   )
 }
 
