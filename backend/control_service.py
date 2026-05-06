@@ -17,6 +17,7 @@ from typing import Optional
 
 from .logging_config import get_logger
 from .robot_adapter import BaseRobotAdapter, VALID_COMMANDS
+from .safety_supervisor import get_safety_supervisor
 from .schemas import ControlAckDTO
 
 
@@ -27,6 +28,7 @@ RESULT_REJECTED_INVALID_CMD = "REJECTED_INVALID_CMD"
 RESULT_RATE_LIMITED = "RATE_LIMITED"
 RESULT_REJECTED_ADAPTER_NOT_READY = "REJECTED_ADAPTER_NOT_READY"
 RESULT_REJECTED_ADAPTER_ERROR = "REJECTED_ADAPTER_ERROR"
+RESULT_REJECTED_SAFETY_BLOCKED = "REJECTED_SAFETY_BLOCKED"
 
 
 class ControlService:
@@ -101,7 +103,37 @@ class ControlService:
                 latency_ms=_elapsed_ms(start_ts),
             )
 
-        # 3. 检查适配器就绪状态
+        # 3. 统一安全检查（stop 永远允许；监督器异常时默认拒绝非 stop 命令）
+        try:
+            supervisor = get_safety_supervisor()
+            decision = supervisor.evaluate_command(
+                cmd,
+                adapter_status=self.get_adapter_status(),
+            )
+        except Exception as exc:  # noqa: BLE001
+            if cmd != "stop":
+                control_logger.exception("SafetySupervisor 判定异常，拒绝控制命令：command={}，原因={}", cmd, exc)
+                return ControlAckDTO(
+                    ack_cmd=cmd,
+                    result=RESULT_REJECTED_SAFETY_BLOCKED,
+                    latency_ms=_elapsed_ms(start_ts),
+                )
+            decision = None
+
+        if decision is not None and not decision.allowed:
+            control_logger.warning(
+                "SafetySupervisor 拒绝控制命令：command={}，reason={}，reasons={}",
+                cmd,
+                decision.reason,
+                decision.reasons,
+            )
+            return ControlAckDTO(
+                ack_cmd=cmd,
+                result=RESULT_REJECTED_SAFETY_BLOCKED,
+                latency_ms=_elapsed_ms(start_ts),
+            )
+
+        # 4. 检查适配器就绪状态
         if self._adapter is None:
             control_logger.warning("控制适配器未配置，拒绝控制命令：command={}", cmd)
             return ControlAckDTO(
@@ -118,7 +150,7 @@ class ControlService:
                 latency_ms=_elapsed_ms(start_ts),
             )
 
-        # 4. 速率限制（stop/stand/sit 跳过限制：stop 需立即响应，stand/sit 是一次性姿态命令）
+        # 5. 速率限制（stop/stand/sit 跳过限制：stop 需立即响应，stand/sit 是一次性姿态命令）
         POSTURE_COMMANDS = frozenset({"stop", "stand", "sit"})
         now = time.monotonic()
         if cmd not in POSTURE_COMMANDS and (now - self._last_request_time) < self._rate_limit_s:
@@ -129,7 +161,7 @@ class ControlService:
             )
         self._last_request_time = now
 
-        # 5. 执行命令
+        # 6. 执行命令
         try:
             control_logger.info("收到控制命令：command={}", cmd)
             await self._adapter.send_command(cmd, vx=vx, vyaw=vyaw)
@@ -141,7 +173,7 @@ class ControlService:
                 latency_ms=_elapsed_ms(start_ts),
             )
 
-        # 6. 更新 Watchdog 状态
+        # 7. 更新 Watchdog 状态
         # 只有持续运动命令（forward/backward/left/right）激活 Watchdog；
         # stand/sit 是一次性姿态命令，不需要周期性续命，发完即可。
         MOTION_COMMANDS = frozenset({"forward", "backward", "left", "right", "strafe_left", "strafe_right"})

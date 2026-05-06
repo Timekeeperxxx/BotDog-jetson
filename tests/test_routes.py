@@ -79,6 +79,7 @@ EVIDENCE_ROUTES = [
 
 SYSTEM_ROUTES = [
     ("GET", "/api/v1/system/health"),
+    ("GET", "/api/v1/system/safety"),
 ]
 
 CONTROL_DEBUG_ROUTES = [

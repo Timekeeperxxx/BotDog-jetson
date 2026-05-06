@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock
 from backend.control_service import (
     ControlService,
@@ -8,9 +9,12 @@ from backend.control_service import (
     RESULT_REJECTED_E_STOP,
     RESULT_RATE_LIMITED,
     RESULT_REJECTED_ADAPTER_NOT_READY,
-    RESULT_REJECTED_ADAPTER_ERROR
+    RESULT_REJECTED_ADAPTER_ERROR,
+    RESULT_REJECTED_SAFETY_BLOCKED,
 )
 from backend.robot_adapter import BaseRobotAdapter
+from backend.state_machine import StateMachine, SystemState
+from backend.state_machine_state import set_state_machine
 
 class MockAdapter(BaseRobotAdapter):
     def is_ready(self):
@@ -26,6 +30,15 @@ def adapter():
 @pytest.fixture
 def control_service(adapter):
     return ControlService(adapter=adapter, cmd_rate_limit_ms=0)
+
+
+@pytest.fixture(autouse=True)
+def state_machine_context():
+    sm = StateMachine()
+    sm.update_heartbeat(time.time())
+    set_state_machine(sm)
+    yield sm
+    set_state_machine(None)
 
 @pytest.mark.asyncio
 async def test_handle_command_accepted(control_service, adapter):
@@ -43,13 +56,21 @@ async def test_handle_command_invalid(control_service):
 async def test_handle_command_not_ready(control_service, adapter):
     adapter.is_ready = MagicMock(return_value=False)
     res = await control_service.handle_command("forward")
-    assert res.result == RESULT_REJECTED_ADAPTER_NOT_READY
+    assert res.result == RESULT_REJECTED_SAFETY_BLOCKED
 
 @pytest.mark.asyncio
 async def test_handle_command_adapter_error(control_service, adapter):
     adapter.send_command = AsyncMock(side_effect=RuntimeError("SDK Error"))
     res = await control_service.handle_command("forward")
     assert res.result == RESULT_REJECTED_ADAPTER_ERROR
+
+
+@pytest.mark.asyncio
+async def test_handle_command_blocked_when_disconnected(adapter, state_machine_context):
+    state_machine_context._state = SystemState.DISCONNECTED
+    cs = ControlService(adapter=adapter, cmd_rate_limit_ms=0)
+    res = await cs.handle_command("forward")
+    assert res.result == RESULT_REJECTED_SAFETY_BLOCKED
 
 @pytest.mark.asyncio
 async def test_handle_command_rate_limit(adapter):
@@ -76,9 +97,14 @@ async def test_handle_command_stop_ignores_rate_limit(adapter):
 async def test_handle_command_adapter_none():
     """adapter=None 时，所有控制命令应返回 REJECTED_ADAPTER_NOT_READY。"""
     cs = ControlService(adapter=None, cmd_rate_limit_ms=0)
-    for cmd in ("forward", "backward", "left", "right", "stop", "stand", "sit"):
+    motion_cmds = ("forward", "backward", "left", "right", "strafe_left", "strafe_right")
+    for cmd in motion_cmds:
         res = await cs.handle_command(cmd)
-        assert res.result == RESULT_REJECTED_ADAPTER_NOT_READY, f"cmd={cmd!r} 应被拒绝"
+        assert res.result == RESULT_REJECTED_SAFETY_BLOCKED, f"cmd={cmd!r} 应被安全监督拒绝"
+
+    for cmd in ("stop", "stand", "sit"):
+        res = await cs.handle_command(cmd)
+        assert res.result == RESULT_REJECTED_ADAPTER_NOT_READY, f"cmd={cmd!r} 应因适配器未就绪被拒绝"
 
 @pytest.mark.asyncio
 async def test_set_adapter_none_rejects_commands(adapter):
@@ -90,14 +116,14 @@ async def test_set_adapter_none_rejects_commands(adapter):
 
     cs.set_adapter(None)
     res = await cs.handle_command("forward")
-    assert res.result == RESULT_REJECTED_ADAPTER_NOT_READY
+    assert res.result == RESULT_REJECTED_SAFETY_BLOCKED
 
 @pytest.mark.asyncio
 async def test_set_adapter_replaces_correctly(adapter):
     """set_adapter(new_adapter) 后，命令应由新适配器处理。"""
     cs = ControlService(adapter=None, cmd_rate_limit_ms=0)
     res = await cs.handle_command("forward")
-    assert res.result == RESULT_REJECTED_ADAPTER_NOT_READY
+    assert res.result == RESULT_REJECTED_SAFETY_BLOCKED
 
     cs.set_adapter(adapter)
     res = await cs.handle_command("forward")
@@ -116,4 +142,3 @@ def test_get_adapter_status_ready(adapter):
     status = cs.get_adapter_status()
     assert status["type"] == "MockAdapter"
     assert status["ready"] is True
-

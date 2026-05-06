@@ -22,6 +22,13 @@ class SystemHealthResponse(BaseModel):
     uptime: float = Field(..., description="服务运行秒数")
 
 
+class SystemSafetyResponse(BaseModel):
+    safe_to_move: bool = Field(..., description="当前是否允许执行运动命令")
+    reasons: list[str] = Field(default_factory=list, description="阻止运动的原因列表")
+    system_state: str = Field(..., description="当前系统状态机状态")
+    control_adapter_ready: bool = Field(..., description="控制适配器是否就绪")
+
+
 class SessionStartRequest(BaseModel):
     task_name: str = Field(..., min_length=1, max_length=255, description="任务名称")
 
@@ -108,7 +115,7 @@ class ControlAckDTO(BaseModel):
     后端回复前端控制指令的确认消息。
     """
     ack_cmd: str = Field(..., description="确认的指令类型")
-    result: str = Field(..., description="结果：ACCEPTED/REJECTED_LOW_BATTERY/REJECTED_E_STOP/RATE_LIMITED/REJECTED_ADAPTER_NOT_READY/REJECTED_ADAPTER_ERROR")
+    result: str = Field(..., description="结果：ACCEPTED/REJECTED_LOW_BATTERY/REJECTED_E_STOP/REJECTED_SAFETY_BLOCKED/RATE_LIMITED/REJECTED_ADAPTER_NOT_READY/REJECTED_ADAPTER_ERROR")
     latency_ms: float = Field(..., description="处理延迟（毫秒）")
 
 

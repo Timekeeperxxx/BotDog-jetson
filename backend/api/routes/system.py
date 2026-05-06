@@ -5,7 +5,9 @@ import time
 from fastapi import APIRouter
 
 from ...app_runtime_state import APP_START_MONO
-from ...schemas import SystemHealthResponse
+from ...control_service import get_control_service
+from ...safety_supervisor import get_safety_supervisor
+from ...schemas import SystemHealthResponse, SystemSafetyResponse
 from ...state_machine import SystemState
 from ...state_machine_state import get_state_machine
 
@@ -43,4 +45,24 @@ async def system_health() -> SystemHealthResponse:
         status=status,
         mavlink_connected=mavlink_connected,
         uptime=round(uptime, 3),
+    )
+
+
+@router.get("/api/v1/system/safety", response_model=SystemSafetyResponse)
+async def system_safety() -> SystemSafetyResponse:
+    """返回当前运动安全状态，仅用于展示和调试。"""
+    state_machine = get_state_machine()
+    control_service = get_control_service()
+    adapter_status = (
+        control_service.get_adapter_status()
+        if control_service is not None
+        else {"type": None, "ready": False}
+    )
+    decision = get_safety_supervisor().get_motion_safety(adapter_status=adapter_status)
+
+    return SystemSafetyResponse(
+        safe_to_move=decision.allowed,
+        reasons=decision.reasons,
+        system_state=state_machine.state.value if state_machine is not None else "UNINITIALIZED",
+        control_adapter_ready=bool(adapter_status.get("ready")),
     )
