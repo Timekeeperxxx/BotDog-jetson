@@ -31,6 +31,7 @@ export function AdminNavigationPage({
   onRefresh,
   onSelectMap,
   onDeleteWaypoint,
+  canOperate = true,
 }: {
   maps: PcdMapItem[]
   selectedMapId: string | null
@@ -43,6 +44,7 @@ export function AdminNavigationPage({
   onRefresh: () => void
   onSelectMap: (mapId: string) => void
   onDeleteWaypoint: (waypoint: NavWaypoint) => void
+  canOperate?: boolean
 }) {
   const [tab, setTab] = useState<SortableNavigationTab>('maps')
 
@@ -186,7 +188,7 @@ export function AdminNavigationPage({
                       <TableCell>
                         <div className="flex flex-wrap gap-2">
                           <ToolbarButton disabled>编辑</ToolbarButton>
-                          <ToolbarButton danger onClick={() => onDeleteWaypoint(item)}>
+                          <ToolbarButton danger onClick={() => onDeleteWaypoint(item)} disabled={!canOperate}>
                             <Trash2 size={14} className="inline-block" /> 删除
                           </ToolbarButton>
                         </div>

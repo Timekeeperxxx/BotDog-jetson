@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import {
-  Bot,
   Camera,
   FileSearch,
   HardDrive,
@@ -10,6 +9,7 @@ import {
   RefreshCw,
   ScrollText,
   Settings2,
+  ShieldAlert,
   Users,
 } from 'lucide-react'
 import { useEventWebSocket } from '../hooks/useEventWebSocket'
@@ -22,18 +22,22 @@ import { deleteWaypoint, getPcdMetadata, listPcdMaps, listWaypoints } from '../a
 import type { NavWaypoint, PcdMapItem, PcdMetadata } from '../types/pcdMap'
 import type { SystemConfig } from '../types/config'
 import type { VideoSource, VideoSourceRequest } from '../types/admin'
-import type { AdminSection, AdminLogEntry, HealthResponse, SystemInfoGroup } from './adminTypes'
+import type { AdminLogEntry, HealthResponse, SystemInfoGroup, AdminSection } from './adminTypes'
 import { getAdminLogs, getSystemHealth, getSystemInfo } from './adminApi'
 import { ConfirmDialog, ToolbarButton } from './AdminUi'
 import { AdminDashboardPage } from './pages/AdminDashboardPage'
-import { AdminDevicePage } from './pages/AdminDevicePage'
 import { AdminNavigationPage } from './pages/AdminNavigationPage'
-import { AdminVideoAiPage } from './pages/AdminVideoAiPage'
 import { AdminEvidencePage } from './pages/AdminEvidencePage'
 import { AdminLogsPage } from './pages/AdminLogsPage'
 import { AdminConfigPage } from './pages/AdminConfigPage'
 import { AdminUsersPage } from './pages/AdminUsersPage'
-import { AuthStatusBar } from '../components/AuthStatusBar'
+import { AdminControlPage } from './pages/AdminControlPage'
+import { AdminDeviceVideoPage } from './pages/AdminDeviceVideoPage'
+import { AdminAiGuardPage } from './pages/AdminAiGuardPage'
+import { AdminDiagnosticsPage } from './pages/AdminDiagnosticsPage'
+import { AdminLayout } from './components/AdminLayout'
+import { AdminHeader, type AdminHeaderStatusItem } from './components/AdminHeader'
+import { AdminSidebar, type AdminMenuItem, type AdminRole } from './components/AdminSidebar'
 import { useAuthState } from '../stores/authStore'
 import type { TaskDefinition } from '../types/taskWorkflow'
 
@@ -52,15 +56,17 @@ type SourceFormState = {
   sort_order: number
 }
 
-const adminNavItems: Array<{ key: AdminSection; label: string; icon: ReactNode; description: string }> = [
-  { key: 'dashboard', label: '系统总览', icon: <LayoutDashboard size={18} />, description: '服务状态 / 告警 / 最新日志' },
-  { key: 'device', label: '设备管理', icon: <HardDrive size={18} />, description: '主机信息 / 网络 / 服务状态' },
-  { key: 'navigation', label: '导航管理', icon: <MapPinned size={18} />, description: '地图 / 点位 / 巡逻任务' },
-  { key: 'video-ai', label: '视频与 AI', icon: <Camera size={18} />, description: '视频源 / AI 参数' },
-  { key: 'evidence', label: '告警与证据', icon: <FileSearch size={18} />, description: '证据记录 / 删除确认' },
-  { key: 'logs', label: '日志审计', icon: <ScrollText size={18} />, description: '日志筛选 / 搜索 / 复制' },
-  { key: 'config', label: '配置中心', icon: <Settings2 size={18} />, description: '系统参数 / 热更新 / 历史' },
-  { key: 'users', label: '用户与权限', icon: <Users size={18} />, description: '管理账号 / 角色 / 密码' },
+const adminNavItems: AdminMenuItem[] = [
+  { key: 'dashboard', label: '系统总览', icon: <LayoutDashboard size={18} />, description: '服务状态 / 告警 / 最新日志', visibleTo: ['viewer', 'operator', 'admin'] },
+  { key: 'control', label: '运行控制', icon: <ShieldAlert size={18} />, description: '控制入口 / 安全状态 / 当前目标', visibleTo: ['operator', 'admin'] },
+  { key: 'navigation', label: '导航管理', icon: <MapPinned size={18} />, description: '地图 / 点位 / 巡逻任务', visibleTo: ['viewer', 'operator', 'admin'] },
+  { key: 'device-video', label: '设备与视频', icon: <HardDrive size={18} />, description: '主机信息 / 视频源 / 网络', visibleTo: ['viewer', 'operator', 'admin'] },
+  { key: 'ai-guard', label: 'AI 与驱离', icon: <Camera size={18} />, description: 'AI 状态 / 自动跟踪 / 驱离摘要', visibleTo: ['operator', 'admin'] },
+  { key: 'evidence', label: '证据中心', icon: <FileSearch size={18} />, description: '证据记录 / 删除确认', visibleTo: ['viewer', 'operator', 'admin'] },
+  { key: 'logs', label: '日志审计', icon: <ScrollText size={18} />, description: '日志筛选 / 搜索 / 复制', visibleTo: ['viewer', 'operator', 'admin'] },
+  { key: 'config', label: '系统配置', icon: <Settings2 size={18} />, description: '系统参数 / 热更新 / 历史', visibleTo: ['operator', 'admin'], badge: '只读' },
+  { key: 'users', label: '用户与权限', icon: <Users size={18} />, description: '管理账号 / 角色 / 密码', visibleTo: ['admin'] },
+  { key: 'diagnostics', label: '诊断工具', icon: <RefreshCw size={18} />, description: '安全 / 目标 / 登录态排查', visibleTo: ['viewer', 'operator', 'admin'] },
 ]
 
 function emptySourceForm(): SourceFormState {
@@ -102,7 +108,13 @@ function readStoredTasks(): TaskDefinition[] {
   }
 }
 
+function getVisibleSections(role: AdminRole) {
+  return adminNavItems.filter((item) => item.visibleTo.includes(role)).map((item) => item.key)
+}
+
 export function AdminApp() {
+  const auth = useAuthState()
+  const role = (auth.role ?? 'viewer') as AdminRole
   const [activeSection, setActiveSection] = useState<AdminSection>('dashboard')
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [systemInfo, setSystemInfo] = useState<SystemInfoGroup[]>([])
@@ -123,8 +135,6 @@ export function AdminApp() {
   const [sourceToDelete, setSourceToDelete] = useState<VideoSource | null>(null)
   const [sourceFormOpen, setSourceFormOpen] = useState(false)
   const [sourceForm, setSourceForm] = useState<SourceFormState>(emptySourceForm())
-
-  const auth = useAuthState()
 
   const eventState = useEventWebSocket()
   const navWs = useNavWebSocket()
@@ -180,7 +190,7 @@ export function AdminApp() {
   }, [fetchEvidence, fetchInterfaces, fetchSources, refreshAdminCore])
 
   useEffect(() => {
-    if (activeSection !== 'video-ai' && activeSection !== 'config') return
+    if (activeSection !== 'device-video' && activeSection !== 'config') return
     if (Object.keys(configHook.configs).length > 0) return
     void fetchConfigs()
   }, [activeSection, configHook.configs, fetchConfigs])
@@ -199,6 +209,13 @@ export function AdminApp() {
     })
   }, [navState])
 
+  useEffect(() => {
+    const visibleSections = getVisibleSections(role)
+    if (!visibleSections.includes(activeSection)) {
+      setActiveSection(visibleSections[0] ?? 'dashboard')
+    }
+  }, [activeSection, role])
+
   const mergedNavState = useMemo(() => ({
     robot_pose: navWs.robotPose ?? navState?.robot_pose ?? null,
     navigation_status: navWs.navigationStatus ?? navState?.navigation_status ?? { status: 'waiting', target_waypoint_id: null, target_name: null, message: '等待中', timestamp: null },
@@ -206,6 +223,10 @@ export function AdminApp() {
   }), [navState, navWs.localizationStatus, navWs.navigationStatus, navWs.robotPose])
 
   const configList = useMemo<SystemConfig[]>(() => Object.values(configHook.configs), [configHook.configs])
+  const sectionMeta = useMemo(
+    () => adminNavItems.find((item) => item.key === activeSection) ?? adminNavItems[0],
+    [activeSection],
+  )
 
   const openNewSource = useCallback(() => {
     setSourceForm(emptySourceForm())
@@ -245,6 +266,19 @@ export function AdminApp() {
     await configHook.fetchConfigs()
   }, [configHook])
 
+  const headerStatusItems = useMemo<AdminHeaderStatusItem[]>(() => [
+    { icon: <Network size={14} />, label: '事件流', value: eventState.status.status },
+    { icon: <MapPinned size={14} />, label: '导航', value: navWs.connected ? 'ws已连接' : 'ws离线' },
+    { icon: <RefreshCw size={14} />, label: '健康状态', value: health?.status || '等待中' },
+  ], [eventState.status.status, health?.status, navWs.connected])
+
+  const headerActions = (
+    <>
+      <ToolbarButton onClick={() => window.location.assign('/operator')}>进入操作台</ToolbarButton>
+      <ToolbarButton onClick={() => void refreshAdminCore()}>{adminLoading ? '刷新中' : '刷新总览'}</ToolbarButton>
+    </>
+  )
+
   const content = useMemo(() => {
     if (activeSection === 'dashboard') {
       return (
@@ -263,21 +297,13 @@ export function AdminApp() {
       )
     }
 
-    if (activeSection === 'device') {
+    if (activeSection === 'control') {
       return (
-        <AdminDevicePage
-          data={{
-            systemInfo,
-            networkInterfaces: videoSources.interfaces,
-            health,
-            navState: mergedNavState,
-            aiStatus: eventState.aiStatus,
-            autoTrackStatus: eventState.autoTrackStatus,
-          }}
-          onRefresh={() => {
-            void refreshAdminCore()
-            void videoSources.fetchInterfaces()
-          }}
+        <AdminControlPage
+          health={health}
+          navState={mergedNavState}
+          onOpenOperator={() => window.location.assign('/operator')}
+          onOpenPatrol={() => window.location.assign('/nav-patrol.html')}
         />
       )
     }
@@ -299,19 +325,34 @@ export function AdminApp() {
           }}
           onSelectMap={setSelectedMapId}
           onDeleteWaypoint={setWaypointToDelete}
+          canOperate={role !== 'viewer'}
         />
       )
     }
 
-    if (activeSection === 'video-ai') {
+    if (activeSection === 'device-video') {
       return (
-        <AdminVideoAiPage
+        <AdminDeviceVideoPage
+          deviceData={{
+            systemInfo,
+            networkInterfaces: videoSources.interfaces,
+            health,
+            navState: mergedNavState,
+            aiStatus: eventState.aiStatus,
+            autoTrackStatus: eventState.autoTrackStatus,
+          }}
+          maps={maps}
+          selectedMapId={selectedMapId}
+          onRefresh={() => {
+            void refreshAdminCore()
+            void videoSources.fetchInterfaces()
+          }}
           videoSources={videoSources.sources}
           configs={configList}
-          loading={videoSources.loading || configHook.loading}
-          search={videoSearch}
-          onSearchChange={setVideoSearch}
-          onRefresh={() => {
+          videoLoading={videoSources.loading || configHook.loading}
+          videoSearch={videoSearch}
+          onVideoSearchChange={setVideoSearch}
+          onVideoRefresh={() => {
             void videoSources.fetchSources()
             void configHook.fetchConfigs()
           }}
@@ -319,6 +360,20 @@ export function AdminApp() {
           onEditSource={openEditSource}
           onDeleteSource={setSourceToDelete}
           onSaveConfig={saveConfigValue}
+        />
+      )
+    }
+
+    if (activeSection === 'ai-guard') {
+      return (
+        <AdminAiGuardPage
+          health={health}
+          aiStatus={eventState.aiStatus}
+          autoTrackStatus={eventState.autoTrackStatus}
+          navState={mergedNavState}
+          logs={logs}
+          videoSources={videoSources.sources}
+          onOpenOperator={() => window.location.assign('/operator')}
         />
       )
     }
@@ -354,6 +409,10 @@ export function AdminApp() {
       return <AdminUsersPage />
     }
 
+    if (activeSection === 'diagnostics') {
+      return <AdminDiagnosticsPage onOpenPatrol={() => window.location.assign('/nav-patrol.html')} />
+    }
+
     return <AdminConfigPage configHook={configHook} />
   }, [
     activeSection,
@@ -383,78 +442,23 @@ export function AdminApp() {
     videoSearch,
     videoSources,
     waypoints,
+    role,
   ])
 
   return (
-    <div className="flex min-h-screen bg-[#060708] text-white">
-      <aside className="hidden w-[280px] shrink-0 border-r border-white/10 bg-[radial-gradient(circle_at_top,rgba(145,172,255,0.08),transparent_40%),linear-gradient(180deg,#0c0d11,#060708)] p-6 lg:block">
-        <div className="rounded-3xl border border-white/10 bg-black/30 p-5">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-              <Bot size={20} />
-            </div>
-            <div>
-              <div className="text-sm font-black uppercase tracking-[0.22em] text-white">BotDog Admin</div>
-              <div className="mt-1 text-xs text-zinc-500">后台管理 / 资源 / 配置 / 运维</div>
-            </div>
-          </div>
-        </div>
-
-        <nav className="mt-6 space-y-2">
-          {adminNavItems
-            .filter((item) => item.key !== 'users' || auth.role === 'admin')
-            .map((item) => (
-            <button
-              key={item.key}
-              onClick={() => setActiveSection(item.key)}
-              className={`w-full rounded-2xl border p-4 text-left transition-all ${
-                activeSection === item.key
-                  ? 'border-white/20 bg-white/10 shadow-[0_16px_40px_-24px_rgba(255,255,255,0.45)]'
-                  : 'border-white/8 bg-black/20 hover:border-white/14 hover:bg-white/4'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <div className="text-zinc-300">{item.icon}</div>
-                <div>
-                  <div className="text-sm font-black text-white">{item.label}</div>
-                  <div className="mt-1 text-xs text-zinc-500">{item.description}</div>
-                </div>
-              </div>
-            </button>
-          ))}
-        </nav>
-
-        <div className="mt-6 rounded-2xl border border-dashed border-white/10 bg-black/30 p-4 text-xs leading-6 text-zinc-500">
-          当前后台只接入本地项目里真实存在的接口。
-          缺失的能力会明确标记 TODO，不伪造“看起来能用”的运维功能。
-        </div>
-      </aside>
-
-      <main className="min-w-0 flex-1">
-        <header className="sticky top-0 z-30 border-b border-white/10 bg-[linear-gradient(180deg,rgba(7,8,10,0.95),rgba(7,8,10,0.82))] px-4 py-4 backdrop-blur xl:px-8">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-            <div>
-              <div className="text-[11px] font-black uppercase tracking-[0.28em] text-zinc-500">机器狗后台管理界面</div>
-              <div className="mt-2 text-2xl font-black text-white">{adminNavItems.find((item) => item.key === activeSection)?.label}</div>
-              <div className="mt-1 text-sm text-zinc-400">
-                {adminError ? `加载异常：${adminError}` : '资源、配置、告警、证据和排障信息统一在这里管理。'}
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <HeaderPill icon={<Network size={14} />} label="事件流" value={eventState.status.status} />
-              <HeaderPill icon={<MapPinned size={14} />} label="导航" value={navWs.connected ? 'ws已连接' : 'ws离线'} />
-              <HeaderPill icon={<RefreshCw size={14} />} label="健康状态" value={health?.status || '等待中'} />
-              <ToolbarButton onClick={() => window.location.assign('/operator')}>进入操作台</ToolbarButton>
-              <ToolbarButton onClick={() => void refreshAdminCore()}>{adminLoading ? '刷新中' : '刷新总览'}</ToolbarButton>
-              <AuthStatusBar variant="bar" />
-            </div>
-          </div>
-        </header>
-
-        <div className="px-4 py-6 xl:px-8">
-          {content}
-        </div>
-      </main>
+    <AdminLayout
+      sidebar={<AdminSidebar items={adminNavItems} activeSection={activeSection} onSectionChange={setActiveSection} role={role} />}
+      header={
+        <AdminHeader
+          title={sectionMeta.label}
+          description={sectionMeta.description}
+          statusItems={headerStatusItems}
+          actions={headerActions}
+          error={adminError}
+        />
+      }
+    >
+      {content}
 
       <ConfirmDialog
         open={waypointToDelete !== null}
@@ -497,27 +501,7 @@ export function AdminApp() {
           loading={videoSources.loading}
         />
       ) : null}
-    </div>
-  )
-}
-
-function HeaderPill({
-  icon,
-  label,
-  value,
-}: {
-  icon: ReactNode
-  label: string
-  value: string
-}) {
-  return (
-    <div className="rounded-full border border-white/10 bg-black/40 px-3 py-2">
-      <div className="flex items-center gap-2 text-zinc-400">
-        {icon}
-        <span className="text-[10px] font-black uppercase tracking-[0.18em]">{label}</span>
-      </div>
-      <div className="mt-1 text-xs text-white">{value}</div>
-    </div>
+    </AdminLayout>
   )
 }
 

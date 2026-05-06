@@ -8,13 +8,15 @@ import type { TaskDefinition } from '../types/taskWorkflow'
 
 export type AdminSection =
   | 'dashboard'
-  | 'device'
+  | 'control'
   | 'navigation'
-  | 'video-ai'
+  | 'device-video'
+  | 'ai-guard'
   | 'evidence'
   | 'logs'
   | 'config'
   | 'users'
+  | 'diagnostics'
 
 export type ModuleHealthState = 'normal' | 'degraded' | 'failed' | 'waiting' | 'todo'
 

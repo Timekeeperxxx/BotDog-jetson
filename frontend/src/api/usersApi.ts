@@ -16,7 +16,7 @@ export interface User {
 
 export interface CreateUserPayload {
   username: string
-  password?: string
+  password: string
   role: Role
   enabled?: boolean
   must_change_password?: boolean
