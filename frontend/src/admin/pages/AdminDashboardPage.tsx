@@ -3,8 +3,8 @@ import { Activity, Bot, Camera, Cpu, MapPinned, Server, ShieldCheck } from 'luci
 import type { AdminDashboardData, AdminServiceCard } from '../adminTypes'
 import { mapHealthStatus, mapNavStatus } from '../adminTypes'
 import { AdminCard, MetricTile, StatusBadge } from '../AdminUi'
-import { getAuthStatus, type AuthStatusResult } from '../../api/auth'
-import { getApiUrl } from '../../config/api'
+import { apiFetch } from '../../api/apiFetch'
+import type { AuthStatusResult } from '../../api/auth'
 import { useAuthState } from '../../stores/authStore'
 
 function formatRelativeTime(value?: string | null) {
@@ -39,22 +39,20 @@ export function AdminDashboardPage({ data }: { data: AdminDashboardData }) {
   const [currentGoalError, setCurrentGoalError] = useState<string | null>(null)
 
   useEffect(() => {
-    getAuthStatus()
+    apiFetch<AuthStatusResult>('/api/v1/auth/status')
       .then(setAuthStatus)
       .catch((err: unknown) => setAuthStatusError(err instanceof Error ? err.message : '暂不可用'))
   }, [])
 
   useEffect(() => {
-    fetch(getApiUrl('/api/v1/system/safety'))
-      .then((res) => res.json() as Promise<Record<string, unknown>>)
+    apiFetch<Record<string, unknown>>('/api/v1/system/safety')
       .then(setSafetyStatus)
       .catch((err: unknown) => setSafetyError(err instanceof Error ? err.message : '暂不可用'))
   }, [])
 
   useEffect(() => {
-    fetch(getApiUrl('/api/v1/nav/current-goal'))
-      .then((res) => res.json() as Promise<Record<string, unknown>>)
-      .then((data) => setCurrentGoal((data.current_goal as Record<string, unknown>) ?? null))
+    apiFetch<{ current_goal: Record<string, unknown> | null }>('/api/v1/nav/current-goal')
+      .then((data) => setCurrentGoal(data.current_goal))
       .catch((err: unknown) => setCurrentGoalError(err instanceof Error ? err.message : '暂不可用'))
   }, [])
 
@@ -136,6 +134,7 @@ export function AdminDashboardPage({ data }: { data: AdminDashboardData }) {
             rows={[
               { label: '用户名', value: auth.username || '--' },
               { label: '角色', value: auth.role || '--' },
+              { label: '须改密', value: auth.must_change_password ? '是' : '否' },
               { label: '登录方式', value: auth.authBypass ? '开发绕过' : 'JWT' },
             ]}
           />
@@ -148,6 +147,7 @@ export function AdminDashboardPage({ data }: { data: AdminDashboardData }) {
               { label: 'AUTH_ENABLED', value: authStatus.auth_enabled ? '已开启 ✓' : '已关闭 ⚠' },
               { label: '后端用户', value: authStatus.current_user.username },
               { label: '后端角色', value: authStatus.current_user.role },
+              { label: '须改密', value: authStatus.current_user.must_change_password ? '是' : '否' },
             ] : []}
           />
           {/* SafetySupervisor */}
@@ -168,10 +168,12 @@ export function AdminDashboardPage({ data }: { data: AdminDashboardData }) {
             title="当前导航目标"
             error={currentGoalError}
             rows={currentGoal ? [
-              { label: '目标点', value: String(currentGoal.name ?? '--') },
+              { label: '目标点', value: String(currentGoal.waypoint_name ?? currentGoal.name ?? '--') },
+              { label: 'waypoint_id', value: String(currentGoal.waypoint_id ?? '--') },
               { label: 'map_id', value: String(currentGoal.map_id ?? '--') },
               { label: 'x / y / z', value: currentGoal.x != null ? `${Number(currentGoal.x).toFixed(2)} / ${Number(currentGoal.y).toFixed(2)} / ${Number(currentGoal.z).toFixed(2)}` : '--' },
               { label: 'yaw', value: currentGoal.yaw != null ? `${Number(currentGoal.yaw).toFixed(3)} rad` : '--' },
+              { label: 'selected_at', value: String(currentGoal.selected_at ?? '--') },
             ] : [{ label: '状态', value: '无当前目标' }]}
           />
         </div>

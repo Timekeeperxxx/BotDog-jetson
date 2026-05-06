@@ -127,7 +127,14 @@ export function AdminEvidencePage({
       <ConfirmDialog
         open={confirmItem !== null}
         title="确认删除证据"
-        description={confirmItem ? `即将删除证据 #${confirmItem.evidence_id}，该操作不可恢复。` : ''}
+        description={confirmItem ? [
+          `evidence_id：${confirmItem.evidence_id}`,
+          `event_type：${confirmItem.event_type}`,
+          `severity：${confirmItem.severity}`,
+          `created_at：${new Date(confirmItem.created_at).toLocaleString('zh-CN', { hour12: false })}`,
+          `file_path：${confirmItem.file_path || '--'}`,
+          '提示：该操作不可恢复。',
+        ].join('\n') : ''}
         confirmText="确认删除"
         onCancel={() => setConfirmItem(null)}
         onConfirm={() => {

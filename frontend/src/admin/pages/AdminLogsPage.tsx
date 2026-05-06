@@ -8,31 +8,35 @@ const CATEGORY_TABS = [
   { key: 'ALL', label: '全部' },
   {
     key: 'auth', label: '登录',
-    keywords: ['auth.login', 'action=auth.login', '登录', 'login'],
+    keywords: ['auth.login', 'action=auth.login', '登录', 'login', 'auth.status'],
   },
   {
     key: 'control', label: '控制',
-    keywords: ['control.', '控制', '手动控制'],
+    keywords: ['control.', '控制', '手动控制', 'control_service'],
   },
   {
     key: 'nav', label: '导航',
-    keywords: ['nav.', '导航', 'go-to', 'go_to', 'nav.go_to', 'nav.e_stop'],
+    keywords: ['nav.', '导航', 'go-to', 'go_to', 'nav.go_to', 'nav.e_stop', 'current_goal'],
   },
   {
     key: 'config', label: '配置',
-    keywords: ['config.', '配置'],
+    keywords: ['config.', '配置', '参数'],
   },
   {
     key: 'delete', label: '删除',
-    keywords: ['delete', '删除', '.delete'],
+    keywords: ['delete', '删除', '.delete', 'soft delete', '软删除'],
   },
   {
     key: 'estop', label: '急停',
-    keywords: ['e_stop', '急停', 'E_STOP'],
+    keywords: ['e_stop', '急停', 'E_STOP', 'stop'],
+  },
+  {
+    key: 'permission', label: '权限',
+    keywords: ['permission', '403', '权限', '缺少访问令牌', 'token 已失效', 'token失效'],
   },
   {
     key: 'fail', label: '失败',
-    keywords: ['result=fail', '失败', '异常'],
+    keywords: ['result=fail', 'failed', 'error', 'critical', '失败', '异常'],
   },
 ] as const
 
@@ -142,7 +146,7 @@ export function AdminLogsPage({
                 return (
                   <tr
                     key={item.log_id}
-                    className={highRisk ? 'border-l-2 border-red-500/60 bg-red-500/5' : ''}
+                    className={highRisk ? 'border-l-4 border-red-500/80 bg-red-500/10' : ''}
                   >
                     <TableCell>{new Date(item.created_at).toLocaleString('zh-CN', { hour12: false })}</TableCell>
                     <TableCell>

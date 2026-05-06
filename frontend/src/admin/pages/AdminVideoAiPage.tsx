@@ -150,6 +150,8 @@ export function AdminVideoAiPage({
                           <select
                             value={String(drafts[config.key] ?? config.value)}
                             onChange={(event) => setDrafts((prev) => ({ ...prev, [config.key]: event.target.value }))}
+                            disabled={!canAdmin}
+                            title={!canAdmin ? '需要 admin 权限' : undefined}
                             className="rounded-xl border border-white/10 bg-black/60 px-4 py-2.5 text-sm text-white outline-none focus:border-white/30"
                           >
                             <option value="true">true</option>
@@ -159,6 +161,8 @@ export function AdminVideoAiPage({
                           <input
                             value={drafts[config.key] ?? String(config.value)}
                             onChange={(event) => setDrafts((prev) => ({ ...prev, [config.key]: event.target.value }))}
+                            disabled={!canAdmin}
+                            title={!canAdmin ? '需要 admin 权限' : undefined}
                             className="flex-1 rounded-xl border border-white/10 bg-black/60 px-4 py-2.5 text-sm text-white outline-none focus:border-white/30"
                           />
                         )}

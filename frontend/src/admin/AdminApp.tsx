@@ -1,17 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
-import {
-  Camera,
-  FileSearch,
-  HardDrive,
-  LayoutDashboard,
-  MapPinned,
-  Network,
-  RefreshCw,
-  ScrollText,
-  Settings2,
-  ShieldAlert,
-  Users,
-} from 'lucide-react'
+import { MapPinned, Network, RefreshCw } from 'lucide-react'
 import { useEventWebSocket } from '../hooks/useEventWebSocket'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import { useVideoSources } from '../hooks/useVideoSources'
@@ -37,7 +25,8 @@ import { AdminAiGuardPage } from './pages/AdminAiGuardPage'
 import { AdminDiagnosticsPage } from './pages/AdminDiagnosticsPage'
 import { AdminLayout } from './components/AdminLayout'
 import { AdminHeader, type AdminHeaderStatusItem } from './components/AdminHeader'
-import { AdminSidebar, type AdminMenuItem, type AdminRole } from './components/AdminSidebar'
+import { AdminSidebar, type AdminRole } from './components/AdminSidebar'
+import { adminNavItems, getVisibleSections, getVisibleAdminMenuItems } from './adminMenu'
 import { useAuthState } from '../stores/authStore'
 import type { TaskDefinition } from '../types/taskWorkflow'
 
@@ -55,19 +44,6 @@ type SourceFormState = {
   is_ai_source: boolean
   sort_order: number
 }
-
-const adminNavItems: AdminMenuItem[] = [
-  { key: 'dashboard', label: '系统总览', icon: <LayoutDashboard size={18} />, description: '服务状态 / 告警 / 最新日志', visibleTo: ['viewer', 'operator', 'admin'] },
-  { key: 'control', label: '运行控制', icon: <ShieldAlert size={18} />, description: '控制入口 / 安全状态 / 当前目标', visibleTo: ['operator', 'admin'] },
-  { key: 'navigation', label: '导航管理', icon: <MapPinned size={18} />, description: '地图 / 点位 / 巡逻任务', visibleTo: ['viewer', 'operator', 'admin'] },
-  { key: 'device-video', label: '设备与视频', icon: <HardDrive size={18} />, description: '主机信息 / 视频源 / 网络', visibleTo: ['viewer', 'operator', 'admin'] },
-  { key: 'ai-guard', label: 'AI 与驱离', icon: <Camera size={18} />, description: 'AI 状态 / 自动跟踪 / 驱离摘要', visibleTo: ['operator', 'admin'] },
-  { key: 'evidence', label: '证据中心', icon: <FileSearch size={18} />, description: '证据记录 / 删除确认', visibleTo: ['viewer', 'operator', 'admin'] },
-  { key: 'logs', label: '日志审计', icon: <ScrollText size={18} />, description: '日志筛选 / 搜索 / 复制', visibleTo: ['viewer', 'operator', 'admin'] },
-  { key: 'config', label: '系统配置', icon: <Settings2 size={18} />, description: '系统参数 / 热更新 / 历史', visibleTo: ['operator', 'admin'], badge: '只读' },
-  { key: 'users', label: '用户与权限', icon: <Users size={18} />, description: '管理账号 / 角色 / 密码', visibleTo: ['admin'] },
-  { key: 'diagnostics', label: '诊断工具', icon: <RefreshCw size={18} />, description: '安全 / 目标 / 登录态排查', visibleTo: ['viewer', 'operator', 'admin'] },
-]
 
 function emptySourceForm(): SourceFormState {
   return {
@@ -106,10 +82,6 @@ function readStoredTasks(): TaskDefinition[] {
   } catch {
     return []
   }
-}
-
-function getVisibleSections(role: AdminRole) {
-  return adminNavItems.filter((item) => item.visibleTo.includes(role)).map((item) => item.key)
 }
 
 export function AdminApp() {
@@ -284,6 +256,8 @@ export function AdminApp() {
       <ToolbarButton onClick={() => void refreshAdminCore()}>{adminLoading ? '刷新中' : '刷新总览'}</ToolbarButton>
     </>
   )
+
+  const visibleNavItems = useMemo(() => getVisibleAdminMenuItems(role), [role])
 
   const content = useMemo(() => {
     if (activeSection === 'dashboard') {
@@ -461,6 +435,9 @@ export function AdminApp() {
           statusItems={headerStatusItems}
           actions={headerActions}
           error={adminError}
+          mobileSections={visibleNavItems.map((item) => ({ key: item.key, label: item.label }))}
+          activeSection={activeSection}
+          onSectionChange={setActiveSection}
         />
       }
     >
@@ -470,7 +447,14 @@ export function AdminApp() {
         open={waypointToDelete !== null}
         title="确认删除导航点"
         description={waypointToDelete
-          ? `即将删除点位「${waypointToDelete.name}」\nwaypoint_id: ${waypointToDelete.id}\nmap_id: ${selectedMapId || '--'}\n\n该操作会修改地图对应的 JSON 存储，不可恢复。`
+          ? [
+            `点位名称：${waypointToDelete.name}`,
+            `waypoint_id：${waypointToDelete.id}`,
+            `map_id：${waypointToDelete.map_id}`,
+            `位置：${waypointToDelete.x.toFixed(2)} / ${waypointToDelete.y.toFixed(2)} / ${waypointToDelete.z.toFixed(2)}`,
+            `yaw：${waypointToDelete.yaw.toFixed(3)}`,
+            '提示：该操作会修改地图对应的 JSON 存储，不可恢复。',
+          ].join('\n')
           : ''}
         confirmText="确认删除"
         onCancel={() => setWaypointToDelete(null)}
@@ -486,7 +470,15 @@ export function AdminApp() {
         open={sourceToDelete !== null}
         title="确认删除视频源"
         description={sourceToDelete
-          ? `即将删除视频源「${sourceToDelete.label}」\nsource_id: ${sourceToDelete.source_id}\n\n当前后端支持真实删除，该操作不可恢复。`
+          ? [
+            `source_id：${sourceToDelete.source_id}`,
+            `name：${sourceToDelete.name}`,
+            `label：${sourceToDelete.label}`,
+            `type：${sourceToDelete.source_type}`,
+            `WHEP：${sourceToDelete.whep_url || '--'}`,
+            `RTSP：${sourceToDelete.rtsp_url || '--'}`,
+            '提示：删除后操作台相关视频源不可用，该操作不可恢复。',
+          ].join('\n')
           : ''}
         confirmText="确认删除"
         onCancel={() => setSourceToDelete(null)}
