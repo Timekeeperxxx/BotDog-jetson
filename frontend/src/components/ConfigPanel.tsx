@@ -246,10 +246,10 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
             </span>
             <span className={`text-[8px] px-2 py-0.5 border font-bold shrink-0 uppercase tracking-wider ${
               config.is_hot_reloadable
-                ? 'border-zinc-700 text-zinc-400'
+                ? 'border-white bg-white text-black rounded-[3px] shadow-[0_0_0_1px_rgba(255,255,255,0.18)]'
                 : 'border-white text-white'
             }`}>
-              {config.is_hot_reloadable ? '热重载' : '需重启'}
+              {config.is_hot_reloadable ? '热更新' : '需重启'}
             </span>
           </div>
         </div>

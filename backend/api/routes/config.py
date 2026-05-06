@@ -32,11 +32,46 @@ def _apply_runtime_update(key: str, value) -> dict:
     DB 保存成功后调用，失败不影响主流程。
     """
     if key == "unitree_network_iface":
-        return {
-            "applied": False,
-            "target": "hardware",
-            "message": "需重启后端或重新初始化硬件适配器",
-        }
+        try:
+            from ...control_service import get_control_service
+            from ...robot_adapter import UnitreeB2Adapter, create_adapter
+
+            settings.UNITREE_NETWORK_IFACE = str(value)
+            control_service = get_control_service()
+            current_adapter = control_service.get_adapter() if control_service else None
+
+            if control_service and isinstance(current_adapter, UnitreeB2Adapter):
+                new_adapter = create_adapter(
+                    "unitree_b2",
+                    network_interface=settings.UNITREE_NETWORK_IFACE,
+                    vx=settings.UNITREE_B2_VX,
+                    vyaw=settings.UNITREE_B2_VYAW,
+                )
+                if new_adapter.is_ready():
+                    control_service.set_adapter(new_adapter)
+                    return {
+                        "applied": True,
+                        "target": "hardware",
+                        "message": "控制适配器已热更新，运行时已生效",
+                    }
+                return {
+                    "applied": False,
+                    "target": "hardware",
+                    "message": "已保存，但新适配器未就绪，请重启后端后再试",
+                }
+
+            return {
+                "applied": False,
+                "target": "hardware",
+                "message": "已保存，但当前适配器未接入热更新，请重启后端生效",
+            }
+        except Exception as exc:  # pragma: no cover - 仅在运行环境异常时触发
+            logger.warning(f"[config] unitree 网络热更新失败: key={key} error={exc}")
+            return {
+                "applied": False,
+                "target": "hardware",
+                "message": "已保存，但当前适配器未接入热更新，请重启后端生效",
+            }
 
     if key == "mavlink_endpoint":
         return {

@@ -241,7 +241,17 @@ class ControlService:
 
     def set_adapter(self, adapter: BaseRobotAdapter | None) -> None:
         """替换适配器实例（供后台热切换使用，adapter=None 表示不可用）。"""
+        old_adapter = self._adapter
         self._adapter = adapter
+        if old_adapter is not None and old_adapter is not adapter:
+            try:
+                old_adapter.close()
+            except Exception as exc:  # noqa: BLE001
+                get_logger("机器人控制").warning("关闭旧适配器时异常：{}", exc)
+
+    def get_adapter(self) -> BaseRobotAdapter | None:
+        """获取当前适配器实例。"""
+        return self._adapter
 
     def get_adapter_status(self) -> dict:
         """返回适配器状态摘要，供调试端点使用。"""

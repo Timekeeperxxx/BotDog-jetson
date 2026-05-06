@@ -59,6 +59,10 @@ class BaseRobotAdapter(ABC):
         """
         ...
 
+    def close(self) -> None:
+        """关闭适配器资源。默认无操作，支持热替换时由子类按需覆盖。"""
+        return None
+
     async def stop(self) -> None:
         """快捷停止方法，供 Watchdog 调用。"""
         await self.send_command("stop")
@@ -75,6 +79,9 @@ class SimulatedRobotAdapter(BaseRobotAdapter):
     def is_ready(self) -> bool:
         """模拟适配器始终就绪。"""
         return True
+
+    def close(self) -> None:
+        return None
 
     async def send_command(self, cmd: str, *, vx: Optional[float] = None, vyaw: Optional[float] = None) -> None:
         """
@@ -110,6 +117,9 @@ class MAVLinkRobotAdapter(BaseRobotAdapter):
     def is_ready(self) -> bool:
         """MAVLink 适配器尚未实现真实控制，返回 False。"""
         return False
+
+    def close(self) -> None:
+        return None
 
     async def send_command(self, cmd: str, *, vx: Optional[float] = None, vyaw: Optional[float] = None) -> None:
         """
@@ -262,6 +272,28 @@ class UnitreeB2Adapter(BaseRobotAdapter):
     def is_ready(self) -> bool:
         """宇树 B2 适配器就绪状态。"""
         return self._initialized
+
+    def close(self) -> None:
+        """关闭后台命令线程并释放当前适配器。"""
+        try:
+            import queue
+
+            self._initialized = False
+            self._sport_client = None
+            try:
+                while not self._cmd_queue.empty():
+                    self._cmd_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                self._cmd_queue.put_nowait("_QUIT_")
+            except queue.Full:
+                pass
+            if hasattr(self, "_worker_thread") and self._worker_thread.is_alive():
+                self._worker_thread.join(timeout=1.0)
+            control_logger.info("UnitreeB2Adapter 已关闭")
+        except Exception as exc:  # noqa: BLE001
+            control_logger.warning("UnitreeB2Adapter 关闭时异常：{}", exc)
 
     def _command_worker(self):
         """后台专用的工作线程：消费队列并调用阻断的 SDK。"""

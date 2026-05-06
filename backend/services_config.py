@@ -80,8 +80,8 @@ class ConfigService:
             "value": settings.UNITREE_NETWORK_IFACE,
             "value_type": "string",
             "category": "hardware",
-            "description": "宇树适配器使用的网卡名称（保存后通常需重启后端或重新初始化硬件适配器）",
-            "is_hot_reloadable": False,
+            "description": "宇树适配器使用的网卡名称（当前适配器支持时可热更新，否则需重启后端）",
+            "is_hot_reloadable": True,
         },
         "mavlink_endpoint": {
             "value": settings.MAVLINK_ENDPOINT,
