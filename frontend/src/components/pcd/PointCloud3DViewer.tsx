@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { NavWaypoint } from '../../types/pcdMap'
 import type { RobotPose } from '../../types/navState'
 import { mapToThree } from '../../utils/pointCloudTransform'
+import { detectWebGLSupport } from './webglSupport'
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
@@ -75,6 +76,7 @@ type Props = {
 
 export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot = false }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const [webglSupported] = useState(() => detectWebGLSupport())
   const sceneRef = useRef<THREE.Scene | null>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
@@ -86,6 +88,7 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
   const robotGroupRef = useRef<THREE.Group | null>(null)
 
   useEffect(() => {
+    if (!webglSupported) return
     const host = hostRef.current
     if (!host) return
 
@@ -188,9 +191,10 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
       renderer.dispose()
       renderer.domElement.remove()
     }
-  }, [])
+  }, [webglSupported])
 
   useEffect(() => {
+    if (!webglSupported) return
     const scene = sceneRef.current
     const camera = cameraRef.current
     const controls = controlsRef.current
@@ -267,9 +271,10 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
         grid.position.set(center.x, Math.min(box.min.y, 0), center.z)
       }
     }
-  }, [points])
+  }, [points, webglSupported])
 
   useEffect(() => {
+    if (!webglSupported) return
     const group = waypointGroupRef.current
     if (!group) return
 
@@ -294,9 +299,10 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
     return () => {
       geometry.dispose()
     }
-  }, [waypoints])
+  }, [waypoints, webglSupported])
 
   useEffect(() => {
+    if (!webglSupported) return
     const robotGroup = robotGroupRef.current
     const camera = cameraRef.current
     const controls = controlsRef.current
@@ -324,7 +330,27 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
     } else {
       followOffsetRef.current = null
     }
-  }, [followRobot, robotPose])
+  }, [followRobot, robotPose, webglSupported])
+
+  if (!webglSupported) {
+    return (
+      <div className="pcd-viewer-shell">
+        <div className="pcd-viewer-label">3D 点云</div>
+        <div className="flex min-h-[420px] items-center justify-center rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top,rgba(16,24,32,0.92),rgba(4,7,10,0.98))] px-6 text-center">
+          <div className="max-w-2xl space-y-4">
+            <div className="text-2xl font-black text-white">当前浏览器未启用 WebGL，无法渲染三维点云地图。</div>
+            <div className="text-sm leading-7 text-zinc-300">
+              <div>请尝试：</div>
+              <div>- 使用电脑浏览器访问本页面</div>
+              <div>- 在开发板 Chromium 中启用 `chrome://flags` → `Override software rendering list`</div>
+              <div>- 使用启动参数 `--ignore-gpu-blocklist --enable-webgl --use-gl=egl`</div>
+              <div>- 检查 `chrome://gpu` 中 WebGL/WebGL2 是否可用</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="pcd-viewer-shell">

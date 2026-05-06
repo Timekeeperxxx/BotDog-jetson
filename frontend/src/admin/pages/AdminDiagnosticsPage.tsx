@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ExternalLink, FlaskConical, Radar, ServerCog } from 'lucide-react'
+import { apiFetch } from '../../api/apiFetch'
 import { AdminCard, EmptyState, ToolbarButton } from '../AdminUi'
 
 export function AdminDiagnosticsPage({
@@ -7,36 +8,74 @@ export function AdminDiagnosticsPage({
 }: {
   onOpenPatrol: () => void
 }) {
+  const [loadingKey, setLoadingKey] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<unknown>(null)
+
+  async function runDiagnostic(path: string) {
+    setLoadingKey(path)
+    setError(null)
+    setResult(null)
+    try {
+      const data = await apiFetch(path)
+      setResult(data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '暂不可用')
+    } finally {
+      setLoadingKey(null)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <AdminCard title="诊断工具" subtitle="这里只放可验证的排查入口，不伪造未实现的诊断面板。">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <DiagTile icon={<ServerCog size={14} />} title="/api/v1/system/safety" desc="检查当前是否允许运动，以及阻止原因。" />
-          <DiagTile icon={<Radar size={14} />} title="/api/v1/nav/current-goal" desc="检查运行时 current_goal.json 是否已写入。" />
-          <DiagTile icon={<FlaskConical size={14} />} title="/api/v1/auth/status" desc="检查当前登录态和角色信息。" />
+          <DiagTile
+            icon={<ServerCog size={14} />}
+            title="/api/v1/system/safety"
+            desc="检查当前是否允许运动，以及阻止原因。"
+            onClick={() => void runDiagnostic('/api/v1/system/safety')}
+            loading={loadingKey === '/api/v1/system/safety'}
+          />
+          <DiagTile
+            icon={<Radar size={14} />}
+            title="/api/v1/nav/current-goal"
+            desc="检查运行时 current_goal.json 是否已写入。"
+            onClick={() => void runDiagnostic('/api/v1/nav/current-goal')}
+            loading={loadingKey === '/api/v1/nav/current-goal'}
+          />
+          <DiagTile
+            icon={<FlaskConical size={14} />}
+            title="/api/v1/auth/status"
+            desc="检查当前登录态和角色信息。"
+            onClick={() => void runDiagnostic('/api/v1/auth/status')}
+            loading={loadingKey === '/api/v1/auth/status'}
+          />
         </div>
       </AdminCard>
 
       <AdminCard title="快捷入口" subtitle="用于现场排障，不替代正式后台流程。">
         <div className="flex flex-wrap gap-3">
           <ToolbarButton onClick={onOpenPatrol}><ExternalLink size={14} className="inline-block" /> 打开导航页</ToolbarButton>
-          <a
-            href="/api/v1/system/safety"
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-xl border border-white/12 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-white transition-all hover:border-white/30 hover:bg-white/5"
-          >
-            查看安全接口
-          </a>
-          <a
-            href="/api/v1/nav/current-goal"
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-xl border border-white/12 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-white transition-all hover:border-white/30 hover:bg-white/5"
-          >
-            查看当前目标
-          </a>
+          <ToolbarButton onClick={() => void runDiagnostic('/api/v1/system/safety')}>检查安全接口</ToolbarButton>
+          <ToolbarButton onClick={() => void runDiagnostic('/api/v1/nav/current-goal')}>检查当前目标</ToolbarButton>
+          <ToolbarButton onClick={() => void runDiagnostic('/api/v1/auth/status')}>检查登录状态</ToolbarButton>
         </div>
+      </AdminCard>
+
+      <AdminCard title="诊断结果" subtitle="按钮触发后，直接在当前页面查看 JSON 返回。">
+        {error ? <div className="rounded-lg bg-red-500/10 p-3 text-xs text-red-400">{error}</div> : null}
+        {!error && loadingKey ? (
+          <EmptyState title="诊断中" description={`正在请求 ${loadingKey}，请稍候。`} />
+        ) : null}
+        {!error && !loadingKey && result != null ? (
+          <pre className="overflow-x-auto rounded-2xl border border-white/8 bg-black/60 p-4 text-xs leading-6 text-zinc-200">
+            {JSON.stringify(result, null, 2)}
+          </pre>
+        ) : null}
+        {!error && !loadingKey && result == null ? (
+          <EmptyState title="等待诊断操作" description="点击上方按钮后，这里会显示 pretty print 的 JSON 结果或错误信息。" />
+        ) : null}
       </AdminCard>
 
       <AdminCard title="说明" subtitle="第三阶段先把壳拆清楚，后续再补更细的诊断能力。">
@@ -53,18 +92,26 @@ function DiagTile({
   icon,
   title,
   desc,
+  onClick,
+  loading = false,
 }: {
   icon: ReactNode
   title: string
   desc: string
+  onClick?: () => void
+  loading?: boolean
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/50 p-4">
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-2xl border border-white/10 bg-black/50 p-4 text-left transition-all hover:border-white/20 hover:bg-white/5"
+    >
       <div className="flex items-center gap-2 text-white">
         {icon}
-        <span className="text-sm font-black">{title}</span>
+        <span className="text-sm font-black">{loading ? '加载中…' : title}</span>
       </div>
       <div className="mt-3 text-sm text-zinc-400">{desc}</div>
-    </div>
+    </button>
   )
 }

@@ -274,7 +274,13 @@ export function AdminApp() {
 
   const headerActions = (
     <>
-      <ToolbarButton onClick={() => window.location.assign('/operator')}>进入操作台</ToolbarButton>
+      <ToolbarButton
+        onClick={() => window.location.assign('/operator')}
+        disabled={role === 'viewer'}
+        title={role === 'viewer' ? '需要 operator 权限' : undefined}
+      >
+        进入操作台
+      </ToolbarButton>
       <ToolbarButton onClick={() => void refreshAdminCore()}>{adminLoading ? '刷新中' : '刷新总览'}</ToolbarButton>
     </>
   )

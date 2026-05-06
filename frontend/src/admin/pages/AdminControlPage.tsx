@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArrowRight, MapPinned } from 'lucide-react'
-import { getApiUrl } from '../../config/api'
+import { apiFetch } from '../../api/apiFetch'
 import type { HealthResponse } from '../adminTypes'
 import type { NavStateResponse } from '../../types/navState'
 import { AdminCard, EmptyState, StatusBadge, ToolbarButton } from '../AdminUi'
@@ -28,20 +28,61 @@ export function AdminControlPage({ health, navState, onOpenOperator, onOpenPatro
   const auth = useAuthState()
   const [safety, setSafety] = useState<SafetyResponse | null>(null)
   const [goal, setGoal] = useState<Record<string, unknown> | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [safetyError, setSafetyError] = useState<string | null>(null)
+  const [goalError, setGoalError] = useState<string | null>(null)
+  const [safetyLoading, setSafetyLoading] = useState(true)
+  const [goalLoading, setGoalLoading] = useState(true)
 
   useEffect(() => {
-    fetch(getApiUrl('/api/v1/system/safety'))
-      .then((res) => res.json() as Promise<SafetyResponse>)
-      .then(setSafety)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : '暂不可用'))
+    let cancelled = false
+
+    async function loadSafety() {
+      setSafetyLoading(true)
+      setSafetyError(null)
+      try {
+        const data = await apiFetch<SafetyResponse>('/api/v1/system/safety')
+        if (!cancelled) setSafety(data)
+      } catch (err) {
+        if (!cancelled) {
+          setSafety(null)
+          setSafetyError(err instanceof Error ? err.message : '暂不可用')
+        }
+      } finally {
+        if (!cancelled) setSafetyLoading(false)
+      }
+    }
+
+    void loadSafety()
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
-    fetch(getApiUrl('/api/v1/nav/current-goal'))
-      .then((res) => res.json() as Promise<CurrentGoalResponse>)
-      .then((data) => setGoal(data.current_goal))
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : '暂不可用'))
+    let cancelled = false
+
+    async function loadGoal() {
+      setGoalLoading(true)
+      setGoalError(null)
+      try {
+        const data = await apiFetch<CurrentGoalResponse>('/api/v1/nav/current-goal')
+        if (!cancelled) setGoal(data.current_goal)
+      } catch (err) {
+        if (!cancelled) {
+          setGoal(null)
+          setGoalError(err instanceof Error ? err.message : '暂不可用')
+        }
+      } finally {
+        if (!cancelled) setGoalLoading(false)
+      }
+    }
+
+    void loadGoal()
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   return (
@@ -59,8 +100,10 @@ export function AdminControlPage({ health, navState, onOpenOperator, onOpenPatro
         </AdminCard>
 
         <AdminCard title="控制安全" subtitle="复用 /api/v1/system/safety 结果，明确显示当前能否移动。">
-          {error && <div className="rounded-lg bg-red-500/10 p-3 text-xs text-red-400">{error}</div>}
-          {safety ? (
+          {safetyError && <div className="rounded-lg bg-red-500/10 p-3 text-xs text-red-400">{safetyError}</div>}
+          {safetyLoading ? (
+            <EmptyState title="安全状态加载中" description="正在拉取 /api/v1/system/safety 的当前结果。" />
+          ) : safety ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm text-zinc-400">允许运动</span>
@@ -87,7 +130,10 @@ export function AdminControlPage({ health, navState, onOpenOperator, onOpenPatro
         </AdminCard>
 
         <AdminCard title="当前目标" subtitle="读取运行时 current_goal.json，确认用户刚选中的目标点。">
-          {goal ? (
+          {goalError && <div className="rounded-lg bg-red-500/10 p-3 text-xs text-red-400">{goalError}</div>}
+          {goalLoading ? (
+            <EmptyState title="当前目标加载中" description="正在拉取 /api/v1/nav/current-goal 的当前结果。" />
+          ) : goal ? (
             <div className="space-y-3">
               <div className="text-sm text-white">{String(goal['waypoint_name'] ?? goal['name'] ?? '--')}</div>
               <div className="text-sm text-zinc-400">map_id: {String(goal['map_id'] ?? '--')}</div>

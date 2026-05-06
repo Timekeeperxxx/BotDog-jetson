@@ -188,7 +188,12 @@ export function AdminNavigationPage({
                       <TableCell>
                         <div className="flex flex-wrap gap-2">
                           <ToolbarButton disabled>编辑</ToolbarButton>
-                          <ToolbarButton danger onClick={() => onDeleteWaypoint(item)} disabled={!canOperate}>
+                          <ToolbarButton
+                            danger
+                            onClick={() => onDeleteWaypoint(item)}
+                            disabled={!canOperate}
+                            title={!canOperate ? '需要 operator 权限' : undefined}
+                          >
                             <Trash2 size={14} className="inline-block" /> 删除
                           </ToolbarButton>
                         </div>

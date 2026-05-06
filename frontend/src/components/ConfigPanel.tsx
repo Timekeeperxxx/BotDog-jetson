@@ -43,6 +43,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
 
   const allConfigs = Object.values(configHook.configs);
   const categories = Array.from(new Set(allConfigs.map(c => c.category)));
+  const adminOnlyTitle = canAdmin ? undefined : '需要 admin 权限';
 
   const categoryNames: Record<string, string> = {
     backend: '后端参数',
@@ -122,6 +123,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
                 checked={isChecked}
                 onChange={(e) => requestSaveConfig(config.key, e.target.checked)}
                 disabled={configHook.loading || !canAdmin}
+                title={adminOnlyTitle}
               />
               <div className={`w-10 h-5 border transition-all ${
                 isChecked ? 'bg-white border-white' : 'bg-zinc-900 border-zinc-600'
@@ -143,12 +145,13 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
     if (config.key === 'ui_lang') {
       return (
         <div className="flex items-center gap-3">
-          <select
-            value={config.value as string}
-            onChange={(e) => requestSaveConfig(config.key, e.target.value)}
-            disabled={configHook.loading || !canAdmin}
-            className="flex-1 bg-zinc-950 border border-zinc-700 text-white font-mono text-xs px-4 py-2 focus:outline-none focus:border-white transition-all appearance-none uppercase tracking-wider"
-          >
+            <select
+              value={config.value as string}
+              onChange={(e) => requestSaveConfig(config.key, e.target.value)}
+              disabled={configHook.loading || !canAdmin}
+              title={adminOnlyTitle}
+              className="flex-1 bg-zinc-950 border border-zinc-700 text-white font-mono text-xs px-4 py-2 focus:outline-none focus:border-white transition-all appearance-none uppercase tracking-wider"
+            >
             <option value="zh-CN">简体中文 (ZH-CN)</option>
             <option value="en-US">English (EN-US)</option>
           </select>
@@ -159,12 +162,13 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
     if (config.key === 'ui_theme') {
       return (
         <div className="flex items-center gap-3">
-          <select
-            value={config.value as string}
-            onChange={(e) => requestSaveConfig(config.key, e.target.value)}
-            disabled={configHook.loading || !canAdmin}
-            className="flex-1 bg-zinc-950 border border-zinc-700 text-white font-mono text-xs px-4 py-2 focus:outline-none focus:border-white transition-all appearance-none uppercase tracking-wider"
-          >
+            <select
+              value={config.value as string}
+              onChange={(e) => requestSaveConfig(config.key, e.target.value)}
+              disabled={configHook.loading || !canAdmin}
+              title={adminOnlyTitle}
+              className="flex-1 bg-zinc-950 border border-zinc-700 text-white font-mono text-xs px-4 py-2 focus:outline-none focus:border-white transition-all appearance-none uppercase tracking-wider"
+            >
             <option value="dark">暗夜工业 (DARK)</option>
             <option value="light">耀眼极光 (LIGHT)</option>
           </select>
@@ -181,6 +185,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
           step={config.value_type === 'float' ? '0.1' : '1'}
           defaultValue={config.value as string | number}
           disabled={configHook.loading || !canAdmin}
+          title={adminOnlyTitle}
           className="flex-1 bg-zinc-950 border border-zinc-700 px-4 py-2 text-sm text-white font-mono focus:outline-none focus:border-white transition-all placeholder-zinc-500"
           placeholder={`输入 ${config.value_type}...`}
         />
@@ -190,6 +195,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
             if (el) requestSaveConfig(config.key, el.value);
           }}
           disabled={configHook.loading || !canAdmin}
+          title={adminOnlyTitle}
           className="bg-zinc-800 border border-zinc-600 text-white px-5 py-2 text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-white hover:text-black hover:border-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {configHook.loading ? '写入中' : '写入'}

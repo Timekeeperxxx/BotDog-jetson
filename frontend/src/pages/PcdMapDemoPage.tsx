@@ -27,6 +27,7 @@ import { NavWaypointPanel } from '../components/pcd/NavWaypointPanel'
 import { PcdFileListPanel } from '../components/pcd/PcdFileListPanel'
 import { PointCloud3DViewer } from '../components/pcd/PointCloud3DViewer'
 import { PointCloudTopDownCanvas } from '../components/pcd/PointCloudTopDownCanvas'
+import { detectWebGLSupport } from '../components/pcd/webglSupport'
 import { TaskCreatorDrawer } from '../components/pcd/TaskCreatorDrawer'
 import { TaskDrawerPanel } from '../components/pcd/TaskDrawerPanel'
 import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl'
@@ -89,6 +90,7 @@ export function PcdMapDemoPage() {
   const [mappingSending, setMappingSending] = useState(false)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
+  const [webglSupported, setWebglSupported] = useState(true)
   // ── 高危操作确认 ──
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
   const selectRequestRef = useRef(0)
@@ -108,6 +110,10 @@ export function PcdMapDemoPage() {
       { id: Date.now() + Math.random(), level, message: `${nowText()} ${message}` },
       ...items,
     ].slice(0, 30))
+  }, [])
+
+  useEffect(() => {
+    setWebglSupported(detectWebGLSupport())
   }, [])
 
   const persistTasks = useCallback((nextTasks: TaskDefinition[]) => {
@@ -726,12 +732,27 @@ export function PcdMapDemoPage() {
       <div className="pcd-workspace">
         <section className="pcd-main-stage">
           <div className="pcd-main-viewer">
-            <PointCloud3DViewer
-              points={preview?.points || []}
-              waypoints={waypoints}
-              robotPose={robotPose}
-              followRobot={followRobot}
-            />
+            {webglSupported ? (
+              <PointCloud3DViewer
+                points={preview?.points || []}
+                waypoints={waypoints}
+                robotPose={robotPose}
+                followRobot={followRobot}
+              />
+            ) : (
+              <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top,rgba(16,24,32,0.92),rgba(4,7,10,0.98))] px-6 text-center">
+                <div className="max-w-2xl space-y-4">
+                  <div className="text-2xl font-black text-white">当前浏览器未启用 WebGL，无法渲染三维点云地图。</div>
+                  <div className="text-sm leading-7 text-zinc-300">
+                    <div>请尝试：</div>
+                    <div>- 使用电脑浏览器访问本页面</div>
+                    <div>- 在开发板 Chromium 中启用 `chrome://flags` → `Override software rendering list`</div>
+                    <div>- 使用启动参数 `--ignore-gpu-blocklist --enable-webgl --use-gl=egl`</div>
+                    <div>- 检查 `chrome://gpu` 中 WebGL/WebGL2 是否可用</div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <div className="pcd-drawer-cluster">
             <div className="pcd-drawer-rail">
