@@ -19,7 +19,9 @@ import time
 from enum import Enum
 from typing import Callable, Optional
 
-from backend.logging_config import logger
+from backend.logging_config import get_logger
+
+logger = get_logger("状态机")
 
 
 class SystemState(str, Enum):
@@ -126,7 +128,7 @@ class StateMachine:
         if self._state != SystemState.E_STOP_TRIGGERED:
             old_state = self._state
             self._state = SystemState.E_STOP_TRIGGERED
-            logger.warning(f"状态机触发紧急制动: {old_state} -> {self._state}")
+            logger.warning("状态切换：{} -> {}", old_state, self._state)
 
             if self._on_state_change:
                 self._on_state_change(old_state, self._state)
@@ -136,7 +138,7 @@ class StateMachine:
         if self._state == SystemState.E_STOP_TRIGGERED:
             old_state = self._state
             self._evaluate_state()  # 重新评估正常状态
-            logger.info(f"状态机重置紧急制动: {old_state} -> {self._state}")
+            logger.info("状态切换：{} -> {}", old_state, self._state)
 
     def _evaluate_state(self) -> None:
         """
@@ -172,7 +174,7 @@ class StateMachine:
         if new_state != self._state:
             old_state = self._state
             self._state = new_state
-            logger.info(f"状态机状态转换: {old_state} -> {self._state}")
+            logger.info("状态切换：{} -> {}", old_state, self._state)
 
             if self._on_state_change:
                 self._on_state_change(old_state, self._state)
@@ -183,14 +185,14 @@ class StateMachine:
 
         该协程会定期检查心跳超时，并在超时时更新状态。
         """
-        logger.info("心跳监控协程已启动")
+        logger.debug("心跳监控协程已启动")
 
         while True:
             try:
                 self._evaluate_state()
                 await asyncio.sleep(0.5)  # 每 0.5 秒检查一次
             except asyncio.CancelledError:
-                logger.info("心跳监控协程已停止")
+                logger.debug("心跳监控协程已停止")
                 break
             except Exception as exc:  # noqa: BLE001
                 logger.exception("心跳监控协程异常: {}", exc)

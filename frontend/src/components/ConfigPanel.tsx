@@ -10,10 +10,13 @@ import { RefreshCw, History, AlertTriangle, CheckCircle2, X } from 'lucide-react
 
 interface ConfigPanelProps {
   onClose?: () => void;
+  configHook?: ReturnType<typeof useConfig>;
 }
 
-export function ConfigPanel({ onClose }: ConfigPanelProps) {
-  const configHook = useConfig();
+export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigPanelProps) {
+  const localConfigHook = useConfig();
+  const configHook = externalConfigHook ?? localConfigHook;
+  const { fetchConfigs } = configHook;
 
   const [selectedCategory, setSelectedCategory] = useState<string>('backend');
   const [showHistory, setShowHistory] = useState(false);
@@ -24,8 +27,9 @@ export function ConfigPanel({ onClose }: ConfigPanelProps) {
   const inputRefs = useRef<Record<string, HTMLInputElement | HTMLSelectElement | null>>({});
 
   useEffect(() => {
-    configHook.fetchConfigs();
-  }, []);
+    if (externalConfigHook) return;
+    void fetchConfigs();
+  }, [externalConfigHook, fetchConfigs]);
 
   const allConfigs = Object.values(configHook.configs);
   const categories = Array.from(new Set(allConfigs.map(c => c.category)));

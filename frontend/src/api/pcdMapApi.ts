@@ -111,6 +111,19 @@ export function setLocalizationPose(
   )
 }
 
+export function setMappingEnabled(
+  enabled: boolean,
+): Promise<{ success: boolean; topic: string; enabled: boolean }> {
+  return requestJson(
+    getApiUrl('/api/v1/nav/mapping/set-enabled'),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    },
+  )
+}
+
 export function triggerNavEmergencyStop(): Promise<{ success: boolean; topic: string }> {
   return requestJson(
     getApiUrl('/api/v1/nav/e-stop'),

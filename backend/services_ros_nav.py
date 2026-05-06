@@ -7,13 +7,16 @@ import time
 from typing import Any
 
 from .config import settings
-from .logging_config import logger
+from .logging_config import get_logger
 from .services_nav_state import (
     get_robot_pose,
     update_localization_status,
     update_robot_pose,
 )
 from .ws_event_broadcaster import EventBroadcaster
+
+nav_logger = get_logger("ROS导航")
+tf_logger = get_logger("ROS TF")
 
 
 def quaternion_to_yaw(x: float, y: float, z: float, w: float) -> float:
@@ -71,10 +74,13 @@ class RosNavBridge:
         self._goal_publisher: Any | None = None
         self._estop_publisher: Any | None = None
         self._set_pose_publisher: Any | None = None
+        self._mapping_publisher: Any | None = None
         self._publisher_lock = threading.RLock()
         self._last_broadcast_at = 0.0
         self._last_localization_broadcast_at = 0.0
-        self._last_tf_lookup_error_at = 0.0
+        self._tf_available = False
+        self._tf_wait_started_at = 0.0
+        self._last_tf_warning_at = 0.0
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -94,13 +100,13 @@ class RosNavBridge:
             try:
                 self._node.destroy_node()
             except Exception as exc:
-                logger.warning(f"ROS2 导航节点销毁失败: {exc}")
+                nav_logger.warning("ROS2 导航节点销毁失败：{}", exc)
 
         if self._rclpy is not None:
             try:
                 self._rclpy.shutdown()
             except Exception as exc:
-                logger.warning(f"rclpy shutdown 失败: {exc}")
+                nav_logger.warning("rclpy shutdown 失败：{}", exc)
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=timeout)
@@ -119,7 +125,7 @@ class RosNavBridge:
                     "message": f"ROS2/rclpy 不可用: {exc}",
                 }
             )
-            logger.warning(f"ROS2 导航订阅未启动: {exc}")
+            nav_logger.warning("ROS2 导航订阅未启动：{}", exc)
             return
 
         self._rclpy = rclpy
@@ -140,8 +146,8 @@ class RosNavBridge:
                         "message": "ROS2 TF 查询已启动，等待坐标变换",
                     }
                 )
-                logger.info(
-                    "ROS2 TF 导航查询已启动: target_frame={}, source_frame={}",
+                nav_logger.info(
+                    "ROS2 TF 查询已启动：target_frame={}，source_frame={}",
                     settings.ROS_NAV_FRAME_ID,
                     settings.ROS_NAV_BASE_FRAME_ID,
                 )
@@ -167,8 +173,8 @@ class RosNavBridge:
                         "message": "ROS2 位姿订阅已启动，等待定位数据",
                     }
                 )
-                logger.info(
-                    "ROS2 导航订阅已启动: topic={}, type={}",
+                nav_logger.info(
+                    "ROS2 导航订阅已启动：topic={}，type={}",
                     settings.ROS_NAV_POSE_TOPIC,
                     settings.ROS_NAV_POSE_TYPE,
                 )
@@ -188,7 +194,7 @@ class RosNavBridge:
                     "message": f"ROS2 导航订阅异常: {exc}",
                 }
             )
-            logger.exception(f"ROS2 导航订阅异常: {exc}")
+            nav_logger.exception("ROS2 导航订阅异常：{}", exc)
         finally:
             if self._node is not None:
                 try:
@@ -200,7 +206,7 @@ class RosNavBridge:
                 rclpy.shutdown()
             except Exception:
                 pass
-            logger.info("ROS2 导航订阅线程已退出")
+            nav_logger.info("ROS2 导航订阅线程已退出")
 
     def _setup_publishers(self) -> None:
         try:
@@ -234,13 +240,19 @@ class RosNavBridge:
             settings.ROS_NAV_SET_POSE_TOPIC,
             10,
         )
-        logger.info(
-            "ROS2 导航发布器已启动: page_open_topic={}, start_topic={}, goal_topic={}, stop_topic={}, set_pose_topic={}",
+        self._mapping_publisher = self._node.create_publisher(
+            Bool,
+            settings.ROS_NAV_MAPPING_TOPIC,
+            10,
+        )
+        nav_logger.info(
+            "ROS2 导航发布器已启动：page_open_topic={}，start_topic={}，goal_topic={}，stop_topic={}，set_pose_topic={}，mapping_topic={}",
             settings.ROS_NAV_PAGE_OPEN_TOPIC,
             settings.ROS_NAV_START_TOPIC,
             settings.ROS_NAV_GOAL_TOPIC,
             settings.ROS_NAV_STOP_TOPIC,
             settings.ROS_NAV_SET_POSE_TOPIC,
+            settings.ROS_NAV_MAPPING_TOPIC,
         )
 
     def publish_navigation_page_open(self) -> dict[str, Any]:
@@ -342,6 +354,23 @@ class RosNavBridge:
             "data": True,
         }
 
+    def publish_mapping_enabled(self, enabled: bool) -> dict[str, Any]:
+        if self._node is None or self._mapping_publisher is None:
+            raise RuntimeError("ROS2 建图发布器未就绪")
+
+        from std_msgs.msg import Bool
+
+        msg = Bool()
+        msg.data = bool(enabled)
+        with self._publisher_lock:
+            self._mapping_publisher.publish(msg)
+
+        return {
+            "success": True,
+            "topic": settings.ROS_NAV_MAPPING_TOPIC,
+            "enabled": bool(enabled),
+        }
+
     def _use_tf_pose(self) -> bool:
         return settings.ROS_NAV_POSE_TYPE.strip().lower() in (
             "tf",
@@ -371,22 +400,49 @@ class RosNavBridge:
         try:
             pose = self._lookup_tf_pose()
         except Exception as exc:
-            if now - self._last_tf_lookup_error_at >= 1.0:
-                self._last_tf_lookup_error_at = now
-                message = (
-                    f"等待 TF 变换 {settings.ROS_NAV_FRAME_ID} -> "
-                    f"{settings.ROS_NAV_BASE_FRAME_ID}: {exc}"
+            message = (
+                f"TF 暂未就绪：target={settings.ROS_NAV_FRAME_ID}，"
+                f"source={settings.ROS_NAV_BASE_FRAME_ID}，原因={exc}"
+            )
+            update_localization_status(
+                {
+                    "status": "initializing",
+                    "frame_id": settings.ROS_NAV_FRAME_ID,
+                    "source": self._tf_source(),
+                    "message": message,
+                }
+            )
+
+            if self._tf_wait_started_at == 0.0:
+                self._tf_wait_started_at = now
+                self._last_tf_warning_at = now
+                self._tf_available = False
+                tf_logger.warning(
+                    "TF 暂未就绪：target={}，source={}，原因={}",
+                    settings.ROS_NAV_FRAME_ID,
+                    settings.ROS_NAV_BASE_FRAME_ID,
+                    exc,
                 )
-                update_localization_status(
-                    {
-                        "status": "initializing",
-                        "frame_id": settings.ROS_NAV_FRAME_ID,
-                        "source": self._tf_source(),
-                        "message": message,
-                    }
+            elif now - self._last_tf_warning_at >= 30.0:
+                self._last_tf_warning_at = now
+                waited = int(now - self._tf_wait_started_at)
+                tf_logger.warning(
+                    "TF 仍未就绪：target={}，source={}，已等待={}s",
+                    settings.ROS_NAV_FRAME_ID,
+                    settings.ROS_NAV_BASE_FRAME_ID,
+                    waited,
                 )
-                logger.debug(message)
             return
+
+        if not self._tf_available and self._tf_wait_started_at > 0.0:
+            tf_logger.info(
+                "TF 已恢复：target={}，source={}",
+                settings.ROS_NAV_FRAME_ID,
+                settings.ROS_NAV_BASE_FRAME_ID,
+            )
+        self._tf_available = True
+        self._tf_wait_started_at = 0.0
+        self._last_tf_warning_at = 0.0
 
         update_robot_pose(pose)
         update_localization_status(
@@ -460,7 +516,7 @@ class RosNavBridge:
                     "message": f"位姿消息解析失败: {exc}",
                 }
             )
-            logger.warning(f"位姿消息解析失败: {exc}")
+            nav_logger.warning("位姿消息解析失败：{}", exc)
             return
 
         update_robot_pose(pose)
@@ -543,4 +599,4 @@ class RosNavBridge:
         try:
             future.result()
         except Exception as exc:
-            logger.warning(f"导航 WebSocket 广播失败: {exc}")
+            nav_logger.warning("导航 WebSocket 广播失败：{}", exc)

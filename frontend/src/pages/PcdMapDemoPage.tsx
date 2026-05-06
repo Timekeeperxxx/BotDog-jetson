@@ -19,6 +19,7 @@ import {
   listPcdMaps,
   listWaypoints,
   notifyNavPageOpen,
+  setMappingEnabled,
   setLocalizationPose,
   triggerNavEmergencyStop,
 } from '../api/pcdMapApi'
@@ -81,6 +82,8 @@ export function PcdMapDemoPage() {
   const [waypointZ, setWaypointZ] = useState(-0.83)
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
   const [estopSending, setEstopSending] = useState(false)
+  const [mappingActive, setMappingActive] = useState(false)
+  const [mappingSending, setMappingSending] = useState(false)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
   const selectRequestRef = useRef(0)
@@ -244,6 +247,20 @@ export function PcdMapDemoPage() {
       setEstopSending(false)
     }
   }, [addLog])
+
+  const handleToggleMapping = useCallback(async () => {
+    const nextEnabled = !mappingActive
+    setMappingSending(true)
+    try {
+      const result = await setMappingEnabled(nextEnabled)
+      setMappingActive(result.enabled)
+      addLog(result.enabled ? `已发送开始建图到 ${result.topic}` : `已发送结束建图到 ${result.topic}`)
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '发送建图控制失败', 'error')
+    } finally {
+      setMappingSending(false)
+    }
+  }, [addLog, mappingActive])
 
   useEffect(() => {
     void refreshMaps()
@@ -859,6 +876,14 @@ export function PcdMapDemoPage() {
             >
               <Square size={15} />
               <span>设置位姿</span>
+            </button>
+            <button
+              className={`pcd-tool-button ${mappingActive ? 'is-active' : ''}`}
+              onClick={() => void handleToggleMapping()}
+              disabled={mappingSending}
+            >
+              <Square size={15} />
+              <span>{mappingSending ? (mappingActive ? '结束建图中' : '开始建图中') : (mappingActive ? '结束建图' : '开始建图')}</span>
             </button>
             <div className="pcd-keyboard-hint">
               <Keyboard size={15} />

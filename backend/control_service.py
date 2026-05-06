@@ -15,7 +15,7 @@ import asyncio
 import time
 from typing import Optional
 
-from .logging_config import logger
+from .logging_config import get_logger
 from .robot_adapter import BaseRobotAdapter, VALID_COMMANDS
 from .schemas import ControlAckDTO
 
@@ -81,10 +81,11 @@ class ControlService:
             ControlAckDTO 应答
         """
         start_ts = time.monotonic()
+        control_logger = get_logger("机器人控制")
 
         # 1. 校验命令名
         if cmd not in VALID_COMMANDS:
-            logger.warning(f"[ControlService] 非法命令: {cmd!r}")
+            control_logger.warning("收到非法控制命令：command={}", cmd)
             return ControlAckDTO(
                 ack_cmd=cmd,
                 result=RESULT_REJECTED_INVALID_CMD,
@@ -93,7 +94,7 @@ class ControlService:
 
         # 2. 检查 E_STOP 状态
         if self._is_e_stop_active():
-            logger.warning(f"[ControlService] E_STOP 激活，拒绝命令: {cmd}")
+            control_logger.warning("E_STOP 已激活，拒绝控制命令：command={}", cmd)
             return ControlAckDTO(
                 ack_cmd=cmd,
                 result=RESULT_REJECTED_E_STOP,
@@ -102,7 +103,7 @@ class ControlService:
 
         # 3. 检查适配器就绪状态
         if self._adapter is None:
-            logger.warning(f"[ControlService] 适配器未配置，拒绝命令: {cmd}")
+            control_logger.warning("控制适配器未配置，拒绝控制命令：command={}", cmd)
             return ControlAckDTO(
                 ack_cmd=cmd,
                 result=RESULT_REJECTED_ADAPTER_NOT_READY,
@@ -110,7 +111,7 @@ class ControlService:
             )
         
         if not self._adapter.is_ready():
-            logger.warning(f"[ControlService] 适配器未就绪，拒绝命令: {cmd}")
+            control_logger.warning("控制适配器未就绪，拒绝控制命令：command={}", cmd)
             return ControlAckDTO(
                 ack_cmd=cmd,
                 result=RESULT_REJECTED_ADAPTER_NOT_READY,
@@ -130,9 +131,10 @@ class ControlService:
 
         # 5. 执行命令
         try:
+            control_logger.info("收到控制命令：command={}", cmd)
             await self._adapter.send_command(cmd, vx=vx, vyaw=vyaw)
         except Exception as exc:  # noqa: BLE001
-            logger.exception(f"[ControlService] 适配器执行命令失败: {exc}")
+            control_logger.exception("控制命令执行失败：command={}，原因={}", cmd, exc)
             return ControlAckDTO(
                 ack_cmd=cmd,
                 result=RESULT_REJECTED_ADAPTER_ERROR,
@@ -167,9 +169,10 @@ class ControlService:
             stop_event: 应用级停止事件
         """
         check_interval = self._watchdog_timeout_s / 5
-        logger.info(
-            f"[Watchdog] 已启动，超时: {self._watchdog_timeout_s * 1000:.0f}ms，"
-            f"检查间隔: {check_interval * 1000:.0f}ms"
+        get_logger("机器人控制").info(
+            "控制 Watchdog 已启动：超时={}ms，检查间隔={}ms",
+            self._watchdog_timeout_s * 1000,
+            check_interval * 1000,
         )
 
         while not stop_event.is_set():
@@ -181,23 +184,24 @@ class ControlService:
 
                 elapsed = time.monotonic() - self._watchdog_last_reset
                 if elapsed >= self._watchdog_timeout_s:
-                    logger.warning(
-                        f"[Watchdog] 超时 ({elapsed * 1000:.0f}ms)，自动执行 stop"
+                    get_logger("机器人控制").warning(
+                        "控制 Watchdog 超时，自动执行 stop：elapsed_ms={:.0f}",
+                        elapsed * 1000,
                     )
                     self._watchdog_active = False
                     if self._adapter is not None and self._adapter.is_ready():
                         try:
                             await self._adapter.stop()
                         except Exception as exc:  # noqa: BLE001
-                            logger.exception(f"[Watchdog] 执行 stop 失败: {exc}")
+                            get_logger("机器人控制").critical("Watchdog 执行 stop 失败：{}", exc)
                     else:
-                        logger.warning("[Watchdog] 适配器不可用，跳过 stop")
+                        get_logger("机器人控制").warning("Watchdog 检测到适配器不可用，已跳过 stop")
 
             except asyncio.CancelledError:
-                logger.info("[Watchdog] 已停止")
+                get_logger("机器人控制").info("控制 Watchdog 已停止")
                 break
             except Exception as exc:  # noqa: BLE001
-                logger.exception(f"[Watchdog] 异常: {exc}")
+                get_logger("机器人控制").exception("控制 Watchdog 异常：{}", exc)
 
     def set_adapter(self, adapter: BaseRobotAdapter | None) -> None:
         """替换适配器实例（供后台热切换使用，adapter=None 表示不可用）。"""

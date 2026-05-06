@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     ROS_NAV_GOAL_TOPIC: str = "/goal_pose"
     ROS_NAV_STOP_TOPIC: str = "/nav_stop"
     ROS_NAV_SET_POSE_TOPIC: str = "/initialpose_start"
+    ROS_NAV_MAPPING_TOPIC: str = "/mapping_start"
 
     # 阶段 6：网页控制服务配置
     # 适配器类型：simulation（仅打印日志）| mavlink（真实硬件）

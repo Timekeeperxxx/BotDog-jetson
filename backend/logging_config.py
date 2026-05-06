@@ -2,48 +2,175 @@
 日志配置模块。
 
 职责边界：
-- 定义统一的日志策略（控制台 + 文件），供应用启动时一次性调用。
+- 初始化控制台与文件日志；
+- 统一标准 logging / Uvicorn / FastAPI 的输出格式；
+- 提供带业务域的 Loguru logger。
 """
 
-from pathlib import Path
+from __future__ import annotations
 
-from loguru import logger
+import logging
+import sys
+from pathlib import Path
+from typing import Any
+
+from loguru import logger as _logger
+
+_LOGGING_READY = False
+
+LOG_FORMAT = (
+    "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+    "<level>{level:<8}</level> | "
+    "<cyan>{extra[domain]}</cyan> | "
+    "<level>{message}</level>"
+)
+
+
+def _patch_record(record: dict[str, Any]) -> None:
+    record["extra"].setdefault("domain", "应用服务")
+    record["extra"].setdefault("access_log", False)
+    record["extra"].setdefault("raw_ffmpeg", False)
+
+
+logger = _logger.patch(_patch_record)
+
+
+class InterceptHandler(logging.Handler):
+    """将标准 logging 转发到 Loguru。"""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            level = logger.level(record.levelname).name
+        except ValueError:
+            level = record.levelno
+
+        frame = logging.currentframe()
+        depth = 2
+        while frame and frame.f_code.co_filename == logging.__file__:
+            frame = frame.f_back
+            depth += 1
+
+        logger.bind(domain="标准日志").opt(
+            depth=depth,
+            exception=record.exc_info,
+        ).log(level, record.getMessage())
+
+
+def get_logger(domain: str):
+    return logger.bind(domain=domain)
+
+
+def get_access_logger():
+    return logger.bind(domain="接口访问", access_log=True)
+
+
+def _console_filter(record: dict[str, Any]) -> bool:
+    if record["extra"].get("raw_ffmpeg"):
+        return False
+    return record["level"].no >= logging.INFO
+
+
+def _backend_file_filter(record: dict[str, Any]) -> bool:
+    return not record["extra"].get("raw_ffmpeg", False)
+
+
+def _access_file_filter(record: dict[str, Any]) -> bool:
+    return record["extra"].get("access_log", False)
+
+
+def _ffmpeg_file_filter(record: dict[str, Any]) -> bool:
+    return record["extra"].get("raw_ffmpeg", False)
 
 
 def setup_logging() -> None:
-    """
-    初始化 Loguru 日志：控制台 + 按天滚动文件。
+    """初始化 Loguru 日志：控制台、业务日志、调试日志、访问日志、FFmpeg 原始日志。"""
 
-    设计要点：
-    - 移除默认 handler，避免第三方库重复配置导致输出混乱；
-    - 文件日志策略与文档要求保持一致，可在运行时通过配置矩阵调整。
-    """
+    global _LOGGING_READY
+    if _LOGGING_READY:
+        return
 
-    logger.remove()  # 移除默认 handler
+    _logger.remove()
 
-    # 控制台输出（面向开发与容器 stdout）
-    logger.add(
-        sink=lambda msg: print(msg, end=""),
-        level="DEBUG",
-        colorize=True,
-        backtrace=True,
-        diagnose=False,
-    )
-
-    # 文件输出（./logs/botdog.log），便于现场排障与长期留存
     logs_dir = Path("logs")
     logs_dir.mkdir(parents=True, exist_ok=True)
+
     logger.add(
-        logs_dir / "botdog.log",
+        sys.stdout,
         level="INFO",
-        rotation="500 MB",
+        colorize=True,
+        enqueue=True,
+        backtrace=False,
+        diagnose=False,
+        format=LOG_FORMAT,
+        filter=_console_filter,
+    )
+    logger.add(
+        logs_dir / "backend.log",
+        level="INFO",
+        rotation="100 MB",
         retention="10 days",
         compression="zip",
         enqueue=True,
         backtrace=False,
         diagnose=False,
+        format=LOG_FORMAT,
+        filter=_backend_file_filter,
+    )
+    logger.add(
+        logs_dir / "debug.log",
+        level="DEBUG",
+        rotation="100 MB",
+        retention="7 days",
+        compression="zip",
+        enqueue=True,
+        backtrace=False,
+        diagnose=False,
+        format=LOG_FORMAT,
+    )
+    logger.add(
+        logs_dir / "access.log",
+        level="INFO",
+        rotation="100 MB",
+        retention="7 days",
+        compression="zip",
+        enqueue=True,
+        backtrace=False,
+        diagnose=False,
+        format=LOG_FORMAT,
+        filter=_access_file_filter,
+    )
+    logger.add(
+        logs_dir / "ffmpeg.log",
+        level="DEBUG",
+        rotation="100 MB",
+        retention="5 days",
+        compression="zip",
+        enqueue=True,
+        backtrace=False,
+        diagnose=False,
+        format=LOG_FORMAT,
+        filter=_ffmpeg_file_filter,
     )
 
+    intercept_handler = InterceptHandler()
+    logging.basicConfig(handlers=[intercept_handler], level=0, force=True)
 
-__all__ = ["logger", "setup_logging"]
+    for name in (
+        "uvicorn",
+        "uvicorn.error",
+        "fastapi",
+        "asyncio",
+    ):
+        std_logger = logging.getLogger(name)
+        std_logger.handlers = [intercept_handler]
+        std_logger.propagate = False
 
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.handlers = []
+    access_logger.propagate = False
+    access_logger.disabled = True
+
+    _LOGGING_READY = True
+
+
+__all__ = ["logger", "setup_logging", "get_logger", "get_access_logger"]

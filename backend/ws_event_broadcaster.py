@@ -14,7 +14,7 @@ from datetime import datetime
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from .logging_config import logger
+from .logging_config import get_logger
 from .schemas import utc_now_iso
 
 
@@ -45,7 +45,7 @@ class EventBroadcaster:
         async with self._lock:
             self._connections.add(websocket)
 
-        logger.info(f"事件 WebSocket 已连接，当前连接数: {len(self._connections)}")
+        get_logger("WebSocket事件").info("客户端已连接：当前连接数={}", len(self._connections))
 
         # 发送欢迎消息
         try:
@@ -55,7 +55,7 @@ class EventBroadcaster:
                 "message": "事件流已连接",
             })
         except Exception as exc:
-            logger.info(f"事件 WebSocket 欢迎消息发送失败: {exc}")
+            get_logger("WebSocket事件").debug("欢迎消息发送失败：{}", exc)
 
     async def disconnect(self, websocket: WebSocket) -> None:
         """
@@ -67,7 +67,7 @@ class EventBroadcaster:
         async with self._lock:
             self._connections.discard(websocket)
 
-        logger.info(f"事件 WebSocket 已断开，当前连接数: {len(self._connections)}")
+        get_logger("WebSocket事件").info("客户端已断开：当前连接数={}", len(self._connections))
 
     async def broadcast_alert(
         self,
@@ -101,7 +101,6 @@ class EventBroadcaster:
             成功发送的连接数
         """
         if not self._connections:
-            logger.debug("没有活跃的 WebSocket 连接，跳过广播")
             return 0
 
         # 构建消息
@@ -134,16 +133,17 @@ class EventBroadcaster:
                     await connection.send_json(alert_message)
                     success_count += 1
                 except Exception as e:
-                    logger.warning(f"发送告警消息失败: {e}")
+                    get_logger("WebSocket事件").warning("发送告警消息失败：{}", e)
                     failed_connections.append(connection)
 
             # 移除失败的连接
             for failed_conn in failed_connections:
                 self._connections.discard(failed_conn)
 
-        logger.info(
-            f"告警已广播: {event_code} - {message} "
-            f"(成功: {success_count}/{len(self._connections)})"
+        get_logger("WebSocket事件").info(
+            "告警事件已广播：event_code={}，成功连接数={}",
+            event_code,
+            success_count,
         )
 
         return success_count
@@ -155,7 +155,6 @@ class EventBroadcaster:
         nav.* 事件使用 {type, data} 结构，避免把 ROS2 原始消息暴露给前端。
         """
         if not self._connections:
-            logger.debug("没有活跃的 WebSocket 连接，跳过事件广播: {}", event_type)
             return 0
 
         message = {
@@ -173,7 +172,7 @@ class EventBroadcaster:
                     await connection.send_json(message)
                     success_count += 1
                 except Exception as exc:
-                    logger.warning(f"发送事件消息失败: {event_type}, {exc}")
+                    get_logger("WebSocket事件").warning("发送事件消息失败：event_type={}，原因={}", event_type, exc)
                     failed_connections.append(connection)
 
             for failed_conn in failed_connections:
@@ -204,7 +203,7 @@ class EventBroadcaster:
                         })
 
                 except WebSocketDisconnect:
-                    logger.info("客户端主动断开连接")
+                    get_logger("WebSocket事件").info("客户端主动断开连接")
                     break
 
                 except Exception:

@@ -219,6 +219,16 @@ class LocalizationPoseDTO(BaseModel):
     updated_at: str
 
 
+class MappingControlRequest(BaseModel):
+    enabled: bool
+
+
+class MappingControlResponse(BaseModel):
+    success: bool
+    topic: str
+    enabled: bool
+
+
 class RobotPoseDTO(BaseModel):
     x: float
     y: float

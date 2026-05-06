@@ -26,13 +26,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
-from .logging_config import logger
+from .logging_config import get_logger
 from .models import InspectionTask
 from .alert_service import get_alert_service
 from .state_machine import SystemState
 from .ws_event_broadcaster import get_event_broadcaster
 from .schemas import utc_now_iso
 from .tracking_types import DetectionResult as TrackDetectionResult
+
+model_logger = get_logger("AI模型")
+video_logger = get_logger("AI视频")
+ai_logger = get_logger("AI识别")
+ffmpeg_logger = get_logger("AI视频").bind(raw_ffmpeg=True)
 
 
 class AIWorkerError(RuntimeError):
@@ -70,7 +75,7 @@ class _NullDetector(_BaseDetector):
 
     def detect(self, frame_bytes: bytes) -> Optional[DetectionResult]:
         if not self._warned:
-            logger.warning("AI 模型未加载，当前仅支持模拟检测 (AI_SIMULATE_DETECTION)")
+            model_logger.warning("AI 模型未加载，当前仅支持模拟检测：AI_SIMULATE_DETECTION=true")
             self._warned = True
         return None
 
@@ -109,14 +114,18 @@ class _YoloDetector(_BaseDetector):
         else:
             resolved_device = device
 
-        logger.info("YOLO 加载模型: %s, 设备: %s", model_path, resolved_device)
+        model_logger.info("YOLO 加载模型：path={}，device={}", model_path, resolved_device)
         self._model = YOLO(model_path, task='detect')
         # self._model.to(resolved_device)
         self._device = resolved_device
 
         # 缓存模型类别名映射
         self._class_names: dict[int, str] = self._model.names
-        logger.info("YOLO 模型已就绪，类别数: %d, 目标: %s", len(self._class_names), target_classes)
+        model_logger.info(
+            "YOLO 模型已就绪：类别数={}，检测目标={}",
+            len(self._class_names),
+            target_classes,
+        )
 
     def detect(self, frame_bytes: bytes) -> Optional[DetectionResult]:
         """返回置信度最高的单个目标（兼容老路径）。"""
@@ -139,7 +148,7 @@ class _YoloDetector(_BaseDetector):
             )
         except Exception as exc:
             # tracker 不可用时降级到 predict
-            logger.warning("[YoloDetector] track() 失败，降级到 predict(): %s", exc)
+            model_logger.warning("YOLO track() 调用失败，已降级到 predict()：{}", exc)
             results = self._model.predict(frame, conf=self._confidence, verbose=False)
 
         if not results or len(results[0].boxes) == 0:
@@ -209,9 +218,21 @@ class AIWorker:
         self._detections_count = 0
         self._last_status_broadcast = 0.0
         self._status_interval = 5.0  # 每 5 秒广播一次
+        self._ffmpeg_stream_unavailable = False
+        self._ffmpeg_unavailable_reason = "unknown"
+        self._ffmpeg_last_exit_reason = "unknown"
+        self._ffmpeg_banner_logged = False
+        self._stream_restored_logged = False
+        self._startup_status = "waiting"
+        self._startup_detail = (
+            f"等待 RTSP 连接：rtsp={settings.AI_RTSP_URL}，fps={settings.AI_FPS}，"
+            f"分辨率={self._frame_width}x{self._frame_height}"
+        )
 
         if settings.AI_SIMULATE_DETECTION:
             self._detector: _BaseDetector = _SimulatedDetector(settings.AI_SIMULATE_PROB)
+            self._startup_status = "ready"
+            self._startup_detail = f"模拟检测已启用：prob={settings.AI_SIMULATE_PROB}"
         else:
             try:
                 self._detector = _YoloDetector(
@@ -222,13 +243,33 @@ class AIWorker:
                     frame_width=self._frame_width,
                     frame_height=self._frame_height,
                 )
+                self._startup_status = "waiting"
+                self._startup_detail = (
+                    f"模型已加载，等待 RTSP 连接：rtsp={settings.AI_RTSP_URL}，"
+                    f"device={settings.AI_DEVICE}"
+                )
             except Exception as exc:
                 import traceback
-                logger.warning(f"YOLO 模型加载失败，回退到 NullDetector: {exc}\n{traceback.format_exc()}")
+                model_logger.error("YOLO 模型加载失败，AI 识别已降级：{}", exc)
+                model_logger.debug("YOLO 模型加载堆栈：\n{}", traceback.format_exc())
                 self._detector = _NullDetector()
+                self._startup_status = "failed"
+                self._startup_detail = f"YOLO 模型加载失败：{exc}"
+
+    def get_startup_status(self) -> dict[str, str]:
+        return {
+            "status": self._startup_status,
+            "detail": self._startup_detail,
+        }
 
     async def start(self, stop_event: asyncio.Event) -> None:
-        logger.info("AI Worker 已启动")
+        ai_logger.info(
+            "AI Worker 已启动：fps={}，分辨率={}x{}，rtsp={}",
+            settings.AI_FPS,
+            self._frame_width,
+            self._frame_height,
+            settings.AI_RTSP_URL,
+        )
         retry_delay = 1.0
         max_retry_delay = 3.0   # 缩短最大重试间隔，RTSP 流恢复后最多 3 秒内重连
         reset_threshold = 10.0
@@ -240,7 +281,7 @@ class AIWorker:
             except asyncio.CancelledError:
                 break
             except Exception as exc:  # noqa: BLE001
-                logger.exception("AI Worker 异常: %s", exc)
+                ai_logger.exception("AI Worker 运行异常：{}", exc)
 
             if stop_event.is_set():
                 break
@@ -251,10 +292,14 @@ class AIWorker:
             else:
                 retry_delay = min(retry_delay * 2, max_retry_delay)
 
-            logger.warning("AI Worker 重连等待 {:.1f}s", retry_delay)
+            video_logger.warning(
+                "FFmpeg 已退出，准备重连：原因={}，{:.1f} 秒后重试",
+                self._ffmpeg_last_exit_reason,
+                retry_delay,
+            )
             await asyncio.sleep(retry_delay)
 
-        logger.info("AI Worker 已停止")
+        ai_logger.info("AI Worker 已停止")
 
     async def _run_ffmpeg_loop(self, stop_event: asyncio.Event) -> None:
         process = await self._start_ffmpeg()
@@ -269,6 +314,14 @@ class AIWorker:
             try:
                 while not stop_event.is_set():
                     frame = await process.stdout.readexactly(self._frame_size)
+                    if self._ffmpeg_stream_unavailable and not self._stream_restored_logged:
+                        self._stream_restored_logged = True
+                        self._ffmpeg_stream_unavailable = False
+                        self._ffmpeg_last_exit_reason = "stream_restored"
+                        video_logger.info(
+                            "RTSP 流已恢复，AI 识别恢复运行：rtsp={}",
+                            settings.AI_RTSP_URL,
+                        )
                     frame_index += 1
                     # 保持队列里始终只有一帧最新鲜的首帧，丢弃堆积的旧帧避免延迟累加
                     if frame_queue.full():
@@ -278,9 +331,9 @@ class AIWorker:
                             pass
                     await frame_queue.put((frame, frame_index))
             except asyncio.IncompleteReadError:
-                logger.warning("AI Worker: FFmpeg 输出中断，准备重启")
-                # stop_event.set()
-        
+                if self._ffmpeg_last_exit_reason == "unknown":
+                    self._ffmpeg_last_exit_reason = "stdout_closed"
+
         reader = asyncio.create_task(reader_task())
 
         try:
@@ -290,7 +343,8 @@ class AIWorker:
                     frame, frame_index = await asyncio.wait_for(frame_queue.get(), timeout=0.1)
                 except asyncio.TimeoutError:
                     if reader.done():
-                        logger.warning("AI Worker: FFmpeg 进程已中断，跳出读取循环准备重连...")
+                        if self._ffmpeg_last_exit_reason == "unknown":
+                            self._ffmpeg_last_exit_reason = "process_exited"
                         break
                     continue
 
@@ -346,8 +400,11 @@ class AIWorker:
             "-",
         ]
 
-        logger.info(
-            "AI Worker 启动 FFmpeg: rtsp={} fps={} size={}x{}",
+        self._ffmpeg_last_exit_reason = "unknown"
+        self._stream_restored_logged = False
+
+        video_logger.info(
+            "启动 FFmpeg 拉流：rtsp={}，fps={}，分辨率={}x{}",
             settings.AI_RTSP_URL,
             settings.AI_FPS,
             self._frame_width,
@@ -377,14 +434,67 @@ class AIWorker:
                 text = line.decode("utf-8", errors="replace").strip()
                 if not text:
                     continue
-                # 过滤掉高频进度行（frame= fps= 开头的），只保留有意义的信息
+                ffmpeg_logger.debug("{}", text)
+
                 if text.startswith("frame=") or text.startswith("size="):
                     continue
-                # 错误和警告优先输出
-                if "error" in text.lower() or "failed" in text.lower() or "connection" in text.lower():
-                    logger.warning("[FFmpeg] {}", text)
-                else:
-                    logger.debug("[FFmpeg] {}", text)
+
+                if self._is_ffmpeg_banner_line(text):
+                    if not self._ffmpeg_banner_logged:
+                        self._ffmpeg_banner_logged = True
+                        video_logger.debug("FFmpeg 版本信息已写入 logs/ffmpeg.log")
+                    continue
+
+                reason = self._classify_ffmpeg_failure_reason(text)
+                if reason is None:
+                    continue
+
+                self._ffmpeg_last_exit_reason = reason
+                if not self._ffmpeg_stream_unavailable:
+                    self._ffmpeg_stream_unavailable = True
+                    self._ffmpeg_unavailable_reason = reason
+                    video_logger.warning(
+                        "RTSP 流不可用，AI 识别暂时降级：rtsp={}，原因={}，3.0 秒后重试",
+                        settings.AI_RTSP_URL,
+                        reason,
+                    )
+
+    @staticmethod
+    def _is_ffmpeg_banner_line(text: str) -> bool:
+        prefixes = (
+            "ffmpeg version",
+            "built with",
+            "configuration:",
+            "libavutil",
+            "libavcodec",
+            "libavformat",
+            "libavdevice",
+            "libavfilter",
+            "libswscale",
+            "libswresample",
+            "libpostproc",
+        )
+        lowered = text.lower()
+        return lowered.startswith(prefixes)
+
+    @staticmethod
+    def _classify_ffmpeg_failure_reason(text: str) -> Optional[str]:
+        lowered = text.lower()
+        if "404 not found" in lowered:
+            return "404_Not_Found"
+        if "401 unauthorized" in lowered:
+            return "401_Unauthorized"
+        if "connection refused" in lowered:
+            return "Connection_Refused"
+        if "connection timed out" in lowered or "timed out" in lowered:
+            return "Connection_Timed_Out"
+        if "no route to host" in lowered:
+            return "No_Route_To_Host"
+        if "server returned" in lowered:
+            return text.replace(" ", "_")
+        if "error" in lowered or "failed" in lowered:
+            return text[:120]
+        return None
 
     async def _update_current_task_id(self) -> None:
         current_time = asyncio.get_event_loop().time()
@@ -564,7 +674,7 @@ class AIWorker:
             import numpy as np
             from PIL import Image
         except ImportError as exc:  # noqa: BLE001
-            logger.error("缺少图像依赖，无法抓拍: %s", exc)
+            ai_logger.error("缺少图像依赖，无法抓拍：{}", exc)
             raise
 
         now = datetime.utcnow()
@@ -633,7 +743,7 @@ class AIWorker:
                 for c in failed:
                     broadcaster._connections.discard(c)
         except Exception as exc:
-            logger.debug("AI 状态广播失败: %s", exc)
+            ai_logger.debug("AI 状态广播失败：{}", exc)
 
 
 async def _get_latest_running_task(session: AsyncSession) -> Optional[InspectionTask]:

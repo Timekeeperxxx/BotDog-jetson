@@ -10,6 +10,8 @@ from ...schemas import (
     DeleteWaypointResponse,
     LocalizationPoseDTO,
     LocalizationPoseSetRequest,
+    MappingControlRequest,
+    MappingControlResponse,
     NavWaypointCreateRequest,
     NavWaypointDTO,
     NavWaypointListResponse,
@@ -84,6 +86,18 @@ async def nav_set_localization_pose(body: LocalizationPoseSetRequest):
         }
     )
     return pose
+
+
+@router.post("/mapping/set-enabled", response_model=MappingControlResponse)
+async def nav_set_mapping_enabled(body: MappingControlRequest):
+    bridge = get_ros_nav_bridge()
+    if bridge is None:
+        raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
+
+    try:
+        return bridge.publish_mapping_enabled(body.enabled)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 @router.get("/pcd-maps/{map_id}/metadata", response_model=PcdMetadataResponse)

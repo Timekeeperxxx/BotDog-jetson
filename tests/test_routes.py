@@ -44,6 +44,8 @@ NAV_ROUTES = [
     ("POST",   "/api/v1/nav/page-open"),
     # 设置重定位位姿
     ("POST",   "/api/v1/nav/localization/set-pose"),
+    # 建图开关
+    ("POST",   "/api/v1/nav/mapping/set-enabled"),
     # 地图元数据
     ("GET",    "/api/v1/nav/pcd-maps/{map_id}/metadata"),
     # 地图预览点云

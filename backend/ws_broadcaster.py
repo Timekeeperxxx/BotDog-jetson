@@ -15,7 +15,7 @@ from typing import Any, Dict, Set
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from backend.logging_config import logger
+from backend.logging_config import get_logger
 from backend.mavlink_dto import TelemetrySnapshotDTO
 from backend.state_machine import SystemState
 from backend.telemetry_queue import TelemetryQueueManager
@@ -47,7 +47,7 @@ class WebSocketBroadcaster:
 
     async def start(self) -> None:
         """启动广播器。"""
-        logger.info(f"WebSocket 广播器已启动，广播间隔: {self.broadcast_interval}s")
+        get_logger("WebSocket遥测").info("遥测广播器已启动：广播间隔={}s", self.broadcast_interval)
 
         while not self._stop_event.is_set():
             try:
@@ -62,10 +62,10 @@ class WebSocketBroadcaster:
                 await asyncio.sleep(self.broadcast_interval)
 
             except asyncio.CancelledError:
-                logger.info("WebSocket 广播器已停止")
+                get_logger("WebSocket遥测").info("遥测广播器已停止")
                 break
             except Exception as exc:  # noqa: BLE001
-                logger.exception(f"WebSocket 广播器异常: {exc}")
+                get_logger("WebSocket遥测").exception("遥测广播器异常：{}", exc)
                 await asyncio.sleep(0.5)
 
     async def stop(self) -> None:
@@ -111,7 +111,7 @@ class WebSocketBroadcaster:
             try:
                 await client.send_json(message)
             except Exception as exc:  # noqa: BLE001
-                logger.warning(f"向客户端发送消息失败: {exc}")
+                get_logger("WebSocket遥测").warning("向客户端发送消息失败：{}", exc)
                 disconnected_clients.add(client)
 
         # 清理断开的客户端
@@ -187,10 +187,8 @@ async def websocket_telemetry_handler(
         state_machine: 系统状态机
     """
     await websocket.accept()
-    logger.info("客户端已连接到 /ws/telemetry")
-
-    # 添加到连接池
     queue_manager.add_ws_client(websocket)
+    get_logger("WebSocket遥测").info("客户端已连接：当前连接数={}", len(queue_manager.get_ws_clients()))
 
     try:
         while True:
@@ -198,9 +196,9 @@ async def websocket_telemetry_handler(
             # 允许空载连接，不要求客户端主动发送
             await asyncio.sleep(1.0)
     except WebSocketDisconnect:
-        logger.info("客户端已断开 /ws/telemetry")
+        get_logger("WebSocket遥测").info("客户端已断开：当前连接数={}", max(0, len(queue_manager.get_ws_clients()) - 1))
     except Exception as exc:  # noqa: BLE001
-        logger.exception(f"WebSocket 遥测异常: {exc}")
+        get_logger("WebSocket遥测").exception("WebSocket 遥测异常：{}", exc)
     finally:
         # 从连接池移除
         queue_manager.remove_ws_client(websocket)

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Activity, Bell, Database, History, LayoutGrid, Map, Settings, ShieldCheck } from 'lucide-react';
 import type { AlertEvent } from '../../types/event';
 
-export type SidebarTab = 'console' | 'history' | 'simulate' | 'admin' | 'guard';
+export type SidebarTab = 'console' | 'history' | 'simulate' | 'guard';
 
 interface SidebarBtnProps {
   icon: ReactNode;
@@ -35,6 +35,7 @@ export interface SidebarProps {
   activeTab: SidebarTab;
   onTabChange: (tab: SidebarTab) => void;
   onOpenNavPatrolPage: () => void;
+  onOpenAdminPage: () => void;
   onOpenConfig: () => void;
   latestAlert: AlertEvent | null;
   isUiFullscreen: boolean;
@@ -44,6 +45,7 @@ export function Sidebar({
   activeTab,
   onTabChange,
   onOpenNavPatrolPage,
+  onOpenAdminPage,
   onOpenConfig,
   latestAlert,
   isUiFullscreen,
@@ -60,7 +62,7 @@ export function Sidebar({
         <SidebarBtn icon={<Map size={20} />} active={false} onClick={onOpenNavPatrolPage} label="导航巡逻" />
         <SidebarBtn icon={<ShieldCheck size={20} />} active={activeTab === 'guard'} onClick={() => onTabChange('guard')} label="驱离系统" />
         <SidebarBtn icon={<History size={20} />} active={activeTab === 'history'} onClick={() => onTabChange('history')} label="档案库" />
-        <SidebarBtn icon={<Database size={20} />} active={activeTab === 'admin'} onClick={() => onTabChange('admin')} label="后台管理" />
+        <SidebarBtn icon={<Database size={20} />} active={false} onClick={onOpenAdminPage} label="后台管理" />
       </div>
       <div className="mt-auto space-y-5 pt-4 border-t border-white/10">
         <SidebarBtn icon={<Settings size={20} />} active={false} onClick={onOpenConfig} label="设置" />

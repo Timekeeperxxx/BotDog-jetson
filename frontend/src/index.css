@@ -18,6 +18,20 @@ body {
   min-height: 100vh;
 }
 
+.field-input {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.6);
+  padding: 0.75rem 1rem;
+  color: white;
+  outline: none;
+}
+
+.field-input:focus {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
 @keyframes videoSpin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }

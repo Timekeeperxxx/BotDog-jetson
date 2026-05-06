@@ -7,7 +7,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useBotDogWebSocket } from './hooks/useBotDogWebSocket';
 import { useWhepVideo } from './hooks/useWhepVideo';
-import { AdminPanel } from './components/AdminPanel';
 import { useEventWebSocket } from './hooks/useEventWebSocket';
 import { useAutoTrack } from './hooks/useAutoTrack';
 import { useEvidence } from './hooks/useEvidence';
@@ -85,6 +84,10 @@ export default function IndustrialConsoleComplete() {
     window.open('/nav-patrol.html', '_blank', 'noopener,noreferrer');
   }, []);
 
+  const openAdminPage = useCallback(() => {
+    window.location.assign('/admin');
+  }, []);
+
   const triggerSnapshot = useCallback(() => {
     addLog('手动拍照请求已发送', 'info', 'SNAPSHOT');
   }, [addLog]);
@@ -126,6 +129,7 @@ export default function IndustrialConsoleComplete() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onOpenNavPatrolPage={openNavPatrolPage}
+        onOpenAdminPage={openAdminPage}
         onOpenConfig={() => setShowConfigPanel(true)}
         latestAlert={latestAlert}
         isUiFullscreen={isUiFullscreen}
@@ -198,11 +202,6 @@ export default function IndustrialConsoleComplete() {
               connectWhep,
             }}
           />
-        ) : activeTab === 'admin' ? (
-          /* 后台管理页面 */
-          <div className="flex-1 flex flex-col bg-black overflow-hidden">
-            <AdminPanel />
-          </div>
         ) : activeTab === 'guard' ? (
           <GuardPage
             videoRef={videoRef}

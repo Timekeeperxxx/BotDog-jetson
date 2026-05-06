@@ -11,13 +11,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .database import init_db, get_session_factory
-from .logging_config import logger, setup_logging
+from .logging_config import get_access_logger, get_logger, setup_logging
 from .services_tasks import cleanup_stale_tasks
 from .state_machine_state import set_state_machine
 from .alert_service import AlertService
@@ -43,6 +43,63 @@ _ai_worker: Any | None = None
 _control_service: ControlService | None = None
 _ros_nav_bridge: Any | None = None
 
+startup_logger = get_logger("启动环境")
+app_logger = get_logger("应用服务")
+config_logger = get_logger("核心配置")
+db_logger = get_logger("数据库")
+cleanup_logger = get_logger("启动清理")
+control_logger = get_logger("机器人控制")
+telemetry_logger = get_logger("机器人遥测")
+ai_logger = get_logger("AI识别")
+ros_logger = get_logger("ROS导航")
+zone_logger = get_logger("重点区服务")
+auto_track_logger = get_logger("自动跟踪")
+guard_logger = get_logger("驱离任务")
+summary_logger = get_logger("启动摘要")
+access_logger = get_access_logger()
+
+IMPORTANT_ACCESS_PREFIXES = (
+    "/api/v1/control",
+    "/api/v1/nav",
+    "/api/v1/guard-mission",
+    "/api/v1/session",
+    "/api/v1/config",
+    "/api/v1/audio/play",
+    "/api/v1/audio/stop",
+    "/api/v1/auto-track",
+)
+
+
+def _format_status_text(status: str) -> str:
+    mapping = {
+        "ready": "正常",
+        "normal": "正常",
+        "degraded": "降级",
+        "failed": "失败",
+        "waiting": "等待中",
+        "disabled": "已禁用",
+    }
+    return mapping.get(status, status)
+
+
+def _log_startup_summary(summary: dict[str, tuple[str, str]]) -> None:
+    normalized_states = [state for state, _ in summary.values()]
+    if "failed" in normalized_states:
+        overall = "存在模块失败"
+    elif "degraded" in normalized_states:
+        overall = "部分模块降级"
+    elif "waiting" in normalized_states:
+        overall = "部分模块等待中"
+    else:
+        overall = "全部模块正常"
+
+    summary_logger.info("=" * 80)
+    summary_logger.info("BotDog 后端启动完成：{}", overall)
+    summary_logger.info("=" * 80)
+    for name, (state, detail) in summary.items():
+        summary_logger.info("{:<12} {}，{}", f"{name}：", _format_status_text(state), detail)
+    summary_logger.info("=" * 80)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -62,18 +119,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Startup
     setup_logging()
-    logger.info("BotDog backend starting up (lifespan)...")
-    logger.info("Config loaded from {}", Path(__file__).resolve().parent / ".env")
-    logger.info("THERMAL_THRESHOLD={}°C", settings.THERMAL_THRESHOLD)
+    app_logger.info("开始初始化 FastAPI 生命周期")
+    config_logger.info(
+        "加载配置文件：path={}，THERMAL_THRESHOLD={}°C",
+        Path(__file__).resolve().parent / ".env",
+        settings.THERMAL_THRESHOLD,
+    )
+    startup_summary: dict[str, tuple[str, str]] = {}
     await init_db()
-    logger.info("Database initialized.")
+    db_logger.info("数据库初始化完成")
+    startup_summary["数据库"] = ("ready", "数据库连接可用")
 
     from .services_config import get_config_service
     config_service = get_config_service()
     async with get_session_factory()() as _session:
         await config_service.initialize_defaults(_session)
         await config_service.get_all_configs(_session)
-    logger.info("系统配置服务已初始化加载")
+    config_logger.info("系统配置已加载完成")
 
     # 初始化视频源和网口默认数据
     from .services_video_sources import get_video_source_service, get_network_interface_service
@@ -82,15 +144,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with get_session_factory()() as _vs_session:
         await _vs_service.initialize_defaults(_vs_session)
         await _ni_service.initialize_defaults(_vs_session)
-    logger.info("视频源 & 网口配置服务已初始化")
+    config_logger.info("视频源与网口默认配置已初始化")
 
     # 清理上次进程遗留的僵尸任务（防止 AI Worker 误认为任务仍在运行）
     async with get_session_factory()() as _startup_session:
         _stale_count = await cleanup_stale_tasks(_startup_session)
         if _stale_count:
-            logger.warning("启动清理: 发现并关闭了 {} 个遗留的 running 任务", _stale_count)
+            cleanup_logger.warning("发现并关闭遗留任务：数量={}", _stale_count)
         else:
-            logger.info("启动清理: 无遗留任务")
+            cleanup_logger.info("未发现遗留任务")
 
     snapshot_dir = Path(settings.SNAPSHOT_DIR)
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -110,7 +172,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         set_state_machine(_state_machine)
         tasks.append(asyncio.create_task(_state_machine.start_heartbeat_monitor()))
-        logger.info("状态机已启动")
+        get_logger("状态机").info("状态机已初始化：heartbeat_timeout={}s", settings.HEARTBEAT_TIMEOUT)
 
         # 2. 初始化遥测队列管理器
         global _queue_manager
@@ -120,7 +182,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # 注册为全局单例，供 Worker 无法注入时通过 get_telemetry_queue_manager() 获取
         set_telemetry_queue_manager(_queue_manager)
         tasks.append(asyncio.create_task(_queue_manager.start_sampling_task(stop_event)))
-        logger.info("遥测队列管理器已启动")
+        telemetry_logger.info(
+            "遥测队列管理器已初始化：sampling_hz={}，broadcast_hz={}",
+            settings.TELEMETRY_SAMPLING_HZ,
+            settings.TELEMETRY_BROADCAST_HZ,
+        )
+        startup_summary["遥测服务"] = (
+            "ready",
+            f"DDS/数据源已启动，WebSocket 广播频率={settings.TELEMETRY_BROADCAST_HZ}Hz",
+        )
 
         # 3. 初始化遥测数据源（根据适配器类型选择）
         global _mavlink_gateway
@@ -134,7 +204,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 network_interface=settings.UNITREE_NETWORK_IFACE,
             )
             tasks.append(asyncio.create_task(_unitree_telemetry_worker.start(stop_event)))
-            logger.info(f"宇树遥测 Worker 已启动，网卡={settings.UNITREE_NETWORK_IFACE}")
+            telemetry_logger.info(
+                "Unitree 遥测 Worker 启动请求已提交：网卡={}",
+                settings.UNITREE_NETWORK_IFACE,
+            )
             # MAVLink gateway 仍需初始化供其他模块引用，但不启动
             _mavlink_gateway = MAVLinkGateway(
                 queue_manager=_queue_manager,
@@ -147,7 +220,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 state_machine=_state_machine,
             )
             tasks.append(asyncio.create_task(_mavlink_gateway.start(stop_event)))
-            logger.info(f"MAVLink 网关已启动，数据源: {settings.MAVLINK_SOURCE}")
+            telemetry_logger.info("MAVLink 网关启动请求已提交：数据源={}", settings.MAVLINK_SOURCE)
 
         # 4. 初始化 WebSocket 广播器
         global _ws_broadcaster
@@ -156,7 +229,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             broadcast_interval=1.0 / settings.TELEMETRY_BROADCAST_HZ,
         )
         tasks.append(asyncio.create_task(_ws_broadcaster.start()))
-        logger.info("WebSocket 广播器已启动")
+        get_logger("WebSocket遥测").info("遥测广播服务启动请求已提交")
 
         # 5. 初始化遥测落盘 Worker
         if settings.MAVLINK_SOURCE != "simulation" or settings.SIMULATION_WORKER_ENABLED:
@@ -167,16 +240,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 sampling_interval=1.0 / settings.TELEMETRY_SAMPLING_HZ,
             )
             tasks.append(asyncio.create_task(_persistence_worker.start(stop_event)))
-            logger.info("遥测落盘 Worker 已启动")
+            telemetry_logger.info("遥测落盘 Worker 启动请求已提交")
         else:
-            logger.info("遥测落盘 Worker 已跳过（simulation + SIMULATION_WORKER_ENABLED=false）")
+            telemetry_logger.info("遥测落盘 Worker 已跳过：simulation 且 SIMULATION_WORKER_ENABLED=false")
 
         # 6. 可选：启动模拟数据 Worker（开发/测试）
         if settings.SIMULATION_WORKER_ENABLED:
             from .workers_simulation import simulation_worker
 
             tasks.append(asyncio.create_task(simulation_worker(stop_event)))
-            logger.info("模拟数据 Worker 已启动")
+            telemetry_logger.info("模拟数据 Worker 启动请求已提交")
 
         # 7. 启动 AI Worker（旁路识别）
         if settings.AI_ENABLED:
@@ -189,9 +262,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 snapshot_dir=snapshot_dir,
             )
             tasks.append(asyncio.create_task(_ai_worker.start(stop_event)))
-            logger.info("AI Worker 已启动")
+            ai_status = _ai_worker.get_startup_status()
+            startup_summary["AI识别"] = (
+                ai_status["status"],
+                ai_status["detail"],
+            )
         else:
-            logger.info("AI Worker 已禁用")
+            startup_summary["AI识别"] = ("disabled", "AI_ENABLED=false")
+            ai_logger.info("AI 识别已禁用：AI_ENABLED=false")
 
         # 8. 初始化事件广播器（阶段 4）
         from .global_event_broadcaster import set_global_event_broadcaster
@@ -200,7 +278,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _event_broadcaster = EventBroadcaster()
         set_global_event_broadcaster(_event_broadcaster)  # 设置全局单例
         set_ws_runtime(_queue_manager, _state_machine, _event_broadcaster)
-        logger.info("事件广播器已初始化")
+        get_logger("WebSocket事件").info("事件广播器已初始化")
 
         # 8.1 初始化 ROS2 导航状态订阅转发（可选）
         if settings.ROS_NAV_ENABLED:
@@ -213,18 +291,29 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             _ros_nav_bridge.start()
             from .nav_bridge_state import set_ros_nav_bridge as _set_nav_bridge
             _set_nav_bridge(_ros_nav_bridge)
-            logger.info(
-                "ROS2 导航状态订阅转发已请求启动: topic={}, type={}",
+            ros_logger.info(
+                "ROS2 导航桥启动请求已提交：topic={}，type={}",
                 settings.ROS_NAV_POSE_TOPIC,
                 settings.ROS_NAV_POSE_TYPE,
             )
+            if settings.ROS_NAV_POSE_TYPE.strip().lower() in ("tf", "tf2", "transform", "transformstamped"):
+                startup_summary["ROS导航"] = (
+                    "waiting",
+                    f"等待 TF：target={settings.ROS_NAV_FRAME_ID}，source={settings.ROS_NAV_BASE_FRAME_ID}",
+                )
+            else:
+                startup_summary["ROS导航"] = (
+                    "waiting",
+                    f"等待定位数据：topic={settings.ROS_NAV_POSE_TOPIC}，type={settings.ROS_NAV_POSE_TYPE}",
+                )
         else:
-            logger.info("ROS2 导航状态订阅转发已禁用")
+            startup_summary["ROS导航"] = ("disabled", "ROS_NAV_ENABLED=false")
+            ros_logger.info("ROS2 导航桥已禁用：ROS_NAV_ENABLED=false")
 
         # 8. 初始化告警服务并注入 broadcaster
         alert_service_instance = AlertService(event_broadcaster=_event_broadcaster)
         set_alert_service(alert_service_instance)
-        logger.info(f"告警服务已初始化，broadcaster ID: {id(_event_broadcaster)}")
+        get_logger("应用服务").info("告警服务已初始化")
 
         # 9. 初始化控制服务（阶段 6）
         global _control_service
@@ -248,8 +337,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             set_control_service(_control_service)
             tasks.append(asyncio.create_task(_control_service.run_watchdog(stop_event)))
-            logger.info(
-                "控制服务已启动（B2 适配器初始化中，控制命令暂时被拒绝）..."
+            control_logger.info(
+                "控制服务已启动：等待 Unitree B2 适配器完成初始化"
+            )
+            startup_summary["机器人控制"] = (
+                "waiting",
+                f"适配器=UnitreeB2，网卡={settings.UNITREE_NETWORK_IFACE}，运控模式=ai",
             )
 
             async def _init_b2_adapter_background() -> None:
@@ -257,9 +350,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 try:
                     real_adapter = create_adapter("unitree_b2", **_adapter_kwargs)
                     _control_service.set_adapter(real_adapter)
-                    logger.info("[B2Init] UnitreeB2Adapter 初始化完成，已热替换控制适配器")
+                    control_logger.info("UnitreeB2 适配器初始化完成，控制能力已恢复可用")
                 except Exception as exc:
-                    logger.error(f"[B2Init] B2 适配器初始化失败，控制命令将被拒绝: {exc}")
+                    control_logger.error("UnitreeB2 适配器初始化失败，控制命令将继续被拒绝：{}", exc)
 
             tasks.append(asyncio.create_task(_init_b2_adapter_background()))
         else:
@@ -272,9 +365,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             set_control_service(_control_service)
             tasks.append(asyncio.create_task(_control_service.run_watchdog(stop_event)))
-            logger.info(
-                f"控制服务已启动，适配器: {settings.CONTROL_ADAPTER_TYPE}，"
-                f"Watchdog: {settings.CONTROL_WATCHDOG_TIMEOUT_MS}ms"
+            control_logger.info(
+                "控制服务已启动：适配器={}，watchdog={}ms",
+                settings.CONTROL_ADAPTER_TYPE,
+                settings.CONTROL_WATCHDOG_TIMEOUT_MS,
+            )
+            startup_summary["机器人控制"] = (
+                "ready",
+                f"适配器={settings.CONTROL_ADAPTER_TYPE}，watchdog={settings.CONTROL_WATCHDOG_TIMEOUT_MS}ms",
             )
 
 
@@ -284,7 +382,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with get_session_factory()() as _zone_session:
             await _zone_service.load_from_db(_zone_session)
         set_zone_service(_zone_service)
-        logger.info(f"重点区服务已初始化，共加载 {_zone_service.zone_count} 个区域")
+        zone_logger.info("重点区服务已初始化：已加载区域数={}", _zone_service.zone_count)
+        startup_summary["重点区服务"] = ("ready", f"已加载区域数={_zone_service.zone_count}")
 
         # 11. 初始化自动跟踪服务（始终装配，运行时启停由内部状态控制）
         from .target_manager import TargetManager
@@ -326,9 +425,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             control_arbiter=_arbiter,
         )
         set_auto_track_service(_auto_track_service)
-        logger.info(
-            f"自动跟踪服务已初始化，默认启用={settings.AUTO_TRACK_ENABLED}，"
-            f"多目标模式已开启"
+        auto_track_logger.info(
+            "自动跟踪服务已初始化：默认启用={}，多目标模式=true",
+            settings.AUTO_TRACK_ENABLED,
+        )
+        startup_summary["自动跟踪"] = (
+            "ready",
+            f"默认启用={settings.AUTO_TRACK_ENABLED}，多目标模式=true",
         )
         
         # 12. 初始化自动驱离主脑服务
@@ -345,18 +448,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             frame_height=settings.AI_FRAME_HEIGHT,
         )
         set_guard_mission_service(_guard_mission_service)
-        logger.info(
-            f"驱离任务服务已初始化，默认启用={settings.GUARD_MISSION_ENABLED}"
+        guard_logger.info("驱离任务服务已初始化：默认启用={}", settings.GUARD_MISSION_ENABLED)
+        startup_summary["驱离任务"] = (
+            "ready",
+            f"默认启用={settings.GUARD_MISSION_ENABLED}",
         )
 
+        startup_summary["API 服务"] = (
+            "ready",
+            f"地址=http://{settings.BACKEND_HOST}:{settings.BACKEND_PORT}",
+        )
+        startup_summary["接口文档"] = (
+            "ready",
+            f"地址=http://{settings.BACKEND_HOST}:{settings.BACKEND_PORT}/api/docs",
+        )
+        frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+        if frontend_dist.is_dir():
+            startup_summary["前端页面"] = ("ready", f"目录={frontend_dist}")
+        else:
+            startup_summary["前端页面"] = ("degraded", f"未找到构建产物：目录={frontend_dist}")
 
-        logger.info("所有后台任务已启动，应用就绪")
+        _log_startup_summary(startup_summary)
 
         yield
 
     finally:
         # Shutdown
-        logger.info("BotDog backend shutting down (lifespan)...")
+        app_logger.info("开始关闭 FastAPI 生命周期")
         stop_event.set()
         set_state_machine(None)
         clear_ws_runtime()
@@ -377,9 +495,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         for result in results:
             if isinstance(result, Exception):
-                logger.warning(f"任务关闭时出现异常: {result}")
+                app_logger.warning("后台任务关闭时出现异常：{}", result)
 
-        logger.info("所有后台任务已停止")
+        app_logger.info("所有后台任务已停止")
 
 
 def create_app() -> FastAPI:
@@ -390,6 +508,8 @@ def create_app() -> FastAPI:
     - 此函数为应用装配的唯一入口，便于测试与 CLI 复用。
     - 不在全局模块级别做 I/O 操作，避免导入副作用。
     """
+
+    setup_logging()
 
     app = FastAPI(
         title="BotDog Backend",
@@ -414,6 +534,43 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def access_log_middleware(request: Request, call_next):
+        client_host = request.client.host if request.client else "-"
+        method = request.method.upper()
+        path = request.url.path
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            access_logger.warning(
+                "接口处理异常：{} {}，来源={}，状态码=500",
+                method,
+                path,
+                client_host,
+            )
+            raise
+
+        status_code = response.status_code
+        if status_code >= 400:
+            access_logger.warning(
+                "接口返回异常：{} {}，来源={}，状态码={}",
+                method,
+                path,
+                client_host,
+                status_code,
+            )
+        elif method != "GET" and path.startswith(IMPORTANT_ACCESS_PREFIXES):
+            access_logger.info(
+                "收到接口请求：{} {}，来源={}，状态码={}",
+                method,
+                path,
+                client_host,
+                status_code,
+            )
+
+        return response
 
     app.mount(
         "/api/v1/static",
@@ -452,11 +609,11 @@ def create_app() -> FastAPI:
             # SPA fallback：React Router 路由
             return _FileResponse(str(_frontend_dist / "index.html"))
 
-        logger.info(f"前端 SPA 已挂载: {_frontend_dist}")
+        app_logger.info("前端 SPA 已挂载：目录={}", _frontend_dist)
     else:
-        logger.warning(
-            f"未找到前端构建产物: {_frontend_dist}，仅提供 API 服务。"
-            "运行 cd frontend && npm run build 后重启后端即可启用。"
+        app_logger.warning(
+            "未找到前端构建产物：目录={}，当前仅提供 API 服务",
+            _frontend_dist,
         )
 
     return app

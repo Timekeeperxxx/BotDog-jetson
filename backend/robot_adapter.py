@@ -13,7 +13,10 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from .logging_config import logger
+from .logging_config import get_logger
+
+control_logger = get_logger("机器人控制")
+logger = control_logger
 
 
 # 合法的动作名集合
@@ -82,7 +85,7 @@ class SimulatedRobotAdapter(BaseRobotAdapter):
             vx:   可选速度覆盖（仅日志）
             vyaw: 可选速度覆盖（仅日志）
         """
-        logger.info(f"[SimulatedAdapter] 执行命令: {cmd}")
+        control_logger.info("模拟适配器执行命令：command={}", cmd)
         # 模拟指令执行延迟（约 5ms）
         await asyncio.sleep(0.005)
 
@@ -119,7 +122,7 @@ class MAVLinkRobotAdapter(BaseRobotAdapter):
         """
         # TODO: 实现具体的 MAVLink 命令映射
         # 例如：forward -> SET_POSITION_TARGET_LOCAL_NED with vx=1.0
-        logger.warning(f"[MAVLinkAdapter] send_command({cmd}) 尚未实现，已忽略")
+        control_logger.warning("MAVLink 适配器尚未实现控制命令：command={}", cmd)
 
 
 class UnitreeB2Adapter(BaseRobotAdapter):
@@ -210,7 +213,7 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                         f"可能存在其他后端进程占用 DDS 端口，请先 pkill -f run_backend.py: {_dds_e}"
                     )
                 # 其他异常视为"已由其他组件初始化"，安全跳过
-                logger.debug(f"[UnitreeB2] ChannelFactoryInitialize 跳过（已初始化）: {_dds_e}")
+                control_logger.debug("CycloneDDS ChannelFactoryInitialize 已跳过：{}", _dds_e)
 
             # Step 1: 通过 MotionSwitcher 切换到 AI 运控模式（必须在 SportClient 之前）
             import time
@@ -223,19 +226,19 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                 # 查询当前模式
                 code, data = msc.CheckMode()
                 current_mode = data.get("name", "unknown") if data else "unknown"
-                logger.info(f"[UnitreeB2] 当前运控模式: {current_mode} (code={code})")
+                control_logger.info("当前运控模式：mode={}，code={}", current_mode, code)
 
                 # 如果不是 ai 模式，切换过去
                 if code == 0 and current_mode != "ai":
-                    logger.info("[UnitreeB2] 切换到 AI 运控模式...")
+                    control_logger.info("正在切换到 AI 运控模式")
                     sel_code, _ = msc.SelectMode("ai")
                     if sel_code == 0:
-                        logger.info("[UnitreeB2] 已切换到 ai 模式")
+                        control_logger.info("已切换到 ai 运控模式")
                         time.sleep(2.0)  # 等待模式切换完成
                     else:
-                        logger.warning(f"[UnitreeB2] 模式切换失败 code={sel_code}，尝试继续")
+                        control_logger.warning("AI 运控模式切换失败，继续尝试初始化：code={}", sel_code)
             except Exception as e:
-                logger.warning(f"[UnitreeB2] MotionSwitcherClient 初始化失败，跳过模式检查: {e}")
+                control_logger.warning("MotionSwitcherClient 初始化失败，已跳过模式检查：{}", e)
                 # 继续尝试初始化 SportClient，因为有些情况下 SportClient 仍然可以工作
                 msc = None  # 确保 msc 为 None，避免后续使用
 
@@ -245,17 +248,16 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             self._sport_client.Init()
 
             self._initialized = True
-            logger.info(
-                f"[UnitreeB2] 初始化成功（网卡={network_interface}, "
-                f"vx={vx} m/s, vyaw={vyaw} rad/s，未发送起立指令）"
+            control_logger.info(
+                "B2 控制适配器已就绪：网卡={}，vx={}，vyaw={}，未发送起立指令",
+                network_interface,
+                vx,
+                vyaw,
             )
         except ImportError:
-            logger.error(
-                "[UnitreeB2] unitree_sdk2_python 未安装！"
-                "请运行: pip install unitree_sdk2_python"
-            )
+            control_logger.error("unitree_sdk2_python 未安装：请运行 pip install unitree_sdk2_python")
         except Exception as e:
-            logger.error(f"[UnitreeB2] 初始化失败: {e}")
+            control_logger.error("UnitreeB2Adapter 初始化失败：{}", e)
 
     def is_ready(self) -> bool:
         """宇树 B2 适配器就绪状态。"""
@@ -475,13 +477,13 @@ def create_adapter(adapter_type: str = "simulation", **kwargs) -> BaseRobotAdapt
         适配器实例
     """
     if adapter_type == "mavlink":
-        logger.info("使用 MAVLink 适配器（真实硬件模式）")
+        control_logger.info("创建机器人控制适配器：type=mavlink")
         return MAVLinkRobotAdapter()
     elif adapter_type == "unitree_b2":
-        logger.info("使用 UnitreeB2Adapter（宇树 B2 真实硬件）")
+        control_logger.info("创建机器人控制适配器：type=unitree_b2")
         return UnitreeB2Adapter(**kwargs)
     else:
-        logger.info("使用 SimulatedRobotAdapter（模拟模式）")
+        control_logger.info("创建机器人控制适配器：type=simulation")
         return SimulatedRobotAdapter()
 
 
