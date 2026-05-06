@@ -10,7 +10,7 @@ from typing import Any
 from ..config import settings
 from ..logging_config import get_logger
 from ..services_logs import write_log
-from .schemas import AuthUser
+from .schemas import AuthUserInternal
 
 auth_logger = get_logger("鉴权")
 
@@ -24,7 +24,7 @@ ROLE_LEVELS = {
 
 
 
-def create_access_token(user: AuthUser) -> str:
+def create_access_token(user: AuthUserInternal) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "user_id": user.id,

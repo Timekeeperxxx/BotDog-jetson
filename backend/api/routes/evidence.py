@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends
 
 from ...auth.dependencies import require_admin, require_viewer
-from ...auth.schemas import AuthUser
+from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
 from ...database import get_db
 from ...schemas import EvidenceBulkDeleteRequest, EvidenceDeleteResponse, EvidenceListResponse
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/v1/evidence", tags=["evidence"])
 @router.get("", response_model=EvidenceListResponse)
 async def get_evidence(
     task_id: int | None = None,
-    user: AuthUser = Depends(require_viewer),
+    user: AuthUserInternal = Depends(require_viewer),
     db=Depends(get_db),
 ) -> EvidenceListResponse:
     """
@@ -49,7 +49,7 @@ async def get_evidence(
 @router.delete("/{evidence_id}", response_model=EvidenceDeleteResponse)
 async def delete_evidence(
     evidence_id: int,
-    user: AuthUser = Depends(require_admin),
+    user: AuthUserInternal = Depends(require_admin),
     db=Depends(get_db),
 ) -> EvidenceDeleteResponse:
     result = await delete_evidence_by_ids(db, evidence_ids=[evidence_id])
@@ -68,7 +68,7 @@ async def delete_evidence(
 @router.post("/bulk-delete", response_model=EvidenceDeleteResponse)
 async def bulk_delete_evidence(
     request: EvidenceBulkDeleteRequest,
-    user: AuthUser = Depends(require_admin),
+    user: AuthUserInternal = Depends(require_admin),
     db=Depends(get_db),
 ) -> EvidenceDeleteResponse:
     result = await delete_evidence_by_ids(db, evidence_ids=request.evidence_ids)

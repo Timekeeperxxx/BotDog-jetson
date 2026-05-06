@@ -47,6 +47,9 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
 
   if (!auth.accessToken && !auth.authBypass) return null
 
+  const forceChangePassword = auth.must_change_password === true
+  const modalOpen = changePasswordOpen || forceChangePassword
+
   const handleLogout = async () => {
     setLoggingOut(true)
     // 退出前发 stop，失败不阻塞
@@ -89,7 +92,7 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
           <LogOut size={10} />
           {loggingOut ? '退出中' : '退出'}
         </button>
-        {changePasswordOpen && <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />}
+        {modalOpen && <ChangePasswordModal force={forceChangePassword} onClose={() => setChangePasswordOpen(false)} />}
       </div>
     )
   }
@@ -118,7 +121,7 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
         <LogOut size={12} />
         {loggingOut ? '退出中' : '退出登录'}
       </button>
-      {changePasswordOpen && <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />}
+      {modalOpen && <ChangePasswordModal force={forceChangePassword} onClose={() => setChangePasswordOpen(false)} />}
     </div>
   )
 }

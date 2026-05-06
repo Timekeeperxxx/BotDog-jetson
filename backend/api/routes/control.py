@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from ...auth.dependencies import require_admin, require_operator
-from ...auth.schemas import AuthUser
+from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
 from ...control_service import get_control_service
 from ...database import get_db
@@ -23,7 +23,7 @@ class ControlCommandRequest(BaseModel):
 @router.post("/command", response_model=ControlAckDTO)
 async def control_command(
     body: ControlCommandRequest,
-    user: AuthUser = Depends(require_operator),
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ) -> ControlAckDTO:
     """
@@ -61,7 +61,7 @@ async def control_command(
 
 @router.post("/stop", response_model=ControlAckDTO)
 async def control_stop(
-    user: AuthUser = Depends(require_operator),
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ) -> ControlAckDTO:
     """快捷停止接口（等同于发送 cmd='stop'），供前端紧急停止使用。"""
@@ -116,7 +116,7 @@ async def emergency_stop(
 
 @router.post("/e-stop/reset", response_model=EStopResetResponse)
 async def emergency_stop_reset(
-    user: AuthUser = Depends(require_admin),
+    user: AuthUserInternal = Depends(require_admin),
     db=Depends(get_db),
 ) -> EStopResetResponse:
     """

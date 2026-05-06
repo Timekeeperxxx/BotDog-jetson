@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth.dependencies import require_admin, require_authenticated
 from ...auth.schemas import (
-    AuthUser,
+    AuthUserInternal,
     ChangePasswordRequest,
     ResetPasswordRequest,
     UserCreate,
@@ -51,7 +51,7 @@ async def check_last_admin_protection(db: AsyncSession, user_to_modify: User, ac
 @router.get("", response_model=list[UserResponse])
 async def list_users(
     db: AsyncSession = Depends(get_db),
-    admin: AuthUser = Depends(require_admin),
+    admin: AuthUserInternal = Depends(require_admin),
 ) -> Any:
     result = await db.execute(select(User).where(User.deleted_at.is_(None)))
     return result.scalars().all()
@@ -61,7 +61,7 @@ async def list_users(
 async def create_user(
     body: UserCreate,
     db: AsyncSession = Depends(get_db),
-    admin: AuthUser = Depends(require_admin),
+    admin: AuthUserInternal = Depends(require_admin),
 ) -> Any:
     valid, msg = is_valid_password(body.password, body.username)
     if not valid:
@@ -95,7 +95,7 @@ async def update_user(
     user_id: int,
     body: UserUpdate,
     db: AsyncSession = Depends(get_db),
-    admin: AuthUser = Depends(require_admin),
+    admin: AuthUserInternal = Depends(require_admin),
 ) -> Any:
     result = await db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None)))
     user = result.scalar_one_or_none()
@@ -124,7 +124,8 @@ async def update_user(
         if not body.enabled:
             user.token_version += 1
 
-    if body.must_change_password is not None:
+    if body.must_change_password is not None and bool(user.must_change_password) != body.must_change_password:
+        actions.append(f"must_change_password: {bool(user.must_change_password)} -> {body.must_change_password}")
         user.must_change_password = 1 if body.must_change_password else 0
 
     if actions:
@@ -145,7 +146,7 @@ async def update_user(
 async def delete_user(
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    admin: AuthUser = Depends(require_admin),
+    admin: AuthUserInternal = Depends(require_admin),
 ) -> None:
     if user_id == admin.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能删除自己")
@@ -175,8 +176,11 @@ async def reset_password(
     user_id: int,
     body: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
-    admin: AuthUser = Depends(require_admin),
+    admin: AuthUserInternal = Depends(require_admin),
 ) -> dict:
+    if user_id == admin.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能重置自己的密码，请使用修改密码功能")
+
     result = await db.execute(select(User).where(User.id == user_id, User.deleted_at.is_(None)))
     user = result.scalar_one_or_none()
     if not user:
@@ -205,7 +209,7 @@ async def reset_password(
 async def change_password(
     body: ChangePasswordRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: AuthUser = Depends(require_authenticated),
+    current_user: AuthUserInternal = Depends(require_authenticated),
 ) -> dict:
     result = await db.execute(select(User).where(User.id == current_user.id))
     user = result.scalar_one_or_none()

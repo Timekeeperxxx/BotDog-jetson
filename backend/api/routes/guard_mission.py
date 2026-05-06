@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...auth.dependencies import require_operator, require_viewer
-from ...auth.schemas import AuthUser
+from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
 from ...database import get_db
 from ...logging_config import logger
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/guard-mission", tags=["guard_mission"])
 
 @router.post("/enable")
 async def enable_guard_mission(
-    user: AuthUser = Depends(require_operator),
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
     from ...guard_mission_service import get_guard_mission_service
@@ -45,7 +45,7 @@ async def enable_guard_mission(
 
 @router.post("/disable")
 async def disable_guard_mission(
-    user: AuthUser = Depends(require_operator),
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
     from ...guard_mission_service import get_guard_mission_service
@@ -65,7 +65,7 @@ async def disable_guard_mission(
 
 @router.post("/abort")
 async def abort_guard_mission(
-    user: AuthUser = Depends(require_operator),
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
     from ...guard_mission_service import get_guard_mission_service
@@ -89,7 +89,7 @@ async def abort_guard_mission(
 
 @router.get("/status", response_model=GuardStatusDTO)
 async def get_guard_status(
-    user: AuthUser = Depends(require_viewer),
+    user: AuthUserInternal = Depends(require_viewer),
 ):
     from ...guard_mission_service import get_guard_mission_service
 

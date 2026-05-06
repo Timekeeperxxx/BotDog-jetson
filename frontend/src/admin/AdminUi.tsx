@@ -141,6 +141,7 @@ export function ConfirmDialog({
   onCancel,
   onConfirm,
   danger = false,
+  disabled = false,
 }: {
   open: boolean
   title: string
@@ -149,6 +150,7 @@ export function ConfirmDialog({
   onCancel: () => void
   onConfirm: () => void
   danger?: boolean
+  disabled?: boolean
 }) {
   if (!open) return null
 
@@ -158,8 +160,8 @@ export function ConfirmDialog({
         <div className="text-lg font-black text-white">{title}</div>
         <p className="mt-3 text-sm leading-6 text-zinc-400">{description}</p>
         <div className="mt-6 flex justify-end gap-3">
-          <ToolbarButton onClick={onCancel}>取消</ToolbarButton>
-          <ToolbarButton onClick={onConfirm} danger={danger}>{confirmText}</ToolbarButton>
+          <ToolbarButton onClick={onCancel} disabled={disabled}>取消</ToolbarButton>
+          <ToolbarButton onClick={onConfirm} danger={danger} disabled={disabled}>{confirmText}</ToolbarButton>
         </div>
       </div>
     </div>

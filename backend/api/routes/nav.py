@@ -7,7 +7,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...auth.dependencies import require_admin, require_operator
-from ...auth.schemas import AuthUser
+from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
 from ...config import settings
 from ...database import get_db
@@ -74,7 +74,7 @@ async def nav_page_open():
 @router.post("/localization/set-pose", response_model=LocalizationPoseDTO)
 async def nav_set_localization_pose(
     body: LocalizationPoseSetRequest,
-    user: AuthUser = Depends(require_operator),
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
     from ...services_nav_localization import save_localization_pose
@@ -121,7 +121,7 @@ async def nav_set_localization_pose(
 @router.post("/mapping/set-enabled", response_model=MappingControlResponse)
 async def nav_set_mapping_enabled(
     body: MappingControlRequest,
-    user: AuthUser = Depends(require_operator),
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
     bridge = get_ros_nav_bridge()
@@ -185,7 +185,7 @@ async def nav_list_waypoints(map_id: str):
 async def nav_create_waypoint(
     map_id: str,
     body: NavWaypointCreateRequest,
-    user: AuthUser = Depends(require_operator),
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
     from ...services_nav_waypoints import create_waypoint
@@ -214,7 +214,7 @@ async def nav_create_waypoint(
 async def nav_go_to_waypoint(
     map_id: str,
     waypoint_id: str,
-    user: AuthUser = Depends(require_operator),
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
     from ...services_nav_runtime import write_current_goal
@@ -305,7 +305,7 @@ async def nav_go_to_waypoint(
 
 @router.post("/e-stop")
 async def nav_emergency_stop(
-    user: AuthUser = Depends(require_operator),
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
     from ...services_nav_state import update_navigation_status
@@ -343,7 +343,7 @@ async def nav_emergency_stop(
 async def nav_delete_waypoint(
     map_id: str,
     waypoint_id: str,
-    user: AuthUser = Depends(require_admin),
+    user: AuthUserInternal = Depends(require_admin),
     db=Depends(get_db),
 ):
     from ...services_nav_waypoints import delete_waypoint

@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...auth.dependencies import require_admin, require_viewer
-from ...auth.schemas import AuthUser
+from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
 from ...config import settings
 from ...database import get_db
@@ -27,7 +27,7 @@ def _parse_bool(value) -> bool:
 @router.get("")
 async def get_system_config(
     category: Optional[str] = None,
-    user: AuthUser = Depends(require_viewer),
+    user: AuthUserInternal = Depends(require_viewer),
     db=Depends(get_db),
 ):
     """
@@ -59,7 +59,7 @@ async def get_system_config(
 @router.post("")
 async def update_system_config(
     request: dict,
-    user: AuthUser = Depends(require_admin),
+    user: AuthUserInternal = Depends(require_admin),
     db=Depends(get_db),
 ):
     """
@@ -134,7 +134,7 @@ async def update_system_config(
 async def get_config_history(
     key: Optional[str] = None,
     limit: int = 50,
-    user: AuthUser = Depends(require_viewer),
+    user: AuthUserInternal = Depends(require_viewer),
     db=Depends(get_db),
 ):
     """

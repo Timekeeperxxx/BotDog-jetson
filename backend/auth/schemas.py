@@ -3,11 +3,17 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
-class AuthUser(BaseModel):
+class AuthUserInternal(BaseModel):
     id: int
     username: str
     role: str
     token_version: int
+
+class AuthUserResponse(BaseModel):
+    id: int
+    username: str
+    role: str
+    must_change_password: bool
 
 class UserResponse(BaseModel):
     id: int
@@ -23,7 +29,7 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 class UserCreate(BaseModel):
-    username: str = Field(..., min_length=1, max_length=50)
+    username: str = Field(..., min_length=1, max_length=50, pattern="^[A-Za-z0-9_-]+$")
     password: str = Field(..., min_length=8)
     role: str = Field(..., pattern="^(viewer|operator|admin)$")
     enabled: bool = True
@@ -49,4 +55,4 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    user: AuthUser
+    user: AuthUserResponse

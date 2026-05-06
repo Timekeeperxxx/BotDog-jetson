@@ -5,8 +5,10 @@ type AuthRole = 'viewer' | 'operator' | 'admin' | null
 
 type AuthState = {
   accessToken: string | null
+  id: number | null
   username: string | null
   role: AuthRole
+  must_change_password: boolean
   authBypass: boolean
   ready: boolean
   validating: boolean
@@ -28,8 +30,10 @@ let authBootstrapPromise: Promise<void> | null = null
 function getGuestState(): AuthState {
   return {
     accessToken: null,
+    id: null,
     username: null,
     role: null,
+    must_change_password: false,
     authBypass: false,
     ready: true,
     validating: false,
@@ -46,8 +50,10 @@ function readStoredState(): AuthState {
     const data = JSON.parse(raw) as Partial<AuthState>
     return {
       accessToken: typeof data.accessToken === 'string' ? data.accessToken : null,
+      id: typeof data.id === 'number' ? data.id : null,
       username: typeof data.username === 'string' ? data.username : null,
       role: data.role === 'viewer' || data.role === 'operator' || data.role === 'admin' ? data.role : null,
+      must_change_password: typeof data.must_change_password === 'boolean' ? data.must_change_password : false,
       authBypass: false,
       ready: false,
       validating: false,
@@ -71,8 +77,10 @@ function persistState(next: AuthState) {
         STORAGE_KEY,
         JSON.stringify({
           accessToken: next.accessToken,
+          id: next.id,
           username: next.username,
           role: next.role,
+          must_change_password: next.must_change_password,
         }),
       )
     } else {
@@ -121,11 +129,13 @@ function redirectToLogin() {
   }
 }
 
-export function setAuthState(next: { accessToken: string; username: string; role: Exclude<AuthRole, null> }) {
+export function setAuthState(next: { accessToken: string; id: number; username: string; role: Exclude<AuthRole, null>; must_change_password: boolean }) {
   writeState({
     accessToken: next.accessToken,
+    id: next.id,
     username: next.username,
     role: next.role,
+    must_change_password: next.must_change_password,
     authBypass: false,
     ready: true,
     validating: false,
@@ -190,8 +200,10 @@ export async function bootstrapAuthState() {
       const user = await getCurrentUser()
       writeState({
         accessToken: authState.accessToken,
+        id: user.id,
         username: user.username,
         role: user.role,
+        must_change_password: user.must_change_password,
         authBypass: !hasStoredToken,
         ready: true,
         validating: false,

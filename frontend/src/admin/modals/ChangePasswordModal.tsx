@@ -5,9 +5,10 @@ import { clearAuthState } from '../../stores/authStore'
 
 interface Props {
   onClose: () => void
+  force?: boolean
 }
 
-export function ChangePasswordModal({ onClose }: Props) {
+export function ChangePasswordModal({ onClose, force = false }: Props) {
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -46,7 +47,9 @@ export function ChangePasswordModal({ onClose }: Props) {
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
       <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-zinc-950 p-6 shadow-2xl">
         <h3 className="text-lg font-black text-white mb-2">修改密码</h3>
-        <p className="text-sm text-zinc-400 mb-5">修改成功后将需要重新登录</p>
+        <p className="text-sm text-zinc-400 mb-5">
+          {force ? '您的密码已被标记为必须修改，请设置新密码' : '修改成功后将需要重新登录'}
+        </p>
         
         {error && <div className="mb-4 rounded-lg bg-red-500/10 p-3 text-xs text-red-400">{error}</div>}
 
@@ -83,7 +86,7 @@ export function ChangePasswordModal({ onClose }: Props) {
           </div>
         </div>
         <div className="mt-8 flex justify-end gap-3">
-          <ToolbarButton onClick={onClose} disabled={loading}>取消</ToolbarButton>
+          {!force && <ToolbarButton onClick={onClose} disabled={loading}>取消</ToolbarButton>}
           <ToolbarButton onClick={handleSubmit} disabled={loading}>{loading ? '提交中...' : '确认修改'}</ToolbarButton>
         </div>
       </div>

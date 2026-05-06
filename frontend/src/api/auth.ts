@@ -4,14 +4,18 @@ export type LoginResult = {
   access_token: string
   token_type: string
   user: {
+    id: number
     username: string
     role: 'viewer' | 'operator' | 'admin'
+    must_change_password: boolean
   }
 }
 
 export type AuthUser = {
+  id: number
   username: string
   role: 'viewer' | 'operator' | 'admin'
+  must_change_password: boolean
 }
 
 export type AuthStatusResult = {

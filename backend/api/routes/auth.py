@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...models import User
 from ...auth.security import verify_password
 from ...auth.dependencies import require_authenticated
-from ...auth.schemas import LoginRequest, LoginResponse, AuthUser
+from ...auth.schemas import LoginRequest, LoginResponse, AuthUserInternal, AuthUserResponse
 from ...auth.service import (
     create_access_token,
     safe_write_audit_log,
@@ -60,7 +60,7 @@ async def auth_login(
     user.last_login_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds") + "Z"
     await db.commit()
 
-    auth_user = AuthUser(
+    auth_user = AuthUserInternal(
         id=user.id,
         username=user.username,
         role=user.role,
@@ -77,16 +77,27 @@ async def auth_login(
     return LoginResponse(
         access_token=token,
         token_type="bearer",
-        user=auth_user,
+        user=AuthUserResponse(
+            id=user.id,
+            username=user.username,
+            role=user.role,
+            must_change_password=user.must_change_password,
+        ),
     )
 
 
-@router.get("/me")
-async def auth_me(user=Depends(require_authenticated)) -> dict[str, str]:
-    return {
-        "username": user.username,
-        "role": user.role,
-    }
+@router.get("/me", response_model=AuthUserResponse)
+async def auth_me(user: AuthUserInternal = Depends(require_authenticated), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).where(User.id == user.id))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(status_code=401, detail="用户不存在")
+    return AuthUserResponse(
+        id=db_user.id,
+        username=db_user.username,
+        role=db_user.role,
+        must_change_password=db_user.must_change_password,
+    )
 
 
 @router.get("/status")

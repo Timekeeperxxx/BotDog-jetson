@@ -129,6 +129,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         config_logger.warning("鉴权已关闭，仅限开发环境：AUTH_ENABLED=false")
     if settings.AUTH_ADMIN_PASSWORD == "please_change_me":
         config_logger.warning("AUTH_ADMIN_PASSWORD 仍为默认值，生产环境必须修改")
+    if settings.JWT_SECRET == "please_change_me":
+        config_logger.warning("JWT_SECRET 仍为默认值，生产环境必须修改")
+        if settings.AUTH_ENABLED:
+            config_logger.warning("AUTH_ENABLED=true 且 JWT_SECRET 为默认值，这属于高风险配置！")
     startup_summary: dict[str, tuple[str, str]] = {}
     await init_db()
     db_logger.info("数据库初始化完成")

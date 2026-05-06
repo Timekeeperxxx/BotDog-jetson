@@ -15,7 +15,7 @@ settings.AUTH_ADMIN_PASSWORD = "ValidPassword123!"
 
 from backend.api.routes.auth import router as auth_router
 from backend.auth.dependencies import require_admin, require_authenticated, require_operator
-from backend.auth.schemas import AuthUser
+from backend.auth.schemas import AuthUserInternal
 from backend.auth.service import create_access_token
 from backend.database import get_db
 from backend.main import create_app

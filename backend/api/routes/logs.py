@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends
 
 from ...auth.dependencies import require_viewer
-from ...auth.schemas import AuthUser
+from ...auth.schemas import AuthUserInternal
 from ...database import get_db
 from ...schemas import LogsPage
 from ...services_logs import list_logs
@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/v1/logs", tags=["logs"])
 
 @router.get("", response_model=LogsPage)
 async def get_logs(
-    user: AuthUser = Depends(require_viewer),
+    user: AuthUserInternal = Depends(require_viewer),
     db=Depends(get_db),
 ) -> LogsPage:
     """简单日志查询：返回最近 N 条日志（默认 50 条）。"""

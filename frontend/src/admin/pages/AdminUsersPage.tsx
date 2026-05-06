@@ -11,6 +11,8 @@ export function AdminUsersPage() {
 
   const [formOpen, setFormOpen] = useState(false)
   const [editUser, setEditUser] = useState<User | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
   
   // Create / Edit Form
   const [username, setUsername] = useState('')
@@ -83,13 +85,16 @@ export function AdminUsersPage() {
     setFormOpen(false)
     setPassword('')
     setConfirmPassword('')
+    setFormError(null)
   }
 
   const handleSaveUser = async () => {
-    if (!username.trim()) return alert('用户名不能为空')
+    setFormError(null)
+    if (!username.trim()) return setFormError('用户名不能为空')
+    if (!/^[A-Za-z0-9_-]+$/.test(username)) return setFormError('用户名只能包含字母、数字、下划线和短横线')
     if (!editUser) {
-      if (password.length < 8) return alert('密码至少8位')
-      if (password !== confirmPassword) return alert('两次密码输入不一致')
+      if (password.length < 8) return setFormError('密码至少 8 位')
+      if (password !== confirmPassword) return setFormError('两次密码输入不一致')
     }
     
     // 如果是修改角色，且是从别的角色修改，需要二次确认
@@ -105,20 +110,32 @@ export function AdminUsersPage() {
     }
 
     try {
+      setSaving(true)
       if (editUser) {
-        await usersApi.updateUser(editUser.id, { role, enabled, must_change_password: mustChangePassword })
+        const updates: Partial<User> = {}
+        if (role !== editUser.role) updates.role = role
+        if (enabled !== editUser.enabled) updates.enabled = enabled
+        if (mustChangePassword !== editUser.must_change_password) updates.must_change_password = mustChangePassword
+        
+        if (Object.keys(updates).length > 0) {
+          await usersApi.updateUser(editUser.id, updates)
+        }
       } else {
-        await usersApi.createUser({ username, password, role, enabled })
+        await usersApi.createUser({ username, password, role, enabled, must_change_password: mustChangePassword })
       }
       closeForm()
       await fetchUsers()
     } catch (err) {
-      alert(err instanceof Error ? err.message : '保存失败')
+      setFormError(err instanceof Error ? err.message : '保存失败')
+    } finally {
+      setSaving(false)
     }
   }
 
   const handleExecuteConfirm = async () => {
     if (!confirmAction) return
+    setSaving(true)
+    setError(null)
     const { type, user, targetRole } = confirmAction
     try {
       if (type === 'delete') {
@@ -127,7 +144,7 @@ export function AdminUsersPage() {
         await usersApi.updateUser(user.id, { enabled: false })
         closeForm()
       } else if (type === 'changeRole') {
-        await usersApi.updateUser(user.id, { role: targetRole!, enabled, must_change_password: mustChangePassword })
+        await usersApi.updateUser(user.id, { role: targetRole! })
         closeForm()
       } else if (type === 'resetPassword') {
         await usersApi.resetPassword(user.id, { new_password: newPassword })
@@ -137,9 +154,10 @@ export function AdminUsersPage() {
       }
       await fetchUsers()
     } catch (err) {
-      alert(err instanceof Error ? err.message : '操作失败')
+      setError(err instanceof Error ? err.message : '操作失败')
     } finally {
       setConfirmAction(null)
+      setSaving(false)
     }
   }
 
@@ -155,8 +173,9 @@ export function AdminUsersPage() {
   }
 
   const handleResetPasswordSubmit = () => {
-    if (newPassword.length < 8) return alert('密码至少8位')
-    if (newPassword !== resetConfirmPassword) return alert('两次密码输入不一致')
+    setFormError(null)
+    if (newPassword.length < 8) return setFormError('密码至少 8 位')
+    if (newPassword !== resetConfirmPassword) return setFormError('两次密码输入不一致')
     setConfirmAction({ type: 'resetPassword', user: resetUser! })
   }
 
@@ -235,6 +254,7 @@ export function AdminUsersPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-3xl border border-white/10 bg-zinc-950 p-6 shadow-2xl">
             <h3 className="text-lg font-black text-white mb-5">{editUser ? '编辑用户' : '新增用户'}</h3>
+            {formError && <div className="mb-4 rounded-lg bg-red-500/10 p-3 text-xs text-red-400">{formError}</div>}
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-black uppercase text-zinc-500 mb-1">用户名</label>
@@ -299,8 +319,8 @@ export function AdminUsersPage() {
             </div>
 
             <div className="mt-8 flex justify-end gap-3">
-              <ToolbarButton onClick={closeForm}>取消</ToolbarButton>
-              <ToolbarButton onClick={handleSaveUser}>保存</ToolbarButton>
+              <ToolbarButton onClick={closeForm} disabled={saving}>取消</ToolbarButton>
+              <ToolbarButton onClick={handleSaveUser} disabled={saving}>{saving ? '保存中...' : '保存'}</ToolbarButton>
             </div>
           </div>
         </div>
@@ -311,6 +331,7 @@ export function AdminUsersPage() {
           <div className="w-full max-w-md rounded-3xl border border-white/10 bg-zinc-950 p-6 shadow-2xl">
             <h3 className="text-lg font-black text-white mb-2">重置密码</h3>
             <p className="text-sm text-zinc-400 mb-5">为用户「{resetUser.username}」设置新密码</p>
+            {formError && <div className="mb-4 rounded-lg bg-red-500/10 p-3 text-xs text-red-400">{formError}</div>}
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-black uppercase text-zinc-500 mb-1">新密码</label>
@@ -334,12 +355,13 @@ export function AdminUsersPage() {
               </div>
             </div>
             <div className="mt-8 flex justify-end gap-3">
-              <ToolbarButton onClick={() => {
+              <ToolbarButton disabled={saving} onClick={() => {
                 setResetModalOpen(false)
                 setNewPassword('')
                 setResetConfirmPassword('')
+                setFormError(null)
               }}>取消</ToolbarButton>
-              <ToolbarButton onClick={handleResetPasswordSubmit}>确认重置</ToolbarButton>
+              <ToolbarButton disabled={saving} onClick={handleResetPasswordSubmit}>确认重置</ToolbarButton>
             </div>
           </div>
         </div>
@@ -359,10 +381,11 @@ export function AdminUsersPage() {
           confirmAction?.type === 'changeRole' ? `即将把用户「${confirmAction.user.username}」的角色从 ${confirmAction.user.role} 修改为 ${confirmAction.targetRole}，权限范围会立即变化，旧 Token 将失效。` :
           confirmAction?.type === 'resetPassword' ? `即将重置用户「${confirmAction.user.username}」的密码。该用户已发放的 Token 将失效。` : ''
         }
-        confirmText="确认操作"
+        confirmText={saving ? '执行中...' : '确认操作'}
         onCancel={() => setConfirmAction(null)}
         onConfirm={handleExecuteConfirm}
         danger={confirmAction?.type === 'delete' || confirmAction?.type === 'disable'}
+        disabled={saving}
       />
     </div>
   )
