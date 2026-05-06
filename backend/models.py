@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Float,
     ForeignKey,
@@ -26,6 +27,32 @@ from .database import Base
 def utc_now_iso() -> str:
     """统一的 UTC ISO8601 时间戳生成，便于日志与客户端对齐。"""
     return datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(200), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    deleted_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    must_change_password: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+    last_login_at: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('viewer', 'operator', 'admin')",
+            name="ck_users_role",
+        ),
+        CheckConstraint("enabled IN (0, 1)", name="ck_users_enabled"),
+        CheckConstraint("must_change_password IN (0, 1)", name="ck_users_must_change_password"),
+    )
+
 
 
 class InspectionTask(Base):

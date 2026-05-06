@@ -134,6 +134,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     db_logger.info("数据库初始化完成")
     startup_summary["数据库"] = ("ready", "数据库连接可用")
 
+    from sqlalchemy import select, func
+    from .models import User
+    from .auth.security import get_password_hash
+    async with get_session_factory()() as _session:
+        user_count = await _session.scalar(select(func.count(User.id)))
+        if user_count == 0:
+            config_logger.info("检测到 users 表为空，准备从 .env 创建 Bootstrap Admin...")
+            default_username = settings.AUTH_ADMIN_USERNAME
+            default_password = settings.AUTH_ADMIN_PASSWORD
+            new_admin = User(
+                username=default_username,
+                password_hash=get_password_hash(default_password),
+                role="admin",
+                enabled=1,
+            )
+            _session.add(new_admin)
+            await _session.commit()
+            config_logger.info("已创建初始 Admin 账号：{}", default_username)
+
     from .services_config import get_config_service
     config_service = get_config_service()
     async with get_session_factory()() as _session:
@@ -651,7 +670,9 @@ def register_routes(app: FastAPI) -> None:
     from .api.routes import auto_track as _auto_track_routes
     from .api.routes import video_sources as _video_source_routes
     from .api.routes import websocket as _websocket_routes
+    from .api.routes import users as _users_routes
     app.include_router(_auth_routes.router)
+    app.include_router(_users_routes.router)
     app.include_router(_nav_routes.router)
     app.include_router(_system_routes.router)
     app.include_router(_control_debug_routes.router)

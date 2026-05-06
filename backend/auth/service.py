@@ -21,30 +21,23 @@ ROLE_LEVELS = {
 }
 
 
-def get_dev_user() -> AuthUser:
-    return AuthUser(username="dev", role="admin")
 
-
-def authenticate_admin(username: str, password: str) -> AuthUser | None:
-    if not hmac.compare_digest(username, settings.AUTH_ADMIN_USERNAME):
-        return None
-    if not hmac.compare_digest(password, settings.AUTH_ADMIN_PASSWORD):
-        return None
-    return AuthUser(username=settings.AUTH_ADMIN_USERNAME, role="admin")
 
 
 def create_access_token(user: AuthUser) -> str:
     now = datetime.now(timezone.utc)
     payload = {
+        "user_id": user.id,
         "sub": user.username,
         "role": user.role,
+        "token_version": user.token_version,
         "exp": int((now + timedelta(minutes=settings.JWT_EXPIRE_MINUTES)).timestamp()),
     }
     header = {"alg": "HS256", "typ": "JWT"}
     return _encode_jwt(header, payload, settings.JWT_SECRET)
 
 
-def decode_access_token(token: str) -> AuthUser:
+def decode_access_token(token: str) -> dict[str, Any]:
     payload = _decode_jwt(token, settings.JWT_SECRET)
     exp = int(payload.get("exp", 0))
     if exp <= int(datetime.now(timezone.utc).timestamp()):
@@ -53,7 +46,7 @@ def decode_access_token(token: str) -> AuthUser:
     role = str(payload.get("role") or "").strip()
     if not username or role not in ROLE_LEVELS:
         raise ValueError("token 载荷无效")
-    return AuthUser(username=username, role=role)
+    return payload
 
 
 def role_satisfies(role: str, required_role: str) -> bool:
