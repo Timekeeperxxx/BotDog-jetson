@@ -89,6 +89,8 @@ export function PcdMapDemoPage() {
   const [mappingSending, setMappingSending] = useState(false)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
+  // ── 高危操作确认 ──
+  const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
   const selectRequestRef = useRef(0)
   const navWs = useNavWebSocket()
   const { robotPose, localizationStatus, setInitialState } = navWs
@@ -226,6 +228,14 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, selectedMapId])
 
+  // 中间层：拦截 go-to，先弹确认框
+  const requestGoToWaypoint = useCallback((waypointId: string) => {
+    if (!canOperate) return
+    const waypoint = waypoints.find((item) => item.id === waypointId)
+    if (!waypoint) return
+    setGoToConfirm(waypoint)
+  }, [canOperate, waypoints])
+
   const handleGoToWaypoint = useCallback(async (waypointId: string) => {
     if (!selectedMapId) return
     if (!canOperate) return
@@ -351,6 +361,8 @@ export function PcdMapDemoPage() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((event.target as HTMLElement).tagName)) return
       if (event.repeat) return
+      // 未登录或无 operator 权限：不响应控制快捷键
+      if (!canOperate) return
 
       let cmd: RobotCommand | null = null
       switch (event.key.toLowerCase()) {
@@ -915,7 +927,7 @@ export function PcdMapDemoPage() {
           <NavWaypointPanel
             waypoints={waypoints}
             navigatingWaypointId={navigatingWaypointId}
-            onGoTo={handleGoToWaypoint}
+            onGoTo={requestGoToWaypoint}
             onDelete={handleDeleteWaypoint}
           />
           <section className="pcd-rail-footer">
@@ -941,6 +953,39 @@ export function PcdMapDemoPage() {
         )}
       </section>
       </div>
+
+      {/* ─── 导航到点二次确认弹窗 ─── */}
+      {goToConfirm !== null && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-[0_30px_120px_-30px_rgba(0,0,0,0.9)]">
+            <div className="text-lg font-black text-white">确认导航到「{goToConfirm.name}」</div>
+            <div className="mt-3 space-y-1.5 text-sm text-zinc-400 font-mono">
+              <div>map_id：{goToConfirm.map_id}</div>
+              <div>x={goToConfirm.x.toFixed(3)} &nbsp; y={goToConfirm.y.toFixed(3)} &nbsp; z={goToConfirm.z.toFixed(3)}</div>
+              <div>yaw={goToConfirm.yaw.toFixed(3)} rad</div>
+            </div>
+            <p className="mt-4 text-xs text-amber-400/80">发布导航请求后机器狗将开始移动到目标点。请确认周围安全。</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                className="rounded-xl border border-white/12 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-white hover:border-white/30 hover:bg-white/5"
+                onClick={() => setGoToConfirm(null)}
+              >
+                取消
+              </button>
+              <button
+                className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-sky-300 hover:border-sky-400 hover:bg-sky-500/20"
+                onClick={() => {
+                  const waypoint = goToConfirm
+                  setGoToConfirm(null)
+                  void handleGoToWaypoint(waypoint.id)
+                }}
+              >
+                确认导航
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

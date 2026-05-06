@@ -63,9 +63,31 @@ export const AutoTrackPanel: React.FC<Props> = ({
   const isEnabled = status?.enabled ?? false;
   const target = status?.active_target;
   const candidateCount = status?.candidate_count ?? 0;
+  const [enableConfirm, setEnableConfirm] = React.useState(false);
+
+  const handleToggle = () => {
+    if (isEnabled) {
+      disable();
+    } else {
+      setEnableConfirm(true);
+    }
+  };
 
   return (
     <div style={styles.container}>
+      {/* 启用自动跟踪确认弹窗 */}
+      {enableConfirm && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)' }}>
+          <div style={{ background: '#09090b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 16, padding: 24, maxWidth: 400, width: '90%', boxShadow: '0 30px 80px -20px rgba(0,0,0,0.9)' }}>
+            <div style={{ fontWeight: 700, fontSize: 16, color: '#fff', marginBottom: 12 }}>确认启用自动跟踪</div>
+            <p style={{ fontSize: 13, color: '#a1a1aa', lineHeight: 1.6, marginBottom: 20 }}>启用后系统将开始检测盘内目标，并可能自动发送控制指令到机器狗。请确认周围安全后再启用。</p>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+              <button style={{ background: '#27272a', border: '1px solid #3f3f46', color: '#fff', borderRadius: 10, padding: '8px 16px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.15em', textTransform: 'uppercase' }} onClick={() => setEnableConfirm(false)}>取消</button>
+              <button style={{ background: 'rgba(43,221,200,0.15)', border: '1px solid rgba(43,221,200,0.4)', color: '#2bd', borderRadius: 10, padding: '8px 16px', fontSize: 11, fontWeight: 700, cursor: 'pointer', letterSpacing: '0.15em', textTransform: 'uppercase' }} onClick={() => { setEnableConfirm(false); enable(); }}>确认启用</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* 标题行 */}
       <div style={styles.header}>
         <span style={{ ...styles.dot, background: stateColor }} />
@@ -81,10 +103,9 @@ export const AutoTrackPanel: React.FC<Props> = ({
             color: isEnabled ? '#2bd' : '#888',
             opacity: (!isMissionRunning && !isEnabled) ? 0.4 : 1,
           }}
-          onClick={() => (isEnabled ? disable() : enable())}
+          onClick={handleToggle}
           disabled={loading || (!isMissionRunning && !isEnabled) || !canOperate}
-          title={!isMissionRunning && !isEnabled ? '请先开始巡检' : isEnabled ? '禁用自动跟踪' : '启用自动跟踪'}
-        >
+          title={!isMissionRunning && !isEnabled ? '请先开始巡检' : isEnabled ? '禁用自动跟踪' : '启用自动跟踪'}>
           {isEnabled ? '■ 禁用' : '▷ 启用'}
         </button>
       </div>

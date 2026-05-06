@@ -14,6 +14,14 @@ export type AuthUser = {
   role: 'viewer' | 'operator' | 'admin'
 }
 
+export type AuthStatusResult = {
+  auth_enabled: boolean
+  current_user: {
+    username: string
+    role: 'viewer' | 'operator' | 'admin'
+  }
+}
+
 export async function login(username: string, password: string): Promise<LoginResult> {
   const response = await fetch(getApiUrl('/api/v1/auth/login'), {
     method: 'POST',
@@ -44,4 +52,18 @@ export async function getCurrentUser(): Promise<AuthUser> {
     throw new Error(message)
   }
   return response.json() as Promise<AuthUser>
+}
+
+export async function getAuthStatus(): Promise<AuthStatusResult> {
+  const response = await fetch(getApiUrl('/api/v1/auth/status'))
+  const contentType = response.headers.get('content-type') || ''
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`
+    if (contentType.includes('application/json')) {
+      const data = await response.json().catch(() => ({}))
+      message = data.detail || message
+    }
+    throw new Error(message)
+  }
+  return response.json() as Promise<AuthStatusResult>
 }

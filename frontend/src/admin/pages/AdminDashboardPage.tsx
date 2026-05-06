@@ -1,8 +1,11 @@
-import { useMemo, type ReactNode } from 'react'
-import { Activity, Bot, Camera, Cpu, MapPinned, Server } from 'lucide-react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Activity, Bot, Camera, Cpu, MapPinned, Server, ShieldCheck } from 'lucide-react'
 import type { AdminDashboardData, AdminServiceCard } from '../adminTypes'
 import { mapHealthStatus, mapNavStatus } from '../adminTypes'
 import { AdminCard, MetricTile, StatusBadge } from '../AdminUi'
+import { getAuthStatus, type AuthStatusResult } from '../../api/auth'
+import { getApiUrl } from '../../config/api'
+import { useAuthState } from '../../stores/authStore'
 
 function formatRelativeTime(value?: string | null) {
   if (!value) return '--'
@@ -27,6 +30,34 @@ function formatUptime(seconds?: number | null) {
 }
 
 export function AdminDashboardPage({ data }: { data: AdminDashboardData }) {
+  const auth = useAuthState()
+  const [authStatus, setAuthStatus] = useState<AuthStatusResult | null>(null)
+  const [authStatusError, setAuthStatusError] = useState<string | null>(null)
+  const [safetyStatus, setSafetyStatus] = useState<Record<string, unknown> | null>(null)
+  const [safetyError, setSafetyError] = useState<string | null>(null)
+  const [currentGoal, setCurrentGoal] = useState<Record<string, unknown> | null>(null)
+  const [currentGoalError, setCurrentGoalError] = useState<string | null>(null)
+
+  useEffect(() => {
+    getAuthStatus()
+      .then(setAuthStatus)
+      .catch((err: unknown) => setAuthStatusError(err instanceof Error ? err.message : '暂不可用'))
+  }, [])
+
+  useEffect(() => {
+    fetch(getApiUrl('/api/v1/system/safety'))
+      .then((res) => res.json() as Promise<Record<string, unknown>>)
+      .then(setSafetyStatus)
+      .catch((err: unknown) => setSafetyError(err instanceof Error ? err.message : '暂不可用'))
+  }, [])
+
+  useEffect(() => {
+    fetch(getApiUrl('/api/v1/nav/current-goal'))
+      .then((res) => res.json() as Promise<Record<string, unknown>>)
+      .then((data) => setCurrentGoal((data.current_goal as Record<string, unknown>) ?? null))
+      .catch((err: unknown) => setCurrentGoalError(err instanceof Error ? err.message : '暂不可用'))
+  }, [])
+
   const serviceCards = useMemo<AdminServiceCard[]>(() => {
     const activeSources = data.videoSources.filter((item) => item.enabled)
     return [
@@ -91,6 +122,60 @@ export function AdminDashboardPage({ data }: { data: AdminDashboardData }) {
         <MetricTile label="当前检测数" value={String(data.aiStatus?.detections_count ?? '--')} hint={data.aiStatus ? `模式=${data.aiStatus.mode}` : '等待 AI_STATUS'} />
         <MetricTile label="导航目标" value={data.navState?.navigation_status.target_name || '空闲'} hint={data.navState?.navigation_status.message || '暂无导航任务'} />
       </div>
+
+      {/* ─── 安全总览 ─── */}
+      <AdminCard
+        title="安全总览"
+        subtitle="登录状态、鉴权开关、SafetySupervisor、当前导航目标。数据失败时显示暂不可用。"
+      >
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {/* 当前用户 */}
+          <SecurityTile
+            icon={<ShieldCheck size={14} />}
+            title="当前用户"
+            rows={[
+              { label: '用户名', value: auth.username || '--' },
+              { label: '角色', value: auth.role || '--' },
+              { label: '登录方式', value: auth.authBypass ? '开发绕过' : 'JWT' },
+            ]}
+          />
+          {/* 鉴权状态 */}
+          <SecurityTile
+            icon={<ShieldCheck size={14} />}
+            title="鉴权状态"
+            error={authStatusError}
+            rows={authStatus ? [
+              { label: 'AUTH_ENABLED', value: authStatus.auth_enabled ? '已开启 ✓' : '已关闭 ⚠' },
+              { label: '后端用户', value: authStatus.current_user.username },
+              { label: '后端角色', value: authStatus.current_user.role },
+            ] : []}
+          />
+          {/* SafetySupervisor */}
+          <SecurityTile
+            icon={<ShieldCheck size={14} />}
+            title="运动安全"
+            error={safetyError}
+            rows={safetyStatus ? [
+              { label: '允许运动', value: safetyStatus.safe_to_move ? '是 ✓' : '否 ✗' },
+              { label: '系统状态', value: String(safetyStatus.system_state ?? '--') },
+              { label: '适配器就绪', value: safetyStatus.control_adapter_ready ? '是' : '否' },
+              { label: '阻止原因', value: Array.isArray(safetyStatus.reasons) && safetyStatus.reasons.length > 0 ? (safetyStatus.reasons as string[]).join('；') : '无' },
+            ] : []}
+          />
+          {/* 当前导航目标 */}
+          <SecurityTile
+            icon={<MapPinned size={14} />}
+            title="当前导航目标"
+            error={currentGoalError}
+            rows={currentGoal ? [
+              { label: '目标点', value: String(currentGoal.name ?? '--') },
+              { label: 'map_id', value: String(currentGoal.map_id ?? '--') },
+              { label: 'x / y / z', value: currentGoal.x != null ? `${Number(currentGoal.x).toFixed(2)} / ${Number(currentGoal.y).toFixed(2)} / ${Number(currentGoal.z).toFixed(2)}` : '--' },
+              { label: 'yaw', value: currentGoal.yaw != null ? `${Number(currentGoal.yaw).toFixed(3)} rad` : '--' },
+            ] : [{ label: '状态', value: '无当前目标' }]}
+          />
+        </div>
+      </AdminCard>
 
       <div className="grid gap-6 xl:grid-cols-[1.4fr_0.9fr]">
         <AdminCard
@@ -202,6 +287,41 @@ function SummaryRow({
         <div className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">{label}</div>
         <div className="mt-1 text-sm text-zinc-200">{value}</div>
       </div>
+    </div>
+  )
+}
+
+function SecurityTile({
+  icon,
+  title,
+  rows,
+  error,
+}: {
+  icon: ReactNode
+  title: string
+  rows: { label: string; value: string }[]
+  error?: string | null
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-black/60 p-4 space-y-2">
+      <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-zinc-400">
+        <span className="text-zinc-500">{icon}</span>
+        {title}
+      </div>
+      {error ? (
+        <div className="text-xs text-amber-400/80 bg-amber-500/5 border border-amber-500/20 rounded px-2 py-1">
+          暂不可用：{error}
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="text-xs text-zinc-500">加载中...</div>
+      ) : (
+        rows.map((row) => (
+          <div key={row.label} className="flex items-baseline justify-between gap-2">
+            <span className="text-[10px] text-zinc-500 shrink-0">{row.label}</span>
+            <span className="text-xs text-zinc-200 text-right break-all">{row.value}</span>
+          </div>
+        ))
+      )}
     </div>
   )
 }

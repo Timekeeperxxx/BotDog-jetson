@@ -3,6 +3,58 @@ import { Copy, RefreshCw } from 'lucide-react'
 import type { AdminLogEntry } from '../adminTypes'
 import { AdminCard, EmptyState, SearchInput, TableCell, TableHead, ToolbarButton } from '../AdminUi'
 
+// 类别筛选定义：同时支持英文结构化关键词和中文关键词
+const CATEGORY_TABS = [
+  { key: 'ALL', label: '全部' },
+  {
+    key: 'auth', label: '登录',
+    keywords: ['auth.login', 'action=auth.login', '登录', 'login'],
+  },
+  {
+    key: 'control', label: '控制',
+    keywords: ['control.', '控制', '手动控制'],
+  },
+  {
+    key: 'nav', label: '导航',
+    keywords: ['nav.', '导航', 'go-to', 'go_to', 'nav.go_to', 'nav.e_stop'],
+  },
+  {
+    key: 'config', label: '配置',
+    keywords: ['config.', '配置'],
+  },
+  {
+    key: 'delete', label: '删除',
+    keywords: ['delete', '删除', '.delete'],
+  },
+  {
+    key: 'estop', label: '急停',
+    keywords: ['e_stop', '急停', 'E_STOP'],
+  },
+  {
+    key: 'fail', label: '失败',
+    keywords: ['result=fail', '失败', '异常'],
+  },
+] as const
+
+type CategoryKey = typeof CATEGORY_TABS[number]['key']
+
+function isHighRisk(item: AdminLogEntry): boolean {
+  if (item.level === 'ERROR' || item.level === 'CRITICAL') return true
+  if (item.level === 'WARN') {
+    const msg = item.message.toLowerCase()
+    return msg.includes('result=fail') || msg.includes('e_stop') || msg.includes('失败') || msg.includes('异常')
+  }
+  return false
+}
+
+function matchCategory(item: AdminLogEntry, cat: CategoryKey): boolean {
+  if (cat === 'ALL') return true
+  const tab = CATEGORY_TABS.find((t) => t.key === cat)
+  if (!tab || !('keywords' in tab)) return true
+  const text = `${item.module} ${item.message}`.toLowerCase()
+  return tab.keywords.some((kw) => text.includes(kw.toLowerCase()))
+}
+
 export function AdminLogsPage({
   logs,
   loading,
@@ -17,15 +69,17 @@ export function AdminLogsPage({
   onRefresh: () => void
 }) {
   const [level, setLevel] = useState('ALL')
+  const [category, setCategory] = useState<CategoryKey>('ALL')
 
   const filteredLogs = useMemo(() => {
     return logs.filter((item) => {
       const keyword = search.toLowerCase()
       const hitKeyword = !keyword || `${item.module} ${item.message}`.toLowerCase().includes(keyword)
       const hitLevel = level === 'ALL' || item.level === level
-      return hitKeyword && hitLevel
+      const hitCategory = matchCategory(item, category)
+      return hitKeyword && hitLevel && hitCategory
     })
-  }, [logs, search, level])
+  }, [logs, search, level, category])
 
   return (
     <AdminCard
@@ -51,6 +105,23 @@ export function AdminLogsPage({
         </div>
       }
     >
+      {/* 类别快捷 Tab */}
+      <div className="mb-4 flex flex-wrap gap-1.5">
+        {CATEGORY_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setCategory(tab.key)}
+            className={`rounded-lg border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.15em] transition-all ${
+              category === tab.key
+                ? 'border-white/30 bg-white/10 text-white'
+                : 'border-white/10 text-zinc-400 hover:border-white/20 hover:text-zinc-200'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       {filteredLogs.length === 0 ? (
         <EmptyState title="暂无日志" description={loading ? '日志加载中。' : '当前没有匹配的日志记录。'} />
       ) : (
@@ -66,19 +137,32 @@ export function AdminLogsPage({
               </tr>
             </thead>
             <tbody>
-              {filteredLogs.map((item) => (
-                <tr key={item.log_id}>
-                  <TableCell>{new Date(item.created_at).toLocaleString('zh-CN', { hour12: false })}</TableCell>
-                  <TableCell>{item.level}</TableCell>
-                  <TableCell>{item.module}</TableCell>
-                  <TableCell className="max-w-[720px] break-all">{item.message}</TableCell>
-                  <TableCell>
-                    <ToolbarButton onClick={() => void navigator.clipboard.writeText(`${item.created_at} ${item.level} ${item.module} ${item.message}`)}>
-                      <Copy size={14} className="inline-block" /> 复制
-                    </ToolbarButton>
-                  </TableCell>
-                </tr>
-              ))}
+              {filteredLogs.map((item) => {
+                const highRisk = isHighRisk(item)
+                return (
+                  <tr
+                    key={item.log_id}
+                    className={highRisk ? 'border-l-2 border-red-500/60 bg-red-500/5' : ''}
+                  >
+                    <TableCell>{new Date(item.created_at).toLocaleString('zh-CN', { hour12: false })}</TableCell>
+                    <TableCell>
+                      <span className={`text-[10px] font-black uppercase tracking-wider ${
+                        item.level === 'CRITICAL' ? 'text-red-400' :
+                        item.level === 'ERROR' ? 'text-red-300' :
+                        item.level === 'WARN' ? 'text-amber-300' :
+                        'text-zinc-400'
+                      }`}>{item.level}</span>
+                    </TableCell>
+                    <TableCell>{item.module}</TableCell>
+                    <TableCell className="max-w-[720px] break-all">{item.message}</TableCell>
+                    <TableCell>
+                      <ToolbarButton onClick={() => void navigator.clipboard.writeText(`${item.created_at} ${item.level} ${item.module} ${item.message}`)}>
+                        <Copy size={14} className="inline-block" /> 复制
+                      </ToolbarButton>
+                    </TableCell>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

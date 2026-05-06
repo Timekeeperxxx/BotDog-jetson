@@ -10,6 +10,7 @@ type AuthState = {
   authBypass: boolean
   ready: boolean
   validating: boolean
+  lastAuthError: string | null
 }
 
 const STORAGE_KEY = 'botdog-auth'
@@ -32,6 +33,7 @@ function getGuestState(): AuthState {
     authBypass: false,
     ready: true,
     validating: false,
+    lastAuthError: null,
   }
 }
 
@@ -49,6 +51,7 @@ function readStoredState(): AuthState {
       authBypass: false,
       ready: false,
       validating: false,
+      lastAuthError: null,
     }
   } catch {
     return getGuestState()
@@ -126,11 +129,14 @@ export function setAuthState(next: { accessToken: string; username: string; role
     authBypass: false,
     ready: true,
     validating: false,
+    lastAuthError: null,
   })
 }
 
-export function clearAuthState() {
-  writeState(getGuestState())
+export function clearAuthState(reason?: string) {
+  const next = getGuestState()
+  if (reason) next.lastAuthError = reason
+  writeState(next)
 }
 
 export function getAuthState() {
@@ -144,6 +150,16 @@ export function hasRole(requiredRole: Exclude<AuthRole, null>) {
 
 export function hasAuthSession() {
   return authState.authBypass || Boolean(authState.accessToken)
+}
+
+export function getLastAuthError(): string | null {
+  return authState.lastAuthError
+}
+
+export function clearLastAuthError() {
+  if (!authState.lastAuthError) return
+  authState = { ...authState, lastAuthError: null }
+  emit()
 }
 
 export function useAuthState() {
@@ -179,6 +195,7 @@ export async function bootstrapAuthState() {
         authBypass: !hasStoredToken,
         ready: true,
         validating: false,
+        lastAuthError: null,
       })
     } catch {
       if (hasStoredToken) {
@@ -210,7 +227,7 @@ export function installAuthFetchInterceptor() {
     const hadToken = Boolean(authState.accessToken)
     const response = await originalFetch(request)
     if (isApiRequest && response.status === 401 && hadToken && !isAuthRoute(new URL(request.url, window.location.origin).pathname)) {
-      clearAuthState()
+      clearAuthState('登录已过期，请重新登录')
       redirectToLogin()
     }
     return response

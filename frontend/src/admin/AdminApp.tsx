@@ -31,6 +31,7 @@ import { AdminVideoAiPage } from './pages/AdminVideoAiPage'
 import { AdminEvidencePage } from './pages/AdminEvidencePage'
 import { AdminLogsPage } from './pages/AdminLogsPage'
 import { AdminConfigPage } from './pages/AdminConfigPage'
+import { AuthStatusBar } from '../components/AuthStatusBar'
 import type { TaskDefinition } from '../types/taskWorkflow'
 
 const TASK_STORAGE_KEY = 'botdog-nav-workflows'
@@ -433,6 +434,7 @@ export function AdminApp() {
               <HeaderPill icon={<RefreshCw size={14} />} label="健康状态" value={health?.status || '等待中'} />
               <ToolbarButton onClick={() => window.location.assign('/operator')}>进入操作台</ToolbarButton>
               <ToolbarButton onClick={() => void refreshAdminCore()}>{adminLoading ? '刷新中' : '刷新总览'}</ToolbarButton>
+              <AuthStatusBar variant="bar" />
             </div>
           </div>
         </header>
@@ -445,7 +447,9 @@ export function AdminApp() {
       <ConfirmDialog
         open={waypointToDelete !== null}
         title="确认删除导航点"
-        description={waypointToDelete ? `即将删除点位 ${waypointToDelete.name}，该操作会修改地图对应的 JSON 存储。` : ''}
+        description={waypointToDelete
+          ? `即将删除点位「${waypointToDelete.name}」\nwaypoint_id: ${waypointToDelete.id}\nmap_id: ${selectedMapId || '--'}\n\n该操作会修改地图对应的 JSON 存储，不可恢复。`
+          : ''}
         confirmText="确认删除"
         onCancel={() => setWaypointToDelete(null)}
         onConfirm={() => {
@@ -459,7 +463,9 @@ export function AdminApp() {
       <ConfirmDialog
         open={sourceToDelete !== null}
         title="确认删除视频源"
-        description={sourceToDelete ? `即将删除视频源 ${sourceToDelete.label}。当前后端支持真实删除，该操作不可恢复。` : ''}
+        description={sourceToDelete
+          ? `即将删除视频源「${sourceToDelete.label}」\nsource_id: ${sourceToDelete.source_id}\n\n当前后端支持真实删除，该操作不可恢复。`
+          : ''}
         confirmText="确认删除"
         onCancel={() => setSourceToDelete(null)}
         onConfirm={() => {

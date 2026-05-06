@@ -52,3 +52,16 @@ async def auth_me(user=Depends(require_authenticated)) -> dict[str, str]:
         "username": user.username,
         "role": user.role,
     }
+
+
+@router.get("/status")
+async def auth_status(user=Depends(require_authenticated)) -> dict:
+    """返回鉴权状态和当前用户信息，供后台安全总览使用。"""
+    from ...config import settings
+    return {
+        "auth_enabled": settings.AUTH_ENABLED,
+        "current_user": {
+            "username": user.username,
+            "role": user.role,
+        },
+    }

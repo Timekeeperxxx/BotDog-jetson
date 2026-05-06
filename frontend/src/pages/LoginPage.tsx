@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { login } from '../api/auth'
-import { hasAuthSession, setAuthState, useAuthState } from '../stores/authStore'
+import { clearLastAuthError, getLastAuthError, hasAuthSession, setAuthState, useAuthState } from '../stores/authStore'
 
 interface LoginPageProps {
   /** 登录成功后的回调。提供此 prop 时不会自动跳转到 /，由调用方控制后续行为。 */
@@ -13,6 +13,16 @@ export function LoginPage({ onSuccess }: LoginPageProps = {}) {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [sessionError, setSessionError] = useState<string | null>(null)
+
+  // 启动时读取 401/过期提示
+  useEffect(() => {
+    const msg = getLastAuthError()
+    if (msg) {
+      setSessionError(msg)
+      clearLastAuthError()
+    }
+  }, [])
 
   useEffect(() => {
     if (hasAuthSession()) {
@@ -56,11 +66,17 @@ export function LoginPage({ onSuccess }: LoginPageProps = {}) {
           <p className="text-sm text-zinc-400">控制、配置和删除类操作需要先登录。</p>
         </div>
 
+        {sessionError ? (
+          <div className="rounded border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+            {sessionError}
+          </div>
+        ) : null}
+
         <label className="block space-y-2">
           <span className="text-xs uppercase tracking-[0.2em] text-zinc-400">用户名</span>
           <input
             value={username}
-            onChange={(event) => setUsername(event.target.value)}
+            onChange={(event) => { setUsername(event.target.value); setSessionError(null) }}
             className="w-full border border-white/10 bg-zinc-950 px-4 py-3 outline-none focus:border-white/30"
             autoComplete="username"
           />

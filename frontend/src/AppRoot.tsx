@@ -45,5 +45,10 @@ export function AppRoot() {
     return <AdminApp />
   }
 
+  // 主控制台：未登录时显示 LoginPage
+  if (!hasAuthSession()) {
+    return <LoginPage />
+  }
+
   return <IndustrialConsoleComplete />
 }

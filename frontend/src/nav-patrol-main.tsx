@@ -4,6 +4,7 @@ import './index.css'
 import './styles/pcdMapDemo.css'
 import { PcdMapDemoPage } from './pages/PcdMapDemoPage'
 import { LoginPage } from './pages/LoginPage'
+import { AuthStatusBar } from './components/AuthStatusBar'
 import {
   bootstrapAuthState,
   hasAuthSession,
@@ -32,9 +33,8 @@ function NavPatrolAuthRoot() {
     )
   }
 
-  // 未登录：显示登录页，登录成功后 onSuccess 不传（默认 undefined），
-  // 但 setAuthState 会触发 useAuthState 订阅更新，NavPatrolAuthRoot 重新渲染，
-  // hasAuthSession() 变为 true，自动切换到 PcdMapDemoPage
+  // 未登录：显示登录页，登录成功后 setAuthState 触发 useAuthState 订阅更新，
+  // NavPatrolAuthRoot 重新渲染 hasAuthSession() 变为 true，切换到 PcdMapDemoPage
   if (!hasAuthSession()) {
     return (
       <LoginPage
@@ -45,7 +45,19 @@ function NavPatrolAuthRoot() {
     )
   }
 
-  return <PcdMapDemoPage />
+  return (
+    <>
+      {/* AuthStatusBar overlay：fixed 右上角，z-40 低于 modal z-50+，不遮挡确认框 */}
+      {/* onLogout 传空函数：退出后 clearAuthState 触发状态变化，自动切回 LoginPage */}
+      <AuthStatusBar
+        variant="overlay"
+        onLogout={() => {
+          // 依赖 authStore 反应式更新自动切换回 LoginPage，无需手动跳转
+        }}
+      />
+      <PcdMapDemoPage />
+    </>
+  )
 }
 
 createRoot(document.getElementById('nav-patrol-root')!).render(
