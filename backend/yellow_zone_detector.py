@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from .logging_config import logger
 
@@ -122,6 +122,55 @@ class YellowZoneDetector:
             self._lost_frames_count += 1
             return None
 
+    def update_params(self, key: str, value: Any) -> bool:
+        """
+        热更新检测参数。
+
+        只更新实例内参数，不重置状态机和丢失帧计数。
+        """
+        param_map = {
+            "zone_yellow_h_low": ("_h_low", int),
+            "zone_yellow_h_high": ("_h_high", int),
+            "zone_yellow_s_low": ("_s_low", int),
+            "zone_yellow_s_high": ("_s_high", int),
+            "zone_yellow_v_low": ("_v_low", int),
+            "zone_yellow_v_high": ("_v_high", int),
+            "zone_border_v_threshold": ("_border_v_threshold", int),
+            "zone_border_expand_px": ("_border_expand_px", int),
+            "zone_min_area_px": ("_min_area_px", int),
+            "zone_max_area_ratio": ("_max_area_ratio", float),
+            "zone_min_aspect": ("_min_aspect", float),
+            "zone_max_aspect": ("_max_aspect", float),
+            "zone_min_solidity": ("_min_solidity", float),
+            "zone_roi_top_ratio": ("_roi_top_ratio", float),
+            "zone_morph_kernel_size": ("_morph_kernel_size", int),
+            "zone_w_area": ("_w_area", float),
+            "zone_w_solid": ("_w_solid", float),
+            "zone_w_border": ("_w_border", float),
+            "zone_center_crop_ratio": ("_center_crop_ratio", float),
+            "zone_center_black_v_threshold": ("_center_black_v_threshold", int),
+            "zone_center_black_min_ratio": ("_center_black_min_ratio", float),
+            "zone_center_text_bonus": ("_center_text_bonus", float),
+        }
+
+        spec = param_map.get(key)
+        if spec is None:
+            logger.debug(f"[YellowZoneDetector] 忽略未知参数更新: {key}={value}")
+            return False
+
+        attr_name, caster = spec
+        try:
+            if caster is int:
+                parsed = int(float(value))
+            else:
+                parsed = float(value)
+            setattr(self, attr_name, parsed)
+            logger.info(f"[YellowZoneDetector] 热更新参数 {key}={parsed}")
+            return True
+        except (TypeError, ValueError) as exc:
+            logger.warning(f"[YellowZoneDetector] 热更新参数 {key}={value} 失败: {exc}")
+            return False
+
     # ─── 内部检测管线 ────────────────────────────────────────────
 
     def _detect_raw(self, frame: bytes, cv2) -> Optional[ZoneDetection]:
@@ -222,7 +271,7 @@ class YellowZoneDetector:
         #得分限制
         MIN_BORDER_SCORE = 0.20
         MIN_TEXT_SOORE = 0.30
-        if border_ok and not has_center_text:
+        if border_ok and not has_text:
             return None
 
         # ── quality 计算 ──

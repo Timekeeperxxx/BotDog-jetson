@@ -10,7 +10,14 @@ export type ConfigValueType = 'int' | 'float' | 'bool' | 'string';
 /**
  * 配置类别
  */
-export type ConfigCategory = 'backend' | 'frontend' | 'storage' | 'auto_track';
+export type ConfigCategory =
+  | 'backend'
+  | 'hardware'
+  | 'frontend'
+  | 'frontend_draw'
+  | 'zone'
+  | 'storage'
+  | 'auto_track';
 
 /**
  * 系统配置项
@@ -25,6 +32,19 @@ export interface SystemConfig {
   is_hot_reloadable: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface ConfigRuntimeApply {
+  applied: boolean;
+  target: string;
+  message: string;
+}
+
+export interface ConfigUpdateResponse {
+  success: boolean;
+  message: string;
+  config: SystemConfig;
+  runtime_apply: ConfigRuntimeApply;
 }
 
 /**

@@ -9,6 +9,7 @@ from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
 from ...config import settings
 from ...database import get_db
+from ...logging_config import logger
 
 router = APIRouter(prefix="/api/v1/config", tags=["config"])
 
@@ -24,6 +25,97 @@ def _parse_bool(value) -> bool:
     raise ValueError(f"布尔值无效: {value}")
 
 
+def _apply_runtime_update(key: str, value) -> dict:
+    """
+    根据配置键尝试执行运行时更新。
+
+    DB 保存成功后调用，失败不影响主流程。
+    """
+    if key == "unitree_network_iface":
+        return {
+            "applied": False,
+            "target": "hardware",
+            "message": "需重启后端或重新初始化硬件适配器",
+        }
+
+    if key == "mavlink_endpoint":
+        return {
+            "applied": False,
+            "target": "hardware",
+            "message": "需重启后端生效",
+        }
+
+    if key.startswith("zone_draw_"):
+        return {
+            "applied": True,
+            "target": "frontend",
+            "message": "前端配置将在下一次配置刷新后生效",
+        }
+
+    if key.startswith("zone_"):
+        try:
+            from ...guard_mission_service import get_guard_mission_service
+
+            guard_service = get_guard_mission_service()
+            if guard_service and guard_service.update_zone_detector_config(key, value):
+                return {
+                    "applied": True,
+                    "target": "zone",
+                    "message": "运行时已生效",
+                }
+            return {
+                "applied": False,
+                "target": "zone",
+                "message": "当前检测器实例未接入运行时热更新",
+            }
+        except Exception as exc:  # pragma: no cover - 仅在运行环境异常时触发
+            logger.warning(f"[config] zone 热更新失败: key={key} error={exc}")
+            return {
+                "applied": False,
+                "target": "zone",
+                "message": "当前检测器实例未接入运行时热更新",
+            }
+
+    if key.startswith("auto_track_"):
+        try:
+            from ...auto_track_service import get_auto_track_service
+
+            auto_track_service = get_auto_track_service()
+            if auto_track_service:
+                auto_track_service.update_params(key, value)
+                return {
+                    "applied": True,
+                    "target": "auto_track",
+                    "message": "运行时已生效",
+                }
+            return {
+                "applied": False,
+                "target": "auto_track",
+                "message": "自动跟踪服务未初始化，运行时未生效",
+            }
+        except Exception as exc:  # pragma: no cover - 仅在运行环境异常时触发
+            logger.warning(f"[config] auto_track 热更新失败: key={key} error={exc}")
+            return {
+                "applied": False,
+                "target": "auto_track",
+                "message": "自动跟踪服务未初始化，运行时未生效",
+            }
+
+    if key == "safety_block_motion_when_disconnected":
+        settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED = _parse_bool(value)
+        return {
+            "applied": True,
+            "target": "backend",
+            "message": "运行时已生效",
+        }
+
+    return {
+        "applied": False,
+        "target": "backend",
+        "message": "已保存，运行时未接入",
+    }
+
+
 @router.get("")
 async def get_system_config(
     category: Optional[str] = None,
@@ -34,7 +126,7 @@ async def get_system_config(
     获取系统配置。
 
     查询参数:
-        category: 配置类别过滤 (backend/frontend/storage)
+        category: 配置类别过滤 (backend/hardware/frontend/frontend_draw/zone/storage/auto_track)
 
     Returns:
         配置字典
@@ -98,15 +190,7 @@ async def update_system_config(
             reason=reason,
         )
 
-        if key.startswith("auto_track_"):
-            from ...auto_track_service import get_auto_track_service
-
-            _at = get_auto_track_service()
-            if _at:
-                _at.update_params(key, value)
-
-        if key == "safety_block_motion_when_disconnected":
-            settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED = _parse_bool(value)
+        runtime_apply = _apply_runtime_update(key, value)
 
         await safe_write_audit_log(
             db,
@@ -114,13 +198,15 @@ async def update_system_config(
             module="BACKEND",
             message=(
                 f"用户={user.username} 角色={user.role} 操作=config.update "
-                f"目标={key} 结果=success"
+                f"目标={key} runtime_target={runtime_apply['target']} "
+                f"runtime_applied={runtime_apply['applied']} 结果=success"
             ),
         )
         return {
             "success": True,
             "message": f"配置 {key} 已更新",
             "config": config.to_dict(),
+            "runtime_apply": runtime_apply,
         }
 
     except ValueError as e:

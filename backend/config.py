@@ -151,6 +151,19 @@ class Settings(BaseSettings):
     # 检测到汉字时的 quality 奖励分（叠加在 0-1 质量分之上）
     ZONE_CENTER_TEXT_BONUS: float = 0.50
 
+    # ==================== Canvas 区域绘制配置 ====================
+    ZONE_DRAW_SAVED_FILL_RGBA: str = "rgba(220,40,40,0.18)"
+    ZONE_DRAW_SAVED_STROKE_RGBA: str = "rgba(255,60,60,0.75)"
+    ZONE_DRAW_SAVED_LINE_WIDTH: float = 1.5
+    ZONE_DRAW_ACTIVE_STROKE_RGBA: str = "rgba(0,255,120,0.85)"
+    ZONE_DRAW_ACTIVE_LINE_WIDTH: float = 1.5
+    ZONE_DRAW_POINT_RADIUS: int = 4
+    ZONE_DRAW_DASH_ON: int = 5
+    ZONE_DRAW_DASH_OFF: int = 4
+    ZONE_DRAW_TOOLBAR_BOTTOM_PX: int = 140
+    ZONE_DRAW_CANVAS_Z_INDEX: int = 5
+    ZONE_DRAW_TOOLBAR_Z_INDEX: int = 50
+
     # 驱离任务配置
     GUARD_MISSION_ENABLED: bool = False
     GUARD_CONFIRM_TIME_S: float = 1.5           # 入侵确认时间（秒）

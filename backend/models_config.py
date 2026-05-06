@@ -26,7 +26,7 @@ class SystemConfig(Base):
     key = Column(String(100), unique=True, nullable=False, index=True)
     value = Column(String(500), nullable=False)
     value_type = Column(String(20), nullable=False)  # 'int', 'float', 'bool', 'string'
-    category = Column(String(50), nullable=False)  # 'backend', 'frontend', 'storage'
+    category = Column(String(50), nullable=False)  # 'backend', 'hardware', 'frontend', 'frontend_draw', 'zone', 'storage', 'auto_track'
     description = Column(String(500))
     is_hot_reloadable = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

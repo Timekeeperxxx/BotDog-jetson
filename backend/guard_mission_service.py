@@ -12,7 +12,7 @@ import asyncio
 import time
 import cv2
 import numpy as np
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from .config import Settings
 from .control_service import ControlService
@@ -146,6 +146,16 @@ class GuardMissionService:
 
     def update_effective_fps(self, fps: float):
         self._effective_fps = max(1.0, fps)
+
+    def update_zone_detector_config(self, key: str, value: Any) -> bool:
+        """
+        热更新黄色区域检测器参数。
+
+        返回 True 表示当前实例已接入运行时更新并执行成功。
+        """
+        if self._zone_detector is None:
+            return False
+        return self._zone_detector.update_params(key, value)
 
     def get_status(self) -> GuardStatusDTO:
         zone_q = self._current_zone.quality if self._current_zone else 0.0

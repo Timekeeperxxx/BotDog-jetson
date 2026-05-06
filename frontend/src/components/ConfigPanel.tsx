@@ -42,16 +42,35 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
   }, [externalConfigHook, fetchConfigs]);
 
   const allConfigs = Object.values(configHook.configs);
-  const categories = Array.from(new Set(allConfigs.map(c => c.category)));
+  const categoryOrder = [
+    'backend',
+    'hardware',
+    'frontend',
+    'frontend_draw',
+    'zone',
+    'storage',
+    'auto_track',
+  ];
+  const categories = Array.from(new Set(allConfigs.map(c => c.category)))
+    .sort((a, b) => {
+      const ia = categoryOrder.indexOf(a);
+      const ib = categoryOrder.indexOf(b);
+      if (ia === -1 && ib === -1) return a.localeCompare(b);
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    });
   const adminOnlyTitle = canAdmin ? undefined : '需要 admin 权限';
 
   const categoryNames: Record<string, string> = {
     backend: '后端参数',
+    hardware: '硬件网口配置',
     frontend: '界面参数',
+    frontend_draw: 'Canvas 区域绘制配置',
     storage: '存储参数',
     auto_track: 'AI 参数',
+    zone: 'HSV / 黄区识别配置',
     camera: '摄像参数',
-    hardware: '硬件参数',
     system: '系统参数',
     navigation: '导航参数',
   };
@@ -86,8 +105,19 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
         return;
       }
 
-      await configHook.updateConfig(key, value, '前端特权指令覆写');
-      setSuccessMessage(`指令执行成功：参数 [${key}] 已重载`);
+      const result = await configHook.updateConfig(key, value, '前端特权指令覆写');
+      const runtimeApply = result.runtime_apply;
+      if (runtimeApply?.applied) {
+        if (runtimeApply.target === 'frontend') {
+          setSuccessMessage('已保存，前端刷新配置后生效');
+        } else {
+          setSuccessMessage(`已保存，运行时已生效：${runtimeApply.message}`);
+        }
+      } else if (!config.is_hot_reloadable) {
+        setSuccessMessage(`已保存，${runtimeApply?.message || '需重启后端生效'}`);
+      } else {
+        setSuccessMessage(`已保存，但运行时未生效：${runtimeApply?.message || '配置已更新'}`);
+      }
       setTimeout(() => setSuccessMessage(null), 3000);
       await configHook.fetchConfigs();
     } catch (error) {

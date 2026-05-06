@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { usersApi } from '../../api/usersApi'
 import { ToolbarButton } from '../AdminUi'
 import { clearAuthState } from '../../stores/authStore'
@@ -14,6 +15,14 @@ export function ChangePasswordModal({ onClose, force = false }: Props) {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [])
 
   const handleSubmit = async () => {
     setError(null)
@@ -43,8 +52,8 @@ export function ChangePasswordModal({ onClose, force = false }: Props) {
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
+  return createPortal(
+    <div className="fixed inset-0 z-[1000] flex items-start justify-center overflow-y-auto bg-black/70 px-4 py-6 backdrop-blur-sm sm:items-center sm:py-8">
       <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-zinc-950 p-6 shadow-2xl">
         <h3 className="text-lg font-black text-white mb-2">修改密码</h3>
         <p className="text-sm text-zinc-400 mb-5">
@@ -90,6 +99,7 @@ export function ChangePasswordModal({ onClose, force = false }: Props) {
           <ToolbarButton onClick={handleSubmit} disabled={loading}>{loading ? '提交中...' : '确认修改'}</ToolbarButton>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

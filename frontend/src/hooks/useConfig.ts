@@ -5,17 +5,21 @@
  */
 
 import { useState, useCallback } from 'react';
-import type { SystemConfig, ConfigChangeHistory, ConfigValidationRule } from '../types/config';
-import { getApiUrl } from '../config/api';
+import type {
+  SystemConfig,
+  ConfigChangeHistory,
+  ConfigValidationRule,
+  ConfigCategory,
+  ConfigUpdateResponse,
+} from '../types/config';
+import { apiFetch } from '../api/apiFetch';
 
 /**
  * 配置 API Hook
  *
- * @param baseURL 后端 API 基础 URL
  * @returns 配置管理状态和方法
  */
-export function useConfig(baseURL?: string) {
-  const apiUrl = baseURL || getApiUrl('');
+export function useConfig() {
   const [state, setState] = useState({
     configs: {} as Record<string, SystemConfig>,
     loading: false,
@@ -28,21 +32,13 @@ export function useConfig(baseURL?: string) {
    * @param category 可选的类别过滤器
    * @returns 配置对象字典
    */
-  const fetchConfigs = useCallback(async (category?: 'backend' | 'frontend' | 'storage') => {
+  const fetchConfigs = useCallback(async (category?: ConfigCategory) => {
     setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
-      const url = category
-        ? `${apiUrl}/api/v1/config?category=${category}`
-        : `${apiUrl}/api/v1/config`;
-
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        throw new Error(`获取配置失败: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await apiFetch<{ configs: Record<string, SystemConfig> }>(
+        category ? `/api/v1/config?category=${category}` : '/api/v1/config',
+      );
       const configs = data.configs as Record<string, SystemConfig>;
 
       // 转换配置值的类型
@@ -50,7 +46,7 @@ export function useConfig(baseURL?: string) {
       for (const [key, config] of Object.entries(configs)) {
         typedConfigs[key] = {
           ...config,
-          value: convertValue(config.value as string, config.value_type),
+          value: convertValue(config.value, config.value_type),
         };
       }
 
@@ -70,7 +66,7 @@ export function useConfig(baseURL?: string) {
       }));
       throw error;
     }
-  }, [baseURL]);
+  }, []);
 
   /**
    * 更新配置
@@ -83,12 +79,12 @@ export function useConfig(baseURL?: string) {
   const updateConfig = useCallback(async (
     key: string,
     value: string | number | boolean,
-    reason?: string
+    reason?: string,
   ) => {
     setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
-      const response = await fetch(`${apiUrl}/api/v1/config`, {
+      const data = await apiFetch<ConfigUpdateResponse>('/api/v1/config', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -96,17 +92,9 @@ export function useConfig(baseURL?: string) {
         body: JSON.stringify({
           key,
           value: String(value),
-          changed_by: 'frontend_user',
           reason: reason || '通过前端界面更新',
         }),
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || '更新配置失败');
-      }
-
-      const data = await response.json();
 
       // 更新本地状态
       setState(prev => ({
@@ -121,10 +109,7 @@ export function useConfig(baseURL?: string) {
         loading: false,
       }));
 
-      // 重新获取所有配置以保持同步
-      await fetchConfigs();
-
-      return data.config;
+      return data;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : '未知错误';
       setState(prev => ({
@@ -134,7 +119,7 @@ export function useConfig(baseURL?: string) {
       }));
       throw error;
     }
-  }, [baseURL, fetchConfigs]);
+  }, []);
 
   /**
    * 获取配置历史
@@ -145,23 +130,17 @@ export function useConfig(baseURL?: string) {
    */
   const fetchHistory = useCallback(async (key?: string, limit: number = 50) => {
     try {
-      const url = key
-        ? `${apiUrl}/api/v1/config/history?key=${key}&limit=${limit}`
-        : `${apiUrl}/api/v1/config/history?limit=${limit}`;
-
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        throw new Error(`获取配置历史失败: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await apiFetch<{ history: ConfigChangeHistory[] }>(
+        key
+          ? `/api/v1/config/history?key=${key}&limit=${limit}`
+          : `/api/v1/config/history?limit=${limit}`,
+      );
       return data.history as ConfigChangeHistory[];
     } catch (error) {
       console.error('获取配置历史失败:', error);
       return [];
     }
-  }, [baseURL]);
+  }, []);
 
   /**
    * 验证配置值
@@ -183,6 +162,36 @@ export function useConfig(baseURL?: string) {
       control_rate_limit_hz: { min: 5, max: 50 },
       ws_max_clients_per_ip: { min: 1, max: 20 },
       video_watchdog_timeout_s: { min: 1, max: 10 },
+      zone_draw_saved_line_width: { min: 0.1, max: 20 },
+      zone_draw_active_line_width: { min: 0.1, max: 20 },
+      zone_draw_point_radius: { min: 1, max: 20 },
+      zone_draw_dash_on: { min: 1, max: 50 },
+      zone_draw_dash_off: { min: 0, max: 50 },
+      zone_draw_toolbar_bottom_px: { min: 0, max: 500 },
+      zone_draw_canvas_z_index: { min: -1000, max: 1000 },
+      zone_draw_toolbar_z_index: { min: -1000, max: 1000 },
+      zone_yellow_h_low: { min: 0, max: 180 },
+      zone_yellow_h_high: { min: 0, max: 180 },
+      zone_yellow_s_low: { min: 0, max: 255 },
+      zone_yellow_s_high: { min: 0, max: 255 },
+      zone_yellow_v_low: { min: 0, max: 255 },
+      zone_yellow_v_high: { min: 0, max: 255 },
+      zone_border_v_threshold: { min: 0, max: 255 },
+      zone_border_expand_px: { min: 1, max: 30 },
+      zone_min_area_px: { min: 1, max: 1000000 },
+      zone_max_area_ratio: { min: 0.01, max: 1.0 },
+      zone_min_aspect: { min: 1.0, max: 50.0 },
+      zone_max_aspect: { min: 1.0, max: 50.0 },
+      zone_min_solidity: { min: 0.0, max: 1.0 },
+      zone_roi_top_ratio: { min: 0.0, max: 1.0 },
+      zone_morph_kernel_size: { min: 1, max: 51 },
+      zone_w_area: { min: 0.0, max: 1.0 },
+      zone_w_solid: { min: 0.0, max: 1.0 },
+      zone_w_border: { min: 0.0, max: 1.0 },
+      zone_center_crop_ratio: { min: 0.1, max: 1.0 },
+      zone_center_black_v_threshold: { min: 0, max: 255 },
+      zone_center_black_min_ratio: { min: 0.0, max: 1.0 },
+      zone_center_text_bonus: { min: 0.0, max: 5.0 },
       ui_alert_ack_timeout_s: { min: 10, max: 600 },
       telemetry_display_hz: { min: 5, max: 30 },
       snapshot_retention_days: { min: 7, max: 365 },
@@ -241,16 +250,18 @@ export function useConfig(baseURL?: string) {
  * @param valueType 值类型
  * @returns 转换后的值
  */
-function convertValue(value: string, valueType: 'int' | 'float' | 'bool' | 'string'): string | number | boolean {
+function convertValue(value: string | number | boolean, valueType: 'int' | 'float' | 'bool' | 'string'): string | number | boolean {
+  const normalized = typeof value === 'string' ? value : String(value);
   switch (valueType) {
     case 'int':
-      return parseInt(value, 10);
+      return parseInt(normalized, 10);
     case 'float':
-      return parseFloat(value);
+      return parseFloat(normalized);
     case 'bool':
-      return value === 'true' || value === '1';
+      if (typeof value === 'boolean') return value;
+      return normalized === 'true' || normalized === '1';
     case 'string':
     default:
-      return value;
+      return normalized;
   }
 }

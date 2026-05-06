@@ -13,8 +13,9 @@
  * 本组件在存储前将点坐标从 canvas 百分比换算到后端像素坐标。
  */
 
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { getApiUrl } from '../config/api';
+import { useConfig } from '../hooks/useConfig';
 
 interface Point {
   x: number; // canvas 内 [0,1] 归一化坐标
@@ -37,10 +38,58 @@ interface Props {
 
 export const ZoneDrawer: React.FC<Props> = ({ frameW, frameH, active, onClose }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const configHook = useConfig();
+  const { fetchConfigs } = configHook;
   const [points, setPoints] = useState<Point[]>([]); // 当前正在绘的点（归一化）
   const [savedZones, setSavedZones] = useState<SavedZone[]>([]);
   const [saving, setSaving] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+
+  const defaultDrawConfig = useMemo(() => ({
+    savedFillRGBA: 'rgba(220,40,40,0.18)',
+    savedStrokeRGBA: 'rgba(255,60,60,0.75)',
+    savedLineWidth: 1.5,
+    activeStrokeRGBA: 'rgba(0,255,120,0.85)',
+    activeLineWidth: 1.5,
+    pointRadius: 4,
+    dashOn: 5,
+    dashOff: 4,
+    toolbarBottomPx: 140,
+    canvasZIndex: 5,
+    toolbarZIndex: 50,
+  }), []);
+
+  useEffect(() => {
+    if (!active) return;
+    void fetchConfigs('frontend_draw');
+  }, [active, fetchConfigs]);
+
+  const drawConfig = useMemo(() => {
+    const configs = configHook.configs;
+    const getString = (key: string, fallback: string) => {
+      const value = configs[key]?.value;
+      return typeof value === 'string' ? value : fallback;
+    };
+    const getNumber = (key: string, fallback: number) => {
+      const value = configs[key]?.value;
+      const num = typeof value === 'number' ? value : Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    };
+
+    return {
+      savedFillRGBA: getString('zone_draw_saved_fill_rgba', defaultDrawConfig.savedFillRGBA),
+      savedStrokeRGBA: getString('zone_draw_saved_stroke_rgba', defaultDrawConfig.savedStrokeRGBA),
+      savedLineWidth: getNumber('zone_draw_saved_line_width', defaultDrawConfig.savedLineWidth),
+      activeStrokeRGBA: getString('zone_draw_active_stroke_rgba', defaultDrawConfig.activeStrokeRGBA),
+      activeLineWidth: getNumber('zone_draw_active_line_width', defaultDrawConfig.activeLineWidth),
+      pointRadius: getNumber('zone_draw_point_radius', defaultDrawConfig.pointRadius),
+      dashOn: getNumber('zone_draw_dash_on', defaultDrawConfig.dashOn),
+      dashOff: getNumber('zone_draw_dash_off', defaultDrawConfig.dashOff),
+      toolbarBottomPx: getNumber('zone_draw_toolbar_bottom_px', defaultDrawConfig.toolbarBottomPx),
+      canvasZIndex: getNumber('zone_draw_canvas_z_index', defaultDrawConfig.canvasZIndex),
+      toolbarZIndex: getNumber('zone_draw_toolbar_z_index', defaultDrawConfig.toolbarZIndex),
+    };
+  }, [configHook.configs, defaultDrawConfig]);
 
   // ── 加载已有区域 ────────────────────────────────────────────
   const fetchZones = useCallback(async () => {
@@ -85,10 +134,10 @@ export const ZoneDrawer: React.FC<Props> = ({ frameW, frameH, active, onClose })
           if (i === 0) ctx.moveTo(cx2, cy2); else ctx.lineTo(cx2, cy2);
         });
         ctx.closePath();
-        ctx.fillStyle = 'rgba(220,40,40,0.18)';
+        ctx.fillStyle = drawConfig.savedFillRGBA;
         ctx.fill();
-        ctx.strokeStyle = 'rgba(255,60,60,0.75)';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = drawConfig.savedStrokeRGBA;
+        ctx.lineWidth = drawConfig.savedLineWidth;
         ctx.stroke();
         // 区域名称
         ctx.fillStyle = 'rgba(255,100,100,0.9)';
@@ -110,20 +159,20 @@ export const ZoneDrawer: React.FC<Props> = ({ frameW, frameH, active, onClose })
       if (i === 0) ctx.moveTo(pt.x * cw, pt.y * ch);
       else ctx.lineTo(pt.x * cw, pt.y * ch);
     });
-    ctx.strokeStyle = 'rgba(0,255,120,0.85)';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = drawConfig.activeStrokeRGBA;
+    ctx.lineWidth = drawConfig.activeLineWidth;
+    ctx.setLineDash(drawConfig.dashOff > 0 ? [drawConfig.dashOn, drawConfig.dashOff] : [drawConfig.dashOn]);
     ctx.stroke();
 
     // 顶点圆点
     for (const pt of points) {
       ctx.beginPath();
-      ctx.arc(pt.x * cw, pt.y * ch, 4, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(0,255,120,0.9)';
+      ctx.arc(pt.x * cw, pt.y * ch, drawConfig.pointRadius, 0, Math.PI * 2);
+      ctx.fillStyle = drawConfig.activeStrokeRGBA;
       ctx.fill();
     }
     ctx.restore();
-  }, [points, savedZones, active, frameW, frameH]);
+  }, [points, savedZones, active, frameW, frameH, drawConfig]);
 
   useEffect(() => { draw(); }, [draw]);
 
@@ -213,7 +262,7 @@ export const ZoneDrawer: React.FC<Props> = ({ frameW, frameH, active, onClose })
           inset: 0,
           width: '100%',
           height: '100%',
-          zIndex: 5,
+          zIndex: drawConfig.canvasZIndex,
           cursor: active ? 'crosshair' : 'default',
           pointerEvents: active ? 'auto' : 'none',
         }}
@@ -221,7 +270,7 @@ export const ZoneDrawer: React.FC<Props> = ({ frameW, frameH, active, onClose })
 
       {/* 绘制工具栏 */}
       {active && (
-        <div style={toolbarStyles.bar}>
+        <div style={{ ...toolbarStyles.bar, bottom: drawConfig.toolbarBottomPx, zIndex: drawConfig.toolbarZIndex }}>
           <span style={toolbarStyles.hint}>
             {points.length === 0
               ? '点击画面添加顶点（至少 3 个）'
