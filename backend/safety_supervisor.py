@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .config import settings
 from .state_machine import SystemState
 from .state_machine_state import get_state_machine
 
@@ -63,7 +64,10 @@ class SafetySupervisor:
             state = getattr(state_machine, "state", None)
             if state == SystemState.E_STOP_TRIGGERED:
                 reasons.append("系统处于急停状态")
-            if state == SystemState.DISCONNECTED:
+            if (
+                state == SystemState.DISCONNECTED
+                and settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED
+            ):
                 reasons.append("底层链路断开")
 
         if adapter_status is not None and adapter_status.get("ready") is False:

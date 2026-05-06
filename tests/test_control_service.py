@@ -2,6 +2,7 @@ import pytest
 import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock
+from backend.config import settings
 from backend.control_service import (
     ControlService,
     RESULT_ACCEPTED,
@@ -39,6 +40,7 @@ def state_machine_context():
     set_state_machine(sm)
     yield sm
     set_state_machine(None)
+    settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED = True
 
 @pytest.mark.asyncio
 async def test_handle_command_accepted(control_service, adapter):
@@ -57,6 +59,8 @@ async def test_handle_command_not_ready(control_service, adapter):
     adapter.is_ready = MagicMock(return_value=False)
     res = await control_service.handle_command("forward")
     assert res.result == RESULT_REJECTED_SAFETY_BLOCKED
+    assert res.safety_reason == "控制适配器未就绪"
+    assert res.safety_reasons == ["控制适配器未就绪"]
 
 @pytest.mark.asyncio
 async def test_handle_command_adapter_error(control_service, adapter):
@@ -71,6 +75,20 @@ async def test_handle_command_blocked_when_disconnected(adapter, state_machine_c
     cs = ControlService(adapter=adapter, cmd_rate_limit_ms=0)
     res = await cs.handle_command("forward")
     assert res.result == RESULT_REJECTED_SAFETY_BLOCKED
+    assert res.safety_reason == "底层链路断开"
+    assert res.safety_reasons == ["底层链路断开"]
+
+
+@pytest.mark.asyncio
+async def test_handle_command_allows_disconnected_when_config_disabled(adapter, state_machine_context):
+    settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED = False
+    state_machine_context._state = SystemState.DISCONNECTED
+    adapter.send_command = AsyncMock()
+    cs = ControlService(adapter=adapter, cmd_rate_limit_ms=0)
+    res = await cs.handle_command("forward")
+    assert res.result == RESULT_ACCEPTED
+    assert res.safety_reason is None
+    assert res.safety_reasons == []
 
 @pytest.mark.asyncio
 async def test_handle_command_rate_limit(adapter):

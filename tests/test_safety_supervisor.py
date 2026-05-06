@@ -1,7 +1,8 @@
 import time
 
+from backend.config import settings
 from backend.safety_supervisor import SafetySupervisor
-from backend.state_machine import StateMachine
+from backend.state_machine import StateMachine, SystemState
 from backend.state_machine_state import set_state_machine
 
 
@@ -14,6 +15,7 @@ def _set_ready_state_machine() -> StateMachine:
 
 def teardown_function():
     set_state_machine(None)
+    settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED = True
 
 
 def test_stop_always_allowed():
@@ -39,6 +41,15 @@ def test_non_motion_command_not_blocked():
 
 def test_forward_allowed_when_state_normal_and_adapter_ready():
     _set_ready_state_machine()
+    decision = SafetySupervisor().evaluate_command("forward", adapter_status={"ready": True})
+    assert decision.allowed is True
+    assert decision.reasons == []
+
+
+def test_forward_allowed_when_disconnected_block_disabled():
+    settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED = False
+    state_machine = _set_ready_state_machine()
+    state_machine._state = SystemState.DISCONNECTED
     decision = SafetySupervisor().evaluate_command("forward", adapter_status={"ready": True})
     assert decision.allowed is True
     assert decision.reasons == []

@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     CONTROL_WATCHDOG_TIMEOUT_MS: int = 500
     # 最小命令间隔（ms）：防止前端过快发命令（stop 命令跳过此限制）
     CONTROL_CMD_RATE_LIMIT_MS: int = 50
+    # SafetySupervisor 是否在底层 DISCONNECTED 时阻止运动命令。
+    # 开发调试可设为 false，真机部署建议保持 true。
+    SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED: bool = True
 
     # ==================== 黄色区域识别参数 ====================
     # HSV 色调范围（OpenCV H: 0-180，纯黄约 25-35）

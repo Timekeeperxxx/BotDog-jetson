@@ -104,6 +104,7 @@ class ControlService:
             )
 
         # 3. 统一安全检查（stop 永远允许；监督器异常时默认拒绝非 stop 命令）
+        decision = None
         try:
             supervisor = get_safety_supervisor()
             decision = supervisor.evaluate_command(
@@ -117,8 +118,9 @@ class ControlService:
                     ack_cmd=cmd,
                     result=RESULT_REJECTED_SAFETY_BLOCKED,
                     latency_ms=_elapsed_ms(start_ts),
+                    safety_reason="SafetySupervisor 判定异常",
+                    safety_reasons=["SafetySupervisor 判定异常"],
                 )
-            decision = None
 
         if decision is not None and not decision.allowed:
             control_logger.warning(
@@ -131,6 +133,8 @@ class ControlService:
                 ack_cmd=cmd,
                 result=RESULT_REJECTED_SAFETY_BLOCKED,
                 latency_ms=_elapsed_ms(start_ts),
+                safety_reason=decision.reason,
+                safety_reasons=decision.reasons,
             )
 
         # 4. 检查适配器就绪状态

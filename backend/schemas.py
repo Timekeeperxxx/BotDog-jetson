@@ -117,6 +117,8 @@ class ControlAckDTO(BaseModel):
     ack_cmd: str = Field(..., description="确认的指令类型")
     result: str = Field(..., description="结果：ACCEPTED/REJECTED_LOW_BATTERY/REJECTED_E_STOP/REJECTED_SAFETY_BLOCKED/RATE_LIMITED/REJECTED_ADAPTER_NOT_READY/REJECTED_ADAPTER_ERROR")
     latency_ms: float = Field(..., description="处理延迟（毫秒）")
+    safety_reason: str | None = Field(default=None, description="SafetySupervisor 的主拒绝原因")
+    safety_reasons: list[str] = Field(default_factory=list, description="SafetySupervisor 的详细拒绝原因列表")
 
 
 class EStopResponse(BaseModel):

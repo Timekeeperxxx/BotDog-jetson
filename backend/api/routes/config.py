@@ -4,9 +4,21 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ...config import settings
 from ...database import get_db
 
 router = APIRouter(prefix="/api/v1/config", tags=["config"])
+
+
+def _parse_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"布尔值无效: {value}")
 
 
 @router.get("")
@@ -87,6 +99,9 @@ async def update_system_config(
             _at = get_auto_track_service()
             if _at:
                 _at.update_params(key, value)
+
+        if key == "safety_block_motion_when_disconnected":
+            settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED = _parse_bool(value)
 
         return {
             "success": True,

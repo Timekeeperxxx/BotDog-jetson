@@ -67,6 +67,13 @@ class ConfigService:
             "description": "视频看门狗超时时间 (秒)",
             "is_hot_reloadable": True,
         },
+        "safety_block_motion_when_disconnected": {
+            "value": "true" if settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED else "false",
+            "value_type": "bool",
+            "category": "backend",
+            "description": "底层断链时是否阻止运动命令（开发调试可关闭，真机部署建议开启）",
+            "is_hot_reloadable": True,
+        },
 
         # 前端配置
         "ui_alert_ack_timeout_s": {
