@@ -93,7 +93,7 @@ Thumbs.db
 *.bak
 *.swp
 *~.nib
+tmp/
 
 
 backend/scripts/
-
