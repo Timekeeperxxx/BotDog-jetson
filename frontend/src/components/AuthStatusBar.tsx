@@ -63,7 +63,7 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
   if (variant === 'overlay') {
     return (
       <div
-        className="fixed right-4 top-4 z-40 flex items-center gap-2 rounded-lg border border-white/10 bg-black/75 px-3 py-2 text-xs text-white shadow-lg backdrop-blur-sm"
+        className="fixed left-1/2 top-4 z-40 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-white/10 bg-black/75 px-3 py-2 text-xs text-white shadow-lg backdrop-blur-sm"
         style={{ maxWidth: 'calc(100vw - 2rem)' }}
       >
         <User size={12} className="shrink-0 text-zinc-400" />
