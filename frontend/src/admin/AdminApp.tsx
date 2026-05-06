@@ -82,15 +82,16 @@ export function AdminApp() {
 
   const eventState = useEventWebSocket()
   const navWs = useNavWebSocket()
+  const { setInitialState } = navWs
 
   useEffect(() => {
     if (!navState) return
-    navWs.setInitialState({
+    setInitialState({
       robotPose: navState.robot_pose,
       navigationStatus: navState.navigation_status,
       localizationStatus: navState.localization_status,
     })
-  }, [navState])
+  }, [navState, setInitialState])
 
   useEffect(() => {
     const visibleSections = getVisibleSections(role)
@@ -268,6 +269,7 @@ export function AdminApp() {
   }, [
     activeSection,
     adminLoading,
+    deleteEvidenceItem,
     configHook,
     configHook.loading,
     configList,
@@ -285,10 +287,19 @@ export function AdminApp() {
     openEditSource,
     openNewSource,
     refreshAdminCore,
+    refreshEvidence,
+    refreshNavigationData,
     refreshMapDetails,
     saveConfigValue,
+    setEvidenceSearch,
+    setNavSearch,
     selectedMapId,
     systemInfo,
+    setSourceToDelete,
+    setSelectedMapId,
+    setSourceForm,
+    setVideoSearch,
+    setWaypointToDelete,
     tasks,
     videoSearch,
     videoSources,
