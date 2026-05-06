@@ -2,7 +2,12 @@ import { useEffect, useState } from 'react'
 import { login } from '../api/auth'
 import { hasAuthSession, setAuthState, useAuthState } from '../stores/authStore'
 
-export function LoginPage() {
+interface LoginPageProps {
+  /** 登录成功后的回调。提供此 prop 时不会自动跳转到 /，由调用方控制后续行为。 */
+  onSuccess?: () => void
+}
+
+export function LoginPage({ onSuccess }: LoginPageProps = {}) {
   const auth = useAuthState()
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('')
@@ -11,9 +16,13 @@ export function LoginPage() {
 
   useEffect(() => {
     if (hasAuthSession()) {
-      window.location.assign('/')
+      if (onSuccess) {
+        onSuccess()
+      } else {
+        window.location.assign('/')
+      }
     }
-  }, [auth.accessToken, auth.authBypass, auth.role])
+  }, [auth.accessToken, auth.authBypass, auth.role, onSuccess])
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -26,7 +35,11 @@ export function LoginPage() {
         username: result.user.username,
         role: result.user.role,
       })
-      window.location.assign('/')
+      if (!onSuccess) {
+        window.location.assign('/')
+      }
+      // 若提供了 onSuccess，setAuthState 会触发 useAuthState 订阅者更新，
+      // NavPatrolAuthRoot 会因此重新渲染并切换到 PcdMapDemoPage
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败，请检查用户名或密码')
     } finally {
