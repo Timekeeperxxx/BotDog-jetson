@@ -26,7 +26,7 @@ import { AdminDiagnosticsPage } from './pages/AdminDiagnosticsPage'
 import { AdminLayout } from './components/AdminLayout'
 import { AdminHeader, type AdminHeaderStatusItem } from './components/AdminHeader'
 import { AdminSidebar, type AdminRole } from './components/AdminSidebar'
-import { adminNavItems, getVisibleSections, getVisibleAdminMenuItems } from './adminMenu'
+import { adminNavItems, getVisibleSections } from './adminMenu'
 import { useAuthState } from '../stores/authStore'
 import type { TaskDefinition } from '../types/taskWorkflow'
 
@@ -257,8 +257,6 @@ export function AdminApp() {
     </>
   )
 
-  const visibleNavItems = useMemo(() => getVisibleAdminMenuItems(role), [role])
-
   const content = useMemo(() => {
     if (activeSection === 'dashboard') {
       return (
@@ -435,7 +433,8 @@ export function AdminApp() {
           statusItems={headerStatusItems}
           actions={headerActions}
           error={adminError}
-          mobileSections={visibleNavItems.map((item) => ({ key: item.key, label: item.label }))}
+          mobileItems={adminNavItems}
+          role={role}
           activeSection={activeSection}
           onSectionChange={setActiveSection}
         />

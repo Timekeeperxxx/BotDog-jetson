@@ -1,16 +1,13 @@
 import type { ReactNode } from 'react'
 import { AuthStatusBar } from '../../components/AuthStatusBar'
 import type { AdminSection } from '../adminTypes'
+import type { AdminMenuItem, AdminRole } from './AdminSidebar'
+import { AdminMobileNav } from './AdminMobileNav'
 
 export interface AdminHeaderStatusItem {
   icon: ReactNode
   label: string
   value: string
-}
-
-export interface AdminHeaderSectionOption {
-  key: AdminSection
-  label: string
 }
 
 interface AdminHeaderProps {
@@ -19,7 +16,8 @@ interface AdminHeaderProps {
   statusItems?: AdminHeaderStatusItem[]
   actions?: ReactNode
   error?: string | null
-  mobileSections?: AdminHeaderSectionOption[]
+  mobileItems?: AdminMenuItem[]
+  role?: AdminRole
   activeSection?: AdminSection
   onSectionChange?: (section: AdminSection) => void
 }
@@ -42,7 +40,8 @@ export function AdminHeader({
   statusItems = [],
   actions,
   error,
-  mobileSections = [],
+  mobileItems = [],
+  role = 'viewer',
   activeSection,
   onSectionChange,
 }: AdminHeaderProps) {
@@ -53,20 +52,13 @@ export function AdminHeader({
           <div className="text-[11px] font-black uppercase tracking-[0.28em] text-zinc-500">机器狗后台管理界面</div>
           <div className="mt-2 text-2xl font-black text-white">{title}</div>
           <div className="mt-1 text-sm text-zinc-400">{error ? `加载异常：${error}` : description}</div>
-          {mobileSections.length > 0 && activeSection && onSectionChange ? (
-            <div className="mt-3 xl:hidden">
-              <select
-                value={activeSection}
-                onChange={(event) => onSectionChange(event.target.value as AdminSection)}
-                className="w-full rounded-2xl border border-white/10 bg-black/60 px-4 py-3 text-sm text-white outline-none focus:border-white/30"
-              >
-                {mobileSections.map((item) => (
-                  <option key={item.key} value={item.key}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+          {activeSection && onSectionChange ? (
+            <AdminMobileNav
+              items={mobileItems}
+              activeSection={activeSection}
+              onSectionChange={onSectionChange}
+              role={role}
+            />
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-3">
