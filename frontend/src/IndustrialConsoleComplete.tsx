@@ -21,6 +21,7 @@ import { useVideoReconnectEffects } from './hooks/useVideoReconnectEffects';
 import { useStartupLog } from './hooks/useStartupLog';
 import { Sidebar, type SidebarTab } from './components/layout/Sidebar';
 import { TopHeader } from './components/layout/TopHeader';
+import { AuthStatusBar } from './components/AuthStatusBar';
 import { EvidencePanel } from './components/evidence/EvidencePanel';
 import { ConsolePage } from './components/pages/ConsolePage';
 import { GuardPage } from './components/pages/GuardPage';
@@ -125,6 +126,7 @@ export default function IndustrialConsoleComplete() {
 
   return (
     <div className="flex h-screen w-full bg-[#050506] text-white font-sans overflow-hidden antialiased selection:bg-white selection:text-black">
+      <AuthStatusBar variant="overlay" />
       <Sidebar
         activeTab={activeTab}
         onTabChange={setActiveTab}

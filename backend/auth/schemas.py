@@ -15,6 +15,11 @@ class AuthUserResponse(BaseModel):
     role: str
     must_change_password: bool
 
+
+class AuthStatusResponse(BaseModel):
+    auth_enabled: bool
+    current_user: AuthUserResponse
+
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -33,6 +38,7 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=8)
     role: str = Field(..., pattern="^(viewer|operator|admin)$")
     enabled: bool = True
+    must_change_password: bool = False
 
 class UserUpdate(BaseModel):
     role: str | None = Field(None, pattern="^(viewer|operator|admin)$")

@@ -19,6 +19,7 @@ export interface CreateUserPayload {
   password?: string
   role: Role
   enabled?: boolean
+  must_change_password?: boolean
 }
 
 export interface UpdateUserPayload {

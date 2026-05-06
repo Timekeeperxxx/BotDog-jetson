@@ -82,7 +82,28 @@ def test_me_returns_current_user(client):
     token = response.json()["access_token"]
     response = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
-    assert response.json() == {"username": "admin", "role": "admin"}
+    assert response.json() == {
+        "id": 1,
+        "username": "admin",
+        "role": "admin",
+        "must_change_password": False,
+    }
+
+
+def test_auth_status_returns_current_user_fields(client):
+    response = client.post("/api/v1/auth/login", json={"username": "admin", "password": "ValidPassword123!"})
+    token = response.json()["access_token"]
+    res = client.get("/api/v1/auth/status", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["auth_enabled"] is True
+    assert body["current_user"] == {
+        "id": 1,
+        "username": "admin",
+        "role": "admin",
+        "must_change_password": False,
+    }
+    assert "token_version" not in body["current_user"]
 
 
 def test_auth_disabled_allows_dev_admin(monkeypatch, app):
@@ -90,13 +111,25 @@ def test_auth_disabled_allows_dev_admin(monkeypatch, app):
     with TestClient(app) as local_client:
         response = local_client.get("/api/v1/auth/me")
         assert response.status_code == 200
-        assert response.json()["username"] == "dev"
-        assert response.json()["role"] == "admin"
+        assert response.json() == {
+            "id": 0,
+            "username": "dev",
+            "role": "admin",
+            "must_change_password": False,
+        }
 
 
 def test_me_allows_dev_user_when_auth_disabled(monkeypatch, app):
     monkeypatch.setattr(settings, "AUTH_ENABLED", False)
     with TestClient(app) as local_client:
-        response = local_client.get("/api/v1/auth/me")
+        response = local_client.get("/api/v1/auth/status")
         assert response.status_code == 200
-        assert response.json() == {"username": "dev", "role": "admin"}
+        assert response.json() == {
+            "auth_enabled": False,
+            "current_user": {
+                "id": 0,
+                "username": "dev",
+                "role": "admin",
+                "must_change_password": False,
+            },
+        }

@@ -4,13 +4,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from ...models import User
+from ...config import settings
 from ...auth.security import verify_password
 from ...auth.dependencies import require_authenticated
-from ...auth.schemas import LoginRequest, LoginResponse, AuthUserInternal, AuthUserResponse
-from ...auth.service import (
-    create_access_token,
-    safe_write_audit_log,
+from ...auth.schemas import (
+    AuthStatusResponse,
+    AuthUserInternal,
+    AuthUserResponse,
+    LoginRequest,
+    LoginResponse,
 )
+from ...auth.service import create_access_token, safe_write_audit_log
 from ...database import get_db
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
@@ -86,12 +90,11 @@ async def auth_login(
     )
 
 
-@router.get("/me", response_model=AuthUserResponse)
-async def auth_me(user: AuthUserInternal = Depends(require_authenticated), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.id == user.id))
+async def _load_auth_user(db: AsyncSession, user_id: int) -> AuthUserResponse | None:
+    result = await db.execute(select(User).where(User.id == user_id))
     db_user = result.scalar_one_or_none()
     if not db_user:
-        raise HTTPException(status_code=401, detail="用户不存在")
+        return None
     return AuthUserResponse(
         id=db_user.id,
         username=db_user.username,
@@ -100,14 +103,39 @@ async def auth_me(user: AuthUserInternal = Depends(require_authenticated), db: A
     )
 
 
-@router.get("/status")
-async def auth_status(user=Depends(require_authenticated)) -> dict:
+@router.get("/me", response_model=AuthUserResponse)
+async def auth_me(
+    user: AuthUserInternal = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_db),
+) -> AuthUserResponse:
+    if not settings.AUTH_ENABLED:
+        return AuthUserResponse(id=0, username="dev", role="admin", must_change_password=False)
+    current_user = await _load_auth_user(db, user.id)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="用户不存在")
+    return current_user
+
+
+@router.get("/status", response_model=AuthStatusResponse)
+async def auth_status(
+    user: AuthUserInternal = Depends(require_authenticated),
+    db: AsyncSession = Depends(get_db),
+) -> AuthStatusResponse:
     """返回鉴权状态和当前用户信息，供后台安全总览使用。"""
-    from ...config import settings
-    return {
-        "auth_enabled": settings.AUTH_ENABLED,
-        "current_user": {
-            "username": user.username,
-            "role": user.role,
-        },
-    }
+    if not settings.AUTH_ENABLED:
+        return AuthStatusResponse(
+            auth_enabled=False,
+            current_user=AuthUserResponse(
+                id=0,
+                username="dev",
+                role="admin",
+                must_change_password=False,
+            ),
+        )
+    current_user = await _load_auth_user(db, user.id)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="用户不存在")
+    return AuthStatusResponse(
+        auth_enabled=settings.AUTH_ENABLED,
+        current_user=current_user,
+    )

@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config/api'
+import { apiFetch } from './apiFetch'
 
 export type LoginResult = {
   access_token: string
@@ -21,8 +22,10 @@ export type AuthUser = {
 export type AuthStatusResult = {
   auth_enabled: boolean
   current_user: {
+    id: number
     username: string
     role: 'viewer' | 'operator' | 'admin'
+    must_change_password: boolean
   }
 }
 
@@ -45,29 +48,9 @@ export async function login(username: string, password: string): Promise<LoginRe
 }
 
 export async function getCurrentUser(): Promise<AuthUser> {
-  const response = await fetch(getApiUrl('/api/v1/auth/me'))
-  const contentType = response.headers.get('content-type') || ''
-  if (!response.ok) {
-    let message = `HTTP ${response.status}`
-    if (contentType.includes('application/json')) {
-      const data = await response.json().catch(() => ({}))
-      message = data.detail || message
-    }
-    throw new Error(message)
-  }
-  return response.json() as Promise<AuthUser>
+  return apiFetch<AuthUser>('/api/v1/auth/me')
 }
 
 export async function getAuthStatus(): Promise<AuthStatusResult> {
-  const response = await fetch(getApiUrl('/api/v1/auth/status'))
-  const contentType = response.headers.get('content-type') || ''
-  if (!response.ok) {
-    let message = `HTTP ${response.status}`
-    if (contentType.includes('application/json')) {
-      const data = await response.json().catch(() => ({}))
-      message = data.detail || message
-    }
-    throw new Error(message)
-  }
-  return response.json() as Promise<AuthStatusResult>
+  return apiFetch<AuthStatusResult>('/api/v1/auth/status')
 }

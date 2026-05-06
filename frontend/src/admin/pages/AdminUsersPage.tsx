@@ -7,7 +7,7 @@ export function AdminUsersPage() {
   const auth = useAuthState()
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [pageError, setPageError] = useState<string | null>(null)
 
   const [formOpen, setFormOpen] = useState(false)
   const [editUser, setEditUser] = useState<User | null>(null)
@@ -27,6 +27,7 @@ export function AdminUsersPage() {
   const [resetUser, setResetUser] = useState<User | null>(null)
   const [newPassword, setNewPassword] = useState('')
   const [resetConfirmPassword, setResetConfirmPassword] = useState('')
+  const [resetError, setResetError] = useState<string | null>(null)
 
   const [confirmAction, setConfirmAction] = useState<{
     type: 'delete' | 'disable' | 'changeRole' | 'resetPassword'
@@ -36,12 +37,12 @@ export function AdminUsersPage() {
 
   const fetchUsers = async () => {
     setLoading(true)
-    setError(null)
+    setPageError(null)
     try {
       const data = await usersApi.listUsers()
       setUsers(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '获取用户列表失败')
+      setPageError(err instanceof Error ? err.message : '获取用户列表失败')
     } finally {
       setLoading(false)
     }
@@ -69,6 +70,7 @@ export function AdminUsersPage() {
     setRole('viewer')
     setEnabled(true)
     setMustChangePassword(true)
+    setFormError(null)
     setFormOpen(true)
   }
 
@@ -78,6 +80,7 @@ export function AdminUsersPage() {
     setRole(u.role)
     setEnabled(u.enabled)
     setMustChangePassword(u.must_change_password)
+    setFormError(null)
     setFormOpen(true)
   }
 
@@ -135,7 +138,7 @@ export function AdminUsersPage() {
   const handleExecuteConfirm = async () => {
     if (!confirmAction) return
     setSaving(true)
-    setError(null)
+    setPageError(null)
     const { type, user, targetRole } = confirmAction
     try {
       if (type === 'delete') {
@@ -154,7 +157,7 @@ export function AdminUsersPage() {
       }
       await fetchUsers()
     } catch (err) {
-      setError(err instanceof Error ? err.message : '操作失败')
+      setPageError(err instanceof Error ? err.message : '操作失败')
     } finally {
       setConfirmAction(null)
       setSaving(false)
@@ -169,13 +172,14 @@ export function AdminUsersPage() {
     setResetUser(u)
     setNewPassword('')
     setResetConfirmPassword('')
+    setResetError(null)
     setResetModalOpen(true)
   }
 
   const handleResetPasswordSubmit = () => {
-    setFormError(null)
-    if (newPassword.length < 8) return setFormError('密码至少 8 位')
-    if (newPassword !== resetConfirmPassword) return setFormError('两次密码输入不一致')
+    setResetError(null)
+    if (newPassword.length < 8) return setResetError('密码至少 8 位')
+    if (newPassword !== resetConfirmPassword) return setResetError('两次密码输入不一致')
     setConfirmAction({ type: 'resetPassword', user: resetUser! })
   }
 
@@ -194,7 +198,7 @@ export function AdminUsersPage() {
         <ToolbarButton onClick={openCreate}>新增用户</ToolbarButton>
       </div>
 
-      {error && <div className="rounded-lg bg-red-500/10 p-4 text-red-400">{error}</div>}
+      {pageError && <div className="rounded-lg bg-red-500/10 p-4 text-red-400">{pageError}</div>}
 
       <div className="rounded-2xl border border-white/10 bg-black/40 overflow-hidden">
         <table className="w-full text-left text-sm text-zinc-300">
@@ -331,7 +335,7 @@ export function AdminUsersPage() {
           <div className="w-full max-w-md rounded-3xl border border-white/10 bg-zinc-950 p-6 shadow-2xl">
             <h3 className="text-lg font-black text-white mb-2">重置密码</h3>
             <p className="text-sm text-zinc-400 mb-5">为用户「{resetUser.username}」设置新密码</p>
-            {formError && <div className="mb-4 rounded-lg bg-red-500/10 p-3 text-xs text-red-400">{formError}</div>}
+            {resetError && <div className="mb-4 rounded-lg bg-red-500/10 p-3 text-xs text-red-400">{resetError}</div>}
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-black uppercase text-zinc-500 mb-1">新密码</label>
@@ -359,7 +363,7 @@ export function AdminUsersPage() {
                 setResetModalOpen(false)
                 setNewPassword('')
                 setResetConfirmPassword('')
-                setFormError(null)
+                setResetError(null)
               }}>取消</ToolbarButton>
               <ToolbarButton disabled={saving} onClick={handleResetPasswordSubmit}>确认重置</ToolbarButton>
             </div>

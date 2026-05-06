@@ -63,6 +63,32 @@ def test_admin_can_create_operator(client):
     assert create_res.json()["username"] == "operator1"
 
 
+def test_admin_can_create_user_with_must_change_password(client):
+    response = client.post("/api/v1/auth/login", json={"username": "admin", "password": "ValidPassword123!"})
+    token = response.json()["access_token"]
+
+    create_res = client.post(
+        "/api/v1/users",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "username": "must_change_user",
+            "password": "MustChange123!",
+            "role": "viewer",
+            "enabled": True,
+            "must_change_password": True,
+        }
+    )
+    assert create_res.status_code == 200
+    assert create_res.json()["must_change_password"] is True
+
+    list_res = client.get("/api/v1/users", headers={"Authorization": f"Bearer {token}"})
+    assert list_res.status_code == 200
+    users = list_res.json()
+    target = next(user for user in users if user["username"] == "must_change_user")
+    assert target["must_change_password"] is True
+    assert "token_version" not in target
+
+
 def test_operator_cannot_access_user_management(client):
     response = client.post("/api/v1/auth/login", json={"username": "operator1", "password": "OperatorPass123"})
     token = response.json()["access_token"]

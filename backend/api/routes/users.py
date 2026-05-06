@@ -76,6 +76,7 @@ async def create_user(
         password_hash=get_password_hash(body.password),
         role=body.role,
         enabled=1 if body.enabled else 0,
+        must_change_password=1 if body.must_change_password else 0,
     )
     db.add(new_user)
     await db.commit()

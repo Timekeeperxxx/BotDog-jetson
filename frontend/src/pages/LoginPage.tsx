@@ -42,8 +42,10 @@ export function LoginPage({ onSuccess }: LoginPageProps = {}) {
       const result = await login(username, password)
       setAuthState({
         accessToken: result.access_token,
+        id: result.user.id,
         username: result.user.username,
         role: result.user.role,
+        must_change_password: result.user.must_change_password,
       })
       if (!onSuccess) {
         window.location.assign('/')

@@ -74,8 +74,10 @@ describe('authStore', () => {
     installAuthFetchInterceptor()
     setAuthState({
       accessToken: 'token-123',
+      id: 1,
       username: 'admin',
       role: 'admin',
+      must_change_password: false,
     })
 
     await window.fetch('http://localhost/api/v1/control/command', { method: 'POST' })
@@ -100,8 +102,10 @@ describe('authStore', () => {
     installAuthFetchInterceptor()
     setAuthState({
       accessToken: 'expired-token',
+      id: 1,
       username: 'admin',
       role: 'admin',
+      must_change_password: false,
     })
 
     await window.fetch('http://localhost/api/v1/control/command', { method: 'POST' })
