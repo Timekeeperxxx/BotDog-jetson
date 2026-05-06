@@ -15,6 +15,7 @@ import { useState } from 'react'
 import { LogOut, User } from 'lucide-react'
 import { clearAuthState, useAuthState } from '../stores/authStore'
 import { getApiUrl } from '../config/api'
+import { ChangePasswordModal } from '../admin/modals/ChangePasswordModal'
 
 const ROLE_LABEL: Record<string, string> = {
   admin: 'Admin',
@@ -42,6 +43,7 @@ async function tryStopRobot(): Promise<void> {
 export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
   const auth = useAuthState()
   const [loggingOut, setLoggingOut] = useState(false)
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
 
   if (!auth.accessToken && !auth.authBypass) return null
 
@@ -72,6 +74,13 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
           {role}
         </span>
         <button
+          onClick={() => setChangePasswordOpen(true)}
+          title="修改密码"
+          className="ml-1 flex items-center gap-1 rounded border border-white/10 bg-white/5 px-2 py-1 text-[10px] font-black uppercase tracking-wider text-zinc-300 transition-all hover:border-white/20 hover:bg-white/10 hover:text-white"
+        >
+          修改密码
+        </button>
+        <button
           onClick={() => void handleLogout()}
           disabled={loggingOut}
           title="退出登录"
@@ -80,6 +89,7 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
           <LogOut size={10} />
           {loggingOut ? '退出中' : '退出'}
         </button>
+        {changePasswordOpen && <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />}
       </div>
     )
   }
@@ -93,6 +103,13 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
         {role}
       </span>
       <button
+        onClick={() => setChangePasswordOpen(true)}
+        title="修改密码"
+        className="flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-[11px] font-black uppercase tracking-[0.15em] text-zinc-400 transition-all hover:border-white/20 hover:bg-white/10 hover:text-white"
+      >
+        修改密码
+      </button>
+      <button
         onClick={() => void handleLogout()}
         disabled={loggingOut}
         title="退出登录"
@@ -101,6 +118,7 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
         <LogOut size={12} />
         {loggingOut ? '退出中' : '退出登录'}
       </button>
+      {changePasswordOpen && <ChangePasswordModal onClose={() => setChangePasswordOpen(false)} />}
     </div>
   )
 }

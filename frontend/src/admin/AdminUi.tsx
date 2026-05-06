@@ -75,16 +75,19 @@ export function ToolbarButton({
   onClick,
   disabled,
   danger = false,
+  title,
 }: {
   children: ReactNode
   onClick?: () => void
   disabled?: boolean
   danger?: boolean
+  title?: string
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={`rounded-xl border px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition-all ${
         danger
           ? 'border-red-500/40 text-red-300 hover:border-red-400 hover:bg-red-500/10'

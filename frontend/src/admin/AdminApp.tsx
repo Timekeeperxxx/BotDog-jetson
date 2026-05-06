@@ -10,6 +10,7 @@ import {
   RefreshCw,
   ScrollText,
   Settings2,
+  Users,
 } from 'lucide-react'
 import { useEventWebSocket } from '../hooks/useEventWebSocket'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
@@ -31,7 +32,9 @@ import { AdminVideoAiPage } from './pages/AdminVideoAiPage'
 import { AdminEvidencePage } from './pages/AdminEvidencePage'
 import { AdminLogsPage } from './pages/AdminLogsPage'
 import { AdminConfigPage } from './pages/AdminConfigPage'
+import { AdminUsersPage } from './pages/AdminUsersPage'
 import { AuthStatusBar } from '../components/AuthStatusBar'
+import { useAuthState } from '../stores/authStore'
 import type { TaskDefinition } from '../types/taskWorkflow'
 
 const TASK_STORAGE_KEY = 'botdog-nav-workflows'
@@ -57,6 +60,7 @@ const adminNavItems: Array<{ key: AdminSection; label: string; icon: ReactNode; 
   { key: 'evidence', label: '告警与证据', icon: <FileSearch size={18} />, description: '证据记录 / 删除确认' },
   { key: 'logs', label: '日志审计', icon: <ScrollText size={18} />, description: '日志筛选 / 搜索 / 复制' },
   { key: 'config', label: '配置中心', icon: <Settings2 size={18} />, description: '系统参数 / 热更新 / 历史' },
+  { key: 'users', label: '用户与权限', icon: <Users size={18} />, description: '管理账号 / 角色 / 密码' },
 ]
 
 function emptySourceForm(): SourceFormState {
@@ -119,6 +123,8 @@ export function AdminApp() {
   const [sourceToDelete, setSourceToDelete] = useState<VideoSource | null>(null)
   const [sourceFormOpen, setSourceFormOpen] = useState(false)
   const [sourceForm, setSourceForm] = useState<SourceFormState>(emptySourceForm())
+
+  const auth = useAuthState()
 
   const eventState = useEventWebSocket()
   const navWs = useNavWebSocket()
@@ -344,6 +350,10 @@ export function AdminApp() {
       )
     }
 
+    if (activeSection === 'users') {
+      return <AdminUsersPage />
+    }
+
     return <AdminConfigPage configHook={configHook} />
   }, [
     activeSection,
@@ -391,7 +401,9 @@ export function AdminApp() {
         </div>
 
         <nav className="mt-6 space-y-2">
-          {adminNavItems.map((item) => (
+          {adminNavItems
+            .filter((item) => item.key !== 'users' || auth.role === 'admin')
+            .map((item) => (
             <button
               key={item.key}
               onClick={() => setActiveSection(item.key)}

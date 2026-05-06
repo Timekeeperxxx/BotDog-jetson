@@ -106,9 +106,14 @@ export function AdminEvidencePage({
                             <Download size={14} className="mr-1 inline-block" /> 打开
                           </a>
                         ) : null}
-                        {canAdmin ? (
-                          <ToolbarButton danger onClick={() => setConfirmItem(item)}><Trash2 size={14} className="inline-block" /> 删除</ToolbarButton>
-                        ) : null}
+                        <ToolbarButton
+                          danger
+                          onClick={() => setConfirmItem(item)}
+                          disabled={!canAdmin}
+                          title={!canAdmin ? '需要 admin 权限' : undefined}
+                        >
+                          <Trash2 size={14} className="inline-block" /> 删除
+                        </ToolbarButton>
                       </div>
                     </TableCell>
                   </tr>

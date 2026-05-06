@@ -4,6 +4,7 @@ import type { SystemConfig } from '../../types/config'
 import type { VideoSource } from '../../types/admin'
 import type { AiConfigGroup } from '../adminTypes'
 import { AdminCard, EmptyState, SearchInput, StatusBadge, TableCell, TableHead, ToolbarButton } from '../AdminUi'
+import { hasAuthSession, hasRole, useAuthState } from '../../stores/authStore'
 
 function inferSourceStatus(source: VideoSource) {
   if (!source.enabled) return 'degraded'
@@ -49,6 +50,8 @@ export function AdminVideoAiPage({
   onDeleteSource: (source: VideoSource) => void
   onSaveConfig: (key: string, value: string | boolean) => Promise<void>
 }) {
+  useAuthState()
+  const canAdmin = hasAuthSession() && hasRole('admin')
   const [drafts, setDrafts] = useState<Record<string, string>>({})
 
   const filteredSources = useMemo(
@@ -69,7 +72,7 @@ export function AdminVideoAiPage({
               <SearchInput value={search} onChange={onSearchChange} placeholder="搜索摄像头名称 / 标签" />
             </div>
             <ToolbarButton onClick={onRefresh}><RefreshCw size={14} className="inline-block" /> 刷新</ToolbarButton>
-            <ToolbarButton onClick={onCreateSource}>新增视频源</ToolbarButton>
+            <ToolbarButton onClick={onCreateSource} disabled={!canAdmin} title={!canAdmin ? '需要 admin 权限' : undefined}>新增视频源</ToolbarButton>
           </div>
         }
       >
@@ -109,8 +112,8 @@ export function AdminVideoAiPage({
                     <TableCell><StatusBadge status={inferSourceStatus(source) as any} /></TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-2">
-                        <ToolbarButton onClick={() => onEditSource(source)}>编辑</ToolbarButton>
-                        <ToolbarButton danger onClick={() => onDeleteSource(source)}>删除</ToolbarButton>
+                        <ToolbarButton onClick={() => onEditSource(source)} disabled={!canAdmin} title={!canAdmin ? '需要 admin 权限' : undefined}>编辑</ToolbarButton>
+                        <ToolbarButton danger onClick={() => onDeleteSource(source)} disabled={!canAdmin} title={!canAdmin ? '需要 admin 权限' : undefined}>删除</ToolbarButton>
                       </div>
                     </TableCell>
                   </tr>
@@ -160,7 +163,8 @@ export function AdminVideoAiPage({
                           />
                         )}
                         <ToolbarButton
-                          disabled={loading}
+                          disabled={loading || !canAdmin}
+                          title={!canAdmin ? '需要 admin 权限' : undefined}
                           onClick={() => onSaveConfig(config.key, config.value_type === 'bool'
                             ? String(drafts[config.key] ?? config.value) === 'true'
                             : String(drafts[config.key] ?? config.value))}

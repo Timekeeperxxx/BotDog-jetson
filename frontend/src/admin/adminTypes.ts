@@ -14,6 +14,7 @@ export type AdminSection =
   | 'evidence'
   | 'logs'
   | 'config'
+  | 'users'
 
 export type ModuleHealthState = 'normal' | 'degraded' | 'failed' | 'waiting' | 'todo'
 
