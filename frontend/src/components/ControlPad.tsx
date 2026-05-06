@@ -7,7 +7,7 @@
  * 行3: [起立]   [    ]  [下蹲]
  */
 
-import React, { useCallback, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import {
   ArrowUp,
   ArrowDown,
@@ -20,6 +20,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl';
+import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore';
 
 interface ControlPadProps {
   isDisabled?: boolean;
@@ -49,26 +50,25 @@ const BUTTONS: ButtonConfig[] = [
 ];
 
 export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadProps) {
+  useAuthState();
+  const canOperate = hasAuthSession() && hasRole('operator');
   const { startCommand, stopCommand, isControlling, lastResult, currentCmd, resultMessage } =
     useRobotControl();
 
-  const handlePointerDown = useCallback(
-    (cmd: RobotCommand) => (e: React.PointerEvent) => {
-      if (isDisabled) return;
-      e.currentTarget.setPointerCapture(e.pointerId);
-      startCommand(cmd);
-    },
-    [isDisabled, startCommand]
-  );
+  const handlePointerDown = (cmd: RobotCommand) => (e: React.PointerEvent) => {
+    if (isDisabled || !canOperate) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    startCommand(cmd);
+  };
 
-  const handlePointerUp = useCallback(() => {
-    if (isDisabled) return;
+  const handlePointerUp = () => {
+    if (isDisabled || !canOperate) return;
     stopCommand();
-  }, [isDisabled, stopCommand]);
+  };
 
   // 键盘控制逻辑
   useEffect(() => {
-    if (isDisabled) {
+    if (isDisabled || !canOperate) {
       if (isControlling) stopCommand();
       return;
     }
@@ -123,7 +123,7 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [isDisabled, isControlling, currentCmd, startCommand, stopCommand]);
+  }, [isDisabled, canOperate, isControlling, currentCmd, startCommand, stopCommand]);
 
   const resultColor =
     lastResult?.result === 'ACCEPTED'
@@ -133,7 +133,7 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
       : 'text-yellow-400';
 
   return (
-    <div className={`select-none ${isDisabled ? 'opacity-40 pointer-events-none' : ''}`}>
+    <div className={`select-none ${isDisabled || !canOperate ? 'opacity-40 pointer-events-none' : ''}`}>
       {/* 标题栏 */}
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-[9px] font-black uppercase tracking-widest text-white/40">
@@ -201,7 +201,9 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
               <span className="text-white/30">{lastResult.latency_ms}ms</span>
             </>
           ) : (
-            <span className="text-white/20 w-full text-center tracking-tighter">按住按钮控制机器狗 (WASD/QE)</span>
+            <span className="text-white/20 w-full text-center tracking-tighter">
+              {canOperate ? '按住按钮控制机器狗 (WASD/QE)' : '登录后可进行手动控制'}
+            </span>
           )}
         </div>
       </div>

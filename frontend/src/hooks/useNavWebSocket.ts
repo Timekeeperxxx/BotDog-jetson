@@ -28,6 +28,7 @@ export function useNavWebSocket() {
   const reconnectTimeoutRef = useRef<number | null>(null)
   const reconnectAttemptsRef = useRef(0)
   const connectionIdRef = useRef(0)
+  const connectRef = useRef<() => void>(() => {})
 
   const connect = useCallback(() => {
     const rs = wsRef.current?.readyState
@@ -91,7 +92,9 @@ export function useNavWebSocket() {
       if (reconnectAttemptsRef.current < 10) {
         reconnectAttemptsRef.current += 1
         const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current - 1), 10000)
-        reconnectTimeoutRef.current = window.setTimeout(connect, delay)
+        reconnectTimeoutRef.current = window.setTimeout(() => {
+          connectRef.current()
+        }, delay)
       }
     }
 
@@ -115,24 +118,30 @@ export function useNavWebSocket() {
   }, [])
 
   useEffect(() => {
+    connectRef.current = connect
+  }, [connect])
+
+  const setInitialState = useCallback((next: {
+    robotPose?: RobotPose | null
+    localizationStatus?: LocalizationStatus | null
+    navigationStatus?: NavigationStatus | null
+  }) => {
+    setState((prev) => ({
+      ...prev,
+      robotPose: next.robotPose ?? prev.robotPose,
+      localizationStatus: next.localizationStatus ?? prev.localizationStatus,
+      navigationStatus: next.navigationStatus ?? prev.navigationStatus,
+    }))
+  }, [])
+
+  useEffect(() => {
     connect()
     return disconnect
   }, [connect, disconnect])
 
   return {
     ...state,
-    setInitialState: (next: {
-      robotPose?: RobotPose | null
-      localizationStatus?: LocalizationStatus | null
-      navigationStatus?: NavigationStatus | null
-    }) => {
-      setState((prev) => ({
-        ...prev,
-        robotPose: next.robotPose ?? prev.robotPose,
-        localizationStatus: next.localizationStatus ?? prev.localizationStatus,
-        navigationStatus: next.navigationStatus ?? prev.navigationStatus,
-      }))
-    },
+    setInitialState,
     connect,
     disconnect,
   }

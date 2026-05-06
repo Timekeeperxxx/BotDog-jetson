@@ -32,6 +32,10 @@ class Settings(BaseSettings):
 
     # 安全配置
     JWT_SECRET: str = "please_change_me"
+    AUTH_ENABLED: bool = True
+    AUTH_ADMIN_USERNAME: str = "admin"
+    AUTH_ADMIN_PASSWORD: str = "please_change_me"
+    JWT_EXPIRE_MINUTES: int = 720
 
     # CORS 配置
     CORS_ALLOW_ORIGINS: list[str] = ["*"]

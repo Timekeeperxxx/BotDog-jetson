@@ -125,6 +125,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         Path(__file__).resolve().parent / ".env",
         settings.THERMAL_THRESHOLD,
     )
+    if not settings.AUTH_ENABLED:
+        config_logger.warning("鉴权已关闭，仅限开发环境：AUTH_ENABLED=false")
+    if settings.AUTH_ADMIN_PASSWORD == "please_change_me":
+        config_logger.warning("AUTH_ADMIN_PASSWORD 仍为默认值，生产环境必须修改")
     startup_summary: dict[str, tuple[str, str]] = {}
     await init_db()
     db_logger.info("数据库初始化完成")
@@ -630,6 +634,7 @@ def register_routes(app: FastAPI) -> None:
 
     # ── 导航巡逻 / PCD 点云地图 ─────────────────────────────────────────────
     from .api.routes import nav as _nav_routes
+    from .api.routes import auth as _auth_routes
     from .api.routes import audio as _audio_routes
     from .api.routes import config as _config_routes
     from .api.routes import control as _control_routes
@@ -646,6 +651,7 @@ def register_routes(app: FastAPI) -> None:
     from .api.routes import auto_track as _auto_track_routes
     from .api.routes import video_sources as _video_source_routes
     from .api.routes import websocket as _websocket_routes
+    app.include_router(_auth_routes.router)
     app.include_router(_nav_routes.router)
     app.include_router(_system_routes.router)
     app.include_router(_control_debug_routes.router)

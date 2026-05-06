@@ -34,6 +34,7 @@ export type RobotCommand =
 export type ControlResult =
   | 'ACCEPTED'
   | 'REJECTED_E_STOP'
+  | 'REJECTED_SAFETY_BLOCKED'
   | 'REJECTED_INVALID_CMD'
   | 'RATE_LIMITED'
   | 'REJECTED_ADAPTER_NOT_READY'
@@ -88,6 +89,8 @@ export function useRobotControl(): UseRobotControlReturn {
         return '机器人控制适配器未就绪';
       case 'REJECTED_ADAPTER_ERROR':
         return '机器人控制命令发送失败';
+      case 'REJECTED_SAFETY_BLOCKED':
+        return '安全监督阻止了当前控制命令';
       case 'REJECTED_E_STOP':
         return '急停状态，控制命令已拒绝';
       case 'REJECTED_INVALID_CMD':

@@ -2,6 +2,9 @@
 
 from fastapi import APIRouter, Depends
 
+from ...auth.dependencies import require_admin, require_viewer
+from ...auth.schemas import AuthUser
+from ...auth.service import safe_write_audit_log
 from ...database import get_db
 from ...schemas import EvidenceBulkDeleteRequest, EvidenceDeleteResponse, EvidenceListResponse
 from ...services_evidence import delete_evidence_by_ids, list_evidence
@@ -12,6 +15,7 @@ router = APIRouter(prefix="/api/v1/evidence", tags=["evidence"])
 @router.get("", response_model=EvidenceListResponse)
 async def get_evidence(
     task_id: int | None = None,
+    user: AuthUser = Depends(require_viewer),
     db=Depends(get_db),
 ) -> EvidenceListResponse:
     """
@@ -45,16 +49,36 @@ async def get_evidence(
 @router.delete("/{evidence_id}", response_model=EvidenceDeleteResponse)
 async def delete_evidence(
     evidence_id: int,
+    user: AuthUser = Depends(require_admin),
     db=Depends(get_db),
 ) -> EvidenceDeleteResponse:
     result = await delete_evidence_by_ids(db, evidence_ids=[evidence_id])
+    await safe_write_audit_log(
+        db,
+        level="WARN",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=evidence.delete "
+            f"目标={evidence_id} 结果=success"
+        ),
+    )
     return EvidenceDeleteResponse(success=True, **result)
 
 
 @router.post("/bulk-delete", response_model=EvidenceDeleteResponse)
 async def bulk_delete_evidence(
     request: EvidenceBulkDeleteRequest,
+    user: AuthUser = Depends(require_admin),
     db=Depends(get_db),
 ) -> EvidenceDeleteResponse:
     result = await delete_evidence_by_ids(db, evidence_ids=request.evidence_ids)
+    await safe_write_audit_log(
+        db,
+        level="WARN",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=evidence.bulk_delete "
+            f"目标={request.evidence_ids} 结果=success"
+        ),
+    )
     return EvidenceDeleteResponse(success=True, **result)

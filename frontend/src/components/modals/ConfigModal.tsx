@@ -1,4 +1,5 @@
 import { ConfigPanel } from '../ConfigPanel';
+import { hasAuthSession, hasRole, useAuthState } from '../../stores/authStore';
 
 export interface ConfigModalProps {
   isOpen: boolean;
@@ -6,6 +7,8 @@ export interface ConfigModalProps {
 }
 
 export function ConfigModal({ isOpen, onClose }: ConfigModalProps) {
+  useAuthState()
+  if (!hasAuthSession() || !hasRole('admin')) return null
   if (!isOpen) return null;
 
   return (

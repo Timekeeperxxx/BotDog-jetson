@@ -31,6 +31,7 @@ import { TaskCreatorDrawer } from '../components/pcd/TaskCreatorDrawer'
 import { TaskDrawerPanel } from '../components/pcd/TaskDrawerPanel'
 import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
+import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
 import type { NavWaypoint, PcdMapItem, PcdMetadata, PcdPreview } from '../types/pcdMap'
 import type { TaskDefinition, TaskDraft, TaskDraftStep, WorkflowStep } from '../types/taskWorkflow'
 
@@ -61,6 +62,8 @@ function createEmptyDraftStep(): TaskDraftStep {
 }
 
 export function PcdMapDemoPage() {
+  useAuthState()
+  const canOperate = hasAuthSession() && hasRole('operator')
   const previewPointLimit = 15000
   const [maps, setMaps] = useState<PcdMapItem[]>([])
   const [root, setRoot] = useState('')
@@ -88,6 +91,7 @@ export function PcdMapDemoPage() {
   const [logs, setLogs] = useState<LogItem[]>([])
   const selectRequestRef = useRef(0)
   const navWs = useNavWebSocket()
+  const { robotPose, localizationStatus, setInitialState } = navWs
   const {
     startCommand,
     stopCommand,
@@ -190,6 +194,7 @@ export function PcdMapDemoPage() {
 
   const handleSetPose = useCallback(async (pos: { x: number; y: number; yaw: number }) => {
     if (!selectedMapId) return
+    if (!canOperate) return
 
     try {
       await setLocalizationPose({
@@ -206,7 +211,7 @@ export function PcdMapDemoPage() {
     } catch (error) {
       addLog(error instanceof Error ? error.message : '设置重定位位姿失败', 'error')
     }
-  }, [addLog, selectedMapId])
+  }, [addLog, canOperate, selectedMapId])
 
   const handleDeleteWaypoint = useCallback(async (waypointId: string) => {
     if (!selectedMapId) return
@@ -223,6 +228,7 @@ export function PcdMapDemoPage() {
 
   const handleGoToWaypoint = useCallback(async (waypointId: string) => {
     if (!selectedMapId) return
+    if (!canOperate) return
 
     setNavigatingWaypointId(waypointId)
     try {
@@ -234,9 +240,10 @@ export function PcdMapDemoPage() {
     } finally {
       setNavigatingWaypointId(null)
     }
-  }, [addLog, selectedMapId, waypoints])
+  }, [addLog, canOperate, selectedMapId, waypoints])
 
   const handleEmergencyStop = useCallback(async () => {
+    if (!canOperate) return
     setEstopSending(true)
     try {
       const result = await triggerNavEmergencyStop()
@@ -246,9 +253,10 @@ export function PcdMapDemoPage() {
     } finally {
       setEstopSending(false)
     }
-  }, [addLog])
+  }, [addLog, canOperate])
 
   const handleToggleMapping = useCallback(async () => {
+    if (!canOperate) return
     const nextEnabled = !mappingActive
     setMappingSending(true)
     try {
@@ -260,7 +268,7 @@ export function PcdMapDemoPage() {
     } finally {
       setMappingSending(false)
     }
-  }, [addLog, mappingActive])
+  }, [addLog, canOperate, mappingActive])
 
   useEffect(() => {
     void refreshMaps()
@@ -320,7 +328,7 @@ export function PcdMapDemoPage() {
       try {
         const state = await getNavState()
         if (cancelled) return
-        navWs.setInitialState({
+        setInitialState({
           robotPose: state.robot_pose,
           localizationStatus: state.localization_status,
           navigationStatus: state.navigation_status,
@@ -337,10 +345,7 @@ export function PcdMapDemoPage() {
     return () => {
       cancelled = true
     }
-  }, [addLog])
-
-  const robotPose = navWs.robotPose
-  const localizationStatus = navWs.localizationStatus
+  }, [addLog, setInitialState])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -873,6 +878,7 @@ export function PcdMapDemoPage() {
             <button
               className={`pcd-tool-button ${toolMode === 'pose' ? 'is-active' : ''}`}
               onClick={() => handleToolMode('pose')}
+              disabled={!canOperate}
             >
               <Square size={15} />
               <span>设置位姿</span>
@@ -880,7 +886,7 @@ export function PcdMapDemoPage() {
             <button
               className={`pcd-tool-button ${mappingActive ? 'is-active' : ''}`}
               onClick={() => void handleToggleMapping()}
-              disabled={mappingSending}
+              disabled={mappingSending || !canOperate}
             >
               <Square size={15} />
               <span>{mappingSending ? (mappingActive ? '结束建图中' : '开始建图中') : (mappingActive ? '结束建图' : '开始建图')}</span>
@@ -916,7 +922,7 @@ export function PcdMapDemoPage() {
             <button
               className="pcd-estop-button"
               onClick={handleEmergencyStop}
-              disabled={estopSending}
+              disabled={estopSending || !canOperate}
             >
               {estopSending ? '急停发送中' : '导航急停'}
             </button>

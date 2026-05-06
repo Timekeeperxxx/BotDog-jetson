@@ -144,11 +144,13 @@ BotDog 后端与 ROS2 / 同事导航模块之间的职责边界如下：
 - 后端在用户点击导航点后，先生成或覆盖 `data/nav_runtime/current_goal.json`
 - 然后发布 `/nav_start` 的 `Bool(true)`
 - 同事模块收到 `/nav_start` 后读取 `current_goal.json`
+- `/goal_pose` 属于兼容发布路径，即使失败也不影响 `current_goal.json + /nav_start` 主路径
 
 `current_goal.json` 示例：
 
 ```json
 {
+  "schema_version": 1,
   "event": "nav_goal",
   "map_id": "ground.pcd",
   "waypoint_id": "wp_e804097a1549",
@@ -158,13 +160,14 @@ BotDog 后端与 ROS2 / 同事导航模块之间的职责边界如下：
   "y": -2.9097979096055937,
   "z": -0.83,
   "yaw": -1.5707963267948966,
-  "created_at": "2026-05-06T12:00:00.000Z",
+  "selected_at": "2026-05-06T12:00:00.000Z",
   "source": "botdog-backend"
 }
 ```
 
 字段说明：
 
+- `schema_version`：当前 `current_goal.json` 契约版本，当前为 `1`
 - `event`：固定为 `nav_goal`
 - `map_id`：地图 ID
 - `waypoint_id`：导航点 ID
@@ -172,7 +175,7 @@ BotDog 后端与 ROS2 / 同事导航模块之间的职责边界如下：
 - `frame_id`：默认 `map`
 - `x/y/z`：单位米
 - `yaw`：单位弧度
-- `created_at`：UTC ISO8601 时间戳
+- `selected_at`：用户在前端选择该目标点的 UTC ISO8601 时间
 - `source`：固定为 `botdog-backend`
 
 可选方案：
@@ -219,6 +222,7 @@ JSON 示例：
 
 - 当前 `services_ros_nav.py` 仍通过 `ROS_NAV_GOAL_TOPIC`，默认 `/goal_pose`，发布 `geometry_msgs/msg/PoseStamped`。
 - 如果暂时继续使用 `/goal_pose`，它属于当前兼容实现。
+- `/goal_pose` 发布失败时，不应影响 `current_goal.json + /nav_start` 主路径。
 - 后续如果改成 JSON，建议新增 `ROS_NAV_GOAL_JSON_TOPIC` 配置，不要直接破坏旧接口。
 
 ### 3. 重定位位姿，推荐新增
@@ -316,6 +320,7 @@ JSON 示例：
 
 - 为了避免一次性破坏已有功能，当前阶段不强制删除 `/goal_pose`。
 - 当前主路径是“共享文件 + Bool 触发”。
+- `/goal_pose` 是兼容发布路径，失败不应影响主路径。
 - 后续如需跨机器部署，可以采用“双发模式”：
 - 继续发布 `/goal_pose` 给 Nav2 兼容
 - 同时发布 `/nav_goal_json` 给不能共享文件的模块读取完整字段

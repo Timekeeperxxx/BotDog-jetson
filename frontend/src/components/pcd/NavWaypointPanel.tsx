@@ -1,5 +1,6 @@
 import { Navigation, Trash2 } from 'lucide-react'
 import type { NavWaypoint } from '../../types/pcdMap'
+import { hasAuthSession, hasRole, useAuthState } from '../../stores/authStore'
 
 type Props = {
   waypoints: NavWaypoint[]
@@ -9,6 +10,10 @@ type Props = {
 }
 
 export function NavWaypointPanel({ waypoints, navigatingWaypointId, onGoTo, onDelete }: Props) {
+  useAuthState()
+  const canOperate = hasAuthSession() && hasRole('operator')
+  const canAdmin = hasAuthSession() && hasRole('admin')
+
   return (
     <section className="pcd-panel pcd-waypoint-panel">
       <div className="pcd-panel-header">
@@ -37,18 +42,20 @@ export function NavWaypointPanel({ waypoints, navigatingWaypointId, onGoTo, onDe
                 <button
                   className="pcd-icon-button"
                   onClick={() => onGoTo(point.id)}
-                  disabled={navigatingWaypointId === point.id}
+                  disabled={!canOperate || navigatingWaypointId === point.id}
                   title="导航到该点"
                 >
                   <Navigation size={15} />
                 </button>
-                <button
-                  className="pcd-icon-button danger"
-                  onClick={() => onDelete(point.id)}
-                  title="删除导航点"
-                >
-                  <Trash2 size={15} />
-                </button>
+                {canAdmin ? (
+                  <button
+                    className="pcd-icon-button danger"
+                    onClick={() => onDelete(point.id)}
+                    title="删除导航点"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                ) : null}
               </div>
             </div>
           ))

@@ -64,6 +64,10 @@ NAV_ROUTES = [
     ("POST",   "/api/v1/nav/e-stop"),
 ]
 
+AUTH_ROUTES = [
+    ("POST", "/api/v1/auth/login"),
+]
+
 SESSION_ROUTES = [
     ("POST", "/api/v1/session/start"),
     ("POST", "/api/v1/session/stop"),
@@ -169,6 +173,14 @@ def test_nav_route_registered(route_index: dict, method: str, path: str) -> None
     """每条 nav 路由必须以正确的 HTTP method 注册，拆分后不能丢失。"""
     assert (method, path) in route_index, (
         f"{method} {path} 未注册 ── 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", AUTH_ROUTES)
+def test_auth_route_registered(route_index: dict, method: str, path: str) -> None:
+    """auth 路由必须注册。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── auth 路由可能在拆分中丢失"
     )
 
 

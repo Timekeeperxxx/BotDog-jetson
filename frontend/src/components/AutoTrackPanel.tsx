@@ -10,6 +10,7 @@
 import React from 'react';
 import type { AutoTrackHookState } from '../hooks/useAutoTrack';
 import type { AutoTrackStateValue } from '../types/event';
+import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore';
 
 const STATE_LABELS: Record<AutoTrackStateValue, string> = {
   DISABLED: '已禁用',
@@ -54,6 +55,8 @@ export const AutoTrackPanel: React.FC<Props> = ({
   unmarkKnown,
   isMissionRunning,
 }) => {
+  useAuthState();
+  const canOperate = hasAuthSession() && hasRole('operator');
   const state = status?.state ?? 'DISABLED';
   const stateColor = STATE_COLORS[state] ?? '#666';
   const stateLabel = STATE_LABELS[state] ?? state;
@@ -79,7 +82,7 @@ export const AutoTrackPanel: React.FC<Props> = ({
             opacity: (!isMissionRunning && !isEnabled) ? 0.4 : 1,
           }}
           onClick={() => (isEnabled ? disable() : enable())}
-          disabled={loading || (!isMissionRunning && !isEnabled)}
+          disabled={loading || (!isMissionRunning && !isEnabled) || !canOperate}
           title={!isMissionRunning && !isEnabled ? '请先开始巡检' : isEnabled ? '禁用自动跟踪' : '启用自动跟踪'}
         >
           {isEnabled ? '■ 禁用' : '▷ 启用'}
@@ -109,7 +112,7 @@ export const AutoTrackPanel: React.FC<Props> = ({
             void releaseOverride();
             void resume();
           }}
-          disabled={loading}
+          disabled={loading || !canOperate}
           title="手动接管后重新开始自动跟踪"
         >
           ▶ 恢复跟踪
@@ -123,7 +126,7 @@ export const AutoTrackPanel: React.FC<Props> = ({
           <button
             style={{ ...styles.smallBtn, marginTop: 2, background: '#8844aa44', color: '#c8f' }}
             onClick={() => markKnown(target.track_id)}
-            disabled={loading}
+            disabled={loading || !canOperate}
             title="将当前目标标记为已知人员，不再跟踪"
           >
             👤 标记为已知
@@ -148,6 +151,7 @@ export const AutoTrackPanel: React.FC<Props> = ({
               <button
                 style={styles.knownRemoveBtn}
                 onClick={() => unmarkKnown(kt.track_id)}
+                disabled={!canOperate}
                 title="取消标记"
               >
                 ×

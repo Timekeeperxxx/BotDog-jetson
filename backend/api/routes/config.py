@@ -4,6 +4,9 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ...auth.dependencies import require_admin, require_viewer
+from ...auth.schemas import AuthUser
+from ...auth.service import safe_write_audit_log
 from ...config import settings
 from ...database import get_db
 
@@ -24,6 +27,7 @@ def _parse_bool(value) -> bool:
 @router.get("")
 async def get_system_config(
     category: Optional[str] = None,
+    user: AuthUser = Depends(require_viewer),
     db=Depends(get_db),
 ):
     """
@@ -55,6 +59,7 @@ async def get_system_config(
 @router.post("")
 async def update_system_config(
     request: dict,
+    user: AuthUser = Depends(require_admin),
     db=Depends(get_db),
 ):
     """
@@ -75,7 +80,7 @@ async def update_system_config(
 
     key = request.get("key")
     value = request.get("value")
-    changed_by = request.get("changed_by", "admin")
+    changed_by = user.username
     reason = request.get("reason", "")
 
     if not key or value is None:
@@ -103,6 +108,15 @@ async def update_system_config(
         if key == "safety_block_motion_when_disconnected":
             settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED = _parse_bool(value)
 
+        await safe_write_audit_log(
+            db,
+            level="INFO",
+            module="BACKEND",
+            message=(
+                f"用户={user.username} 角色={user.role} 操作=config.update "
+                f"目标={key} 结果=success"
+            ),
+        )
         return {
             "success": True,
             "message": f"配置 {key} 已更新",
@@ -120,6 +134,7 @@ async def update_system_config(
 async def get_config_history(
     key: Optional[str] = None,
     limit: int = 50,
+    user: AuthUser = Depends(require_viewer),
     db=Depends(get_db),
 ):
     """

@@ -5,6 +5,7 @@ import {
   Volume2, VolumeX
 } from 'lucide-react';
 import { TrackOverlay, TrackOverlayData } from './TrackOverlay1';
+import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore';
 
 export interface GuardStatus {
   enabled: boolean;
@@ -20,7 +21,17 @@ export interface GuardStatus {
   start_zone_bbox: [number, number, number, number] | null;
 }
 
-const GUARD_STATES: Record<string, any> = {
+type GuardStateDescriptor = {
+  label: string;
+  desc: string;
+  color: string;
+  bg: string;
+  border: string;
+  icon: React.ComponentType<{ className?: string }>;
+  pulse?: boolean;
+}
+
+const GUARD_STATES: Record<string, GuardStateDescriptor> = {
   STANDBY: { label: '待命巡检', desc: '颜色检测中，防区已锁定', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', icon: Shield },
   ADVANCING: { label: '驱离执行中', desc: '目标入侵，战术推进中', color: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/50', icon: ShieldAlert, pulse: true },
   RETURNING: { label: '视觉返航中', desc: '目标已清空，归位中', color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/30', icon: RefreshCcw },
@@ -55,6 +66,8 @@ export function GuardControlCenter({
   isAudioPlaying,
   onAudioToggle,
 }: GuardControlCenterProps) {
+  useAuthState();
+  const canOperate = hasAuthSession() && hasRole('operator');
   // Use safe default for status (ensure it behaves correctly if not connected)
   const safeStatus = guardStatus || {
     enabled: false,
@@ -162,6 +175,7 @@ export function GuardControlCenter({
           
           <button 
             onClick={onToggleEnable}
+            disabled={!canOperate}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${safeStatus.enabled ? 'bg-white' : 'bg-zinc-800 border border-white/20'}`}
           >
             <span className={`inline-block h-4 w-4 transform rounded-full transition-transform ${safeStatus.enabled ? 'translate-x-6 bg-black' : 'translate-x-1 bg-zinc-500'}`} />
@@ -190,6 +204,7 @@ export function GuardControlCenter({
             {safeStatus.enabled && (
               <button
                 onClick={onEmergencyStop}
+                disabled={!canOperate}
                 className="mt-4 w-full py-3.5 bg-red-600/10 border border-red-600/50 hover:bg-red-600/30 hover:border-red-500 text-red-500 font-black tracking-widest uppercase rounded flex items-center justify-center gap-2 transition-all active:scale-95 text-xs shadow-[0_0_15px_rgba(220,38,38,0.1)] hover:shadow-[0_0_20px_rgba(220,38,38,0.3)]"
               >
                 <Octagon className="w-4 h-4" />

@@ -4,8 +4,14 @@
 路径、response_model、请求参数、返回字段与原始实现完全一致。
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from ...auth.dependencies import require_admin, require_operator
+from ...auth.schemas import AuthUser
+from ...auth.service import safe_write_audit_log
+from ...config import settings
+from ...database import get_db
+from ...logging_config import get_logger
 from ...schemas import (
     DeleteWaypointResponse,
     LocalizationPoseDTO,
@@ -23,6 +29,7 @@ from ...schemas import (
 from ...nav_bridge_state import get_ros_nav_bridge
 
 router = APIRouter(prefix="/api/v1/nav", tags=["nav"])
+nav_logger = get_logger("导航巡逻")
 
 
 @router.get("/pcd-maps", response_model=PcdMapListResponse)
@@ -65,7 +72,11 @@ async def nav_page_open():
 
 
 @router.post("/localization/set-pose", response_model=LocalizationPoseDTO)
-async def nav_set_localization_pose(body: LocalizationPoseSetRequest):
+async def nav_set_localization_pose(
+    body: LocalizationPoseSetRequest,
+    user: AuthUser = Depends(require_operator),
+    db=Depends(get_db),
+):
     from ...services_nav_localization import save_localization_pose
     from ...services_nav_state import update_localization_status
     from ...services_pcd_maps import PcdMapError
@@ -95,19 +106,42 @@ async def nav_set_localization_pose(body: LocalizationPoseSetRequest):
             ),
         }
     )
+    await safe_write_audit_log(
+        db,
+        level="INFO",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.localization.set_pose "
+            f"目标={body.map_id} 结果=success"
+        ),
+    )
     return pose
 
 
 @router.post("/mapping/set-enabled", response_model=MappingControlResponse)
-async def nav_set_mapping_enabled(body: MappingControlRequest):
+async def nav_set_mapping_enabled(
+    body: MappingControlRequest,
+    user: AuthUser = Depends(require_operator),
+    db=Depends(get_db),
+):
     bridge = get_ros_nav_bridge()
     if bridge is None:
         raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
 
     try:
-        return bridge.publish_mapping_enabled(body.enabled)
+        result = bridge.publish_mapping_enabled(body.enabled)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+    await safe_write_audit_log(
+        db,
+        level="INFO",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.mapping.set_enabled "
+            f"目标={result['topic']} 结果=success enabled={body.enabled}"
+        ),
+    )
+    return result
 
 
 @router.get("/pcd-maps/{map_id}/metadata", response_model=PcdMetadataResponse)
@@ -148,21 +182,41 @@ async def nav_list_waypoints(map_id: str):
 
 
 @router.post("/pcd-maps/{map_id}/waypoints", response_model=NavWaypointDTO)
-async def nav_create_waypoint(map_id: str, body: NavWaypointCreateRequest):
+async def nav_create_waypoint(
+    map_id: str,
+    body: NavWaypointCreateRequest,
+    user: AuthUser = Depends(require_operator),
+    db=Depends(get_db),
+):
     from ...services_nav_waypoints import create_waypoint
     from ...services_pcd_maps import PcdMapError
 
     try:
-        return create_waypoint(map_id, body.model_dump())
+        waypoint = create_waypoint(map_id, body.model_dump())
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
     except (PcdMapError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    await safe_write_audit_log(
+        db,
+        level="INFO",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.waypoint.create "
+            f"目标={waypoint['id']} map={map_id} 结果=success"
+        ),
+    )
+    return waypoint
 
 
 @router.post("/pcd-maps/{map_id}/waypoints/{waypoint_id}")
 @router.post("/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to")
-async def nav_go_to_waypoint(map_id: str, waypoint_id: str):
+async def nav_go_to_waypoint(
+    map_id: str,
+    waypoint_id: str,
+    user: AuthUser = Depends(require_operator),
+    db=Depends(get_db),
+):
     from ...services_nav_runtime import write_current_goal
     from ...services_nav_state import update_navigation_status
     from ...services_nav_waypoints import get_waypoint
@@ -188,30 +242,72 @@ async def nav_go_to_waypoint(map_id: str, waypoint_id: str):
 
     try:
         start_result = bridge.publish_navigation_start()
-        result = bridge.publish_navigation_goal(waypoint)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
+    goal_pose_compat = {
+        "enabled": True,
+        "success": True,
+        "topic": settings.ROS_NAV_GOAL_TOPIC,
+        "result": None,
+        "error": None,
+    }
+    try:
+        result = bridge.publish_navigation_goal(waypoint)
+        goal_pose_compat = {
+            "enabled": True,
+            "success": True,
+            "topic": result["topic"],
+            "result": result,
+            "error": None,
+        }
+    except RuntimeError as exc:
+        nav_logger.warning("兼容 /goal_pose 发布失败，但主导航启动已成功：waypoint_id={}，原因={}", waypoint["id"], exc)
+        goal_pose_compat = {
+            "enabled": True,
+            "success": False,
+            "topic": settings.ROS_NAV_GOAL_TOPIC,
+            "result": None,
+            "error": str(exc),
+        }
+
+    await safe_write_audit_log(
+        db,
+        level="INFO" if goal_pose_compat["success"] else "WARN",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.go_to "
+            f"目标={waypoint_id} map={map_id} 结果=success "
+            f"goal_pose_compat={goal_pose_compat['success']}"
+        ),
+    )
     update_navigation_status(
         {
             "status": "navigating",
             "target_waypoint_id": waypoint["id"],
             "target_name": waypoint["name"],
-            "message": f"已发布导航开始信号并发送目标: {waypoint['name']}",
+            "message": (
+                f"已发布导航开始信号并写入当前目标: {waypoint['name']}"
+                if not goal_pose_compat["success"]
+                else f"已发布导航开始信号并发送目标: {waypoint['name']}"
+            ),
         }
     )
     return {
         "success": True,
         "current_goal": current_goal,
-        "topic": result["topic"],
-        "waypoint_id": result["waypoint_id"],
+        "topic": settings.ROS_NAV_GOAL_TOPIC,
+        "waypoint_id": waypoint["id"],
         "start": start_result,
-        "goal": result,
+        "goal_pose_compat": goal_pose_compat,
     }
 
 
 @router.post("/e-stop")
-async def nav_emergency_stop():
+async def nav_emergency_stop(
+    user: AuthUser = Depends(require_operator),
+    db=Depends(get_db),
+):
     from ...services_nav_state import update_navigation_status
 
     bridge = get_ros_nav_bridge()
@@ -231,6 +327,12 @@ async def nav_emergency_stop():
             "message": "已发布导航急停",
         }
     )
+    await safe_write_audit_log(
+        db,
+        level="WARN",
+        module="BACKEND",
+        message=f"用户={user.username} 角色={user.role} 操作=nav.e_stop 目标=nav 结果=success",
+    )
     return result
 
 
@@ -238,7 +340,12 @@ async def nav_emergency_stop():
     "/pcd-maps/{map_id}/waypoints/{waypoint_id}",
     response_model=DeleteWaypointResponse,
 )
-async def nav_delete_waypoint(map_id: str, waypoint_id: str):
+async def nav_delete_waypoint(
+    map_id: str,
+    waypoint_id: str,
+    user: AuthUser = Depends(require_admin),
+    db=Depends(get_db),
+):
     from ...services_nav_waypoints import delete_waypoint
     from ...services_pcd_maps import PcdMapError
 
@@ -252,4 +359,13 @@ async def nav_delete_waypoint(map_id: str, waypoint_id: str):
     if not ok:
         raise HTTPException(status_code=404, detail=f"导航点不存在: {waypoint_id}")
 
+    await safe_write_audit_log(
+        db,
+        level="WARN",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.waypoint.delete "
+            f"目标={waypoint_id} map={map_id} 结果=success"
+        ),
+    )
     return {"success": True}

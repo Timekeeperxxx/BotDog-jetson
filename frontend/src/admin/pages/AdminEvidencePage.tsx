@@ -3,6 +3,7 @@ import { Download, Eye, RefreshCw, Trash2 } from 'lucide-react'
 import type { EvidenceItem } from '../../types/evidence'
 import { getApiUrl } from '../../config/api'
 import { AdminCard, ConfirmDialog, EmptyState, SearchInput, StatusBadge, TableCell, TableHead, ToolbarButton } from '../AdminUi'
+import { hasAuthSession, hasRole, useAuthState } from '../../stores/authStore'
 
 function getEvidenceUrl(item: EvidenceItem) {
   if (!item.image_url) return null
@@ -25,6 +26,8 @@ export function AdminEvidencePage({
   onRefresh: () => void
   onDelete: (item: EvidenceItem) => Promise<void>
 }) {
+  useAuthState()
+  const canAdmin = hasAuthSession() && hasRole('admin')
   const [severity, setSeverity] = useState('ALL')
   const [confirmItem, setConfirmItem] = useState<EvidenceItem | null>(null)
   const [previewItem, setPreviewItem] = useState<EvidenceItem | null>(null)
@@ -103,7 +106,9 @@ export function AdminEvidencePage({
                             <Download size={14} className="mr-1 inline-block" /> 打开
                           </a>
                         ) : null}
-                        <ToolbarButton danger onClick={() => setConfirmItem(item)}><Trash2 size={14} className="inline-block" /> 删除</ToolbarButton>
+                        {canAdmin ? (
+                          <ToolbarButton danger onClick={() => setConfirmItem(item)}><Trash2 size={14} className="inline-block" /> 删除</ToolbarButton>
+                        ) : null}
                       </div>
                     </TableCell>
                   </tr>

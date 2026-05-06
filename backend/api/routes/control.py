@@ -3,10 +3,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from ...auth.dependencies import require_admin, require_operator
+from ...auth.schemas import AuthUser
+from ...auth.service import safe_write_audit_log
 from ...control_service import get_control_service
 from ...database import get_db
 from ...schemas import ControlAckDTO, EStopResetResponse, EStopResponse, utc_now_iso
-from ...services_logs import write_log
 from ...state_machine_state import get_state_machine
 
 router = APIRouter(prefix="/api/v1/control", tags=["control"])
@@ -19,7 +21,11 @@ class ControlCommandRequest(BaseModel):
 
 
 @router.post("/command", response_model=ControlAckDTO)
-async def control_command(body: ControlCommandRequest) -> ControlAckDTO:
+async def control_command(
+    body: ControlCommandRequest,
+    user: AuthUser = Depends(require_operator),
+    db=Depends(get_db),
+) -> ControlAckDTO:
     """
     发送控制命令到机器狗。
 
@@ -43,17 +49,34 @@ async def control_command(body: ControlCommandRequest) -> ControlAckDTO:
         if body.cmd != "stop":
             arbiter.request_control(ControlOwner.WEB_MANUAL)
 
-    return await svc.handle_command(body.cmd)
+    ack = await svc.handle_command(body.cmd)
+    await safe_write_audit_log(
+        db,
+        level="INFO" if ack.result == "ACCEPTED" else "WARN",
+        module="BACKEND",
+        message=f"用户={user.username} 角色={user.role} 操作=control.command 目标={body.cmd} 结果={ack.result}",
+    )
+    return ack
 
 
 @router.post("/stop", response_model=ControlAckDTO)
-async def control_stop() -> ControlAckDTO:
+async def control_stop(
+    user: AuthUser = Depends(require_operator),
+    db=Depends(get_db),
+) -> ControlAckDTO:
     """快捷停止接口（等同于发送 cmd='stop'），供前端紧急停止使用。"""
     svc = get_control_service()
     if svc is None:
         raise HTTPException(status_code=503, detail="控制服务未就绪")
 
-    return await svc.handle_command("stop")
+    ack = await svc.handle_command("stop")
+    await safe_write_audit_log(
+        db,
+        level="INFO" if ack.result == "ACCEPTED" else "WARN",
+        module="BACKEND",
+        message=f"用户={user.username} 角色={user.role} 操作=control.stop 目标=stop 结果={ack.result}",
+    )
+    return ack
 
 
 @router.post("/e-stop", response_model=EStopResponse)
@@ -77,12 +100,11 @@ async def emergency_stop(
 
     state_machine.trigger_emergency_stop()
 
-    await write_log(
+    await safe_write_audit_log(
         db,
         level="WARN",
         module="BACKEND",
-        message="Emergency stop triggered via API",
-        task_id=None,
+        message="用户=anonymous 角色=anonymous 操作=control.e_stop 目标=system 结果=success",
     )
 
     return EStopResponse(
@@ -94,6 +116,7 @@ async def emergency_stop(
 
 @router.post("/e-stop/reset", response_model=EStopResetResponse)
 async def emergency_stop_reset(
+    user: AuthUser = Depends(require_admin),
     db=Depends(get_db),
 ) -> EStopResetResponse:
     """
@@ -114,12 +137,14 @@ async def emergency_stop_reset(
     old_state = state_machine.state
     state_machine.reset_emergency_stop()
 
-    await write_log(
+    await safe_write_audit_log(
         db,
         level="INFO",
         module="BACKEND",
-        message=f"Emergency stop reset: {old_state} -> {state_machine.state}",
-        task_id=None,
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=control.e_stop.reset "
+            f"目标=system 结果=success 状态={old_state}->{state_machine.state}"
+        ),
     )
 
     return EStopResetResponse(

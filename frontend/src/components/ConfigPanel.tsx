@@ -5,8 +5,9 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useConfig } from '../hooks/useConfig';
-import type { SystemConfig } from '../types/config';
+import type { ConfigChangeHistory, SystemConfig } from '../types/config';
 import { RefreshCw, History, AlertTriangle, CheckCircle2, X } from 'lucide-react';
+import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore';
 
 interface ConfigPanelProps {
   onClose?: () => void;
@@ -14,13 +15,15 @@ interface ConfigPanelProps {
 }
 
 export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigPanelProps) {
+  useAuthState();
+  const canAdmin = hasAuthSession() && hasRole('admin');
   const localConfigHook = useConfig();
   const configHook = externalConfigHook ?? localConfigHook;
   const { fetchConfigs } = configHook;
 
   const [selectedCategory, setSelectedCategory] = useState<string>('backend');
   const [showHistory, setShowHistory] = useState(false);
-  const [history, setHistory] = useState<any[]>([]);
+  const [history, setHistory] = useState<ConfigChangeHistory[]>([]);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -47,7 +50,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
 
   const currentGroupConfigs = allConfigs.filter(c => c.category === selectedCategory);
 
-  const handleSaveConfig = async (key: string, value: any) => {
+  const handleSaveConfig = async (key: string, value: string | number | boolean) => {
     try {
       setValidationError(null);
       setSuccessMessage(null);
@@ -96,7 +99,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
                 className="sr-only"
                 checked={isChecked}
                 onChange={(e) => handleSaveConfig(config.key, e.target.checked)}
-                disabled={configHook.loading}
+                disabled={configHook.loading || !canAdmin}
               />
               <div className={`w-10 h-5 border transition-all ${
                 isChecked ? 'bg-white border-white' : 'bg-zinc-900 border-zinc-600'
@@ -121,7 +124,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
           <select
             value={config.value as string}
             onChange={(e) => handleSaveConfig(config.key, e.target.value)}
-            disabled={configHook.loading}
+            disabled={configHook.loading || !canAdmin}
             className="flex-1 bg-zinc-950 border border-zinc-700 text-white font-mono text-xs px-4 py-2 focus:outline-none focus:border-white transition-all appearance-none uppercase tracking-wider"
           >
             <option value="zh-CN">简体中文 (ZH-CN)</option>
@@ -137,7 +140,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
           <select
             value={config.value as string}
             onChange={(e) => handleSaveConfig(config.key, e.target.value)}
-            disabled={configHook.loading}
+            disabled={configHook.loading || !canAdmin}
             className="flex-1 bg-zinc-950 border border-zinc-700 text-white font-mono text-xs px-4 py-2 focus:outline-none focus:border-white transition-all appearance-none uppercase tracking-wider"
           >
             <option value="dark">暗夜工业 (DARK)</option>
@@ -155,7 +158,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
           type={isNum ? 'number' : 'text'}
           step={config.value_type === 'float' ? '0.1' : '1'}
           defaultValue={config.value as string | number}
-          disabled={configHook.loading}
+          disabled={configHook.loading || !canAdmin}
           className="flex-1 bg-zinc-950 border border-zinc-700 px-4 py-2 text-sm text-white font-mono focus:outline-none focus:border-white transition-all placeholder-zinc-500"
           placeholder={`输入 ${config.value_type}...`}
         />
@@ -164,7 +167,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
             const el = inputRefs.current[config.key];
             if (el) handleSaveConfig(config.key, el.value);
           }}
-          disabled={configHook.loading}
+          disabled={configHook.loading || !canAdmin}
           className="bg-zinc-800 border border-zinc-600 text-white px-5 py-2 text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-white hover:text-black hover:border-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {configHook.loading ? '写入中' : '写入'}
