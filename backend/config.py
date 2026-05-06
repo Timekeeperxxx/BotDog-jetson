@@ -81,6 +81,8 @@ class Settings(BaseSettings):
     PCD_PREVIEW_MAX_POINTS: int = 200000
     NAV_WAYPOINT_STORE_DIR: str = "./data/nav_waypoints"
     NAV_LOCALIZATION_STORE_DIR: str = "./data/nav_localization"
+    NAV_RUNTIME_DIR: str = "./data/nav_runtime"
+    NAV_CURRENT_GOAL_FILE: str = "current_goal.json"
 
     # ==================== ROS2 导航状态订阅转发 ====================
     ROS_NAV_ENABLED: bool = True

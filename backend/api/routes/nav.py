@@ -42,6 +42,16 @@ async def nav_get_state():
     return get_nav_state()
 
 
+@router.get("/current-goal")
+async def nav_get_current_goal():
+    from ...services_nav_runtime import read_current_goal
+
+    try:
+        return {"current_goal": read_current_goal()}
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.post("/page-open")
 async def nav_page_open():
     bridge = get_ros_nav_bridge()
@@ -153,6 +163,7 @@ async def nav_create_waypoint(map_id: str, body: NavWaypointCreateRequest):
 @router.post("/pcd-maps/{map_id}/waypoints/{waypoint_id}")
 @router.post("/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to")
 async def nav_go_to_waypoint(map_id: str, waypoint_id: str):
+    from ...services_nav_runtime import write_current_goal
     from ...services_nav_state import update_navigation_status
     from ...services_nav_waypoints import get_waypoint
     from ...services_pcd_maps import PcdMapError
@@ -163,14 +174,21 @@ async def nav_go_to_waypoint(map_id: str, waypoint_id: str):
 
     try:
         waypoint = get_waypoint(map_id, waypoint_id)
-        start_result = bridge.publish_navigation_start()
-        result = bridge.publish_navigation_goal(waypoint)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
     except KeyError:
         raise HTTPException(status_code=404, detail=f"导航点不存在: {waypoint_id}")
     except PcdMapError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
+        current_goal = write_current_goal(waypoint)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"写入 current_goal.json 失败: {exc}")
+
+    try:
+        start_result = bridge.publish_navigation_start()
+        result = bridge.publish_navigation_goal(waypoint)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
@@ -184,6 +202,7 @@ async def nav_go_to_waypoint(map_id: str, waypoint_id: str):
     )
     return {
         "success": True,
+        "current_goal": current_goal,
         "topic": result["topic"],
         "waypoint_id": result["waypoint_id"],
         "start": start_result,
