@@ -28,7 +28,3 @@ export const adminNavItems: AdminMenuItem[] = [
 export function getVisibleSections(role: AdminRole) {
   return adminNavItems.filter((item) => item.visibleTo.includes(role)).map((item) => item.key)
 }
-
-export function getVisibleAdminMenuItems(role: AdminRole) {
-  return adminNavItems.filter((item) => item.visibleTo.includes(role))
-}
