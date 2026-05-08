@@ -4,6 +4,8 @@
 路径、response_model、请求参数、返回字段与原始实现完全一致。
 """
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from ...auth.dependencies import require_admin, require_operator
@@ -111,24 +113,39 @@ async def nav_set_mapping_enabled(
     user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
-    bridge = get_ros_nav_bridge()
-    if bridge is None:
-        raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
+    from ...services_mapping import MappingError, get_mapping_service
+
+    mapping_service = get_mapping_service()
 
     try:
-        result = bridge.publish_mapping_enabled(body.enabled)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    await safe_write_audit_log(
-        db,
-        level="INFO",
-        module="BACKEND",
-        message=(
-            f"用户={user.username} 角色={user.role} 操作=nav.mapping.set_enabled "
-            f"目标={result['topic']} 结果=success enabled={body.enabled}"
-        ),
-    )
-    return result
+        if body.enabled:
+            if body.scene_name is None:
+                raise MappingError("请输入场景名称")
+            result = await asyncio.to_thread(mapping_service.start, body.scene_name)
+            await safe_write_audit_log(
+                db,
+                level="INFO",
+                module="BACKEND",
+                message=(
+                    f"用户={user.username} 角色={user.role} 操作=nav.mapping.start "
+                    f"场景={result['scene_name']} 目录={result['map_dir']} 结果=success pid={result['pid']}"
+                ),
+            )
+            return result
+
+        result = await asyncio.to_thread(mapping_service.stop)
+        await safe_write_audit_log(
+            db,
+            level="INFO",
+            module="BACKEND",
+            message=(
+                f"用户={user.username} 角色={user.role} 操作=nav.mapping.stop "
+                f"场景={result['scene_name'] or '-'} 目录={result['map_dir'] or '-'} 结果=success"
+            ),
+        )
+        return result
+    except MappingError as exc:
+        raise HTTPException(status_code=409 if "进行中" in str(exc) else 400, detail=str(exc))
 
 
 @router.get("/pcd-maps/{map_id}/metadata", response_model=PcdMetadataResponse)

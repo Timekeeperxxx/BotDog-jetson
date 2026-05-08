@@ -4,6 +4,7 @@ import type {
   LocalizationPosePayload,
   NavWaypoint,
   NavWaypointCreatePayload,
+  MappingControlResponse,
   PcdMapListResponse,
   PcdMetadata,
   PcdPreview,
@@ -130,13 +131,21 @@ export function setLocalizationPose(
 
 export function setMappingEnabled(
   enabled: boolean,
-): Promise<{ success: boolean; topic: string; enabled: boolean }> {
+  sceneName?: string,
+): Promise<MappingControlResponse> {
+  const body: Record<string, string | boolean | null> = {
+    enabled,
+  }
+  if (sceneName !== undefined) {
+    body.scene_name = sceneName
+  }
+
   return requestJson(
     getApiUrl('/api/v1/nav/mapping/set-enabled'),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled }),
+      body: JSON.stringify(body),
     },
   )
 }

@@ -507,6 +507,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         clear_ws_runtime()
         _state_machine = None
 
+        try:
+            from .services_mapping import get_mapping_service
+
+            mapping_service = get_mapping_service()
+            mapping_status = mapping_service.get_status()
+            if mapping_status["running"]:
+                mapping_logger = get_logger("建图服务")
+                mapping_logger.info("应用关闭时停止建图流程")
+                await asyncio.to_thread(mapping_service.stop)
+        except Exception as exc:
+            app_logger.warning("关闭建图服务时发生异常：{}", exc)
+
         if _ros_nav_bridge is not None:
             _ros_nav_bridge.stop()
             from .nav_bridge_state import set_ros_nav_bridge as _set_nav_bridge

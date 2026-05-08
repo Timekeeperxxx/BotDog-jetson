@@ -77,3 +77,18 @@ export type LocalizationPose = {
   frame_id: string
   updated_at: string
 }
+
+export type MappingControlRequest = {
+  enabled: boolean
+  scene_name?: string | null
+}
+
+export type MappingControlResponse = {
+  success: boolean
+  enabled: boolean
+  running: boolean
+  scene_name: string | null
+  map_dir: string | null
+  pid: number | null
+  message: string | null
+}

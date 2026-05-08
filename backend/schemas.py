@@ -230,12 +230,17 @@ class LocalizationPoseDTO(BaseModel):
 
 class MappingControlRequest(BaseModel):
     enabled: bool
+    scene_name: str | None = Field(default=None, max_length=100, description="建图场景名称")
 
 
 class MappingControlResponse(BaseModel):
     success: bool
-    topic: str
     enabled: bool
+    running: bool = False
+    scene_name: str | None = None
+    map_dir: str | None = None
+    pid: int | None = None
+    message: str | None = None
 
 
 class RobotPoseDTO(BaseModel):

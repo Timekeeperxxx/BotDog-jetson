@@ -42,8 +42,38 @@ type LogItem = {
   message: string
 }
 
+type MappingSessionInfo = {
+  sceneName: string
+  mapDir: string
+}
+
 function nowText() {
   return new Date().toLocaleTimeString()
+}
+
+function validateMappingSceneName(
+  rawValue: string,
+): { ok: false; message: string } | { ok: true; value: string } {
+  const sceneName = rawValue.trim()
+  if (!sceneName) {
+    return { ok: false, message: '请输入场景名称' }
+  }
+  if (sceneName === '.' || sceneName === '..') {
+    return { ok: false, message: '场景名称非法' }
+  }
+  if (sceneName.includes('/') || sceneName.includes('\\')) {
+    return { ok: false, message: '场景名称不能包含 / 或 \\' }
+  }
+  if (sceneName.includes('..')) {
+    return { ok: false, message: '场景名称不能包含 ..' }
+  }
+  if (Array.from(sceneName).some((char) => char.charCodeAt(0) < 32)) {
+    return { ok: false, message: '场景名称包含非法控制字符' }
+  }
+  if (sceneName.length > 100) {
+    return { ok: false, message: '场景名称过长' }
+  }
+  return { ok: true, value: sceneName }
 }
 
 const TASK_STORAGE_KEY = 'botdog-nav-workflows'
@@ -88,6 +118,10 @@ export function PcdMapDemoPage() {
   const [estopSending, setEstopSending] = useState(false)
   const [mappingActive, setMappingActive] = useState(false)
   const [mappingSending, setMappingSending] = useState(false)
+  const [mappingDialogOpen, setMappingDialogOpen] = useState(false)
+  const [mappingSceneName, setMappingSceneName] = useState('')
+  const [mappingSceneError, setMappingSceneError] = useState<string | null>(null)
+  const [mappingSessionInfo, setMappingSessionInfo] = useState<MappingSessionInfo | null>(null)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
   const [webglSupported, setWebglSupported] = useState(true)
@@ -271,20 +305,66 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, canOperate])
 
-  const handleToggleMapping = useCallback(async () => {
+  const handleStopMapping = useCallback(async () => {
     if (!canOperate) return
-    const nextEnabled = !mappingActive
+    if (mappingSending) return
+
     setMappingSending(true)
     try {
-      const result = await setMappingEnabled(nextEnabled)
-      setMappingActive(result.enabled)
-      addLog(result.enabled ? `已发送开始建图到 ${result.topic}` : `已发送结束建图到 ${result.topic}`)
+      const result = await setMappingEnabled(false)
+      setMappingActive(false)
+      setMappingSessionInfo(null)
+      addLog(result.message || '已停止建图')
     } catch (error) {
-      addLog(error instanceof Error ? error.message : '发送建图控制失败', 'error')
+      addLog(error instanceof Error ? error.message : '停止建图失败', 'error')
     } finally {
       setMappingSending(false)
     }
-  }, [addLog, canOperate, mappingActive])
+  }, [addLog, canOperate, mappingSending])
+
+  const handleOpenMappingDialog = useCallback(() => {
+    if (!canOperate) return
+    if (mappingSending) return
+    setMappingSceneError(null)
+    setMappingSceneName('')
+    setMappingDialogOpen(true)
+  }, [canOperate, mappingSending])
+
+  const handleConfirmStartMapping = useCallback(async () => {
+    if (!canOperate) return
+    if (mappingSending) return
+
+    const validated = validateMappingSceneName(mappingSceneName)
+    if (!validated.ok) {
+      setMappingSceneError(validated.message)
+      return
+    }
+
+    setMappingSceneError(null)
+    setMappingSending(true)
+    try {
+      const result = await setMappingEnabled(true, validated.value)
+      setMappingActive(true)
+      setMappingSessionInfo({
+        sceneName: result.scene_name || validated.value,
+        mapDir: result.map_dir || '',
+      })
+      setMappingDialogOpen(false)
+      addLog(
+        result.message
+          ? `${result.message}：${result.scene_name}，目录=${result.map_dir}`
+          : `建图已启动：${result.scene_name}，目录=${result.map_dir}`,
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '启动建图失败'
+      addLog(message, 'error')
+      if (message.includes('建图已在进行中')) {
+        setMappingActive(true)
+      }
+    } finally {
+      setMappingSending(false)
+    }
+  }, [addLog, canOperate, mappingSceneName, mappingSending])
 
   useEffect(() => {
     void refreshMaps()
@@ -920,7 +1000,13 @@ export function PcdMapDemoPage() {
             </button>
             <button
               className={`pcd-tool-button ${mappingActive ? 'is-active' : ''}`}
-              onClick={() => void handleToggleMapping()}
+              onClick={() => {
+                if (mappingActive) {
+                  void handleStopMapping()
+                  return
+                }
+                handleOpenMappingDialog()
+              }}
               disabled={mappingSending || !canOperate}
             >
               <Square size={15} />
@@ -933,6 +1019,12 @@ export function PcdMapDemoPage() {
               {!resultMessage && lastResult ? <small>{lastResult.result}</small> : null}
             </div>
           </section>
+          {mappingSessionInfo ? (
+            <section className="pcd-mapping-session">
+              <strong>当前建图场景：{mappingSessionInfo.sceneName}</strong>
+              <span>地图保存路径：{mappingSessionInfo.mapDir}</span>
+            </section>
+          ) : null}
         </section>
 
         <aside className="pcd-right-rail">
@@ -1010,6 +1102,69 @@ export function PcdMapDemoPage() {
           </div>
         </div>
       )}
+      {mappingDialogOpen ? (
+        <div
+          className="pcd-scene-modal"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !mappingSending) {
+              setMappingDialogOpen(false)
+              setMappingSceneError(null)
+            }
+          }}
+        >
+          <div className="pcd-scene-modal-card">
+            <div className="pcd-scene-modal-header">
+              <strong>请输入场景名称</strong>
+              <span>建图开始后会自动创建对应地图目录。</span>
+            </div>
+            <label className="pcd-scene-modal-field">
+              <span>场景名称</span>
+              <input
+                autoFocus
+                value={mappingSceneName}
+                onChange={(event) => {
+                  setMappingSceneName(event.target.value)
+                  if (mappingSceneError) {
+                    setMappingSceneError(null)
+                  }
+                }}
+                placeholder="例如：实验室一楼"
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault()
+                    void handleConfirmStartMapping()
+                  }
+                }}
+                disabled={mappingSending}
+              />
+            </label>
+            {mappingSceneError ? (
+              <div className="pcd-scene-modal-error">{mappingSceneError}</div>
+            ) : null}
+            <div className="pcd-scene-modal-actions">
+              <button
+                type="button"
+                className="pcd-tool-button"
+                onClick={() => {
+                  setMappingDialogOpen(false)
+                  setMappingSceneError(null)
+                }}
+                disabled={mappingSending}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="pcd-tool-button is-active"
+                onClick={() => void handleConfirmStartMapping()}
+                disabled={mappingSending}
+              >
+                {mappingSending ? '启动中...' : '确认开始'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }

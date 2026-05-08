@@ -1214,6 +1214,106 @@
   white-space: nowrap;
 }
 
+.pcd-mapping-session {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 12px 12px;
+  color: #b7c8d2;
+  font-size: 12px;
+}
+
+.pcd-mapping-session strong {
+  color: #eef6fa;
+  font-size: 13px;
+}
+
+.pcd-scene-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(2, 6, 23, 0.74);
+  backdrop-filter: blur(10px);
+}
+
+.pcd-scene-modal-card {
+  width: min(520px, 100%);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at top left, rgba(45, 212, 191, 0.12), transparent 32%),
+    rgba(7, 18, 22, 0.98);
+  box-shadow: 0 28px 120px -36px rgba(0, 0, 0, 0.92);
+  padding: 22px;
+}
+
+.pcd-scene-modal-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pcd-scene-modal-header strong {
+  color: #f8fafc;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.pcd-scene-modal-header span {
+  color: #8ea3ad;
+  font-size: 12px;
+}
+
+.pcd-scene-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.pcd-scene-modal-field span {
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pcd-scene-modal-field input {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #f8fafc;
+  font: inherit;
+  outline: none;
+}
+
+.pcd-scene-modal-field input:focus {
+  border-color: rgba(45, 212, 191, 0.72);
+  box-shadow: 0 0 0 2px rgba(45, 212, 191, 0.18);
+}
+
+.pcd-scene-modal-error {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(248, 113, 113, 0.28);
+  border-radius: 8px;
+  background: rgba(127, 29, 29, 0.28);
+  color: #fecaca;
+  font-size: 12px;
+}
+
+.pcd-scene-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 @media (max-width: 1180px) {
   .pcd-workspace {
     grid-template-columns: minmax(0, 1fr) 308px;
