@@ -9,9 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ...auth.dependencies import require_admin, require_operator
 from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
-from ...config import settings
 from ...database import get_db
-from ...logging_config import get_logger
 from ...schemas import (
     DeleteWaypointResponse,
     LocalizationPoseDTO,
@@ -29,7 +27,6 @@ from ...schemas import (
 from ...nav_bridge_state import get_ros_nav_bridge
 
 router = APIRouter(prefix="/api/v1/nav", tags=["nav"])
-nav_logger = get_logger("导航巡逻")
 
 
 @router.get("/pcd-maps", response_model=PcdMapListResponse)
@@ -47,16 +44,6 @@ async def nav_get_state():
     from ...services_nav_state import get_nav_state
 
     return get_nav_state()
-
-
-@router.get("/current-goal")
-async def nav_get_current_goal():
-    from ...services_nav_runtime import read_current_goal
-
-    try:
-        return {"current_goal": read_current_goal()}
-    except ValueError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post("/page-open")
@@ -217,7 +204,6 @@ async def nav_go_to_waypoint(
     user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
-    from ...services_nav_runtime import write_current_goal
     from ...services_nav_state import update_navigation_status
     from ...services_nav_waypoints import get_waypoint
     from ...services_pcd_maps import PcdMapError
@@ -236,49 +222,20 @@ async def nav_go_to_waypoint(
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        current_goal = write_current_goal(waypoint)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"写入 current_goal.json 失败: {exc}")
-
-    try:
-        start_result = bridge.publish_navigation_start()
+        nav_start_result = bridge.publish_navigation_start()
+        goal_result = bridge.publish_goal_xyz_yaw(waypoint)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
-    goal_pose_compat = {
-        "enabled": True,
-        "success": True,
-        "topic": settings.ROS_NAV_GOAL_TOPIC,
-        "result": None,
-        "error": None,
-    }
-    try:
-        result = bridge.publish_navigation_goal(waypoint)
-        goal_pose_compat = {
-            "enabled": True,
-            "success": True,
-            "topic": result["topic"],
-            "result": result,
-            "error": None,
-        }
-    except RuntimeError as exc:
-        nav_logger.warning("兼容 /goal_pose 发布失败，但主导航启动已成功：waypoint_id={}，原因={}", waypoint["id"], exc)
-        goal_pose_compat = {
-            "enabled": True,
-            "success": False,
-            "topic": settings.ROS_NAV_GOAL_TOPIC,
-            "result": None,
-            "error": str(exc),
-        }
-
     await safe_write_audit_log(
         db,
-        level="INFO" if goal_pose_compat["success"] else "WARN",
+        level="INFO",
         module="BACKEND",
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.go_to "
             f"目标={waypoint_id} map={map_id} 结果=success "
-            f"goal_pose_compat={goal_pose_compat['success']}"
+            f"nav_start_topic={nav_start_result['topic']} "
+            f"clicked_point_topic={goal_result['xyz_topic']} yaw_topic={goal_result['yaw_topic']}"
         ),
     )
     update_navigation_status(
@@ -287,19 +244,23 @@ async def nav_go_to_waypoint(
             "target_waypoint_id": waypoint["id"],
             "target_name": waypoint["name"],
             "message": (
-                f"已发布导航开始信号并写入当前目标: {waypoint['name']}"
-                if not goal_pose_compat["success"]
-                else f"已发布导航开始信号并发送目标: {waypoint['name']}"
+                f"已发布 nav_start，随后发布 clicked_point 和 goal_yaw: {waypoint['name']} "
+                f"x={float(waypoint['x']):.3f}, "
+                f"y={float(waypoint['y']):.3f}, "
+                f"z={float(waypoint.get('z', 0.0)):.3f}, "
+                f"yaw={float(waypoint.get('yaw', 0.0)):.3f}"
             ),
         }
     )
     return {
         "success": True,
-        "current_goal": current_goal,
-        "topic": settings.ROS_NAV_GOAL_TOPIC,
+        "topic": goal_result["xyz_topic"],
         "waypoint_id": waypoint["id"],
-        "start": start_result,
-        "goal_pose_compat": goal_pose_compat,
+        "nav_start_topic": nav_start_result["topic"],
+        "xyz_topic": goal_result["xyz_topic"],
+        "yaw_topic": goal_result["yaw_topic"],
+        "nav_start": nav_start_result,
+        "goal": goal_result,
     }
 
 

@@ -40,8 +40,6 @@ NAV_ROUTES = [
     ("GET",    "/api/v1/nav/pcd-maps"),
     # 导航状态
     ("GET",    "/api/v1/nav/state"),
-    # 当前目标点运行时文件
-    ("GET",    "/api/v1/nav/current-goal"),
     # 页面打开通知
     ("POST",   "/api/v1/nav/page-open"),
     # 设置重定位位姿

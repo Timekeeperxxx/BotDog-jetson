@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { NavWaypoint } from '../../types/pcdMap'
-import type { RobotPose } from '../../types/navState'
+import type { GlobalPath, RobotPose } from '../../types/navState'
 import { mapToThree } from '../../utils/pointCloudTransform'
 import { detectWebGLSupport } from './webglSupport'
 
@@ -12,6 +12,14 @@ function clamp(value: number, min: number, max: number) {
 
 function disposeObject3D(object: THREE.Object3D) {
   if (object instanceof THREE.Mesh) {
+    object.geometry.dispose()
+    const material = object.material
+    if (Array.isArray(material)) material.forEach((item) => item.dispose())
+    else material.dispose()
+    return
+  }
+
+  if (object instanceof THREE.Line) {
     object.geometry.dispose()
     const material = object.material
     if (Array.isArray(material)) material.forEach((item) => item.dispose())
@@ -71,10 +79,11 @@ type Props = {
   points: [number, number, number][]
   waypoints: NavWaypoint[]
   robotPose: RobotPose | null
+  globalPath: GlobalPath | null
   followRobot?: boolean
 }
 
-export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot = false }: Props) {
+export function PointCloud3DViewer({ points, waypoints, robotPose, globalPath, followRobot = false }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const [webglSupported] = useState(() => detectWebGLSupport())
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -84,6 +93,7 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
   const followOffsetRef = useRef<THREE.Vector3 | null>(null)
   const gridRef = useRef<THREE.GridHelper | null>(null)
   const cloudRef = useRef<THREE.Points | null>(null)
+  const pathGroupRef = useRef<THREE.Group | null>(null)
   const waypointGroupRef = useRef<THREE.Group | null>(null)
   const robotGroupRef = useRef<THREE.Group | null>(null)
 
@@ -115,6 +125,10 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
     gridRef.current = grid
     scene.add(grid)
     scene.add(new THREE.AmbientLight(0xffffff, 0.85))
+
+    const pathGroup = new THREE.Group()
+    pathGroupRef.current = pathGroup
+    scene.add(pathGroup)
 
     const waypointGroup = new THREE.Group()
     waypointGroupRef.current = waypointGroup
@@ -170,7 +184,10 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
       const material = cloudRef.current?.material
       if (Array.isArray(material)) material.forEach((item) => item.dispose())
       else material?.dispose()
+      pathGroup.children.forEach(disposeObject3D)
+      pathGroup.clear()
       waypointGroup.children.forEach(disposeObject3D)
+      waypointGroup.clear()
       robotGroup.children.forEach((child) => {
         if (child instanceof THREE.Mesh) {
           child.geometry.dispose()
@@ -208,6 +225,13 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
       if (Array.isArray(material)) material.forEach((item) => item.dispose())
       else material.dispose()
       cloudRef.current = null
+    }
+
+    if (pathGroupRef.current) {
+      scene.remove(pathGroupRef.current)
+      pathGroupRef.current.children.forEach(disposeObject3D)
+      pathGroupRef.current.clear()
+      scene.add(pathGroupRef.current)
     }
 
     if (points.length === 0) {
@@ -272,6 +296,48 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, followRobot =
       }
     }
   }, [points, webglSupported])
+
+  useEffect(() => {
+    if (!webglSupported) return
+    const scene = sceneRef.current
+    const pathGroup = pathGroupRef.current
+    if (!scene || !pathGroup) return
+
+    pathGroup.children.forEach(disposeObject3D)
+    pathGroup.clear()
+
+    if (!globalPath || globalPath.frame_id !== 'map' || globalPath.points.length < 2) {
+      return
+    }
+
+    const positions = new Float32Array(globalPath.points.length * 3)
+    const zLift = 0.03
+    globalPath.points.forEach((point, index) => {
+      const converted = mapToThree(point.x, point.y, point.z)
+      positions[index * 3] = converted.x
+      positions[index * 3 + 1] = converted.y + zLift
+      positions[index * 3 + 2] = converted.z
+    })
+
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+
+    const material = new THREE.LineBasicMaterial({
+      color: 0xfacc15,
+      transparent: true,
+      opacity: 0.95,
+      depthTest: false,
+    })
+
+    const pathLine = new THREE.Line(geometry, material)
+    pathLine.renderOrder = 20
+    pathGroup.add(pathLine)
+
+    return () => {
+      pathGroup.children.forEach(disposeObject3D)
+      pathGroup.clear()
+    }
+  }, [globalPath, webglSupported])
 
   useEffect(() => {
     if (!webglSupported) return

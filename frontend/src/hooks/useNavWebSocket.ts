@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getWsUrl } from '../config/api'
 import type {
+  GlobalPath,
   LocalizationStatus,
   NavigationStatus,
   NavWebSocketEvent,
@@ -10,6 +11,7 @@ import type {
 type NavWebSocketState = {
   connected: boolean
   robotPose: RobotPose | null
+  globalPath: GlobalPath | null
   localizationStatus: LocalizationStatus | null
   navigationStatus: NavigationStatus | null
   lastMessageAt: number | null
@@ -19,6 +21,7 @@ export function useNavWebSocket() {
   const [state, setState] = useState<NavWebSocketState>({
     connected: false,
     robotPose: null,
+    globalPath: null,
     localizationStatus: null,
     navigationStatus: null,
     lastMessageAt: null,
@@ -69,6 +72,9 @@ export function useNavWebSocket() {
         setState((prev) => {
           if (navEvent.type === 'nav.robot_pose') {
             return { ...prev, robotPose: navEvent.data, lastMessageAt: Date.now() }
+          }
+          if (navEvent.type === 'nav.global_path') {
+            return { ...prev, globalPath: navEvent.data, lastMessageAt: Date.now() }
           }
           if (navEvent.type === 'nav.localization_status') {
             return { ...prev, localizationStatus: navEvent.data, lastMessageAt: Date.now() }
@@ -123,12 +129,14 @@ export function useNavWebSocket() {
 
   const setInitialState = useCallback((next: {
     robotPose?: RobotPose | null
+    globalPath?: GlobalPath | null
     localizationStatus?: LocalizationStatus | null
     navigationStatus?: NavigationStatus | null
   }) => {
     setState((prev) => ({
       ...prev,
       robotPose: next.robotPose ?? prev.robotPose,
+      globalPath: next.globalPath ?? prev.globalPath,
       localizationStatus: next.localizationStatus ?? prev.localizationStatus,
       navigationStatus: next.navigationStatus ?? prev.navigationStatus,
     }))

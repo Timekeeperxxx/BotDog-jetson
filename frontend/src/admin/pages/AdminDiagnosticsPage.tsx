@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { ExternalLink, FlaskConical, Radar, ServerCog } from 'lucide-react'
+import { ExternalLink, FlaskConical, ServerCog } from 'lucide-react'
 import { apiFetch } from '../../api/apiFetch'
 import { AdminCard, EmptyState, ToolbarButton } from '../AdminUi'
 
@@ -38,13 +38,6 @@ export function AdminDiagnosticsPage({
             loading={loadingKey === '/api/v1/system/safety'}
           />
           <DiagTile
-            icon={<Radar size={14} />}
-            title="/api/v1/nav/current-goal"
-            desc="检查运行时 current_goal.json 是否已写入。"
-            onClick={() => void runDiagnostic('/api/v1/nav/current-goal')}
-            loading={loadingKey === '/api/v1/nav/current-goal'}
-          />
-          <DiagTile
             icon={<FlaskConical size={14} />}
             title="/api/v1/auth/status"
             desc="检查当前登录态和角色信息。"
@@ -58,7 +51,6 @@ export function AdminDiagnosticsPage({
         <div className="flex flex-wrap gap-3">
           <ToolbarButton onClick={onOpenPatrol}><ExternalLink size={14} className="inline-block" /> 打开导航页</ToolbarButton>
           <ToolbarButton onClick={() => void runDiagnostic('/api/v1/system/safety')}>检查安全接口</ToolbarButton>
-          <ToolbarButton onClick={() => void runDiagnostic('/api/v1/nav/current-goal')}>检查当前目标</ToolbarButton>
           <ToolbarButton onClick={() => void runDiagnostic('/api/v1/auth/status')}>检查登录状态</ToolbarButton>
         </div>
       </AdminCard>

@@ -16,7 +16,7 @@ const CATEGORY_TABS = [
   },
   {
     key: 'nav', label: '导航',
-    keywords: ['nav.', '导航', 'go-to', 'go_to', 'nav.go_to', 'nav.e_stop', 'current_goal'],
+    keywords: ['nav.', '导航', 'go-to', 'go_to', 'nav.go_to', 'nav.e_stop'],
   },
   {
     key: 'config', label: '配置',

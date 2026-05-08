@@ -89,7 +89,24 @@ export function deleteWaypoint(
 export function goToWaypoint(
   mapId: string,
   waypointId: string,
-): Promise<{ success: boolean; topic: string; waypoint_id: string }> {
+): Promise<{
+  success: boolean
+  topic: string
+  waypoint_id: string
+  xyz_topic?: string
+  yaw_topic?: string
+  goal?: {
+    success: boolean
+    xyz_topic: string
+    yaw_topic: string
+    waypoint_id?: string
+    x: number
+    y: number
+    z: number
+    yaw: number
+    frame_id: string
+  }
+}> {
   return requestJson(
     getApiUrl(
       `/api/v1/nav/pcd-maps/${encodeURIComponent(mapId)}/waypoints/${encodeURIComponent(waypointId)}/go-to`,

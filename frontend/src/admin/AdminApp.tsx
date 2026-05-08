@@ -88,6 +88,7 @@ export function AdminApp() {
     if (!navState) return
     setInitialState({
       robotPose: navState.robot_pose,
+      globalPath: navState.global_path,
       navigationStatus: navState.navigation_status,
       localizationStatus: navState.localization_status,
     })
@@ -102,9 +103,10 @@ export function AdminApp() {
 
   const mergedNavState = useMemo(() => ({
     robot_pose: navWs.robotPose ?? navState?.robot_pose ?? null,
+    global_path: navWs.globalPath ?? navState?.global_path ?? null,
     navigation_status: navWs.navigationStatus ?? navState?.navigation_status ?? { status: 'waiting', target_waypoint_id: null, target_name: null, message: '等待中', timestamp: null },
     localization_status: navWs.localizationStatus ?? navState?.localization_status ?? { status: 'waiting', frame_id: 'map', source: null, message: '等待中', timestamp: null },
-  }), [navState, navWs.localizationStatus, navWs.navigationStatus, navWs.robotPose])
+  }), [navState, navWs.globalPath, navWs.localizationStatus, navWs.navigationStatus, navWs.robotPose])
 
   const sectionMeta = useMemo(
     () => adminNavItems.find((item) => item.key === activeSection) ?? adminNavItems[0],

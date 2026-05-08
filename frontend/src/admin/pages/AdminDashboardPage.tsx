@@ -35,8 +35,6 @@ export function AdminDashboardPage({ data }: { data: AdminDashboardData }) {
   const [authStatusError, setAuthStatusError] = useState<string | null>(null)
   const [safetyStatus, setSafetyStatus] = useState<Record<string, unknown> | null>(null)
   const [safetyError, setSafetyError] = useState<string | null>(null)
-  const [currentGoal, setCurrentGoal] = useState<Record<string, unknown> | null>(null)
-  const [currentGoalError, setCurrentGoalError] = useState<string | null>(null)
 
   useEffect(() => {
     apiFetch<AuthStatusResult>('/api/v1/auth/status')
@@ -48,12 +46,6 @@ export function AdminDashboardPage({ data }: { data: AdminDashboardData }) {
     apiFetch<Record<string, unknown>>('/api/v1/system/safety')
       .then(setSafetyStatus)
       .catch((err: unknown) => setSafetyError(err instanceof Error ? err.message : '暂不可用'))
-  }, [])
-
-  useEffect(() => {
-    apiFetch<{ current_goal: Record<string, unknown> | null }>('/api/v1/nav/current-goal')
-      .then((data) => setCurrentGoal(data.current_goal))
-      .catch((err: unknown) => setCurrentGoalError(err instanceof Error ? err.message : '暂不可用'))
   }, [])
 
   const serviceCards = useMemo<AdminServiceCard[]>(() => {
@@ -161,20 +153,6 @@ export function AdminDashboardPage({ data }: { data: AdminDashboardData }) {
               { label: '适配器就绪', value: safetyStatus.control_adapter_ready ? '是' : '否' },
               { label: '阻止原因', value: Array.isArray(safetyStatus.reasons) && safetyStatus.reasons.length > 0 ? (safetyStatus.reasons as string[]).join('；') : '无' },
             ] : []}
-          />
-          {/* 当前导航目标 */}
-          <SecurityTile
-            icon={<MapPinned size={14} />}
-            title="当前导航目标"
-            error={currentGoalError}
-            rows={currentGoal ? [
-              { label: '目标点', value: String(currentGoal.waypoint_name ?? currentGoal.name ?? '--') },
-              { label: 'waypoint_id', value: String(currentGoal.waypoint_id ?? '--') },
-              { label: 'map_id', value: String(currentGoal.map_id ?? '--') },
-              { label: 'x / y / z', value: currentGoal.x != null ? `${Number(currentGoal.x).toFixed(2)} / ${Number(currentGoal.y).toFixed(2)} / ${Number(currentGoal.z).toFixed(2)}` : '--' },
-              { label: 'yaw', value: currentGoal.yaw != null ? `${Number(currentGoal.yaw).toFixed(3)} rad` : '--' },
-              { label: 'selected_at', value: String(currentGoal.selected_at ?? '--') },
-            ] : [{ label: '状态', value: '无当前目标' }]}
           />
         </div>
       </AdminCard>

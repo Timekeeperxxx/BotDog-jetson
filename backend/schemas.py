@@ -264,7 +264,20 @@ class LocalizationStatusDTO(BaseModel):
     timestamp: float | None = None
 
 
+class GlobalPathPointDTO(BaseModel):
+    x: float
+    y: float
+    z: float = 0.0
+
+
+class GlobalPathDTO(BaseModel):
+    frame_id: str
+    points: list[GlobalPathPointDTO]
+    timestamp: float | None = None
+
+
 class NavStateResponse(BaseModel):
     robot_pose: RobotPoseDTO | None = None
     navigation_status: NavigationStatusDTO
     localization_status: LocalizationStatusDTO
+    global_path: GlobalPathDTO | None = None

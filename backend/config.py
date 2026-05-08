@@ -86,7 +86,6 @@ class Settings(BaseSettings):
     NAV_WAYPOINT_STORE_DIR: str = "./data/nav_waypoints"
     NAV_LOCALIZATION_STORE_DIR: str = "./data/nav_localization"
     NAV_RUNTIME_DIR: str = "./data/nav_runtime"
-    NAV_CURRENT_GOAL_FILE: str = "current_goal.json"
 
     # ==================== ROS2 导航状态订阅转发 ====================
     ROS_NAV_ENABLED: bool = True
@@ -98,6 +97,9 @@ class Settings(BaseSettings):
     ROS_NAV_PAGE_OPEN_TOPIC: str = "/lidar_start"
     ROS_NAV_START_TOPIC: str = "/nav_start"
     ROS_NAV_GOAL_TOPIC: str = "/goal_pose"
+    ROS_NAV_GOAL_XYZ_TOPIC: str = "/clicked_point"
+    ROS_NAV_GOAL_YAW_TOPIC: str = "goal_yaw"
+    ROS_NAV_GLOBAL_PATH_TOPIC: str = "/global_path"
     ROS_NAV_STOP_TOPIC: str = "/nav_stop"
     ROS_NAV_SET_POSE_TOPIC: str = "/initialpose_start"
     ROS_NAV_MAPPING_TOPIC: str = "/mapping_start"

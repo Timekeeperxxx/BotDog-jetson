@@ -9,6 +9,7 @@ from typing import Any
 from .config import settings
 from .logging_config import get_logger
 from .services_nav_state import (
+    update_global_path,
     get_robot_pose,
     update_localization_status,
     update_robot_pose,
@@ -23,16 +24,6 @@ def quaternion_to_yaw(x: float, y: float, z: float, w: float) -> float:
     siny_cosp = 2.0 * (w * z + x * y)
     cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
     return math.atan2(siny_cosp, cosy_cosp)
-
-
-def yaw_to_quaternion(yaw: float) -> dict[str, float]:
-    half_yaw = yaw / 2.0
-    return {
-        "x": 0.0,
-        "y": 0.0,
-        "z": math.sin(half_yaw),
-        "w": math.cos(half_yaw),
-    }
 
 
 def _stamp_to_seconds(stamp: Any) -> float:
@@ -70,8 +61,10 @@ class RosNavBridge:
         self._tf_buffer: Any | None = None
         self._tf_listener: Any | None = None
         self._page_open_publisher: Any | None = None
-        self._start_publisher: Any | None = None
-        self._goal_publisher: Any | None = None
+        self._nav_start_publisher: Any | None = None
+        self._goal_xyz_publisher: Any | None = None
+        self._goal_yaw_publisher: Any | None = None
+        self._global_path_subscription: Any | None = None
         self._estop_publisher: Any | None = None
         self._set_pose_publisher: Any | None = None
         self._mapping_publisher: Any | None = None
@@ -115,6 +108,7 @@ class RosNavBridge:
         try:
             import rclpy
             from nav_msgs.msg import Odometry
+            from nav_msgs.msg import Path
             from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
         except Exception as exc:
             update_localization_status(
@@ -134,6 +128,7 @@ class RosNavBridge:
             rclpy.init(args=None)
             self._node = rclpy.create_node("botdog_nav_state_bridge")
             self._setup_publishers()
+            self._setup_global_path_subscription(Path)
 
             if self._use_tf_pose():
                 self._setup_tf_listener()
@@ -210,8 +205,8 @@ class RosNavBridge:
 
     def _setup_publishers(self) -> None:
         try:
-            from geometry_msgs.msg import PoseStamped
-            from std_msgs.msg import Bool
+            from geometry_msgs.msg import PointStamped
+            from std_msgs.msg import Bool, Float64
         except Exception as exc:
             raise RuntimeError(f"导航发布消息类型不可用: {exc}") from exc
 
@@ -220,14 +215,19 @@ class RosNavBridge:
             settings.ROS_NAV_PAGE_OPEN_TOPIC,
             10,
         )
-        self._start_publisher = self._node.create_publisher(
+        self._nav_start_publisher = self._node.create_publisher(
             Bool,
             settings.ROS_NAV_START_TOPIC,
             10,
         )
-        self._goal_publisher = self._node.create_publisher(
-            PoseStamped,
-            settings.ROS_NAV_GOAL_TOPIC,
+        self._goal_xyz_publisher = self._node.create_publisher(
+            PointStamped,
+            settings.ROS_NAV_GOAL_XYZ_TOPIC,
+            1,
+        )
+        self._goal_yaw_publisher = self._node.create_publisher(
+            Float64,
+            settings.ROS_NAV_GOAL_YAW_TOPIC,
             10,
         )
         self._estop_publisher = self._node.create_publisher(
@@ -246,13 +246,15 @@ class RosNavBridge:
             10,
         )
         nav_logger.info(
-            "ROS2 导航发布器已启动：page_open_topic={}，start_topic={}，goal_topic={}，stop_topic={}，set_pose_topic={}，mapping_topic={}",
+            "ROS2 导航发布器已启动：page_open_topic={}，nav_start_topic={}，clicked_point_topic={}，goal_yaw_topic={}，stop_topic={}，set_pose_topic={}，mapping_topic={}，global_path_topic={}",
             settings.ROS_NAV_PAGE_OPEN_TOPIC,
             settings.ROS_NAV_START_TOPIC,
-            settings.ROS_NAV_GOAL_TOPIC,
+            settings.ROS_NAV_GOAL_XYZ_TOPIC,
+            settings.ROS_NAV_GOAL_YAW_TOPIC,
             settings.ROS_NAV_STOP_TOPIC,
             settings.ROS_NAV_SET_POSE_TOPIC,
             settings.ROS_NAV_MAPPING_TOPIC,
+            settings.ROS_NAV_GLOBAL_PATH_TOPIC,
         )
 
     def publish_navigation_page_open(self) -> dict[str, Any]:
@@ -273,15 +275,15 @@ class RosNavBridge:
         }
 
     def publish_navigation_start(self) -> dict[str, Any]:
-        if self._node is None or self._start_publisher is None:
-            raise RuntimeError("ROS2 导航开始发布器未就绪")
+        if self._node is None or self._nav_start_publisher is None:
+            raise RuntimeError("ROS2 nav_start 发布器未就绪")
 
         from std_msgs.msg import Bool
 
         msg = Bool()
         msg.data = True
         with self._publisher_lock:
-            self._start_publisher.publish(msg)
+            self._nav_start_publisher.publish(msg)
 
         return {
             "success": True,
@@ -289,36 +291,43 @@ class RosNavBridge:
             "data": True,
         }
 
-    def publish_navigation_goal(self, waypoint: dict[str, Any]) -> dict[str, Any]:
-        if self._node is None or self._goal_publisher is None:
-            raise RuntimeError("ROS2 导航发布器未就绪")
+    def publish_goal_xyz_yaw(self, waypoint: dict[str, Any]) -> dict[str, Any]:
+        if self._node is None:
+            raise RuntimeError("ROS2 导航节点未就绪")
+        if self._goal_xyz_publisher is None:
+            raise RuntimeError("ROS2 clicked_point 发布器未就绪")
+        if self._goal_yaw_publisher is None:
+            raise RuntimeError("ROS2 goal_yaw 发布器未就绪")
 
-        from geometry_msgs.msg import PoseStamped
+        from geometry_msgs.msg import PointStamped
+        from std_msgs.msg import Float64
 
-        msg = PoseStamped()
-        msg.header.stamp = self._node.get_clock().now().to_msg()
-        msg.header.frame_id = str(waypoint.get("frame_id") or settings.ROS_NAV_FRAME_ID)
-        msg.pose.position.x = float(waypoint["x"])
-        msg.pose.position.y = float(waypoint["y"])
-        msg.pose.position.z = float(waypoint.get("z", 0.0))
-        orientation = yaw_to_quaternion(float(waypoint.get("yaw", 0.0)))
-        msg.pose.orientation.x = orientation["x"]
-        msg.pose.orientation.y = orientation["y"]
-        msg.pose.orientation.z = orientation["z"]
-        msg.pose.orientation.w = orientation["w"]
+        yaw = float(waypoint.get("yaw", 0.0))
+
+        yaw_msg = Float64()
+        yaw_msg.data = yaw
+
+        point_msg = PointStamped()
+        point_msg.header.stamp = self._node.get_clock().now().to_msg()
+        point_msg.header.frame_id = str(waypoint.get("frame_id") or settings.ROS_NAV_FRAME_ID)
+        point_msg.point.x = float(waypoint["x"])
+        point_msg.point.y = float(waypoint["y"])
+        point_msg.point.z = float(waypoint.get("z", 0.0))
 
         with self._publisher_lock:
-            self._goal_publisher.publish(msg)
+            self._goal_yaw_publisher.publish(yaw_msg)
+            self._goal_xyz_publisher.publish(point_msg)
 
         return {
             "success": True,
-            "topic": settings.ROS_NAV_GOAL_TOPIC,
+            "xyz_topic": settings.ROS_NAV_GOAL_XYZ_TOPIC,
+            "yaw_topic": settings.ROS_NAV_GOAL_YAW_TOPIC,
             "waypoint_id": waypoint.get("id"),
-            "x": msg.pose.position.x,
-            "y": msg.pose.position.y,
-            "z": msg.pose.position.z,
-            "yaw": float(waypoint.get("yaw", 0.0)),
-            "frame_id": msg.header.frame_id,
+            "x": point_msg.point.x,
+            "y": point_msg.point.y,
+            "z": point_msg.point.z,
+            "yaw": yaw,
+            "frame_id": point_msg.header.frame_id,
         }
 
     def publish_emergency_stop(self) -> dict[str, Any]:
@@ -369,6 +378,53 @@ class RosNavBridge:
             "success": True,
             "topic": settings.ROS_NAV_MAPPING_TOPIC,
             "enabled": bool(enabled),
+        }
+
+    def _setup_global_path_subscription(self, path_cls: Any) -> None:
+        if self._node is None:
+            return
+
+        self._global_path_subscription = self._node.create_subscription(
+            path_cls,
+            settings.ROS_NAV_GLOBAL_PATH_TOPIC,
+            self._handle_global_path_message,
+            10,
+        )
+        nav_logger.info(
+            "ROS2 global_path 订阅已启动：topic={}",
+            settings.ROS_NAV_GLOBAL_PATH_TOPIC,
+        )
+
+    def _handle_global_path_message(self, msg: Any) -> None:
+        try:
+            path = self._extract_global_path(msg)
+        except Exception as exc:
+            nav_logger.warning("global_path 消息解析失败：{}", exc)
+            return
+
+        update_global_path(path)
+        self._submit_broadcast("nav.global_path", path)
+
+    def _extract_global_path(self, msg: Any) -> dict[str, Any]:
+        poses = getattr(msg, "poses", []) or []
+        points: list[dict[str, float]] = []
+        for pose_stamped in poses:
+            pose = getattr(pose_stamped, "pose", None)
+            position = getattr(pose, "position", None)
+            if position is None:
+                continue
+            points.append(
+                {
+                    "x": float(position.x),
+                    "y": float(position.y),
+                    "z": float(getattr(position, "z", 0.0)),
+                }
+            )
+
+        return {
+            "frame_id": _header_frame_id(msg),
+            "timestamp": _header_timestamp(msg),
+            "points": points,
         }
 
     def _use_tf_pose(self) -> bool:

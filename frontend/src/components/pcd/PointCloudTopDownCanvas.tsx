@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { LocateFixed, ZoomIn, ZoomOut } from 'lucide-react'
 import type { NavWaypoint, PcdBounds } from '../../types/pcdMap'
-import type { RobotPose } from '../../types/navState'
+import type { GlobalPath, RobotPose } from '../../types/navState'
 import { canvasToMap, mapToCanvas } from '../../utils/topDownCoordinate'
 
 type Props = {
@@ -10,6 +10,7 @@ type Props = {
   bounds: PcdBounds | null
   waypoints: NavWaypoint[]
   robotPose: RobotPose | null
+  globalPath: GlobalPath | null
   mode: 'none' | 'waypoint' | 'pose'
   waypointZ: number
   onMouseMapPositionChange: (pos: { x: number; y: number } | null) => void
@@ -30,6 +31,7 @@ export function PointCloudTopDownCanvas({
   bounds,
   waypoints,
   robotPose,
+  globalPath,
   mode,
   waypointZ,
   onMouseMapPositionChange,
@@ -212,6 +214,38 @@ export function PointCloudTopDownCanvas({
       ctx.lineTo(y1.x, y1.y)
       ctx.stroke()
 
+      if (globalPath && globalPath.frame_id === 'map' && globalPath.points.length > 1) {
+        const pathColor = '#facc15'
+        ctx.save()
+        ctx.strokeStyle = pathColor
+        ctx.fillStyle = pathColor
+        ctx.lineWidth = 3
+        ctx.lineJoin = 'round'
+        ctx.lineCap = 'round'
+        ctx.beginPath()
+
+        globalPath.points.forEach((point, index) => {
+          const basePos = mapToCanvas(point.x, point.y, bounds, width, height, PADDING)
+          const pos = applyView(basePos.x, basePos.y, width, height)
+          if (index === 0) {
+            ctx.moveTo(pos.x, pos.y)
+          } else {
+            ctx.lineTo(pos.x, pos.y)
+          }
+        })
+
+        ctx.stroke()
+
+        globalPath.points.forEach((point) => {
+          const basePos = mapToCanvas(point.x, point.y, bounds, width, height, PADDING)
+          const pos = applyView(basePos.x, basePos.y, width, height)
+          ctx.beginPath()
+          ctx.arc(pos.x, pos.y, 2.3, 0, Math.PI * 2)
+          ctx.fill()
+        })
+        ctx.restore()
+      }
+
       waypoints.forEach((waypoint, index) => {
         const basePos = mapToCanvas(waypoint.x, waypoint.y, bounds, width, height, PADDING)
         const pos = applyView(basePos.x, basePos.y, width, height)
@@ -266,7 +300,7 @@ export function PointCloudTopDownCanvas({
     draw()
 
     return () => resizeObserver.disconnect()
-  }, [bounds, pendingWaypoint, points, robotPose, view, waypoints])
+  }, [bounds, globalPath, pendingWaypoint, points, robotPose, view, waypoints])
 
   const readMapPosition = (event: MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current

@@ -95,7 +95,7 @@ export function PcdMapDemoPage() {
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
   const selectRequestRef = useRef(0)
   const navWs = useNavWebSocket()
-  const { robotPose, localizationStatus, setInitialState } = navWs
+  const { robotPose, globalPath, localizationStatus, setInitialState } = navWs
   const {
     startCommand,
     stopCommand,
@@ -346,6 +346,7 @@ export function PcdMapDemoPage() {
         if (cancelled) return
         setInitialState({
           robotPose: state.robot_pose,
+          globalPath: state.global_path,
           localizationStatus: state.localization_status,
           navigationStatus: state.navigation_status,
         })
@@ -737,6 +738,7 @@ export function PcdMapDemoPage() {
                 points={preview?.points || []}
                 waypoints={waypoints}
                 robotPose={robotPose}
+                globalPath={globalPath}
                 followRobot={followRobot}
               />
             ) : (
@@ -939,6 +941,7 @@ export function PcdMapDemoPage() {
             bounds={preview?.bounds || metadata?.bounds || null}
             waypoints={waypoints}
             robotPose={robotPose}
+            globalPath={globalPath}
             mode={interactionMode}
             waypointZ={waypointZ}
             onMouseMapPositionChange={setMouseMapPosition}

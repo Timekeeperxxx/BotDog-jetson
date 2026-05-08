@@ -13,10 +13,6 @@ type SafetyResponse = {
   control_adapter_ready: boolean
 }
 
-type CurrentGoalResponse = {
-  current_goal: Record<string, unknown> | null
-}
-
 interface AdminControlPageProps {
   health: HealthResponse | null
   navState: NavStateResponse | null
@@ -27,11 +23,8 @@ interface AdminControlPageProps {
 export function AdminControlPage({ health, navState, onOpenOperator, onOpenPatrol }: AdminControlPageProps) {
   const auth = useAuthState()
   const [safety, setSafety] = useState<SafetyResponse | null>(null)
-  const [goal, setGoal] = useState<Record<string, unknown> | null>(null)
   const [safetyError, setSafetyError] = useState<string | null>(null)
-  const [goalError, setGoalError] = useState<string | null>(null)
   const [safetyLoading, setSafetyLoading] = useState(true)
-  const [goalLoading, setGoalLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
@@ -53,32 +46,6 @@ export function AdminControlPage({ health, navState, onOpenOperator, onOpenPatro
     }
 
     void loadSafety()
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadGoal() {
-      setGoalLoading(true)
-      setGoalError(null)
-      try {
-        const data = await apiFetch<CurrentGoalResponse>('/api/v1/nav/current-goal')
-        if (!cancelled) setGoal(data.current_goal)
-      } catch (err) {
-        if (!cancelled) {
-          setGoal(null)
-          setGoalError(err instanceof Error ? err.message : '暂不可用')
-        }
-      } finally {
-        if (!cancelled) setGoalLoading(false)
-      }
-    }
-
-    void loadGoal()
 
     return () => {
       cancelled = true
@@ -126,26 +93,6 @@ export function AdminControlPage({ health, navState, onOpenOperator, onOpenPatro
             </div>
           ) : (
             <EmptyState title="安全状态暂不可用" description="接口未返回数据时，这里只保留空状态，不伪造运动许可。" />
-          )}
-        </AdminCard>
-
-        <AdminCard title="当前目标" subtitle="读取运行时 current_goal.json，确认用户刚选中的目标点。">
-          {goalError && <div className="rounded-lg bg-red-500/10 p-3 text-xs text-red-400">{goalError}</div>}
-          {goalLoading ? (
-            <EmptyState title="当前目标加载中" description="正在拉取 /api/v1/nav/current-goal 的当前结果。" />
-          ) : goal ? (
-            <div className="space-y-3">
-              <div className="text-sm text-white">{String(goal['waypoint_name'] ?? goal['name'] ?? '--')}</div>
-              <div className="text-sm text-zinc-400">map_id: {String(goal['map_id'] ?? '--')}</div>
-              <div className="text-sm text-zinc-400">
-                x / y / z: {goal['x'] != null ? `${Number(goal['x']).toFixed(2)} / ${Number(goal['y']).toFixed(2)} / ${Number(goal['z']).toFixed(2)}` : '--'}
-              </div>
-              <div className="text-sm text-zinc-400">
-                yaw: {goal['yaw'] != null ? `${Number(goal['yaw']).toFixed(3)} rad` : '--'}
-              </div>
-            </div>
-          ) : (
-            <EmptyState title="暂无当前目标" description="还没有选择导航点，或 current_goal.json 尚未生成。" />
           )}
         </AdminCard>
       </div>

@@ -10,6 +10,7 @@ from .config import settings
 
 _lock = threading.RLock()
 _latest_robot_pose: dict[str, Any] | None = None
+_latest_global_path: dict[str, Any] | None = None
 _latest_navigation_status: dict[str, Any] = {
     "status": "idle",
     "target_waypoint_id": None,
@@ -36,6 +37,18 @@ def update_robot_pose(pose: dict[str, Any]) -> dict[str, Any]:
         _latest_robot_pose = next_pose
 
     return copy.deepcopy(next_pose)
+
+
+def update_global_path(path: dict[str, Any]) -> dict[str, Any]:
+    global _latest_global_path
+
+    next_path = copy.deepcopy(path)
+    next_path.setdefault("timestamp", time.time())
+
+    with _lock:
+        _latest_global_path = next_path
+
+    return copy.deepcopy(next_path)
 
 
 def update_navigation_status(status: dict[str, Any]) -> dict[str, Any]:
@@ -73,10 +86,16 @@ def get_robot_pose() -> dict[str, Any] | None:
         return copy.deepcopy(_latest_robot_pose)
 
 
+def get_global_path() -> dict[str, Any] | None:
+    with _lock:
+        return copy.deepcopy(_latest_global_path)
+
+
 def get_nav_state() -> dict[str, Any]:
     with _lock:
         return {
             "robot_pose": copy.deepcopy(_latest_robot_pose),
             "navigation_status": copy.deepcopy(_latest_navigation_status),
             "localization_status": copy.deepcopy(_latest_localization_status),
+            "global_path": copy.deepcopy(_latest_global_path),
         }
