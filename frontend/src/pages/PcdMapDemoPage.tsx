@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Boxes,
   ChevronDown,
@@ -820,6 +821,7 @@ export function PcdMapDemoPage() {
                 robotPose={robotPose}
                 globalPath={globalPath}
                 followRobot={followRobot}
+                centerHeight={waypointZ}
               />
             ) : (
               <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top,rgba(16,24,32,0.92),rgba(4,7,10,0.98))] px-6 text-center">
@@ -1102,69 +1104,72 @@ export function PcdMapDemoPage() {
           </div>
         </div>
       )}
-      {mappingDialogOpen ? (
-        <div
-          className="pcd-scene-modal"
-          onClick={(event) => {
-            if (event.target === event.currentTarget && !mappingSending) {
-              setMappingDialogOpen(false)
-              setMappingSceneError(null)
-            }
-          }}
-        >
-          <div className="pcd-scene-modal-card">
-            <div className="pcd-scene-modal-header">
-              <strong>请输入场景名称</strong>
-              <span>建图开始后会自动创建对应地图目录。</span>
-            </div>
-            <label className="pcd-scene-modal-field">
-              <span>场景名称</span>
-              <input
-                autoFocus
-                value={mappingSceneName}
-                onChange={(event) => {
-                  setMappingSceneName(event.target.value)
-                  if (mappingSceneError) {
-                    setMappingSceneError(null)
-                  }
-                }}
-                placeholder="例如：实验室一楼"
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault()
-                    void handleConfirmStartMapping()
-                  }
-                }}
-                disabled={mappingSending}
-              />
-            </label>
-            {mappingSceneError ? (
-              <div className="pcd-scene-modal-error">{mappingSceneError}</div>
-            ) : null}
-            <div className="pcd-scene-modal-actions">
-              <button
-                type="button"
-                className="pcd-tool-button"
-                onClick={() => {
+      {mappingDialogOpen && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="pcd-scene-modal"
+              onClick={(event) => {
+                if (event.target === event.currentTarget && !mappingSending) {
                   setMappingDialogOpen(false)
                   setMappingSceneError(null)
-                }}
-                disabled={mappingSending}
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                className="pcd-tool-button is-active"
-                onClick={() => void handleConfirmStartMapping()}
-                disabled={mappingSending}
-              >
-                {mappingSending ? '启动中...' : '确认开始'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+                }
+              }}
+            >
+              <div className="pcd-scene-modal-card" role="dialog" aria-modal="true" aria-label="请输入场景名称">
+                <div className="pcd-scene-modal-header">
+                  <strong>请输入场景名称</strong>
+                  <span>建图开始后会自动创建对应地图目录。</span>
+                </div>
+                <label className="pcd-scene-modal-field">
+                  <span>场景名称</span>
+                  <input
+                    autoFocus
+                    value={mappingSceneName}
+                    onChange={(event) => {
+                      setMappingSceneName(event.target.value)
+                      if (mappingSceneError) {
+                        setMappingSceneError(null)
+                      }
+                    }}
+                    placeholder="例如：实验室一楼"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        void handleConfirmStartMapping()
+                      }
+                    }}
+                    disabled={mappingSending}
+                  />
+                </label>
+                {mappingSceneError ? (
+                  <div className="pcd-scene-modal-error">{mappingSceneError}</div>
+                ) : null}
+                <div className="pcd-scene-modal-actions">
+                  <button
+                    type="button"
+                    className="pcd-tool-button"
+                    onClick={() => {
+                      setMappingDialogOpen(false)
+                      setMappingSceneError(null)
+                    }}
+                    disabled={mappingSending}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="pcd-tool-button is-active"
+                    onClick={() => void handleConfirmStartMapping()}
+                    disabled={mappingSending}
+                  >
+                    {mappingSending ? '启动中...' : '确认开始'}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </main>
   )
 }

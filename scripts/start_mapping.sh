@@ -3,7 +3,7 @@ set -euo pipefail
 
 MAP_DIR="${1:-}"
 LIVOX_PID=""
-SUPER_LIO_PID=""
+SUPERLIO_PID=""
 TERRAIN_PID=""
 
 if [ -z "$MAP_DIR" ]; then
@@ -16,7 +16,7 @@ cleanup() {
   local exit_code=$?
   echo "收到停止信号，正在终止建图相关进程..."
 
-  for pid in "$TERRAIN_PID" "$SUPER_LIO_PID" "$LIVOX_PID"; do
+  for pid in "$TERRAIN_PID" "$SUPERLIO_PID" "$LIVOX_PID"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       kill -TERM "$pid" 2>/dev/null || true
     fi
@@ -24,7 +24,7 @@ cleanup() {
 
   sleep 2
 
-  for pid in "$TERRAIN_PID" "$SUPER_LIO_PID" "$LIVOX_PID"; do
+  for pid in "$TERRAIN_PID" "$SUPERLIO_PID" "$LIVOX_PID"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       kill -KILL "$pid" 2>/dev/null || true
     fi
@@ -42,8 +42,11 @@ echo "本次建图目录：$MAP_DIR"
 
 mkdir -p "$MAP_DIR"
 
-cd "$HOME/super_lio"
+cd "$HOME/superlio"
+# colcon 生成的 setup 脚本可能引用未定义环境变量；临时关闭 nounset 避免告警。
+set +u
 source install/setup.bash
+set -u
 
 echo "启动 Livox MID360 驱动..."
 ros2 launch livox_ros_driver2 msg_MID360_launch.py &
@@ -52,8 +55,8 @@ LIVOX_PID=$!
 sleep 5
 
 echo "启动 Super LIO 建图..."
-ros2 launch super_lio Livox_mid360.py map_dir:="$MAP_DIR" &
-SUPER_LIO_PID=$!
+ros2 launch super_lio Livox_mid360.py lio.map.save_map_dir:="$MAP_DIR" &
+SUPERLIO_PID=$!
 
 sleep 5
 
@@ -63,7 +66,7 @@ TERRAIN_PID=$!
 
 echo "建图相关进程已启动："
 echo "Livox PID: $LIVOX_PID"
-echo "Super LIO PID: $SUPER_LIO_PID"
+echo "Super LIO PID: $SUPERLIO_PID"
 echo "Terrain PID: $TERRAIN_PID"
 
 wait

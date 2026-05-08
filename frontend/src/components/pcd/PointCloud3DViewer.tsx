@@ -81,9 +81,17 @@ type Props = {
   robotPose: RobotPose | null
   globalPath: GlobalPath | null
   followRobot?: boolean
+  centerHeight?: number | null
 }
 
-export function PointCloud3DViewer({ points, waypoints, robotPose, globalPath, followRobot = false }: Props) {
+export function PointCloud3DViewer({
+  points,
+  waypoints,
+  robotPose,
+  globalPath,
+  followRobot = false,
+  centerHeight = null,
+}: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const [webglSupported] = useState(() => detectWebGLSupport())
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -271,6 +279,7 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, globalPath, f
     if (box) {
       const size = box.getSize(new THREE.Vector3())
       const center = box.getCenter(new THREE.Vector3())
+      const targetHeight = Number.isFinite(centerHeight ?? Number.NaN) ? (centerHeight as number) : center.y
       const horizontalSpan = Math.max(size.x, size.z, 1)
       const verticalSpan = Math.max(size.y, 0.8)
       const fitHeightDistance = verticalSpan / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2))
@@ -278,8 +287,10 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, globalPath, f
       const distance = Math.max(fitHeightDistance, fitWidthDistance) * 1.22
       const direction = new THREE.Vector3(1, 0.75, 1).normalize()
 
+      // 锁定屏幕中心的高度到业务指定的平面，避免自动居中落到点云平均高度上。
       controls.target.copy(center)
-      camera.position.copy(center.clone().add(direction.multiplyScalar(distance)))
+      controls.target.y = targetHeight
+      camera.position.copy(controls.target.clone().add(direction.multiplyScalar(distance)))
       camera.near = Math.max(0.01, distance / 500)
       camera.far = Math.max(1000, distance * 30)
       camera.updateProjectionMatrix()
@@ -292,10 +303,10 @@ export function PointCloud3DViewer({ points, waypoints, robotPose, globalPath, f
         const divisions = clamp(Math.ceil(gridSize / 3), 10, 80)
         grid.geometry.dispose()
         grid.geometry = new THREE.GridHelper(gridSize, divisions, 0x33515a, 0x1d333a).geometry
-        grid.position.set(center.x, Math.min(box.min.y, 0), center.z)
+        grid.position.set(center.x, targetHeight, center.z)
       }
     }
-  }, [points, webglSupported])
+  }, [centerHeight, points, webglSupported])
 
   useEffect(() => {
     if (!webglSupported) return

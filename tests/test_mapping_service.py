@@ -30,21 +30,27 @@ def test_start_mapping_creates_directory_and_launches_script(monkeypatch, tmp_pa
 
     started: list[tuple[list[str], bool]] = []
 
-    def fake_popen(command, start_new_session=False):
+    def fake_popen(command, start_new_session=False, stdout=None, stderr=None, text=None, bufsize=None):
         started.append((command, start_new_session))
+        assert stdout == mapping_service_module.subprocess.PIPE
+        assert stderr == mapping_service_module.subprocess.PIPE
+        assert text is True
+        assert bufsize == 1
         return DummyProcess()
 
-    monkeypatch.setattr(mapping_service_module, "MAPS_ROOT", tmp_path / "MAPS")
+    maps_root = tmp_path / "MAPS"
+    monkeypatch.setattr(mapping_service_module, "MAPS_ROOT", maps_root)
     monkeypatch.setattr(mapping_service_module, "START_MAPPING_SCRIPT", script)
     monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
 
     service = mapping_service_module.MappingService()
     result = service.start("实验室一楼")
 
-    expected_dir = tmp_path / "MAPS" / "实验室一楼"
+    expected_dir = tmp_path / "MAPS" / "Scene1_实验室一楼"
     assert expected_dir.is_dir()
-    assert result["scene_name"] == "实验室一楼"
+    assert result["scene_name"] == "Scene1_实验室一楼"
     assert result["map_dir"] == str(expected_dir)
+    assert result["enabled"] is True
     assert result["pid"] == 4321
     assert started == [(["bash", str(script), str(expected_dir)], True)]
 
@@ -64,6 +70,25 @@ def test_mapping_service_rejects_duplicate_start(monkeypatch, tmp_path):
         service.start("另一个场景")
 
 
+def test_scene_number_increments_from_existing_dirs(monkeypatch, tmp_path):
+    script = tmp_path / "start_mapping.sh"
+    script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    maps_root = tmp_path / "MAPS"
+    (maps_root / "Scene1_旧场景").mkdir(parents=True)
+    (maps_root / "Scene2_别的场景").mkdir(parents=True)
+
+    monkeypatch.setattr(mapping_service_module, "MAPS_ROOT", maps_root)
+    monkeypatch.setattr(mapping_service_module, "START_MAPPING_SCRIPT", script)
+    monkeypatch.setattr(mapping_service_module.subprocess, "Popen", lambda *args, **kwargs: DummyProcess())
+
+    service = mapping_service_module.MappingService()
+    result = service.start("实验室一楼")
+
+    assert result["scene_name"] == "Scene3_实验室一楼"
+    assert result["map_dir"] == str(maps_root / "Scene3_实验室一楼")
+
+
 def test_stop_mapping_kills_process_group(monkeypatch, tmp_path):
     script = tmp_path / "start_mapping.sh"
     script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -81,7 +106,8 @@ def test_stop_mapping_kills_process_group(monkeypatch, tmp_path):
     result = service.stop()
 
     assert result["running"] is False
-    assert result["scene_name"] == "实验室一楼"
+    assert result["enabled"] is False
+    assert result["scene_name"] == "Scene1_实验室一楼"
     assert kills == [(4321, signal.SIGTERM)]
 
 
@@ -90,13 +116,14 @@ def test_mapping_route_uses_scene_name_and_stop(monkeypatch):
 
     class DummyService:
         def start(self, scene_name: str):
+            scene_dir_name = f"Scene1_{scene_name}"
             calls.append(("start", scene_name))
             return {
                 "success": True,
                 "enabled": True,
                 "running": True,
-                "scene_name": scene_name,
-                "map_dir": f"/home/jetson/Project/BOTDOG/MAPS/{scene_name}",
+                "scene_name": scene_dir_name,
+                "map_dir": f"/home/jetson/Project/BOTDOG/MAPS/{scene_dir_name}",
                 "pid": 4321,
                 "message": "建图脚本已启动",
             }
@@ -133,7 +160,8 @@ def test_mapping_route_uses_scene_name_and_stop(monkeypatch):
         )
     )
 
-    assert start_result["scene_name"] == "实验室一楼"
-    assert start_result["map_dir"] == "/home/jetson/Project/BOTDOG/MAPS/实验室一楼"
+    assert start_result["scene_name"] == "Scene1_实验室一楼"
+    assert start_result["map_dir"] == "/home/jetson/Project/BOTDOG/MAPS/Scene1_实验室一楼"
+    assert start_result["enabled"] is True
     assert stop_result["enabled"] is False
     assert calls == [("start", "实验室一楼"), ("stop", None)]
