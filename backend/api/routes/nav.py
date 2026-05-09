@@ -16,6 +16,7 @@ from ...schemas import (
     DeleteWaypointResponse,
     LocalizationPoseDTO,
     LocalizationPoseSetRequest,
+    LocalizationRestartResponse,
     MappingControlRequest,
     MappingControlResponse,
     NavWaypointCreateRequest,
@@ -25,6 +26,10 @@ from ...schemas import (
     PcdMapListResponse,
     PcdMetadataResponse,
     PcdPreviewResponse,
+    PcdSceneDeleteResponse,
+    PcdSceneListResponse,
+    PcdSceneMetadataResponse,
+    PcdScenePreviewResponse,
 )
 from ...nav_bridge_state import get_ros_nav_bridge
 
@@ -39,6 +44,43 @@ async def nav_list_pcd_maps():
         return list_pcd_maps()
     except PcdMapError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/pcd-scenes", response_model=PcdSceneListResponse)
+async def nav_list_pcd_scenes():
+    from ...services_pcd_maps import PcdMapError, list_pcd_scenes
+
+    try:
+        return list_pcd_scenes()
+    except PcdMapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.delete("/pcd-scenes/{scene_id}", response_model=PcdSceneDeleteResponse)
+async def nav_delete_pcd_scene(
+    scene_id: str,
+    user: AuthUserInternal = Depends(require_admin),
+    db=Depends(get_db),
+):
+    from ...services_pcd_maps import PcdMapError, delete_pcd_scene
+
+    try:
+        result = delete_pcd_scene(scene_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"场景目录不存在: {scene_id}")
+    except PcdMapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    await safe_write_audit_log(
+        db,
+        level="WARN",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.scene.delete "
+            f"目标={scene_id} 路径={result['deleted_path']} 结果=success"
+        ),
+    )
+    return result
 
 
 @router.get("/state", response_model=NavStateResponse)
@@ -78,7 +120,7 @@ async def nav_set_localization_pose(
         pose = save_localization_pose(body.model_dump())
         result = bridge.publish_set_pose()
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {body.map_id}")
+        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {body.map_id}")
     except (PcdMapError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
@@ -105,6 +147,34 @@ async def nav_set_localization_pose(
         ),
     )
     return pose
+
+
+@router.post("/localization/restart", response_model=LocalizationRestartResponse)
+async def nav_restart_localization(
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    from ...services_nav_localization import restart_navigation_localization
+
+    try:
+        result = restart_navigation_localization()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    await safe_write_audit_log(
+        db,
+        level="INFO",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.localization.restart "
+            f"结果=success pid={result['pid']}"
+        ),
+    )
+    return result
 
 
 @router.post("/mapping/set-enabled", response_model=MappingControlResponse)
@@ -172,6 +242,30 @@ async def nav_get_pcd_preview(map_id: str, max_points: int | None = None):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.get("/pcd-scenes/{scene_id}/metadata", response_model=PcdSceneMetadataResponse)
+async def nav_get_pcd_scene_metadata(scene_id: str):
+    from ...services_pcd_maps import PcdMapError, get_scene_metadata
+
+    try:
+        return get_scene_metadata(scene_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"场景目录不存在: {scene_id}")
+    except PcdMapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/pcd-scenes/{scene_id}/preview", response_model=PcdScenePreviewResponse)
+async def nav_get_pcd_scene_preview(scene_id: str, max_points: int | None = None):
+    from ...services_pcd_maps import PcdMapError, get_scene_preview
+
+    try:
+        return get_scene_preview(scene_id, max_points=max_points)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"场景目录不存在: {scene_id}")
+    except PcdMapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.get("/pcd-maps/{map_id}/waypoints", response_model=NavWaypointListResponse)
 async def nav_list_waypoints(map_id: str):
     from ...services_pcd_maps import PcdMapError
@@ -180,7 +274,7 @@ async def nav_list_waypoints(map_id: str):
     try:
         return list_waypoints(map_id)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
+        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {map_id}")
     except PcdMapError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -198,7 +292,7 @@ async def nav_create_waypoint(
     try:
         waypoint = create_waypoint(map_id, body.model_dump())
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
+        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {map_id}")
     except (PcdMapError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     await safe_write_audit_log(
@@ -232,7 +326,7 @@ async def nav_go_to_waypoint(
     try:
         waypoint = get_waypoint(map_id, waypoint_id)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
+        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {map_id}")
     except KeyError:
         raise HTTPException(status_code=404, detail=f"导航点不存在: {waypoint_id}")
     except PcdMapError as exc:
@@ -330,7 +424,7 @@ async def nav_delete_waypoint(
     try:
         ok = delete_waypoint(map_id, waypoint_id)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
+        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {map_id}")
     except PcdMapError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

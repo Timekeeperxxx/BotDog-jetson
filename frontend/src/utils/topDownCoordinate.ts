@@ -27,7 +27,7 @@ export function mapToCanvas(
   const scale = getTopDownScale(bounds, canvasWidth, canvasHeight, padding)
 
   return {
-    x: padding + (y - bounds.min_y) * scale,
+    x: canvasWidth - padding - (y - bounds.min_y) * scale,
     y: canvasHeight - padding - (x - bounds.min_x) * scale,
   }
 }
@@ -44,6 +44,6 @@ export function canvasToMap(
 
   return {
     x: bounds.min_x + (canvasHeight - padding - canvasY) / scale,
-    y: bounds.min_y + (canvasX - padding) / scale,
+    y: bounds.min_y + (canvasWidth - padding - canvasX) / scale,
   }
 }

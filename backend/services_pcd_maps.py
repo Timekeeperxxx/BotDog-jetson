@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 import math
+import re
 import struct
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .config import settings
+from .logging_config import get_logger
+
+
+pcd_logger = get_logger("场景点云服务")
+SCENE_ID_PATTERN = re.compile(r"^Scene\d+_")
 
 
 class PcdMapError(Exception):
@@ -17,10 +24,75 @@ def _utc_from_timestamp(ts: float) -> str:
     return datetime.utcfromtimestamp(ts).isoformat(timespec="milliseconds") + "Z"
 
 
+def _file_info(path: Path) -> dict[str, Any]:
+    stat = path.stat()
+    return {
+        "name": path.name,
+        "size_bytes": stat.st_size,
+        "modified_at": _utc_from_timestamp(stat.st_mtime),
+    }
+
+
+def _normalize_scene_id(scene_id: str) -> str:
+    normalized = str(scene_id).strip()
+    if not normalized:
+        raise PcdMapError("scene_id 不能为空")
+    if normalized in {".", ".."}:
+        raise PcdMapError("scene_id 非法")
+    if "/" in normalized or "\\" in normalized:
+        raise PcdMapError("scene_id 不能包含 / 或 \\")
+    if ".." in normalized:
+        raise PcdMapError("scene_id 不能包含 ..")
+    if any(ord(ch) < 32 for ch in normalized):
+        raise PcdMapError("scene_id 不能包含控制字符")
+    if not SCENE_ID_PATTERN.match(normalized):
+        raise PcdMapError("scene_id 必须匹配 ^Scene\\d+_")
+    return normalized
+
+
 def get_pcd_root() -> Path:
     root = Path(settings.PCD_MAP_ROOT).resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def get_scene_root() -> Path:
+    root = Path(settings.SCENE_MAP_ROOT).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def validate_scene_id(scene_id: str) -> None:
+    _normalize_scene_id(scene_id)
+
+
+def resolve_scene_path(scene_id: str) -> Path:
+    normalized = _normalize_scene_id(scene_id)
+    root = get_scene_root()
+    path = (root / normalized).resolve()
+
+    if path.parent != root or path.name != normalized:
+        raise PcdMapError("禁止访问场景根目录以外的路径")
+    if not path.exists():
+        raise FileNotFoundError(f"场景目录不存在: {normalized}")
+    if not path.is_dir():
+        raise PcdMapError("scene_id 不是目录")
+    return path
+
+
+def resolve_scene_ground_path(scene_id: str) -> Path:
+    try:
+        scene_path = resolve_scene_path(scene_id)
+    except PcdMapError:
+        if str(scene_id).strip().lower().endswith(".pcd"):
+            return resolve_pcd_path(scene_id)
+        raise
+
+    files = find_scene_pcd_files(scene_path)
+    ground_file = files["ground"]
+    if ground_file is None:
+        raise FileNotFoundError(f"场景缺少 ground.pcd: {scene_id}")
+    return ground_file
 
 
 def resolve_pcd_path(map_id: str) -> Path:
@@ -48,6 +120,49 @@ def resolve_pcd_path(map_id: str) -> Path:
     return path
 
 
+def _latest_path(paths: list[Path], label: str, scene_name: str) -> Path | None:
+    if not paths:
+        return None
+
+    if len(paths) > 1:
+        pcd_logger.debug("场景 {} 发现多个 {} 候选文件，将选择最近修改的文件", scene_name, label)
+        for candidate in paths:
+            pcd_logger.debug(
+                "候选 {}：{}，mtime={}",
+                label,
+                candidate.name,
+                _utc_from_timestamp(candidate.stat().st_mtime),
+            )
+
+    return max(paths, key=lambda item: item.stat().st_mtime)
+
+
+def find_scene_pcd_files(scene_path: Path) -> dict[str, Path | None]:
+    if not scene_path.exists():
+        raise FileNotFoundError(f"场景目录不存在: {scene_path.name}")
+    if not scene_path.is_dir():
+        raise PcdMapError("scene_path 不是目录")
+
+    ground_candidates: list[Path] = []
+    wall_candidates: list[Path] = []
+
+    for path in scene_path.iterdir():
+        if not path.is_file() or path.suffix.lower() != ".pcd":
+            continue
+
+        lower_name = path.name.lower()
+        if lower_name.endswith("ground.pcd"):
+            ground_candidates.append(path)
+            continue
+        if lower_name.endswith("map.pcd") and not lower_name.endswith("ground.pcd"):
+            wall_candidates.append(path)
+
+    return {
+        "wall": _latest_path(wall_candidates, "wall/map.pcd", scene_path.name),
+        "ground": _latest_path(ground_candidates, "ground.pcd", scene_path.name),
+    }
+
+
 def list_pcd_maps() -> dict[str, Any]:
     root = get_pcd_root()
     items = []
@@ -68,6 +183,61 @@ def list_pcd_maps() -> dict[str, Any]:
 
     items.sort(key=lambda item: item["modified_at"], reverse=True)
     return {"root": str(root), "items": items}
+
+
+def list_pcd_scenes() -> dict[str, Any]:
+    root = get_scene_root()
+    items: list[dict[str, Any]] = []
+
+    for path in root.iterdir():
+        if not path.is_dir() or not SCENE_ID_PATTERN.match(path.name):
+            continue
+
+        scene_stat = path.stat()
+        files = find_scene_pcd_files(path)
+        wall_info = _file_info(files["wall"]) if files["wall"] else None
+        ground_info = _file_info(files["ground"]) if files["ground"] else None
+        ready = wall_info is not None and ground_info is not None
+        navigable = ground_info is not None
+
+        if not wall_info and not ground_info:
+            message = "缺少 wall/map.pcd，缺少 ground.pcd"
+        elif not wall_info:
+            message = "缺少 wall/map.pcd"
+        elif not ground_info:
+            message = "缺少 ground.pcd"
+        else:
+            message = None
+
+        items.append(
+            {
+                "id": path.name,
+                "name": path.name,
+                "path": str(path),
+                "modified_at": _utc_from_timestamp(scene_stat.st_mtime),
+                "wall": wall_info,
+                "ground": ground_info,
+                "ready": ready,
+                "navigable": navigable,
+                "message": message,
+            }
+        )
+
+    items.sort(key=lambda item: item["modified_at"], reverse=True)
+    return {"root": str(root), "items": items}
+
+
+def delete_pcd_scene(scene_id: str) -> dict[str, Any]:
+    scene_path = resolve_scene_path(scene_id)
+    pcd_logger.info("准备删除场景目录：{}", scene_path)
+    shutil.rmtree(scene_path)
+    pcd_logger.info("场景目录已删除：{}", scene_path)
+    return {
+        "success": True,
+        "scene_id": scene_id,
+        "deleted_path": str(scene_path),
+        "message": "场景目录已删除",
+    }
 
 
 def parse_pcd_header(path: Path) -> tuple[dict[str, list[str]], int]:
@@ -156,6 +326,35 @@ def _finalize_bounds(bounds: dict[str, float]) -> dict[str, float]:
     if bounds["min_x"] == float("inf"):
         raise PcdMapError("PCD 文件没有可解析点")
     return bounds
+
+
+def _merge_bounds(bounds_list: list[dict[str, float] | None]) -> dict[str, float]:
+    merged = _empty_bounds()
+    has_any = False
+    for bounds in bounds_list:
+        if not bounds:
+            continue
+        if bounds["min_x"] == float("inf"):
+            continue
+        if not has_any:
+            merged = dict(bounds)
+            has_any = True
+            continue
+        merged["min_x"] = min(merged["min_x"], bounds["min_x"])
+        merged["max_x"] = max(merged["max_x"], bounds["max_x"])
+        merged["min_y"] = min(merged["min_y"], bounds["min_y"])
+        merged["max_y"] = max(merged["max_y"], bounds["max_y"])
+        merged["min_z"] = min(merged["min_z"], bounds["min_z"])
+        merged["max_z"] = max(merged["max_z"], bounds["max_z"])
+
+    return merged if has_any else {
+        "min_x": 0.0,
+        "max_x": 0.0,
+        "min_y": 0.0,
+        "max_y": 0.0,
+        "min_z": 0.0,
+        "max_z": 0.0,
+    }
 
 
 def read_ascii_preview(
@@ -331,6 +530,40 @@ def _read_preview_by_type(
     raise PcdMapError(f"当前 Demo 暂不支持 DATA {data_type} PCD")
 
 
+def _build_file_metadata(path: Path) -> dict[str, Any]:
+    header, data_start_offset = parse_pcd_header(path)
+    normalized = normalize_pcd_header(header)
+    file_info = _file_info(path)
+    data_type = normalized["data_type"]
+
+    payload: dict[str, Any] = {
+        **file_info,
+        "frame_id": settings.PCD_FRAME_ID,
+        "type": "pcd",
+        "point_count": normalized["point_count"],
+        "fields": normalized["fields"],
+        "data_type": data_type,
+        "bounds": None,
+        "supported": False,
+        "message": None,
+    }
+
+    if data_type not in ("ascii", "binary"):
+        payload["message"] = f"当前暂不支持 DATA {data_type} PCD"
+        return payload
+
+    _, bounds = _read_preview_by_type(
+        path=path,
+        header=header,
+        data_start_offset=data_start_offset,
+        max_points=settings.PCD_PREVIEW_MAX_POINTS,
+    )
+
+    payload["bounds"] = bounds
+    payload["supported"] = True
+    return payload
+
+
 def get_pcd_metadata(map_id: str) -> dict[str, Any]:
     path = resolve_pcd_path(map_id)
     header, data_start_offset = parse_pcd_header(path)
@@ -398,4 +631,94 @@ def get_pcd_preview(map_id: str, max_points: int | None = None) -> dict[str, Any
         "frame_id": settings.PCD_FRAME_ID,
         "points": points,
         "bounds": bounds,
+    }
+
+
+def get_scene_metadata(scene_id: str) -> dict[str, Any]:
+    scene_path = resolve_scene_path(scene_id)
+    files = find_scene_pcd_files(scene_path)
+    wall_meta = _build_file_metadata(files["wall"]) if files["wall"] else None
+    ground_meta = _build_file_metadata(files["ground"]) if files["ground"] else None
+    summary_meta = ground_meta or wall_meta
+
+    bounds = _merge_bounds(
+        [wall_meta["bounds"] if wall_meta else None, ground_meta["bounds"] if ground_meta else None],
+    )
+
+    if ground_meta is None:
+        supported = False
+        message = "缺少 ground.pcd，不能用于导航"
+    elif not ground_meta["supported"]:
+        supported = False
+        message = ground_meta["message"] or "地面点云暂不支持预览"
+    elif wall_meta is None:
+        supported = True
+        message = "缺少墙壁点云，仅显示地面点云"
+    else:
+        supported = True
+        message = wall_meta["message"] if wall_meta and wall_meta.get("supported") is False else None
+
+    return {
+        "scene_id": scene_id,
+        "name": scene_path.name,
+        "frame_id": settings.PCD_FRAME_ID,
+        "type": "scene_pcd",
+        "point_count": int(summary_meta["point_count"]) if summary_meta else 0,
+        "fields": list(summary_meta["fields"]) if summary_meta else [],
+        "data_type": str(summary_meta["data_type"]) if summary_meta else "unknown",
+        "files": {
+            "wall": wall_meta,
+            "ground": ground_meta,
+        },
+        "bounds": bounds,
+        "supported": supported,
+        "message": message,
+    }
+
+
+def get_scene_preview(scene_id: str, max_points: int | None = None) -> dict[str, Any]:
+    if max_points is None:
+        max_points = settings.PCD_PREVIEW_DEFAULT_POINTS
+
+    max_points = max(1000, min(max_points, settings.PCD_PREVIEW_MAX_POINTS))
+
+    scene_path = resolve_scene_path(scene_id)
+    files = find_scene_pcd_files(scene_path)
+
+    layers: dict[str, dict[str, Any] | None] = {"ground": None, "wall": None}
+    layer_bounds: list[dict[str, float] | None] = []
+
+    for role in ("ground", "wall"):
+        path = files[role]
+        if path is None:
+            continue
+
+        try:
+            header, data_start_offset = parse_pcd_header(path)
+            normalized = normalize_pcd_header(header)
+            if normalized["data_type"] not in ("ascii", "binary"):
+                raise PcdMapError(f"当前 Demo 暂不支持 DATA {normalized['data_type']} PCD")
+            points, bounds = _read_preview_by_type(
+                path=path,
+                header=header,
+                data_start_offset=data_start_offset,
+                max_points=max_points,
+            )
+        except PcdMapError as exc:
+            pcd_logger.warning("场景 {} 的 {} 图层预览失败：{}", scene_id, role, exc)
+            continue
+
+        layers[role] = {
+            "role": role,
+            "file_name": path.name,
+            "points": points,
+            "bounds": bounds,
+        }
+        layer_bounds.append(bounds)
+
+    return {
+        "scene_id": scene_id,
+        "frame_id": settings.PCD_FRAME_ID,
+        "layers": layers,
+        "bounds": _merge_bounds(layer_bounds),
     }

@@ -7,6 +7,76 @@ export type PcdBounds = {
   max_z: number
 }
 
+export type PcdSceneLayerRole = 'ground' | 'wall'
+
+export type PcdSceneFile = {
+  name: string
+  size_bytes: number
+  modified_at: string
+}
+
+export type PcdSceneItem = {
+  id: string
+  name: string
+  path: string
+  modified_at: string
+  wall: PcdSceneFile | null
+  ground: PcdSceneFile | null
+  ready: boolean
+  navigable: boolean
+  message: string | null
+}
+
+export type PcdSceneListResponse = {
+  root: string
+  items: PcdSceneItem[]
+}
+
+export type PcdSceneLayerMetadata = PcdSceneFile & {
+  frame_id: string
+  type: 'pcd'
+  point_count: number
+  fields: string[]
+  data_type: string
+  bounds: PcdBounds | null
+  supported: boolean
+  message: string | null
+}
+
+export type PcdSceneMetadata = {
+  scene_id: string
+  name: string
+  frame_id: string
+  type: 'scene_pcd'
+  point_count: number
+  fields: string[]
+  data_type: string
+  files: {
+    wall: PcdSceneLayerMetadata | null
+    ground: PcdSceneLayerMetadata | null
+  }
+  bounds: PcdBounds
+  supported: boolean
+  message: string | null
+}
+
+export type PcdSceneLayerPreview = {
+  role: PcdSceneLayerRole
+  file_name: string
+  points: [number, number, number][]
+  bounds: PcdBounds
+}
+
+export type PcdScenePreview = {
+  scene_id: string
+  frame_id: string
+  layers: {
+    ground: PcdSceneLayerPreview | null
+    wall: PcdSceneLayerPreview | null
+  }
+  bounds: PcdBounds
+}
+
 export type PcdMapItem = {
   id: string
   name: string

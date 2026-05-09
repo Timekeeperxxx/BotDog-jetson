@@ -80,6 +80,7 @@ class Settings(BaseSettings):
 
     # ==================== 导航巡逻 / PCD 点云地图 Demo ====================
     PCD_MAP_ROOT: str = "/home/jetson/superlio/Super-LIO/src/super_lio/map"
+    SCENE_MAP_ROOT: str = "/home/jetson/Project/BOTDOG/MAPS"
     PCD_FRAME_ID: str = "map"
     PCD_PREVIEW_DEFAULT_POINTS: int = 100000
     PCD_PREVIEW_MAX_POINTS: int = 200000

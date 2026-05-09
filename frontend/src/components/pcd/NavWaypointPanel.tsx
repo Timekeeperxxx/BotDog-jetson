@@ -5,11 +5,12 @@ import { hasAuthSession, hasRole, useAuthState } from '../../stores/authStore'
 type Props = {
   waypoints: NavWaypoint[]
   navigatingWaypointId: string | null
+  sceneNavigable: boolean
   onGoTo: (waypointId: string) => void
   onDelete: (waypointId: string) => void
 }
 
-export function NavWaypointPanel({ waypoints, navigatingWaypointId, onGoTo, onDelete }: Props) {
+export function NavWaypointPanel({ waypoints, navigatingWaypointId, sceneNavigable, onGoTo, onDelete }: Props) {
   useAuthState()
   const canOperate = hasAuthSession() && hasRole('operator')
   const canAdmin = hasAuthSession() && hasRole('admin')
@@ -19,7 +20,7 @@ export function NavWaypointPanel({ waypoints, navigatingWaypointId, onGoTo, onDe
       <div className="pcd-panel-header">
         <div>
           <h2>导航点</h2>
-          <p>{waypoints.length} 个 map 坐标点</p>
+          <p>{waypoints.length} 个场景坐标点</p>
         </div>
       </div>
 
@@ -42,7 +43,7 @@ export function NavWaypointPanel({ waypoints, navigatingWaypointId, onGoTo, onDe
                 <button
                   className="pcd-icon-button"
                   onClick={() => onGoTo(point.id)}
-                  disabled={!canOperate || navigatingWaypointId === point.id}
+                  disabled={!canOperate || !sceneNavigable || navigatingWaypointId === point.id}
                   title="导航到该点"
                 >
                   <Navigation size={15} />

@@ -38,6 +38,8 @@ def websocket_paths() -> set[str]:
 NAV_ROUTES = [
     # 地图列表
     ("GET",    "/api/v1/nav/pcd-maps"),
+    # 场景列表
+    ("GET",    "/api/v1/nav/pcd-scenes"),
     # 导航状态
     ("GET",    "/api/v1/nav/state"),
     # 页面打开通知
@@ -50,6 +52,10 @@ NAV_ROUTES = [
     ("GET",    "/api/v1/nav/pcd-maps/{map_id}/metadata"),
     # 地图预览点云
     ("GET",    "/api/v1/nav/pcd-maps/{map_id}/preview"),
+    # 场景元数据
+    ("GET",    "/api/v1/nav/pcd-scenes/{scene_id}/metadata"),
+    # 场景预览点云
+    ("GET",    "/api/v1/nav/pcd-scenes/{scene_id}/preview"),
     # 导航点列表（GET）和新建（POST）— 同 path 不同 method
     ("GET",    "/api/v1/nav/pcd-maps/{map_id}/waypoints"),
     ("POST",   "/api/v1/nav/pcd-maps/{map_id}/waypoints"),

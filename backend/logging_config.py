@@ -10,13 +10,18 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 import sys
+from collections import deque
 from pathlib import Path
 from typing import Any
 
 from loguru import logger as _logger
 
 _LOGGING_READY = False
+_LOG_MAX_LINES = 1000
+_LOG_MAINTENANCE_STARTED = False
 
 LOG_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
@@ -82,6 +87,55 @@ def _ffmpeg_file_filter(record: dict[str, Any]) -> bool:
     return record["extra"].get("raw_ffmpeg", False)
 
 
+def trim_log_file_tail(path: Path, max_lines: int = _LOG_MAX_LINES) -> None:
+    if not path.exists() or not path.is_file():
+        return
+
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as f:
+            tail = deque(f, maxlen=max_lines)
+        with path.open("w", encoding="utf-8") as f:
+            f.writelines(tail)
+    except Exception:
+        return
+
+
+class LimitedLineFileSink:
+    def __init__(self, path: Path, max_lines: int = _LOG_MAX_LINES) -> None:
+        self._path = path
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._max_lines = max_lines
+        self._lock = threading.Lock()
+
+    def write(self, message: str) -> None:
+        with self._lock:
+            with self._path.open("a", encoding="utf-8") as f:
+                f.write(message)
+            trim_log_file_tail(self._path, self._max_lines)
+
+    def flush(self) -> None:
+        return
+
+
+def _start_log_maintenance_thread(logs_dir: Path) -> None:
+    global _LOG_MAINTENANCE_STARTED
+    if _LOG_MAINTENANCE_STARTED:
+        return
+
+    def _loop() -> None:
+        while True:
+            try:
+                for log_path in logs_dir.glob("*.log"):
+                    trim_log_file_tail(log_path, _LOG_MAX_LINES)
+            except Exception:
+                pass
+            time.sleep(30)
+
+    thread = threading.Thread(target=_loop, name="log-tail-maintenance", daemon=True)
+    thread.start()
+    _LOG_MAINTENANCE_STARTED = True
+
+
 def setup_logging() -> None:
     """初始化 Loguru 日志：控制台、业务日志、调试日志、访问日志、FFmpeg 原始日志。"""
 
@@ -105,11 +159,8 @@ def setup_logging() -> None:
         filter=_console_filter,
     )
     logger.add(
-        logs_dir / "backend.log",
+        LimitedLineFileSink(logs_dir / "backend.log"),
         level="INFO",
-        rotation="100 MB",
-        retention="10 days",
-        compression="zip",
         enqueue=True,
         backtrace=False,
         diagnose=False,
@@ -117,22 +168,16 @@ def setup_logging() -> None:
         filter=_backend_file_filter,
     )
     logger.add(
-        logs_dir / "debug.log",
+        LimitedLineFileSink(logs_dir / "debug.log"),
         level="DEBUG",
-        rotation="100 MB",
-        retention="7 days",
-        compression="zip",
         enqueue=True,
         backtrace=False,
         diagnose=False,
         format=LOG_FORMAT,
     )
     logger.add(
-        logs_dir / "access.log",
+        LimitedLineFileSink(logs_dir / "access.log"),
         level="INFO",
-        rotation="100 MB",
-        retention="7 days",
-        compression="zip",
         enqueue=True,
         backtrace=False,
         diagnose=False,
@@ -140,11 +185,8 @@ def setup_logging() -> None:
         filter=_access_file_filter,
     )
     logger.add(
-        logs_dir / "ffmpeg.log",
+        LimitedLineFileSink(logs_dir / "ffmpeg.log"),
         level="DEBUG",
-        rotation="100 MB",
-        retention="5 days",
-        compression="zip",
         enqueue=True,
         backtrace=False,
         diagnose=False,
@@ -170,7 +212,9 @@ def setup_logging() -> None:
     access_logger.propagate = False
     access_logger.disabled = True
 
+    _start_log_maintenance_thread(logs_dir)
+
     _LOGGING_READY = True
 
 
-__all__ = ["logger", "setup_logging", "get_logger", "get_access_logger"]
+__all__ = ["logger", "setup_logging", "get_logger", "get_access_logger", "trim_log_file_tail"]

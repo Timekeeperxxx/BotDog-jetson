@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import settings
-from .services_pcd_maps import resolve_pcd_path
+from .services_pcd_maps import resolve_scene_ground_path
 
 
 def _utc_now_iso() -> str:
@@ -21,7 +21,7 @@ def _store_dir() -> Path:
 
 
 def _safe_waypoint_file(map_id: str) -> Path:
-    resolve_pcd_path(map_id)
+    resolve_scene_ground_path(map_id)
     safe_name = map_id.replace("/", "_").replace("\\", "_")
     return _store_dir() / f"{safe_name}.json"
 

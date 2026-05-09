@@ -5,6 +5,9 @@ import type {
   NavWaypoint,
   NavWaypointCreatePayload,
   MappingControlResponse,
+  PcdSceneListResponse,
+  PcdSceneMetadata,
+  PcdScenePreview,
   PcdMapListResponse,
   PcdMetadata,
   PcdPreview,
@@ -34,6 +37,22 @@ export function listPcdMaps(): Promise<PcdMapListResponse> {
   return requestJson(getApiUrl('/api/v1/nav/pcd-maps'))
 }
 
+export function listPcdScenes(): Promise<PcdSceneListResponse> {
+  return requestJson(getApiUrl('/api/v1/nav/pcd-scenes'))
+}
+
+export function deletePcdScene(sceneId: string): Promise<{
+  success: boolean
+  scene_id: string
+  deleted_path: string
+  message: string
+}> {
+  return requestJson(
+    getApiUrl(`/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}`),
+    { method: 'DELETE' },
+  )
+}
+
 export function notifyNavPageOpen(): Promise<{ success: boolean; topic: string; data: boolean }> {
   return requestJson(
     getApiUrl('/api/v1/nav/page-open'),
@@ -47,10 +66,24 @@ export function getPcdMetadata(mapId: string): Promise<PcdMetadata> {
   )
 }
 
+export function getPcdSceneMetadata(sceneId: string): Promise<PcdSceneMetadata> {
+  return requestJson(
+    getApiUrl(`/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/metadata`),
+  )
+}
+
 export function getPcdPreview(mapId: string, maxPoints = 100000): Promise<PcdPreview> {
   return requestJson(
     getApiUrl(
       `/api/v1/nav/pcd-maps/${encodeURIComponent(mapId)}/preview?max_points=${maxPoints}`,
+    ),
+  )
+}
+
+export function getPcdScenePreview(sceneId: string, maxPoints = 15000): Promise<PcdScenePreview> {
+  return requestJson(
+    getApiUrl(
+      `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/preview?max_points=${maxPoints}`,
     ),
   )
 }
@@ -126,6 +159,18 @@ export function setLocalizationPose(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     },
+  )
+}
+
+export function restartNavigationLocalization(): Promise<{
+  success: boolean
+  running: boolean
+  pid: number | null
+  message: string
+}> {
+  return requestJson(
+    getApiUrl('/api/v1/nav/localization/restart'),
+    { method: 'POST' },
   )
 }
 

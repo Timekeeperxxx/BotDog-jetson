@@ -15,11 +15,13 @@ import {
   createWaypoint,
   deleteWaypoint,
   goToWaypoint,
-  getPcdMetadata,
-  getPcdPreview,
-  listPcdMaps,
+  getPcdSceneMetadata,
+  getPcdScenePreview,
+  listPcdScenes,
   listWaypoints,
   notifyNavPageOpen,
+  deletePcdScene,
+  restartNavigationLocalization,
   setMappingEnabled,
   setLocalizationPose,
   triggerNavEmergencyStop,
@@ -34,7 +36,7 @@ import { TaskDrawerPanel } from '../components/pcd/TaskDrawerPanel'
 import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
-import type { NavWaypoint, PcdMapItem, PcdMetadata, PcdPreview } from '../types/pcdMap'
+import type { NavWaypoint, PcdSceneItem, PcdSceneMetadata, PcdScenePreview } from '../types/pcdMap'
 import type { TaskDefinition, TaskDraft, TaskDraftStep, WorkflowStep } from '../types/taskWorkflow'
 
 type LogItem = {
@@ -78,6 +80,7 @@ function validateMappingSceneName(
 }
 
 const TASK_STORAGE_KEY = 'botdog-nav-workflows'
+const SELECTED_SCENE_STORAGE_KEY = 'botdog-nav-selected-scene'
 
 const emptyTaskDraft: TaskDraft = {
   name: '',
@@ -97,11 +100,14 @@ export function PcdMapDemoPage() {
   useAuthState()
   const canOperate = hasAuthSession() && hasRole('operator')
   const previewPointLimit = 15000
-  const [maps, setMaps] = useState<PcdMapItem[]>([])
+  const [scenes, setScenes] = useState<PcdSceneItem[]>([])
   const [root, setRoot] = useState('')
-  const [selectedMapId, setSelectedMapId] = useState<string | null>(null)
-  const [metadata, setMetadata] = useState<PcdMetadata | null>(null)
-  const [preview, setPreview] = useState<PcdPreview | null>(null)
+  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+    return window.localStorage.getItem(SELECTED_SCENE_STORAGE_KEY)
+  })
+  const [metadata, setMetadata] = useState<PcdSceneMetadata | null>(null)
+  const [preview, setPreview] = useState<PcdScenePreview | null>(null)
   const [waypoints, setWaypoints] = useState<NavWaypoint[]>([])
   const [loading, setLoading] = useState(false)
   const [addMode, setAddMode] = useState(false)
@@ -117,6 +123,7 @@ export function PcdMapDemoPage() {
   const [waypointZ, setWaypointZ] = useState(-0.83)
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
   const [estopSending, setEstopSending] = useState(false)
+  const [restartLocalizationSending, setRestartLocalizationSending] = useState(false)
   const [mappingActive, setMappingActive] = useState(false)
   const [mappingSending, setMappingSending] = useState(false)
   const [mappingDialogOpen, setMappingDialogOpen] = useState(false)
@@ -126,6 +133,7 @@ export function PcdMapDemoPage() {
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
   const [webglSupported, setWebglSupported] = useState(true)
+  const [sceneDeleteConfirm, setSceneDeleteConfirm] = useState<PcdSceneItem | null>(null)
   // ── 高危操作确认 ──
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
   const selectRequestRef = useRef(0)
@@ -147,6 +155,24 @@ export function PcdMapDemoPage() {
     ].slice(0, 30))
   }, [])
 
+  const selectedScene = useMemo(
+    () => scenes.find((scene) => scene.id === selectedSceneId) ?? null,
+    [scenes, selectedSceneId],
+  )
+
+  const selectedSceneNavigable = selectedScene?.navigable ?? false
+  const selectedSceneReady = selectedScene?.ready ?? false
+  const selectedSceneMessage = selectedScene?.message ?? metadata?.message ?? null
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (selectedSceneId) {
+      window.localStorage.setItem(SELECTED_SCENE_STORAGE_KEY, selectedSceneId)
+    } else {
+      window.localStorage.removeItem(SELECTED_SCENE_STORAGE_KEY)
+    }
+  }, [selectedSceneId])
+
   useEffect(() => {
     setWebglSupported(detectWebGLSupport())
   }, [])
@@ -156,51 +182,48 @@ export function PcdMapDemoPage() {
     window.localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(nextTasks))
   }, [])
 
-  const refreshMaps = useCallback(async () => {
+  const refreshScenes = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await listPcdMaps()
-      setMaps(data.items)
+      const data = await listPcdScenes()
+      setScenes(data.items)
       setRoot(data.root)
-      addLog(`已刷新 PCD 目录，共 ${data.items.length} 个文件`)
+      addLog(`已刷新场景目录，共 ${data.items.length} 个场景文件夹`)
     } catch (error) {
-      addLog(error instanceof Error ? error.message : '获取 PCD 列表失败', 'error')
+      addLog(error instanceof Error ? error.message : '获取场景列表失败', 'error')
     } finally {
       setLoading(false)
     }
   }, [addLog])
 
-  const selectMap = useCallback(async (mapId: string) => {
+  const selectScene = useCallback(async (sceneId: string) => {
     const requestId = ++selectRequestRef.current
     setLoading(true)
-    setSelectedMapId(mapId)
+    setSelectedSceneId(sceneId)
     setMetadata(null)
     setPreview(null)
     setWaypoints([])
     setAddMode(false)
 
     try {
-      const nextMetadata = await getPcdMetadata(mapId)
+      const nextMetadata = await getPcdSceneMetadata(sceneId)
       if (requestId !== selectRequestRef.current) return
       setMetadata(nextMetadata)
-      addLog(`已读取 metadata: ${mapId}`)
-
-      if (nextMetadata.supported === false) {
-        addLog(nextMetadata.message || '当前 PCD 暂不支持预览', 'error')
-        return
-      }
+      addLog(`已读取场景 metadata: ${sceneId}`)
 
       const [nextPreview, nextWaypoints] = await Promise.all([
-        getPcdPreview(mapId, previewPointLimit),
-        listWaypoints(mapId),
+        getPcdScenePreview(sceneId, previewPointLimit),
+        listWaypoints(sceneId).catch(() => ({ items: [] as NavWaypoint[] })),
       ])
       if (requestId !== selectRequestRef.current) return
       setPreview(nextPreview)
       setWaypoints(nextWaypoints.items)
-      addLog(`已加载预览点云 ${nextPreview.points.length.toLocaleString()} 点`)
+      const groundPoints = nextPreview.layers.ground?.points.length || 0
+      const wallPoints = nextPreview.layers.wall?.points.length || 0
+      addLog(`已加载场景预览点云：ground ${groundPoints.toLocaleString()} 点，wall ${wallPoints.toLocaleString()} 点`)
     } catch (error) {
       if (requestId !== selectRequestRef.current) return
-      addLog(error instanceof Error ? error.message : `加载地图失败: ${mapId}`, 'error')
+      addLog(error instanceof Error ? error.message : `加载场景失败: ${sceneId}`, 'error')
     } finally {
       if (requestId === selectRequestRef.current) {
         setLoading(false)
@@ -209,14 +232,18 @@ export function PcdMapDemoPage() {
   }, [addLog, previewPointLimit])
 
   const handleAddWaypoint = useCallback(async (pos: { x: number; y: number; z: number; yaw: number }) => {
-    if (!selectedMapId) return
+    if (!selectedSceneId) return
+    if (!selectedSceneNavigable) {
+      addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
+      return
+    }
 
     const defaultName = `巡检点${waypoints.length + 1}`
     const name = window.prompt('导航点名称', defaultName)?.trim()
     if (!name) return
 
     try {
-      await createWaypoint(selectedMapId, {
+      await createWaypoint(selectedSceneId, {
         name,
         x: pos.x,
         y: pos.y,
@@ -224,7 +251,7 @@ export function PcdMapDemoPage() {
         yaw: pos.yaw,
         frame_id: 'map',
       })
-      const nextWaypoints = await listWaypoints(selectedMapId)
+      const nextWaypoints = await listWaypoints(selectedSceneId)
       setWaypoints(nextWaypoints.items)
       setAddMode(false)
       addLog(
@@ -233,15 +260,18 @@ export function PcdMapDemoPage() {
     } catch (error) {
       addLog(error instanceof Error ? error.message : '保存导航点失败', 'error')
     }
-  }, [addLog, selectedMapId, waypoints.length])
+  }, [addLog, selectedSceneId, selectedSceneNavigable, waypoints.length])
 
   const handleSetPose = useCallback(async (pos: { x: number; y: number; yaw: number }) => {
-    if (!selectedMapId) return
-    if (!canOperate) return
+    if (!selectedSceneId) return
+    if (!canOperate || !selectedSceneNavigable) {
+      addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
+      return
+    }
 
     try {
       await setLocalizationPose({
-        map_id: selectedMapId,
+        map_id: selectedSceneId,
         x: pos.x,
         y: pos.y,
         yaw: pos.yaw,
@@ -254,20 +284,20 @@ export function PcdMapDemoPage() {
     } catch (error) {
       addLog(error instanceof Error ? error.message : '设置重定位位姿失败', 'error')
     }
-  }, [addLog, canOperate, selectedMapId])
+  }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable])
 
   const handleDeleteWaypoint = useCallback(async (waypointId: string) => {
-    if (!selectedMapId) return
+    if (!selectedSceneId) return
 
     try {
-      await deleteWaypoint(selectedMapId, waypointId)
-      const nextWaypoints = await listWaypoints(selectedMapId)
+      await deleteWaypoint(selectedSceneId, waypointId)
+      const nextWaypoints = await listWaypoints(selectedSceneId)
       setWaypoints(nextWaypoints.items)
       addLog(`已删除导航点 ${waypointId}`)
     } catch (error) {
       addLog(error instanceof Error ? error.message : '删除导航点失败', 'error')
     }
-  }, [addLog, selectedMapId])
+  }, [addLog, selectedSceneId])
 
   // 中间层：拦截 go-to，先弹确认框
   const requestGoToWaypoint = useCallback((waypointId: string) => {
@@ -278,12 +308,15 @@ export function PcdMapDemoPage() {
   }, [canOperate, waypoints])
 
   const handleGoToWaypoint = useCallback(async (waypointId: string) => {
-    if (!selectedMapId) return
-    if (!canOperate) return
+    if (!selectedSceneId) return
+    if (!canOperate || !selectedSceneNavigable) {
+      addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
+      return
+    }
 
     setNavigatingWaypointId(waypointId)
     try {
-      const result = await goToWaypoint(selectedMapId, waypointId)
+      const result = await goToWaypoint(selectedSceneId, waypointId)
       const waypoint = waypoints.find((item) => item.id === waypointId)
       addLog(`已发布导航目标 ${waypoint?.name || waypointId} 到 ${result.topic}`)
     } catch (error) {
@@ -291,7 +324,7 @@ export function PcdMapDemoPage() {
     } finally {
       setNavigatingWaypointId(null)
     }
-  }, [addLog, canOperate, selectedMapId, waypoints])
+  }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable, waypoints])
 
   const handleEmergencyStop = useCallback(async () => {
     if (!canOperate) return
@@ -305,6 +338,37 @@ export function PcdMapDemoPage() {
       setEstopSending(false)
     }
   }, [addLog, canOperate])
+
+  const handleRestartNavigationLocalization = useCallback(async () => {
+    if (!canOperate) return
+    if (restartLocalizationSending) return
+
+    setRestartLocalizationSending(true)
+    try {
+      await restartNavigationLocalization()
+      addLog('导航定位已重启')
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '重启导航定位失败', 'error')
+    } finally {
+      setRestartLocalizationSending(false)
+    }
+  }, [addLog, canOperate, restartLocalizationSending])
+
+  const requestDeleteScene = useCallback((scene: PcdSceneItem) => {
+    setSceneDeleteConfirm(scene)
+  }, [])
+
+  const handleDeleteScene = useCallback(async () => {
+    if (!sceneDeleteConfirm) return
+    try {
+      await deletePcdScene(sceneDeleteConfirm.id)
+      addLog(`已删除场景文件夹 ${sceneDeleteConfirm.id}`)
+      setSceneDeleteConfirm(null)
+      await refreshScenes()
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '删除场景失败', 'error')
+    }
+  }, [addLog, refreshScenes, sceneDeleteConfirm])
 
   const handleStopMapping = useCallback(async () => {
     if (!canOperate) return
@@ -368,8 +432,8 @@ export function PcdMapDemoPage() {
   }, [addLog, canOperate, mappingSceneName, mappingSending])
 
   useEffect(() => {
-    void refreshMaps()
-  }, [refreshMaps])
+    void refreshScenes()
+  }, [refreshScenes])
 
   useEffect(() => {
     try {
@@ -383,9 +447,40 @@ export function PcdMapDemoPage() {
   }, [addLog])
 
   useEffect(() => {
-    if (selectedMapId || maps.length === 0) return
-    void selectMap(maps[0].id)
-  }, [maps, selectedMapId, selectMap])
+    if (selectedSceneId && scenes.some((item) => item.id === selectedSceneId)) {
+      if (metadata?.scene_id !== selectedSceneId && !loading) {
+        void selectScene(selectedSceneId)
+      }
+      return
+    }
+
+    if (scenes.length === 0) return
+
+    const storedSceneId = typeof window === 'undefined'
+      ? null
+      : window.localStorage.getItem(SELECTED_SCENE_STORAGE_KEY)
+
+    if (storedSceneId && scenes.some((item) => item.id === storedSceneId)) {
+      void selectScene(storedSceneId)
+      return
+    }
+
+    const readyScene = scenes.find((item) => item.ready)
+    if (readyScene) {
+      void selectScene(readyScene.id)
+      return
+    }
+
+    if (selectedSceneId === null) {
+      return
+    }
+
+    setSelectedSceneId(null)
+    setMetadata(null)
+    setPreview(null)
+    setWaypoints([])
+    addLog('当前没有可用于导航的场景')
+  }, [addLog, loading, metadata?.scene_id, scenes, selectedSceneId, selectScene])
 
   useEffect(() => {
     if (!selectedTaskId && tasks.length > 0) {
@@ -576,14 +671,35 @@ export function PcdMapDemoPage() {
     [selectedTaskId, tasks],
   )
 
+  const selectedTaskScene = useMemo(
+    () => (selectedTask ? scenes.find((scene) => scene.id === selectedTask.mapId) ?? null : null),
+    [scenes, selectedTask],
+  )
+  const selectedTaskSceneNavigable = selectedTaskScene?.navigable ?? false
+
   const mapOptions = useMemo(
-    () => maps.map((map) => ({ id: map.id, name: map.name })),
-    [maps],
+    () => scenes.map((scene) => ({ id: scene.id, name: scene.name })),
+    [scenes],
   )
 
-  const selectedMapWaypoints = useMemo(
+  const selectedSceneWaypoints = useMemo(
     () => waypoints.map((waypoint) => ({ id: waypoint.id, name: waypoint.name })),
     [waypoints],
+  )
+
+  const draftScene = useMemo(
+    () => scenes.find((scene) => scene.id === taskDraft.mapId) ?? null,
+    [scenes, taskDraft.mapId],
+  )
+  const draftSceneNavigable = draftScene?.navigable ?? false
+  const draftSceneMessage = draftScene?.message ?? null
+
+  const previewLayers = useMemo(
+    () => [
+      { role: 'ground' as const, points: preview?.layers.ground?.points ?? [] },
+      { role: 'wall' as const, points: preview?.layers.wall?.points ?? [] },
+    ],
+    [preview],
   )
 
   const handleTaskDraftChange = useCallback((patch: Partial<TaskDraft>) => {
@@ -592,10 +708,10 @@ export function PcdMapDemoPage() {
       ...patch,
       steps: patch.mapId && patch.mapId !== current.mapId ? [] : (patch.steps ?? current.steps),
     }))
-    if (patch.mapId && patch.mapId !== selectedMapId) {
-      void selectMap(patch.mapId)
+    if (patch.mapId && patch.mapId !== selectedSceneId) {
+      void selectScene(patch.mapId)
     }
-  }, [selectedMapId, selectMap])
+  }, [selectedSceneId, selectScene])
 
   const handleAddDraftWaypoint = useCallback(() => {
     setTaskDraft((current) => ({
@@ -628,21 +744,26 @@ export function PcdMapDemoPage() {
   }, [])
 
   const handleStartCreateTask = useCallback(async () => {
-    if (!selectedMapId && maps[0]?.id) {
+    if (!selectedSceneNavigable) {
+      addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
+      return
+    }
+
+    if (!selectedSceneId && scenes[0]?.id) {
       setTaskDraft({
         ...emptyTaskDraft,
-        mapId: maps[0].id,
+        mapId: scenes[0].id,
       })
     } else {
       setTaskDraft({
         ...emptyTaskDraft,
-        mapId: selectedMapId ?? '',
+        mapId: selectedSceneId ?? '',
       })
     }
     setCreatingTask(true)
     setTaskEditorMode('create')
     setActiveDrawer('task')
-  }, [maps, selectedMapId])
+  }, [addLog, scenes, selectedSceneId, selectedSceneNavigable])
 
   const handleStartEditTask = useCallback((taskId: string) => {
     const task = tasks.find((item) => item.id === taskId)
@@ -663,10 +784,10 @@ export function PcdMapDemoPage() {
     setCreatingTask(true)
     setTaskEditorMode('edit')
     setActiveDrawer('task')
-    if (task.mapId !== selectedMapId) {
-      void selectMap(task.mapId)
+    if (task.mapId !== selectedSceneId) {
+      void selectScene(task.mapId)
     }
-  }, [selectedMapId, selectMap, tasks])
+  }, [selectedSceneId, selectScene, tasks])
 
   const handleCancelCreateTask = useCallback(() => {
     setCreatingTask(false)
@@ -681,13 +802,18 @@ export function PcdMapDemoPage() {
       return
     }
     if (!taskDraft.mapId) {
-      addLog('任务必须先绑定地图', 'error')
+      addLog('任务必须先绑定场景', 'error')
       return
     }
 
-    const map = maps.find((item) => item.id === taskDraft.mapId)
-    if (!map) {
-      addLog('任务关联地图不存在', 'error')
+    const scene = scenes.find((item) => item.id === taskDraft.mapId)
+    if (!scene) {
+      addLog('任务关联场景不存在', 'error')
+      return
+    }
+
+    if (!scene.navigable) {
+      addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
       return
     }
 
@@ -696,7 +822,7 @@ export function PcdMapDemoPage() {
       return
     }
 
-    const waypointSource = taskDraft.mapId === selectedMapId ? waypoints : []
+    const waypointSource = taskDraft.mapId === selectedSceneId ? waypoints : []
     const workflowSteps: WorkflowStep[] = []
     taskDraft.steps.forEach((step) => {
       if (step.type === 'relocalize') {
@@ -732,14 +858,14 @@ export function PcdMapDemoPage() {
     const nextTask: TaskDefinition = {
       id: taskEditorMode === 'edit' && selectedTaskId ? selectedTaskId : `task-${Date.now()}`,
       name,
-      mapId: map.id,
-      mapName: map.name,
+      mapId: scene.id,
+      mapName: scene.name,
       createdAt:
         taskEditorMode === 'edit'
           ? tasks.find((item) => item.id === selectedTaskId)?.createdAt || new Date().toISOString()
           : new Date().toISOString(),
       steps: [
-        { type: 'select_map', label: `选择地图 ${map.name}`, mapId: map.id },
+        { type: 'select_map', label: `选择场景 ${scene.name}`, mapId: scene.id },
         ...workflowSteps,
       ],
     }
@@ -755,7 +881,7 @@ export function PcdMapDemoPage() {
     setTaskDraft(emptyTaskDraft)
     setActiveDrawer('task')
     addLog(taskEditorMode === 'edit' ? `已更新任务 ${name}` : `已创建任务工作流 ${name}`)
-  }, [addLog, maps, persistTasks, selectedMapId, selectedTaskId, taskDraft, taskEditorMode, tasks, waypoints])
+  }, [addLog, persistTasks, scenes, selectedSceneId, selectedTaskId, taskDraft, taskEditorMode, tasks, waypoints])
 
   const handleDeleteTask = useCallback(() => {
     if (!selectedTask) return
@@ -766,14 +892,19 @@ export function PcdMapDemoPage() {
 
   const handleExecuteTask = useCallback(async () => {
     if (!selectedTask) return
-    if (selectedTask.mapId !== selectedMapId) {
-      await selectMap(selectedTask.mapId)
+    const selectedSceneItem = scenes.find((item) => item.id === selectedTask.mapId)
+    if (selectedSceneItem && !selectedSceneItem.navigable) {
+      addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
+      return
     }
-    addLog(`开始执行任务 ${selectedTask.name}`)
+    if (selectedTask.mapId !== selectedSceneId) {
+      await selectScene(selectedTask.mapId)
+    }
+    addLog(`开始执行场景任务 ${selectedTask.name}`)
     selectedTask.steps.forEach((step, index) => {
       addLog(`步骤 ${index + 1}: ${step.label}`)
     })
-  }, [addLog, selectedMapId, selectedTask, selectMap])
+  }, [addLog, scenes, selectedSceneId, selectedTask, selectScene])
 
   return (
     <main className="pcd-demo-page">
@@ -781,7 +912,7 @@ export function PcdMapDemoPage() {
         <div className="pcd-title-row">
           <div className="pcd-title-block">
             <h1>BotDog 导航巡逻</h1>
-            <p>PCD 预览、标点、导航、位姿和日志统一压缩到单屏工作区</p>
+            <p>场景地图预览、标点、导航、位姿和日志统一压缩到单屏工作区</p>
           </div>
         </div>
         <div className="pcd-header-actions">
@@ -790,6 +921,13 @@ export function PcdMapDemoPage() {
               <Loader2 size={16} /> 加载中
             </span>
           ) : null}
+          <button
+            className="pcd-secondary-button"
+            disabled={!canOperate || restartLocalizationSending}
+            onClick={() => void handleRestartNavigationLocalization()}
+          >
+            {restartLocalizationSending ? '重启中...' : '重启导航定位'}
+          </button>
           <label className="pcd-z-control">
             <span>Z</span>
             <input
@@ -802,7 +940,7 @@ export function PcdMapDemoPage() {
           </label>
           <button
             className={`pcd-primary-button ${addMode ? 'is-active' : ''}`}
-            disabled={!preview}
+            disabled={!preview || !selectedSceneNavigable}
             onClick={handleToggleWaypointMode}
           >
             <Crosshair size={16} />
@@ -816,7 +954,7 @@ export function PcdMapDemoPage() {
           <div className="pcd-main-viewer">
             {webglSupported ? (
               <PointCloud3DViewer
-                points={preview?.points || []}
+                layers={previewLayers}
                 waypoints={waypoints}
                 robotPose={robotPose}
                 globalPath={globalPath}
@@ -856,9 +994,9 @@ export function PcdMapDemoPage() {
                   const next = activeDrawer === 'map' ? null : 'map'
                   setActiveDrawer(next)
                 }}
-                title={activeDrawer === 'map' ? '收起地图选择' : '展开地图选择'}
+                title={activeDrawer === 'map' ? '收起场景选择' : '展开场景选择'}
               >
-                <span>地图选择</span>
+                <span>场景选择</span>
               </button>
             </div>
             <div className={`pcd-drawer-body pcd-shared-drawer-body ${activeDrawer ? 'is-open' : 'is-closed'}`}>
@@ -866,6 +1004,8 @@ export function PcdMapDemoPage() {
                 <TaskDrawerPanel
                   tasks={tasks}
                   selectedTaskId={selectedTaskId}
+                  canStartCreate={selectedSceneNavigable}
+                  canExecuteTask={selectedTaskSceneNavigable}
                   onSelectTask={setSelectedTaskId}
                   onEditTask={handleStartEditTask}
                   onExecuteTask={() => void handleExecuteTask()}
@@ -874,24 +1014,28 @@ export function PcdMapDemoPage() {
                 />
               ) : null}
               {activeDrawer === 'map' ? (
-                <PcdFileListPanel
-                  maps={maps}
-                  root={root}
-                  selectedMapId={selectedMapId}
-                  loading={loading}
-                  onRefresh={refreshMaps}
-                  onSelect={selectMap}
-                />
-              ) : null}
-            </div>
+              <PcdFileListPanel
+                scenes={scenes}
+                root={root}
+                selectedSceneId={selectedSceneId}
+                loading={loading}
+                onRefresh={refreshScenes}
+                onSelect={selectScene}
+                onDeleteScene={requestDeleteScene}
+              />
+            ) : null}
+          </div>
             {creatingTask ? (
               <div className="pcd-task-creator-drawer">
                 <TaskCreatorDrawer
                   mode={taskEditorMode || 'create'}
                   draft={taskDraft}
                   maps={mapOptions}
-                  selectedMapId={selectedMapId}
-                  selectedMapWaypoints={selectedMapWaypoints}
+                  selectedSceneId={selectedSceneId}
+                  selectedSceneWaypoints={selectedSceneWaypoints}
+                  selectedSceneNavigable={draftSceneNavigable}
+                  selectedSceneMessage={draftSceneMessage}
+                  canSaveTask={draftSceneNavigable}
                   onDraftChange={handleTaskDraftChange}
                   onAddDraftWaypoint={handleAddDraftWaypoint}
                   onRemoveDraftWaypoint={handleRemoveDraftWaypoint}
@@ -905,14 +1049,14 @@ export function PcdMapDemoPage() {
 
           <div className="pcd-overlay-stack">
             <section className={`pcd-panel pcd-floating-panel pcd-info-drawer ${infoOpen ? 'is-open' : 'is-closed'}`}>
-              <button
-                className="pcd-info-toggle"
+                <button
+                  className="pcd-info-toggle"
                 onClick={() => setInfoOpen((value) => !value)}
-                title={infoOpen ? '收起地图和位姿信息' : '展开地图和位姿信息'}
+                title={infoOpen ? '收起场景和位姿信息' : '展开场景和位姿信息'}
               >
                 <div>
-                  <strong>地图信息 / 机器狗坐标</strong>
-                  <span>{metadata?.name || '未选择地图'}</span>
+                  <strong>场景信息 / 机器狗坐标</strong>
+                  <span>{metadata?.name || '未选择场景'}</span>
                 </div>
                 {infoOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
               </button>
@@ -944,12 +1088,16 @@ export function PcdMapDemoPage() {
                       <strong>{robotPose?.frame_id || '-'}</strong>
                       <span>Source</span>
                       <strong>{robotPose?.source || '-'}</strong>
+                      <span>场景状态</span>
+                      <strong>{selectedSceneReady ? 'ready' : 'incomplete'}</strong>
+                      <span>可导航</span>
+                      <strong>{selectedSceneNavigable ? 'yes' : 'no'}</strong>
                     </div>
                   ) : (
-                    <div className="pcd-empty">选择地图后显示地图信息和机器狗位姿</div>
+                    <div className="pcd-empty">选择场景后显示场景信息和机器狗位姿</div>
                   )}
-                  {metadata?.supported === false ? (
-                    <div className="pcd-warning">{metadata.message || '当前 PCD 类型暂不支持预览'}</div>
+                  {selectedSceneMessage ? (
+                    <div className="pcd-warning">{selectedSceneMessage}</div>
                   ) : null}
                   {metadata?.bounds ? (
                     <div className="pcd-bounds">
@@ -960,6 +1108,9 @@ export function PcdMapDemoPage() {
                   ) : null}
                   {robotPose && robotPose.frame_id !== 'map' ? (
                     <div className="pcd-warning">当前位姿不是 map 坐标系：{robotPose.frame_id}</div>
+                  ) : null}
+                  {!selectedSceneNavigable ? (
+                    <div className="pcd-warning">当前场景缺少 ground.pcd，不能用于导航</div>
                   ) : null}
                   {localizationStatus ? (
                     <div className={localizationStatus.status === 'ok' ? 'pcd-bounds' : 'pcd-warning'}>
@@ -995,7 +1146,7 @@ export function PcdMapDemoPage() {
             <button
               className={`pcd-tool-button ${toolMode === 'pose' ? 'is-active' : ''}`}
               onClick={() => handleToolMode('pose')}
-              disabled={!canOperate}
+              disabled={!canOperate || !selectedSceneNavigable}
             >
               <Square size={15} />
               <span>设置位姿</span>
@@ -1024,14 +1175,14 @@ export function PcdMapDemoPage() {
           {mappingSessionInfo ? (
             <section className="pcd-mapping-session">
               <strong>当前建图场景：{mappingSessionInfo.sceneName}</strong>
-              <span>地图保存路径：{mappingSessionInfo.mapDir}</span>
+              <span>场景保存路径：{mappingSessionInfo.mapDir}</span>
             </section>
           ) : null}
         </section>
 
         <aside className="pcd-right-rail">
           <PointCloudTopDownCanvas
-            points={preview?.points || []}
+            layers={previewLayers}
             bounds={preview?.bounds || metadata?.bounds || null}
             waypoints={waypoints}
             robotPose={robotPose}
@@ -1045,6 +1196,7 @@ export function PcdMapDemoPage() {
           <NavWaypointPanel
             waypoints={waypoints}
             navigatingWaypointId={navigatingWaypointId}
+            sceneNavigable={selectedSceneNavigable}
             onGoTo={requestGoToWaypoint}
             onDelete={handleDeleteWaypoint}
           />
@@ -1071,6 +1223,38 @@ export function PcdMapDemoPage() {
         )}
       </section>
       </div>
+
+      {/* ─── 导航到点二次确认弹窗 ─── */}
+      {sceneDeleteConfirm !== null && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-[0_30px_120px_-30px_rgba(0,0,0,0.9)]">
+            <div className="text-lg font-black text-white">确认删除场景「{sceneDeleteConfirm.name}」</div>
+            <div className="mt-3 space-y-1.5 text-sm text-zinc-400">
+              <div>scene_id：{sceneDeleteConfirm.id}</div>
+              <div>路径：{sceneDeleteConfirm.path}</div>
+            </div>
+            <p className="mt-4 text-xs text-amber-400/80">
+              该操作会直接删除整个 SceneN_ 文件夹，且不可恢复。请确认该场景不再需要。
+            </p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                className="rounded-xl border border-white/12 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-white hover:border-white/30 hover:bg-white/5"
+                onClick={() => setSceneDeleteConfirm(null)}
+              >
+                取消
+              </button>
+              <button
+                className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-red-300 hover:border-red-400 hover:bg-red-500/20"
+                onClick={() => {
+                  void handleDeleteScene()
+                }}
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── 导航到点二次确认弹窗 ─── */}
       {goToConfirm !== null && (
@@ -1118,7 +1302,7 @@ export function PcdMapDemoPage() {
               <div className="pcd-scene-modal-card" role="dialog" aria-modal="true" aria-label="请输入场景名称">
                 <div className="pcd-scene-modal-header">
                   <strong>请输入场景名称</strong>
-                  <span>建图开始后会自动创建对应地图目录。</span>
+                  <span>建图开始后会自动创建对应场景目录。</span>
                 </div>
                 <label className="pcd-scene-modal-field">
                   <span>场景名称</span>

@@ -15,8 +15,11 @@ type Props = {
   mode: 'create' | 'edit'
   draft: TaskDraft
   maps: MapOption[]
-  selectedMapId: string | null
-  selectedMapWaypoints: WaypointOption[]
+  selectedSceneId: string | null
+  selectedSceneWaypoints: WaypointOption[]
+  selectedSceneNavigable: boolean
+  selectedSceneMessage: string | null
+  canSaveTask: boolean
   onDraftChange: (patch: Partial<TaskDraft>) => void
   onAddDraftWaypoint: () => void
   onRemoveDraftWaypoint: (index: number) => void
@@ -38,8 +41,11 @@ export function TaskCreatorDrawer({
   mode,
   draft,
   maps,
-  selectedMapId,
-  selectedMapWaypoints,
+  selectedSceneId,
+  selectedSceneWaypoints,
+  selectedSceneNavigable,
+  selectedSceneMessage,
+  canSaveTask,
   onDraftChange,
   onAddDraftWaypoint,
   onRemoveDraftWaypoint,
@@ -55,7 +61,7 @@ export function TaskCreatorDrawer({
             <ArrowLeft size={14} />
             <span>返回任务列表</span>
           </button>
-          <h2>{mode === 'create' ? '编辑导航任务' : '编辑导航任务'}</h2>
+          <h2>{mode === 'create' ? '新建导航任务' : '编辑导航任务'}</h2>
         </div>
         <button className="pcd-icon-button" onClick={onCancelCreate} title="关闭编辑模式">
           <X size={16} />
@@ -74,13 +80,13 @@ export function TaskCreatorDrawer({
           </label>
 
           <label className="pcd-form-row">
-            <span>绑定地图</span>
+            <span>绑定场景</span>
             <select
               className="pcd-task-value-select"
               value={draft.mapId}
               onChange={(event) => onDraftChange({ mapId: event.target.value, steps: [] })}
             >
-              <option value="">请选择地图</option>
+              <option value="">请选择场景</option>
               {maps.map((map) => (
                 <option key={map.id} value={map.id}>
                   {map.name}
@@ -135,8 +141,8 @@ export function TaskCreatorDrawer({
                           </>
                         ) : (
                           <>
-                            <option value="">{draft.mapId ? '请选择导航点' : '请先绑定地图'}</option>
-                            {selectedMapWaypoints.map((waypoint) => (
+                            <option value="">{draft.mapId ? '请选择导航点' : '请先绑定场景'}</option>
+                            {selectedSceneWaypoints.map((waypoint) => (
                               <option key={waypoint.id} value={waypoint.id}>
                                 {waypoint.name}
                               </option>
@@ -177,14 +183,15 @@ export function TaskCreatorDrawer({
 
         <div className="pcd-task-editor-footer pcd-task-editor-footer-wide">
           <div className="pcd-task-editor-hint">
-            地图必须绑定任务，任务名称不能为空。点击左侧任务卡片进入编辑，步骤通过下拉框配置。
-            {draft.mapId && draft.mapId === selectedMapId ? ' 当前地图已加载。' : ''}
+            任务必须绑定场景，任务名称不能为空。点击左侧任务卡片进入编辑，步骤通过下拉框配置。
+            {draft.mapId && draft.mapId === selectedSceneId ? ' 当前场景已加载。' : ''}
+            {!selectedSceneNavigable && selectedSceneMessage ? ` ${selectedSceneMessage}` : ''}
           </div>
           <div className="pcd-task-editor-actions pcd-task-editor-actions-wide">
             <button className="pcd-tool-button" onClick={onCancelCreate}>
               取消
             </button>
-            <button className="pcd-primary-button pcd-save-button" onClick={onCreateTask}>
+            <button className="pcd-primary-button pcd-save-button" onClick={onCreateTask} disabled={!canSaveTask}>
               {mode === 'create' ? '保存任务' : '保存修改'}
             </button>
           </div>

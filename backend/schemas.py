@@ -149,6 +149,88 @@ class PcdBoundsDTO(BaseModel):
     max_z: float
 
 
+class PcdSceneFileDTO(BaseModel):
+    name: str
+    size_bytes: int
+    modified_at: str
+
+
+class PcdSceneItemDTO(BaseModel):
+    id: str
+    name: str
+    path: str
+    modified_at: str
+    wall: PcdSceneFileDTO | None = None
+    ground: PcdSceneFileDTO | None = None
+    ready: bool = False
+    navigable: bool = False
+    message: str | None = None
+
+
+class PcdSceneListResponse(BaseModel):
+    root: str
+    items: list[PcdSceneItemDTO]
+
+
+class PcdSceneDeleteResponse(BaseModel):
+    success: bool = Field(..., description="是否删除成功")
+    scene_id: str = Field(..., description="场景 ID")
+    deleted_path: str = Field(..., description="已删除的场景目录")
+    message: str = Field(..., description="响应消息")
+
+
+class PcdSceneLayerMetadataDTO(BaseModel):
+    name: str
+    size_bytes: int
+    modified_at: str
+    frame_id: str = "map"
+    type: str = "pcd"
+    point_count: int
+    fields: list[str]
+    data_type: str
+    bounds: PcdBoundsDTO | None = None
+    supported: bool = True
+    message: str | None = None
+
+
+class PcdSceneMetadataFilesDTO(BaseModel):
+    wall: PcdSceneLayerMetadataDTO | None = None
+    ground: PcdSceneLayerMetadataDTO | None = None
+
+
+class PcdSceneMetadataResponse(BaseModel):
+    scene_id: str
+    name: str
+    frame_id: str = "map"
+    type: str = "scene_pcd"
+    point_count: int
+    fields: list[str]
+    data_type: str
+    files: PcdSceneMetadataFilesDTO
+    bounds: PcdBoundsDTO
+    supported: bool = True
+    message: str | None = None
+
+
+class PcdScenePreviewLayerDTO(BaseModel):
+    role: str
+    file_name: str
+    points: list[list[float]]
+    bounds: PcdBoundsDTO
+
+
+class PcdScenePreviewLayersDTO(BaseModel):
+    ground: PcdScenePreviewLayerDTO | None = None
+    wall: PcdScenePreviewLayerDTO | None = None
+
+
+class PcdScenePreviewResponse(BaseModel):
+    scene_id: str
+    frame_id: str = "map"
+    layers: PcdScenePreviewLayersDTO
+    bounds: PcdBoundsDTO
+
+
 class PcdMapItemDTO(BaseModel):
     id: str
     name: str
@@ -226,6 +308,13 @@ class LocalizationPoseDTO(BaseModel):
     yaw: float
     frame_id: str
     updated_at: str
+
+
+class LocalizationRestartResponse(BaseModel):
+    success: bool = Field(..., description="是否已成功发起重启")
+    running: bool = Field(..., description="重启脚本是否仍在运行")
+    pid: int | None = Field(default=None, description="重启脚本进程 PID")
+    message: str = Field(..., description="响应消息")
 
 
 class MappingControlRequest(BaseModel):

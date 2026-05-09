@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { LocateFixed, ZoomIn, ZoomOut } from 'lucide-react'
-import type { NavWaypoint, PcdBounds } from '../../types/pcdMap'
+import type { NavWaypoint, PcdBounds, PcdSceneLayerRole } from '../../types/pcdMap'
 import type { GlobalPath, RobotPose } from '../../types/navState'
 import { canvasToMap, mapToCanvas } from '../../utils/topDownCoordinate'
 
-type Props = {
+type PointCloudLayer = {
+  role: PcdSceneLayerRole
   points: [number, number, number][]
+}
+
+type Props = {
+  layers?: PointCloudLayer[]
+  points?: [number, number, number][]
   bounds: PcdBounds | null
   waypoints: NavWaypoint[]
   robotPose: RobotPose | null
@@ -26,7 +32,14 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
 
+function getLayerColor(role: PcdSceneLayerRole) {
+  return role === 'ground'
+    ? 'rgba(56, 189, 248, 0.60)'
+    : 'rgba(22, 101, 52, 0.85)'
+}
+
 export function PointCloudTopDownCanvas({
+  layers,
   points,
   bounds,
   waypoints,
@@ -55,9 +68,18 @@ export function PointCloudTopDownCanvas({
   const [view, setView] = useState({ zoom: 1, panX: 0, panY: 0 })
   const [isPanning, setIsPanning] = useState(false)
 
+  const normalizedLayers: PointCloudLayer[] =
+    layers?.length
+      ? layers
+      : points && points.length > 0
+        ? [{ role: 'ground', points }]
+        : []
+
+  const totalPointCount = normalizedLayers.reduce((sum, layer) => sum + layer.points.length, 0)
+
   useEffect(() => {
     setView({ zoom: 1, panX: 0, panY: 0 })
-  }, [bounds, points.length])
+  }, [bounds, totalPointCount])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -78,18 +100,18 @@ export function PointCloudTopDownCanvas({
       originMapX: number,
       originMapY: number,
       yaw: number,
-      bounds: PcdBounds,
+      boundsValue: PcdBounds,
       width: number,
       height: number,
       lengthPx: number,
       color: string,
       lineWidth: number,
     ) => {
-      const originBase = mapToCanvas(originMapX, originMapY, bounds, width, height, PADDING)
+      const originBase = mapToCanvas(originMapX, originMapY, boundsValue, width, height, PADDING)
       const tipBase = mapToCanvas(
         originMapX + Math.cos(yaw),
         originMapY + Math.sin(yaw),
-        bounds,
+        boundsValue,
         width,
         height,
         PADDING,
@@ -164,21 +186,24 @@ export function PointCloudTopDownCanvas({
         ctx.stroke()
       }
 
-      if (!bounds || points.length === 0) {
+      if (!bounds || totalPointCount === 0) {
         ctx.fillStyle = 'rgba(226, 232, 240, 0.55)'
         ctx.font = '13px system-ui'
         ctx.fillText('等待 XY 投影数据', PADDING, PADDING + 22)
         return
       }
 
-      ctx.fillStyle = 'rgba(94, 234, 212, 0.58)'
-      const stride = Math.max(1, Math.floor(points.length / 45000))
-      for (let index = 0; index < points.length; index += stride) {
-        const point = points[index]
-        const basePos = mapToCanvas(point[0], point[1], bounds, width, height, PADDING)
-        const pos = applyView(basePos.x, basePos.y, width, height)
-        ctx.fillRect(pos.x, pos.y, 1.4, 1.4)
-      }
+      normalizedLayers.forEach((layer) => {
+        if (layer.points.length === 0) return
+        const stride = Math.max(1, Math.floor(layer.points.length / 45000))
+        ctx.fillStyle = getLayerColor(layer.role)
+        for (let index = 0; index < layer.points.length; index += stride) {
+          const point = layer.points[index]
+          const basePos = mapToCanvas(point[0], point[1], bounds, width, height, PADDING)
+          const pos = applyView(basePos.x, basePos.y, width, height)
+          ctx.fillRect(pos.x, pos.y, 1.4, 1.4)
+        }
+      })
 
       ctx.strokeStyle = 'rgba(59, 130, 246, 0.75)'
       ctx.lineWidth = 1.5
@@ -196,8 +221,8 @@ export function PointCloudTopDownCanvas({
 
       ctx.strokeStyle = 'rgba(248, 113, 113, 0.85)'
       ctx.beginPath()
-      const x0Base = mapToCanvas(0, bounds.min_y, bounds, width, height, PADDING)
-      const x1Base = mapToCanvas(0, bounds.max_y, bounds, width, height, PADDING)
+      const x0Base = mapToCanvas(bounds.min_x, 0, bounds, width, height, PADDING)
+      const x1Base = mapToCanvas(bounds.max_x, 0, bounds, width, height, PADDING)
       const x0 = applyView(x0Base.x, x0Base.y, width, height)
       const x1 = applyView(x1Base.x, x1Base.y, width, height)
       ctx.moveTo(x0.x, x0.y)
@@ -206,8 +231,8 @@ export function PointCloudTopDownCanvas({
 
       ctx.strokeStyle = 'rgba(34, 197, 94, 0.85)'
       ctx.beginPath()
-      const y0Base = mapToCanvas(bounds.min_x, 0, bounds, width, height, PADDING)
-      const y1Base = mapToCanvas(bounds.max_x, 0, bounds, width, height, PADDING)
+      const y0Base = mapToCanvas(0, bounds.min_y, bounds, width, height, PADDING)
+      const y1Base = mapToCanvas(0, bounds.max_y, bounds, width, height, PADDING)
       const y0 = applyView(y0Base.x, y0Base.y, width, height)
       const y1 = applyView(y1Base.x, y1Base.y, width, height)
       ctx.moveTo(y0.x, y0.y)
@@ -278,10 +303,10 @@ export function PointCloudTopDownCanvas({
       if (robotPose) {
         const basePos = mapToCanvas(robotPose.x, robotPose.y, bounds, width, height, PADDING)
         const pos = applyView(basePos.x, basePos.y, width, height)
-        const robotColor = robotPose.frame_id === 'map' ? '#7dd3fc' : '#fca5a5'
+        const robotColor = robotPose.frame_id === 'map' ? '#f97316' : '#fb7185'
 
         ctx.save()
-        ctx.fillStyle = robotPose.frame_id === 'map' ? '#38bdf8' : '#ef4444'
+        ctx.fillStyle = robotPose.frame_id === 'map' ? '#ea580c' : '#dc2626'
         ctx.beginPath()
         ctx.arc(pos.x, pos.y, 8, 0, Math.PI * 2)
         ctx.fill()
@@ -300,7 +325,7 @@ export function PointCloudTopDownCanvas({
     draw()
 
     return () => resizeObserver.disconnect()
-  }, [bounds, globalPath, pendingWaypoint, points, robotPose, view, waypoints])
+  }, [bounds, globalPath, normalizedLayers, pendingWaypoint, robotPose, totalPointCount, view, waypoints])
 
   const readMapPosition = (event: MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current

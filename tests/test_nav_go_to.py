@@ -9,7 +9,7 @@ from backend.auth.schemas import AuthUserInternal
 def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
     waypoint = {
         "id": "wp_001",
-        "map_id": "ground.pcd",
+        "map_id": "Scene1_实验室一楼",
         "name": "巡检点1",
         "x": 1.0,
         "y": 2.0,
@@ -59,7 +59,7 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
 
     result = asyncio.run(
         nav_routes.nav_go_to_waypoint(
-            "ground.pcd",
+            "Scene1_实验室一楼",
             "wp_001",
             user=AuthUserInternal(id=1, username="admin", role="operator", token_version=1),
             db=object(),
