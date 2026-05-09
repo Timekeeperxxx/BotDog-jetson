@@ -9,7 +9,9 @@ function summarizeSteps(task: TaskDefinition) {
   return task.steps.map((step) => {
     if (step.type === 'select_map') return `切换地图 ${step.mapId}`
     if (step.type === 'relocalize') return `重定位 ${step.mode}`
-    return `导航至 ${step.waypointName}`
+    return step.x != null && step.y != null && step.z != null && step.yaw != null
+      ? `导航至 ${step.waypointName} (${step.x.toFixed(2)}, ${step.y.toFixed(2)}, ${step.z.toFixed(2)}, ${step.yaw.toFixed(3)})`
+      : `导航至 ${step.waypointName}`
   })
 }
 
@@ -208,9 +210,9 @@ export function AdminNavigationPage({
       ) : null}
 
       {tab === 'tasks' ? (
-        <AdminCard title="巡逻任务" subtitle="当前项目没有后端任务资源 CRUD；这里展示的是操作台保存在 localStorage 的任务定义，并明确标记来源。">
+        <AdminCard title="巡逻任务" subtitle="当前任务定义由后端统一保存在 data 目录下的 JSON 文件中；这里展示的是同一份后端数据。">
           {filteredTasks.length === 0 ? (
-            <EmptyState title="暂无巡逻任务" description="当前没有保存到 localStorage 的任务定义。要真正做后台级任务管理，需要新增后端任务资源接口。" />
+            <EmptyState title="暂无巡逻任务" description="当前 JSON 任务文件里没有任务定义。" />
           ) : (
             <div className="space-y-3">
               {filteredTasks.map((task) => (

@@ -30,10 +30,79 @@ from ...schemas import (
     PcdSceneListResponse,
     PcdSceneMetadataResponse,
     PcdScenePreviewResponse,
+    NavCurrentSceneResponse,
+    NavTaskListResponse,
+    NavTaskUpsertRequest,
 )
 from ...nav_bridge_state import get_ros_nav_bridge
 
 router = APIRouter(prefix="/api/v1/nav", tags=["nav"])
+
+
+@router.get("/tasks", response_model=NavTaskListResponse)
+async def nav_list_tasks():
+    from ...services_nav_tasks import NavTaskError, list_nav_tasks
+
+    try:
+        return list_nav_tasks()
+    except NavTaskError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.put("/tasks/{task_id}")
+async def nav_upsert_task(
+    task_id: str,
+    body: NavTaskUpsertRequest,
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    from ...services_nav_tasks import NavTaskError, save_nav_task
+
+    if task_id != body.task.id:
+        raise HTTPException(status_code=400, detail="路径 task_id 与请求体 task.id 不一致")
+
+    try:
+        result = save_nav_task(body.task.model_dump())
+    except NavTaskError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    await safe_write_audit_log(
+        db,
+        level="INFO",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.task.upsert "
+            f"目标={task_id} 结果=success"
+        ),
+    )
+    return result
+
+
+@router.delete("/tasks/{task_id}")
+async def nav_delete_task(
+    task_id: str,
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    from ...services_nav_tasks import NavTaskError, delete_nav_task
+
+    try:
+        result = delete_nav_task(task_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except NavTaskError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    await safe_write_audit_log(
+        db,
+        level="WARN",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.task.delete "
+            f"目标={task_id} 结果=success"
+        ),
+    )
+    return result
 
 
 @router.get("/pcd-maps", response_model=PcdMapListResponse)
@@ -78,6 +147,40 @@ async def nav_delete_pcd_scene(
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.scene.delete "
             f"目标={scene_id} 路径={result['deleted_path']} 结果=success"
+        ),
+    )
+    return result
+
+
+@router.post("/pcd-scenes/{scene_id}/select", response_model=NavCurrentSceneResponse)
+async def nav_select_pcd_scene(
+    scene_id: str,
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    from ...services_nav_localization import save_current_scene
+    from ...services_pcd_maps import PcdMapError, find_scene_pcd_files, resolve_scene_path
+
+    try:
+        scene_path = resolve_scene_path(scene_id)
+        files = find_scene_pcd_files(scene_path)
+        if files["wall"] is None:
+            raise HTTPException(status_code=400, detail="场景缺少 map.pcd")
+        if files["ground"] is None:
+            raise HTTPException(status_code=400, detail="场景缺少 ground.pcd")
+        result = save_current_scene(scene_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PcdMapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    await safe_write_audit_log(
+        db,
+        level="INFO",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.scene.select "
+            f"目标={scene_id} 路径={scene_path} 结果=success"
         ),
     )
     return result
@@ -380,32 +483,42 @@ async def nav_emergency_stop(
     user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
-    from ...services_nav_state import update_navigation_status
-
-    bridge = get_ros_nav_bridge()
-    if bridge is None:
-        raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
+    from ...control_service import get_control_service
+    from ...services_nav_localization import stop_navigation_processes
+    from ...services_nav_state import clear_global_path, set_navigation_idle
+    control_service = get_control_service()
 
     try:
-        result = bridge.publish_emergency_stop()
+        control_result = None
+        if control_service is not None:
+            control_result = await control_service.force_stop()
+
+        nav_result = stop_navigation_processes()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
-    update_navigation_status(
-        {
-            "status": "cancelled",
-            "target_waypoint_id": None,
-            "target_name": None,
-            "message": "已发布导航急停",
-        }
-    )
+    clear_global_path()
+    set_navigation_idle("已触发导航急停")
     await safe_write_audit_log(
         db,
         level="WARN",
         module="BACKEND",
-        message=f"用户={user.username} 角色={user.role} 操作=nav.e_stop 目标=nav 结果=success",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.e_stop 目标=nav 结果=success "
+            f"control_result={getattr(control_result, 'result', 'N/A')} "
+            f"nav_pids={nav_result.get('pids') if isinstance(nav_result, dict) else 'N/A'}"
+        ),
     )
-    return result
+    return {
+        "success": True,
+        "message": "已触发导航急停",
+        "topic": None,
+        "control_stop": {
+            "result": getattr(control_result, "result", None),
+            "ack_cmd": getattr(control_result, "ack_cmd", None),
+        } if control_result is not None else None,
+        "nav_stop": nav_result,
+    }
 
 
 @router.delete(

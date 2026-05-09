@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     NAV_WAYPOINT_STORE_DIR: str = "./data/nav_waypoints"
     NAV_LOCALIZATION_STORE_DIR: str = "./data/nav_localization"
     NAV_RUNTIME_DIR: str = "./data/nav_runtime"
+    NAV_TASK_STORE_DIR: str = "./data/nav_tasks"
 
     # ==================== ROS2 导航状态订阅转发 ====================
     ROS_NAV_ENABLED: bool = True

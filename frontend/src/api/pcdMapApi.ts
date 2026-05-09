@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config/api'
+import { apiFetch } from './apiFetch'
 import type {
   LocalizationPose,
   LocalizationPosePayload,
@@ -6,31 +7,21 @@ import type {
   NavWaypointCreatePayload,
   MappingControlResponse,
   PcdSceneListResponse,
+  NavCurrentScene,
   PcdSceneMetadata,
   PcdScenePreview,
   PcdMapListResponse,
   PcdMetadata,
   PcdPreview,
 } from '../types/pcdMap'
+import type { TaskDefinition } from '../types/taskWorkflow'
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init)
-  const contentType = res.headers.get('content-type') || ''
+  const path = url.startsWith('http://') || url.startsWith('https://')
+    ? `${new URL(url).pathname}${new URL(url).search}`
+    : url
 
-  if (!res.ok) {
-    let message = `HTTP ${res.status}`
-    if (contentType.includes('application/json')) {
-      const data = await res.json()
-      message = data.detail || message
-    }
-    throw new Error(message)
-  }
-
-  if (!contentType.includes('application/json')) {
-    throw new Error('接口返回的不是 JSON，请检查 VITE_API_BASE_URL 或 Vite /api 代理是否指向后端')
-  }
-
-  return res.json() as Promise<T>
+  return apiFetch<T>(path, init)
 }
 
 export function listPcdMaps(): Promise<PcdMapListResponse> {
@@ -39,6 +30,28 @@ export function listPcdMaps(): Promise<PcdMapListResponse> {
 
 export function listPcdScenes(): Promise<PcdSceneListResponse> {
   return requestJson(getApiUrl('/api/v1/nav/pcd-scenes'))
+}
+
+export function listNavTasks(): Promise<{ items: TaskDefinition[] }> {
+  return requestJson(getApiUrl('/api/v1/nav/tasks'))
+}
+
+export function saveNavTask(task: TaskDefinition): Promise<{ success: boolean; task: TaskDefinition }> {
+  return requestJson(
+    getApiUrl(`/api/v1/nav/tasks/${encodeURIComponent(task.id)}`),
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task }),
+    },
+  )
+}
+
+export function deleteNavTask(taskId: string): Promise<{ success: boolean; task_id: string }> {
+  return requestJson(
+    getApiUrl(`/api/v1/nav/tasks/${encodeURIComponent(taskId)}`),
+    { method: 'DELETE' },
+  )
 }
 
 export function deletePcdScene(sceneId: string): Promise<{
@@ -50,6 +63,13 @@ export function deletePcdScene(sceneId: string): Promise<{
   return requestJson(
     getApiUrl(`/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}`),
     { method: 'DELETE' },
+  )
+}
+
+export function selectPcdScene(sceneId: string): Promise<NavCurrentScene> {
+  return requestJson(
+    getApiUrl(`/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/select`),
+    { method: 'POST' },
   )
 }
 
@@ -162,10 +182,33 @@ export function setLocalizationPose(
   )
 }
 
+export function triggerControlEmergencyStop(): Promise<{
+  success: boolean
+  timestamp: string
+  message: string
+}> {
+  return requestJson(
+    getApiUrl('/api/v1/control/e-stop'),
+    { method: 'POST' },
+  )
+}
+
 export function restartNavigationLocalization(): Promise<{
   success: boolean
   running: boolean
   pid: number | null
+  scene_id: string
+  scene_dir: string
+  map_pcd: string
+  ground_pcd: string
+  livox_pid: number | null
+  relocation_pid: number | null
+  global_planner_pid: number | null
+  p2p_move_base_pid: number | null
+  cmd_vel_pid: number | null
+  cmd_vel_running: boolean
+  navigation_ready: boolean
+  process_pids: Record<string, number | null>
   message: string
 }> {
   return requestJson(
@@ -195,7 +238,7 @@ export function setMappingEnabled(
   )
 }
 
-export function triggerNavEmergencyStop(): Promise<{ success: boolean; topic: string }> {
+export function triggerNavEmergencyStop(): Promise<{ success: boolean; topic: string | null; message: string }> {
   return requestJson(
     getApiUrl('/api/v1/nav/e-stop'),
     { method: 'POST' },

@@ -18,9 +18,13 @@ import {
   getPcdSceneMetadata,
   getPcdScenePreview,
   listPcdScenes,
+  listNavTasks,
   listWaypoints,
   notifyNavPageOpen,
   deletePcdScene,
+  deleteNavTask,
+  saveNavTask,
+  selectPcdScene,
   restartNavigationLocalization,
   setMappingEnabled,
   setLocalizationPose,
@@ -54,6 +58,20 @@ function nowText() {
   return new Date().toLocaleTimeString()
 }
 
+function formatWaypointCoords(step: WorkflowStep): string | null {
+  if (step.type !== 'navigate_waypoint') return null
+  if (
+    step.x == null ||
+    step.y == null ||
+    step.z == null ||
+    step.yaw == null
+  ) {
+    return null
+  }
+  const frame = step.frameId ? `, frame=${step.frameId}` : ''
+  return `x=${step.x.toFixed(2)}, y=${step.y.toFixed(2)}, z=${step.z.toFixed(2)}, yaw=${step.yaw.toFixed(3)}${frame}`
+}
+
 function validateMappingSceneName(
   rawValue: string,
 ): { ok: false; message: string } | { ok: true; value: string } {
@@ -79,7 +97,6 @@ function validateMappingSceneName(
   return { ok: true, value: sceneName }
 }
 
-const TASK_STORAGE_KEY = 'botdog-nav-workflows'
 const SELECTED_SCENE_STORAGE_KEY = 'botdog-nav-selected-scene'
 
 const emptyTaskDraft: TaskDraft = {
@@ -177,11 +194,6 @@ export function PcdMapDemoPage() {
     setWebglSupported(detectWebGLSupport())
   }, [])
 
-  const persistTasks = useCallback((nextTasks: TaskDefinition[]) => {
-    setTasks(nextTasks)
-    window.localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(nextTasks))
-  }, [])
-
   const refreshScenes = useCallback(async () => {
     setLoading(true)
     try {
@@ -199,13 +211,20 @@ export function PcdMapDemoPage() {
   const selectScene = useCallback(async (sceneId: string) => {
     const requestId = ++selectRequestRef.current
     setLoading(true)
-    setSelectedSceneId(sceneId)
-    setMetadata(null)
-    setPreview(null)
-    setWaypoints([])
-    setAddMode(false)
 
     try {
+      const currentScene = await selectPcdScene(sceneId)
+      if (requestId !== selectRequestRef.current) return
+
+      setSelectedSceneId(currentScene.scene_id)
+      setMetadata(null)
+      setPreview(null)
+      setWaypoints([])
+      setAddMode(false)
+      addLog(`当前选择导航场景：${currentScene.scene_id}`)
+      addLog(`当前场景 map.pcd：${currentScene.map_pcd}`)
+      addLog(`当前场景 ground.pcd：${currentScene.ground_pcd}`)
+
       const nextMetadata = await getPcdSceneMetadata(sceneId)
       if (requestId !== selectRequestRef.current) return
       setMetadata(nextMetadata)
@@ -221,6 +240,22 @@ export function PcdMapDemoPage() {
       const groundPoints = nextPreview.layers.ground?.points.length || 0
       const wallPoints = nextPreview.layers.wall?.points.length || 0
       addLog(`已加载场景预览点云：ground ${groundPoints.toLocaleString()} 点，wall ${wallPoints.toLocaleString()} 点`)
+
+      try {
+        const navState = await getNavState()
+        if (requestId !== selectRequestRef.current) return
+        setInitialState({
+          robotPose: navState.robot_pose,
+          globalPath: navState.global_path,
+          localizationStatus: navState.localization_status,
+          navigationStatus: navState.navigation_status,
+        })
+        addLog('已刷新导航实时状态')
+      } catch (error) {
+        if (requestId === selectRequestRef.current) {
+          addLog(error instanceof Error ? error.message : '刷新导航状态失败', 'error')
+        }
+      }
     } catch (error) {
       if (requestId !== selectRequestRef.current) return
       addLog(error instanceof Error ? error.message : `加载场景失败: ${sceneId}`, 'error')
@@ -229,7 +264,7 @@ export function PcdMapDemoPage() {
         setLoading(false)
       }
     }
-  }, [addLog, previewPointLimit])
+  }, [addLog, previewPointLimit, setInitialState])
 
   const handleAddWaypoint = useCallback(async (pos: { x: number; y: number; z: number; yaw: number }) => {
     if (!selectedSceneId) return
@@ -328,16 +363,28 @@ export function PcdMapDemoPage() {
 
   const handleEmergencyStop = useCallback(async () => {
     if (!canOperate) return
+    if (estopSending) return
     setEstopSending(true)
     try {
       const result = await triggerNavEmergencyStop()
-      addLog(`已发布导航急停到 ${result.topic}`, 'error')
+      setNavigatingWaypointId(null)
+      setInitialState({
+        globalPath: null,
+        navigationStatus: {
+          status: 'idle',
+          target_waypoint_id: null,
+          target_name: null,
+          message: '已执行导航急停',
+          timestamp: Date.now() / 1000,
+        },
+      })
+      addLog(`已执行导航急停：${result.message}`, 'error')
     } catch (error) {
-      addLog(error instanceof Error ? error.message : '发布导航急停失败', 'error')
+      addLog(error instanceof Error ? error.message : '执行导航急停失败', 'error')
     } finally {
       setEstopSending(false)
     }
-  }, [addLog, canOperate])
+  }, [addLog, canOperate, estopSending, setInitialState])
 
   const handleRestartNavigationLocalization = useCallback(async () => {
     if (!canOperate) return
@@ -345,8 +392,13 @@ export function PcdMapDemoPage() {
 
     setRestartLocalizationSending(true)
     try {
-      await restartNavigationLocalization()
-      addLog('导航定位已重启')
+      const result = await restartNavigationLocalization()
+      addLog(
+        `导航定位已重启：${result.scene_id}，map=${result.map_pcd}，ground=${result.ground_pcd}，` +
+          `livox=${result.livox_pid}，relocation=${result.relocation_pid}，` +
+          `global_planner=${result.global_planner_pid}，p2p_move_base=${result.p2p_move_base_pid}，` +
+          `cmd_vel=${result.cmd_vel_pid}，ready=${result.navigation_ready}`,
+      )
     } catch (error) {
       addLog(error instanceof Error ? error.message : '重启导航定位失败', 'error')
     } finally {
@@ -435,16 +487,18 @@ export function PcdMapDemoPage() {
     void refreshScenes()
   }, [refreshScenes])
 
-  useEffect(() => {
+  const refreshTasks = useCallback(async () => {
     try {
-      const raw = window.localStorage.getItem(TASK_STORAGE_KEY)
-      if (!raw) return
-      const parsed = JSON.parse(raw) as TaskDefinition[]
-      setTasks(Array.isArray(parsed) ? parsed : [])
-    } catch {
-      addLog('任务工作流缓存读取失败', 'error')
+      const data = await listNavTasks()
+      setTasks(Array.isArray(data.items) ? data.items : [])
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '任务工作流读取失败', 'error')
     }
   }, [addLog])
+
+  useEffect(() => {
+    void refreshTasks()
+  }, [refreshTasks])
 
   useEffect(() => {
     if (selectedSceneId && scenes.some((item) => item.id === selectedSceneId)) {
@@ -795,7 +849,7 @@ export function PcdMapDemoPage() {
     setTaskDraft(emptyTaskDraft)
   }, [])
 
-  const handleCreateTask = useCallback(() => {
+  const handleCreateTask = useCallback(async () => {
     const name = taskDraft.name.trim()
     if (!name) {
       addLog('任务名称不能为空', 'error')
@@ -844,9 +898,14 @@ export function PcdMapDemoPage() {
       if (!waypoint) return
       workflowSteps.push({
         type: 'navigate_waypoint' as const,
-        label: `导航到 ${waypoint.name}`,
+        label: `导航到 ${waypoint.name} (x=${waypoint.x.toFixed(2)}, y=${waypoint.y.toFixed(2)}, z=${waypoint.z.toFixed(2)}, yaw=${waypoint.yaw.toFixed(3)})`,
         waypointId: waypoint.id,
         waypointName: waypoint.name,
+        x: waypoint.x,
+        y: waypoint.y,
+        z: waypoint.z,
+        yaw: waypoint.yaw,
+        frameId: waypoint.frame_id,
       })
     })
 
@@ -870,41 +929,68 @@ export function PcdMapDemoPage() {
       ],
     }
 
+    try {
+      await saveNavTask(nextTask)
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '保存任务失败', 'error')
+      return
+    }
+
     const nextTasks =
       taskEditorMode === 'edit' && selectedTaskId
         ? tasks.map((item) => (item.id === selectedTaskId ? nextTask : item))
         : [nextTask, ...tasks]
-    persistTasks(nextTasks)
+    setTasks(nextTasks)
     setSelectedTaskId(nextTask.id)
     setCreatingTask(false)
     setTaskEditorMode(null)
     setTaskDraft(emptyTaskDraft)
     setActiveDrawer('task')
     addLog(taskEditorMode === 'edit' ? `已更新任务 ${name}` : `已创建任务工作流 ${name}`)
-  }, [addLog, persistTasks, scenes, selectedSceneId, selectedTaskId, taskDraft, taskEditorMode, tasks, waypoints])
+  }, [addLog, scenes, selectedSceneId, selectedTaskId, taskDraft, taskEditorMode, tasks, waypoints])
 
-  const handleDeleteTask = useCallback(() => {
-    if (!selectedTask) return
-    const nextTasks = tasks.filter((task) => task.id !== selectedTask.id)
-    persistTasks(nextTasks)
-    addLog(`已删除任务 ${selectedTask.name}`)
-  }, [addLog, persistTasks, selectedTask, tasks])
+  const handleDeleteTask = useCallback(async (taskId: string) => {
+    const task = tasks.find((item) => item.id === taskId)
+    if (!task) return
+    try {
+      await deleteNavTask(task.id)
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '删除任务失败', 'error')
+      return
+    }
+    const nextTasks = tasks.filter((item) => item.id !== task.id)
+    setTasks(nextTasks)
+    addLog(`已删除任务 ${task.name}`)
+  }, [addLog, tasks])
 
-  const handleExecuteTask = useCallback(async () => {
-    if (!selectedTask) return
-    const selectedSceneItem = scenes.find((item) => item.id === selectedTask.mapId)
+  const handleExecuteTask = useCallback(async (taskId: string) => {
+    const task = tasks.find((item) => item.id === taskId)
+    if (!task) return
+    setSelectedTaskId(task.id)
+    const selectedSceneItem = scenes.find((item) => item.id === task.mapId)
     if (selectedSceneItem && !selectedSceneItem.navigable) {
       addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
       return
     }
-    if (selectedTask.mapId !== selectedSceneId) {
-      await selectScene(selectedTask.mapId)
+    if (task.mapId !== selectedSceneId) {
+      await selectScene(task.mapId)
     }
-    addLog(`开始执行场景任务 ${selectedTask.name}`)
-    selectedTask.steps.forEach((step, index) => {
-      addLog(`步骤 ${index + 1}: ${step.label}`)
+    const taskWaypoints = task.mapId === selectedSceneId ? waypoints : (await listWaypoints(task.mapId).catch(() => ({ items: [] as NavWaypoint[] }))).items
+    addLog(`开始执行场景任务 ${task.name}`)
+    task.steps.forEach((step, index) => {
+      const coordText =
+        formatWaypointCoords(step) ??
+        (step.type === 'navigate_waypoint'
+          ? (() => {
+              const waypoint = taskWaypoints.find((item) => item.id === step.waypointId)
+              return waypoint
+                ? `x=${waypoint.x.toFixed(2)}, y=${waypoint.y.toFixed(2)}, z=${waypoint.z.toFixed(2)}, yaw=${waypoint.yaw.toFixed(3)}, frame=${waypoint.frame_id}`
+                : null
+            })()
+          : null)
+      addLog(coordText ? `步骤 ${index + 1}: ${step.label} | ${coordText}` : `步骤 ${index + 1}: ${step.label}`)
     })
-  }, [addLog, scenes, selectedSceneId, selectedTask, selectScene])
+  }, [addLog, scenes, selectedSceneId, selectScene, tasks, waypoints])
 
   return (
     <main className="pcd-demo-page">
@@ -1008,7 +1094,7 @@ export function PcdMapDemoPage() {
                   canExecuteTask={selectedTaskSceneNavigable}
                   onSelectTask={setSelectedTaskId}
                   onEditTask={handleStartEditTask}
-                  onExecuteTask={() => void handleExecuteTask()}
+                  onExecuteTask={(taskId) => void handleExecuteTask(taskId)}
                   onDeleteTask={handleDeleteTask}
                   onStartCreate={() => void handleStartCreateTask()}
                 />

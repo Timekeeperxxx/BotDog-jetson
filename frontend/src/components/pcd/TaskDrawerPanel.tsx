@@ -8,8 +8,8 @@ type Props = {
   canExecuteTask: boolean
   onSelectTask: (taskId: string) => void
   onEditTask: (taskId: string) => void
-  onExecuteTask: () => void
-  onDeleteTask: () => void
+  onExecuteTask: (taskId: string) => void
+  onDeleteTask: (taskId: string) => void
   onStartCreate: () => void
 }
 
@@ -20,7 +20,13 @@ function waypointCount(task: TaskDefinition) {
 function taskSummary(task: TaskDefinition) {
   return task.steps
     .filter((step) => step.type !== 'select_map')
-    .map((step) => step.label)
+    .map((step) =>
+      step.type === 'navigate_waypoint'
+        ? step.x != null && step.y != null && step.z != null && step.yaw != null
+          ? `${step.waypointName} (${step.x.toFixed(2)}, ${step.y.toFixed(2)}, ${step.z.toFixed(2)}, ${step.yaw.toFixed(3)})`
+          : step.waypointName
+        : step.label,
+    )
     .join(' -> ')
 }
 
@@ -89,8 +95,7 @@ export function TaskDrawerPanel({
                     className="pcd-tool-button"
                     onClick={(event) => {
                       event.stopPropagation()
-                      onSelectTask(task.id)
-                      onExecuteTask()
+                      onExecuteTask(task.id)
                     }}
                     disabled={!canExecuteTask}
                   >
@@ -101,8 +106,7 @@ export function TaskDrawerPanel({
                     className="pcd-tool-button"
                     onClick={(event) => {
                       event.stopPropagation()
-                      onSelectTask(task.id)
-                      onDeleteTask()
+                      onDeleteTask(task.id)
                     }}
                   >
                     <Trash2 size={14} />

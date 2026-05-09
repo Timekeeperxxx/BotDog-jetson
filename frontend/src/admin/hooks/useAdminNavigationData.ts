@@ -1,19 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { deleteWaypoint, getPcdMetadata, listPcdMaps, listWaypoints } from '../../api/pcdMapApi'
+import { deleteWaypoint, getPcdMetadata, listNavTasks, listPcdMaps, listWaypoints } from '../../api/pcdMapApi'
 import type { NavWaypoint, PcdMapItem, PcdMetadata } from '../../types/pcdMap'
 import type { TaskDefinition } from '../../types/taskWorkflow'
-
-const TASK_STORAGE_KEY = 'botdog-nav-workflows'
-
-export function readStoredTasks(): TaskDefinition[] {
-  try {
-    const raw = window.localStorage.getItem(TASK_STORAGE_KEY)
-    if (!raw) return []
-    return JSON.parse(raw) as TaskDefinition[]
-  } catch {
-    return []
-  }
-}
 
 export function useAdminNavigationData() {
   const [maps, setMaps] = useState<PcdMapItem[]>([])
@@ -34,9 +22,12 @@ export function useAdminNavigationData() {
   }, [])
 
   const refreshNavigationData = useCallback(async () => {
-    const nextMaps = await listPcdMaps().catch(() => ({ root: '', items: [] as PcdMapItem[] }))
+    const [nextMaps, nextTasks] = await Promise.all([
+      listPcdMaps().catch(() => ({ root: '', items: [] as PcdMapItem[] })),
+      listNavTasks().catch(() => ({ items: [] as TaskDefinition[] })),
+    ])
     setMaps(nextMaps.items || [])
-    setTasks(readStoredTasks())
+    setTasks(nextTasks.items || [])
     setSelectedMapId((current) => current || nextMaps.items[0]?.id || null)
   }, [])
 

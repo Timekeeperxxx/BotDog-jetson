@@ -85,7 +85,7 @@ export interface AdminTaskSummary {
   failurePolicy: string
   enabled: boolean
   steps: string[]
-  source: 'localStorage'
+  source: 'json_file'
 }
 
 export interface AiConfigGroup {

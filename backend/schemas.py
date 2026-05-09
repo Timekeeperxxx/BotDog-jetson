@@ -179,6 +179,14 @@ class PcdSceneDeleteResponse(BaseModel):
     message: str = Field(..., description="响应消息")
 
 
+class NavCurrentSceneResponse(BaseModel):
+    scene_id: str
+    scene_dir: str
+    map_pcd: str
+    ground_pcd: str
+    updated_at: str
+
+
 class PcdSceneLayerMetadataDTO(BaseModel):
     name: str
     size_bytes: int
@@ -314,6 +322,18 @@ class LocalizationRestartResponse(BaseModel):
     success: bool = Field(..., description="是否已成功发起重启")
     running: bool = Field(..., description="重启脚本是否仍在运行")
     pid: int | None = Field(default=None, description="重启脚本进程 PID")
+    scene_id: str | None = Field(default=None, description="当前场景 ID")
+    scene_dir: str | None = Field(default=None, description="当前场景目录")
+    map_pcd: str | None = Field(default=None, description="当前场景 map.pcd 路径")
+    ground_pcd: str | None = Field(default=None, description="当前场景 ground.pcd 路径")
+    livox_pid: int | None = Field(default=None, description="Livox 驱动 PID")
+    relocation_pid: int | None = Field(default=None, description="Super-LIO PID")
+    global_planner_pid: int | None = Field(default=None, description="global_planner PID")
+    p2p_move_base_pid: int | None = Field(default=None, description="p2p_move_base PID")
+    cmd_vel_pid: int | None = Field(default=None, description="cmd_vel PID")
+    cmd_vel_running: bool = Field(default=False, description="cmd_vel 脚本是否已拉起")
+    navigation_ready: bool = Field(default=False, description="导航链路是否已恢复")
+    process_pids: dict[str, int | None] = Field(default_factory=dict, description="子进程 PID 摘要")
     message: str = Field(..., description="响应消息")
 
 
@@ -330,6 +350,37 @@ class MappingControlResponse(BaseModel):
     map_dir: str | None = None
     pid: int | None = None
     message: str | None = None
+
+
+class NavTaskStepDTO(BaseModel):
+    type: str
+    label: str
+    mapId: str | None = None
+    mode: str | None = None
+    waypointId: str | None = None
+    waypointName: str | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    yaw: float | None = None
+    frameId: str | None = None
+
+
+class NavTaskDefinitionDTO(BaseModel):
+    id: str = Field(..., min_length=1)
+    name: str = Field(..., min_length=1, max_length=255)
+    mapId: str = Field(..., min_length=1)
+    mapName: str = Field(..., min_length=1)
+    createdAt: str = Field(..., min_length=1)
+    steps: list[NavTaskStepDTO] = Field(default_factory=list)
+
+
+class NavTaskListResponse(BaseModel):
+    items: list[NavTaskDefinitionDTO]
+
+
+class NavTaskUpsertRequest(BaseModel):
+    task: NavTaskDefinitionDTO
 
 
 class RobotPoseDTO(BaseModel):
