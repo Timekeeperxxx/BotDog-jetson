@@ -155,6 +155,11 @@ export function PointCloud3DViewer({
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
     controls.dampingFactor = 0.08
+    controls.mouseButtons = {
+      LEFT: THREE.MOUSE.PAN,
+      MIDDLE: THREE.MOUSE.DOLLY,
+      RIGHT: THREE.MOUSE.ROTATE,
+    }
     controlsRef.current = controls
 
     const grid = new THREE.GridHelper(80, 40, 0x33515a, 0x1d333a)
@@ -414,6 +419,19 @@ export function PointCloud3DViewer({
 
   useEffect(() => {
     if (!webglSupported) return
+    const controls = controlsRef.current
+    if (!controls) return
+
+    controls.enablePan = !followRobot
+    controls.update()
+
+    return () => {
+      controls.enablePan = true
+    }
+  }, [followRobot, webglSupported])
+
+  useEffect(() => {
+    if (!webglSupported) return
     const robotGroup = robotGroupRef.current
     const camera = cameraRef.current
     const controls = controlsRef.current
@@ -432,9 +450,7 @@ export function PointCloud3DViewer({
     if (followRobot) {
       const currentTarget = controls.target.clone()
       const currentOffset = camera.position.clone().sub(currentTarget)
-      if (followOffsetRef.current === null) {
-        followOffsetRef.current = currentOffset
-      }
+      followOffsetRef.current = currentOffset
       controls.target.set(pos.x, pos.y, pos.z)
       camera.position.copy(new THREE.Vector3(pos.x, pos.y, pos.z).add(followOffsetRef.current))
       controls.update()

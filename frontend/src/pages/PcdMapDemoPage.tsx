@@ -1246,9 +1246,11 @@ export function PcdMapDemoPage() {
                   return nextValue
                 })
               }}
+              disabled={!robotPose}
+              title={!robotPose ? '等待机器狗定位数据' : undefined}
             >
               <LocateFixed size={15} />
-              <span>视角跟随</span>
+              <span>{followRobot ? '解除跟随' : '视角跟随'}</span>
             </button>
             <button
               className={`pcd-tool-button ${toolMode === 'obstacle' ? 'is-active' : ''}`}
