@@ -29,6 +29,7 @@ export type UseNavScenesOptions = {
   setInitialState: (state: InitialStatePayload) => void
   onWaypointsLoaded: (waypoints: NavWaypoint[]) => void
   onLog: (message: string, level?: 'info' | 'error') => void
+  onSceneChanging?: () => void
 }
 
 export function useNavScenes({
@@ -36,6 +37,7 @@ export function useNavScenes({
   setInitialState,
   onWaypointsLoaded,
   onLog,
+  onSceneChanging,
 }: UseNavScenesOptions) {
   const [scenes, setScenes] = useState<PcdSceneItem[]>([])
   const [root, setRoot] = useState('')
@@ -102,6 +104,7 @@ export function useNavScenes({
       setMetadata(null)
       setPreview(null)
       onWaypointsLoaded([])
+      onSceneChanging?.()
       onLog(`当前选择导航场景：${currentScene.scene_id}`)
       onLog(`当前场景 map.pcd：${currentScene.map_pcd}`)
       onLog(`当前场景 ground.pcd：${currentScene.ground_pcd}`)
@@ -145,7 +148,7 @@ export function useNavScenes({
         setLoading(false)
       }
     }
-  }, [onWaypointsLoaded, onLog, previewPointLimit, setInitialState])
+  }, [onSceneChanging, onWaypointsLoaded, onLog, previewPointLimit, setInitialState])
 
   useEffect(() => {
     void refreshScenes()

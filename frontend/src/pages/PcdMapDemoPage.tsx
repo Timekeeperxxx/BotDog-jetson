@@ -144,6 +144,10 @@ export function PcdMapDemoPage() {
     ].slice(0, 30))
   }, [])
 
+  const handleSceneChanging = useCallback(() => {
+    setAddMode(false)
+  }, [])
+
   const {
     scenes,
     root,
@@ -162,6 +166,7 @@ export function PcdMapDemoPage() {
     setInitialState,
     onWaypointsLoaded: setWaypoints,
     onLog: addLog,
+    onSceneChanging: handleSceneChanging,
   })
 
   useEffect(() => {
