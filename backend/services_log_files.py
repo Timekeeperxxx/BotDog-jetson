@@ -98,7 +98,7 @@ def tail_log_file(name: str, lines: int = 300) -> dict[str, object]:
 
     return {
         "name": name,
-        "lines": list(tail),
+        "lines": list(reversed(tail)),
         "line_count": len(tail),
         "truncated": total_lines > len(tail),
     }
