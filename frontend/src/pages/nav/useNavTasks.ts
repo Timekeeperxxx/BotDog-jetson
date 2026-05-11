@@ -63,16 +63,20 @@ export function useNavTasks({
   }, [onLog])
 
   useEffect(() => {
-    void refreshTasks()
+    queueMicrotask(() => {
+      void refreshTasks()
+    })
   }, [refreshTasks])
 
   useEffect(() => {
-    if (!selectedTaskId && tasks.length > 0) {
-      setSelectedTaskId(tasks[0].id)
-    }
-    if (selectedTaskId && !tasks.some((task) => task.id === selectedTaskId)) {
-      setSelectedTaskId(tasks[0]?.id ?? null)
-    }
+    queueMicrotask(() => {
+      if (!selectedTaskId && tasks.length > 0) {
+        setSelectedTaskId(tasks[0].id)
+      }
+      if (selectedTaskId && !tasks.some((task) => task.id === selectedTaskId)) {
+        setSelectedTaskId(tasks[0]?.id ?? null)
+      }
+    })
   }, [selectedTaskId, tasks])
 
   const selectedTask = useMemo(

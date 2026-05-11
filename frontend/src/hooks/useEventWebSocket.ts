@@ -117,11 +117,11 @@ export function useEventWebSocket(): EventHookState {
 
   const connect = useCallback(() => {
     stream.connect()
-  }, [stream.connect])
+  }, [stream])
 
   const disconnect = useCallback(() => {
     stream.disconnect()
-  }, [stream.disconnect])
+  }, [stream])
 
   return {
     status,

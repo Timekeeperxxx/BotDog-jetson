@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useState, type Dispatch, type SetStateAction } from 'react'
 import { detectWebGLSupport } from '../../components/pcd/webglSupport'
 
 type UseNavViewStateOptions = {
@@ -13,11 +13,7 @@ export function useNavViewState({ addMode, setAddMode, onLog }: UseNavViewStateO
   const [toolMode, setToolMode] = useState<'none' | 'obstacle' | 'pose'>('none')
   const [waypointZ, setWaypointZ] = useState(-0.83)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
-  const [webglSupported, setWebglSupported] = useState(true)
-
-  useEffect(() => {
-    setWebglSupported(detectWebGLSupport())
-  }, [])
+  const [webglSupported] = useState(() => detectWebGLSupport())
 
   const handleToolMode = useCallback((nextMode: 'obstacle' | 'pose') => {
     setToolMode((current) => {

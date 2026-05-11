@@ -47,7 +47,9 @@ export function AdminApp() {
   useEffect(() => {
     const visibleSections = getVisibleSections(role)
     if (!visibleSections.includes(activeSection)) {
-      setActiveSection(visibleSections[0] ?? 'dashboard')
+      queueMicrotask(() => {
+        setActiveSection(visibleSections[0] ?? 'dashboard')
+      })
     }
   }, [activeSection, role])
 

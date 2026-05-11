@@ -38,12 +38,16 @@ export function useAdminNavigationData() {
   }, [refreshSceneDetails, selectedSceneId, waypointToDelete])
 
   useEffect(() => {
-    void refreshNavigationData()
+    queueMicrotask(() => {
+      void refreshNavigationData()
+    })
   }, [refreshNavigationData])
 
   useEffect(() => {
     if (!selectedSceneId) return
-    void refreshSceneDetails(selectedSceneId)
+    queueMicrotask(() => {
+      void refreshSceneDetails(selectedSceneId)
+    })
   }, [refreshSceneDetails, selectedSceneId])
 
   return {

@@ -59,6 +59,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
   const reconnectAttemptsRef = useRef(0)
   const connectionIdRef = useRef(0)
   const envelopeIdRef = useRef(0)
+  const connectRef = useRef<() => void>(() => {})
 
   const clearReconnectTimer = useCallback(() => {
     if (reconnectTimeoutRef.current !== null) {
@@ -166,7 +167,7 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
           reconnectAttemptsRef.current += 1
           const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current - 1), 10000)
           reconnectTimeoutRef.current = window.setTimeout(() => {
-            connect()
+            connectRef.current()
           }, delay)
         }
       }
@@ -180,7 +181,13 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
   }, [clearReconnectTimer])
 
   useEffect(() => {
-    connect()
+    connectRef.current = connect
+  }, [connect])
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      connect()
+    })
     return () => {
       disconnect()
     }
