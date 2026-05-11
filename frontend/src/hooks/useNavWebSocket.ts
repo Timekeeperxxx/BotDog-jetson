@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getWsUrl } from '../config/api'
+import { useEventStream } from '../runtime/EventStreamProvider'
 import type {
   GlobalPath,
   LocalizationStatus,
@@ -9,7 +9,6 @@ import type {
 } from '../types/navState'
 
 type NavWebSocketState = {
-  connected: boolean
   robotPose: RobotPose | null
   globalPath: GlobalPath | null
   localizationStatus: LocalizationStatus | null
@@ -18,114 +17,48 @@ type NavWebSocketState = {
 }
 
 export function useNavWebSocket() {
+  const stream = useEventStream()
   const [state, setState] = useState<NavWebSocketState>({
-    connected: false,
     robotPose: null,
     globalPath: null,
     localizationStatus: null,
     navigationStatus: null,
     lastMessageAt: null,
   })
-
-  const wsRef = useRef<WebSocket | null>(null)
-  const reconnectTimeoutRef = useRef<number | null>(null)
-  const reconnectAttemptsRef = useRef(0)
-  const connectionIdRef = useRef(0)
-  const connectRef = useRef<() => void>(() => {})
-
-  const connect = useCallback(() => {
-    const rs = wsRef.current?.readyState
-    if (rs === WebSocket.OPEN || rs === WebSocket.CONNECTING) return
-
-    if (wsRef.current && wsRef.current.readyState !== WebSocket.CLOSED) {
-      wsRef.current.close(1000)
-      wsRef.current = null
-    }
-
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current)
-      reconnectTimeoutRef.current = null
-    }
-
-    connectionIdRef.current += 1
-    const currentConnectionId = connectionIdRef.current
-
-    const ws = new WebSocket(getWsUrl('/ws/event'))
-    wsRef.current = ws
-
-    ws.onopen = () => {
-      if (currentConnectionId !== connectionIdRef.current) return
-      reconnectAttemptsRef.current = 0
-      setState((prev) => ({ ...prev, connected: true }))
-    }
-
-    ws.onmessage = (event) => {
-      if (currentConnectionId !== connectionIdRef.current) return
-
-      try {
-        const message = JSON.parse(event.data)
-        if (!message?.type || typeof message.type !== 'string' || !message.type.startsWith('nav.')) {
-          return
-        }
-
-        const navEvent = message as NavWebSocketEvent
-        setState((prev) => {
-          if (navEvent.type === 'nav.robot_pose') {
-            return { ...prev, robotPose: navEvent.data, lastMessageAt: Date.now() }
-          }
-          if (navEvent.type === 'nav.global_path') {
-            return { ...prev, globalPath: navEvent.data, lastMessageAt: Date.now() }
-          }
-          if (navEvent.type === 'nav.localization_status') {
-            return { ...prev, localizationStatus: navEvent.data, lastMessageAt: Date.now() }
-          }
-          if (navEvent.type === 'nav.navigation_status') {
-            return { ...prev, navigationStatus: navEvent.data, lastMessageAt: Date.now() }
-          }
-          return prev
-        })
-      } catch (error) {
-        console.error('解析导航 WebSocket 消息失败:', error)
-      }
-    }
-
-    ws.onclose = (event) => {
-      if (currentConnectionId !== connectionIdRef.current) return
-      setState((prev) => ({ ...prev, connected: false }))
-
-      if (event.code === 1000) return
-
-      if (reconnectAttemptsRef.current < 10) {
-        reconnectAttemptsRef.current += 1
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current - 1), 10000)
-        reconnectTimeoutRef.current = window.setTimeout(() => {
-          connectRef.current()
-        }, delay)
-      }
-    }
-
-    ws.onerror = () => {
-      if (currentConnectionId !== connectionIdRef.current) return
-      setState((prev) => ({ ...prev, connected: false }))
-    }
-  }, [])
-
-  const disconnect = useCallback(() => {
-    connectionIdRef.current += 1
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current)
-      reconnectTimeoutRef.current = null
-    }
-    if (wsRef.current) {
-      wsRef.current.close(1000)
-      wsRef.current = null
-    }
-    setState((prev) => ({ ...prev, connected: false }))
-  }, [])
+  const processedEnvelopeIdRef = useRef(0)
 
   useEffect(() => {
-    connectRef.current = connect
-  }, [connect])
+    const pending = stream.envelopes.filter((envelope) => envelope.id > processedEnvelopeIdRef.current)
+    if (pending.length === 0) {
+      return
+    }
+
+    pending.forEach((envelope) => {
+      const message = envelope.message as { type?: string; data?: unknown }
+      if (!message?.type || typeof message.type !== 'string' || !message.type.startsWith('nav.')) {
+        return
+      }
+
+      const navEvent = message as NavWebSocketEvent
+      setState((prev) => {
+        if (navEvent.type === 'nav.robot_pose') {
+          return { ...prev, robotPose: navEvent.data, lastMessageAt: envelope.receivedAt }
+        }
+        if (navEvent.type === 'nav.global_path') {
+          return { ...prev, globalPath: navEvent.data, lastMessageAt: envelope.receivedAt }
+        }
+        if (navEvent.type === 'nav.localization_status') {
+          return { ...prev, localizationStatus: navEvent.data, lastMessageAt: envelope.receivedAt }
+        }
+        if (navEvent.type === 'nav.navigation_status') {
+          return { ...prev, navigationStatus: navEvent.data, lastMessageAt: envelope.receivedAt }
+        }
+        return prev
+      })
+    })
+
+    processedEnvelopeIdRef.current = pending[pending.length - 1].id
+  }, [stream.envelopes])
 
   const setInitialState = useCallback((next: {
     robotPose?: RobotPose | null
@@ -142,13 +75,16 @@ export function useNavWebSocket() {
     }))
   }, [])
 
-  useEffect(() => {
-    connect()
-    return disconnect
-  }, [connect, disconnect])
+  const connect = useCallback(() => {}, [])
+  const disconnect = useCallback(() => {}, [])
 
   return {
-    ...state,
+    connected: stream.connected,
+    robotPose: state.robotPose,
+    globalPath: state.globalPath,
+    localizationStatus: state.localizationStatus,
+    navigationStatus: state.navigationStatus,
+    lastMessageAt: state.lastMessageAt,
     setInitialState,
     connect,
     disconnect,
