@@ -39,6 +39,7 @@ export default function IndustrialConsoleComplete() {
     disconnect: disconnectWs,
   } = useBotDogWebSocket();
 
+  // 事件流由 main.tsx 中的 EventStreamProvider 自动连接，这里只消费派生状态。
   const { alerts, latestAlert, aiStatus, autoTrackStatus, trackDecision, trackOverlay } = useEventWebSocket();
 
   const autoTrack = useAutoTrack(autoTrackStatus, trackDecision);

@@ -21,6 +21,7 @@ export interface EventHookState {
 }
 
 export function useEventWebSocket(): EventHookState {
+  // /ws/event 由 EventStreamProvider 统一管理，这里只派生业务状态。
   const stream = useEventStream()
   const [alerts, setAlerts] = useState<AlertEvent[]>([])
   const [latestAlert, setLatestAlert] = useState<AlertEvent | null>(null)

@@ -5,12 +5,6 @@ const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '
 const frontendSrc = path.join(repoRoot, 'frontend', 'src')
 const providerPath = path.join('frontend', 'src', 'runtime', 'EventStreamProvider.tsx')
 
-const allowedProviderPatterns = [
-  "new WebSocket(getWsUrl('/ws/event'))",
-  'new WebSocket(getWsUrl("/ws/event"))',
-  "/ws/event",
-]
-
 function walkFiles(dir, result = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
@@ -43,16 +37,32 @@ for (const file of files) {
   const lines = content.split(/\r?\n/)
 
   if (relativePath === providerPath) {
-    providerSeen = allowedProviderPatterns.some((pattern) => content.includes(pattern))
+    providerSeen = content.includes("new WebSocket") && content.includes('/ws/event')
     continue
   }
 
+  if (!content.includes('new WebSocket') || !content.includes('/ws/event')) {
+    continue
+  }
+
+  const newWebSocketLines = []
+  const eventUrlLines = []
+
   lines.forEach((line, index) => {
-    const hasEventSocket = line.includes('new WebSocket') && line.includes('/ws/event')
-    if (hasEventSocket) {
-      violations.push(`${relativePath}: ${index + 1}: ${line.trim()}`)
+    const trimmed = line.trim()
+    if (line.includes('new WebSocket')) {
+      newWebSocketLines.push(`  line ${index + 1}: ${trimmed}`)
+    }
+    if (line.includes('/ws/event')) {
+      eventUrlLines.push(`  line ${index + 1}: ${trimmed}`)
     }
   })
+
+  violations.push([
+    `- ${relativePath}`,
+    ...newWebSocketLines.slice(0, 3),
+    ...eventUrlLines.slice(0, 3),
+  ].join('\n'))
 }
 
 if (!providerSeen) {
@@ -62,7 +72,7 @@ if (!providerSeen) {
 if (violations.length > 0) {
   console.error('[check-event-stream-singleton] ERROR: duplicate /ws/event WebSocket creation found:')
   for (const item of violations) {
-    console.error(`- ${item}`)
+    console.error(item)
   }
   process.exit(1)
 }

@@ -80,6 +80,7 @@ export function AdminApp() {
   } = useAdminEvidenceData()
   const [logSearch, setLogSearch] = useState('')
 
+  // 事件流由 main.tsx 中的 EventStreamProvider 自动连接，这里只读取状态。
   const eventState = useEventWebSocket()
   const navWs = useNavWebSocket()
   const { setInitialState } = navWs

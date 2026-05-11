@@ -17,6 +17,7 @@ type NavWebSocketState = {
 }
 
 export function useNavWebSocket() {
+  // /ws/event 由 EventStreamProvider 统一管理，这里只派生导航状态。
   const stream = useEventStream()
   const [state, setState] = useState<NavWebSocketState>({
     robotPose: null,

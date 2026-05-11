@@ -203,5 +203,12 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
 }
 
 export function useEventStream() {
-  return useContext(EventStreamContext) ?? fallbackContext
+  const context = useContext(EventStreamContext)
+  if (!context) {
+    if (import.meta.env.DEV) {
+      throw new Error('useEventStream must be used within EventStreamProvider')
+    }
+    return fallbackContext
+  }
+  return context
 }
