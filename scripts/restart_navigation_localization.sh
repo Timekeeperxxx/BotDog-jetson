@@ -20,6 +20,7 @@ CMD_VEL_PID_FILE="$RUNTIME_DIR/cmd_vel.pid"
 LIVOX_PID_FILE="$RUNTIME_DIR/livox.pid"
 RELOCATION_PID_FILE="$RUNTIME_DIR/relocation.pid"
 GLOBAL_PLANNER_PID_FILE="$RUNTIME_DIR/global_planner.pid"
+MCL_3DL_PID_FILE="$RUNTIME_DIR/mcl_3dl.pid"
 P2P_MOVE_BASE_PID_FILE="$RUNTIME_DIR/p2p_move_base.pid"
 
 mkdir -p "$RUNTIME_DIR" "$LOGS_DIR" "$SCRIPT_LOG_DIR"
@@ -93,6 +94,7 @@ rm -f \
   "$LIVOX_PID_FILE" \
   "$RELOCATION_PID_FILE" \
   "$GLOBAL_PLANNER_PID_FILE" \
+  "$MCL_3DL_PID_FILE" \
   "$P2P_MOVE_BASE_PID_FILE" \
   "$CMD_VEL_PID_FILE"
 
@@ -146,6 +148,7 @@ ROS_NEEDLES=(
   "ros2 launch p2p_move_base go2_localization_launch.py"
   "/home/jetson/superlio/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node"
   "/home/jetson/superlio/install/super_lio/lib/super_lio/relocation_node"
+  "/home/jetson/dddmr_navigation_new_local/install/mcl_3dl/lib/mcl_3dl/mcl_3dl"
   "/home/jetson/dddmr_navigation_new_local/install/global_planner/lib/global_planner/global_planner_node"
   "/home/jetson/dddmr_navigation_new_local/install/mcl_3dl/lib/mcl_3dl/pcl_publisher"
   "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/clicked2goal.py"
@@ -206,6 +209,31 @@ start_launch() {
   cd "$workspace_dir"
   source_ros_setup "$setup_file"
   ros2 launch "$launch_pkg" "$launch_file" "${@:7}" &
+  local pid=$!
+  printf -v "$pid_var" '%s' "$pid"
+  if [ -n "${pid_file:-}" ]; then
+    printf '%s\n' "$pid" > "$RUNTIME_DIR/$pid_file"
+  fi
+}
+
+start_run() {
+  local workspace_dir="$1"
+  local setup_file="$workspace_dir/install/setup.bash"
+  local package_name="$2"
+  local executable_name="$3"
+  local title="$4"
+  local pid_var="$5"
+  local pid_file="$6"
+
+  if [ ! -d "$workspace_dir" ]; then
+    echo "错误：目录不存在：$workspace_dir" >&2
+    exit 1
+  fi
+
+  echo "$title"
+  cd "$workspace_dir"
+  source_ros_setup "$setup_file"
+  ros2 run "$package_name" "$executable_name" "${@:7}" &
   local pid=$!
   printf -v "$pid_var" '%s' "$pid"
   if [ -n "${pid_file:-}" ]; then
@@ -298,8 +326,14 @@ start_launch "$HOME/superlio" super_lio relocation.py "启动 Super-LIO 重定�
 echo "Relocation PID: $RELOCATION_PID"
 sleep 5
 
-start_launch "$HOME/dddmr_navigation_new_local" global_planner path_planning_with_polygon.launch "启动全局路径规划..." GLOBAL_PLANNER_PID global_planner.pid "map_dir:=$GROUND_PCD"
+echo "Global Planner 参数: map_dir=$MAP_PCD"
+echo "Global Planner 参数: ground_dir=$GROUND_PCD"
+start_launch "$HOME/dddmr_navigation_new_local" global_planner path_planning_with_polygon.launch "启动全局路径规划..." GLOBAL_PLANNER_PID global_planner.pid "map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD"
 echo "Global Planner PID: $GLOBAL_PLANNER_PID"
+sleep 5
+
+start_run "$HOME/dddmr_navigation_new_local" mcl_3dl mcl_3dl "启动 MCL3DL 定位..." MCL_3DL_PID mcl_3dl.pid --ros-args --params-file "$HOME/dddmr_navigation_new_local/install/p2p_move_base/share/p2p_move_base/config/go2_localization.yaml"
+echo "MCL3DL PID: $MCL_3DL_PID"
 sleep 5
 
 start_launch "$HOME/dddmr_navigation_new_local" p2p_move_base go2_localization_launch.py "启动 P2P move base 定位导航..." P2P_MOVE_BASE_PID p2p_move_base.pid

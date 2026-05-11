@@ -14,6 +14,7 @@ def _make_pid_paths(root: Path) -> dict[str, Path]:
     return {
         "livox_pid": root / "livox.pid",
         "relocation_pid": root / "relocation.pid",
+        "mcl_3dl_pid": root / "mcl_3dl.pid",
         "global_planner_pid": root / "global_planner.pid",
         "p2p_move_base_pid": root / "p2p_move_base.pid",
         "cmd_vel_pid": root / "cmd_vel.pid",
@@ -25,9 +26,10 @@ def test_wait_for_pid_files_reads_all_files(tmp_path):
     values = {
         "livox_pid": 101,
         "relocation_pid": 102,
-        "global_planner_pid": 103,
-        "p2p_move_base_pid": 104,
-        "cmd_vel_pid": 105,
+        "mcl_3dl_pid": 103,
+        "global_planner_pid": 104,
+        "p2p_move_base_pid": 105,
+        "cmd_vel_pid": 106,
     }
 
     for name, path in pid_paths.items():
@@ -46,6 +48,7 @@ def test_wait_for_pid_files_returns_none_for_missing_files(tmp_path):
 
     assert result["livox_pid"] == 101
     assert result["relocation_pid"] is None
+    assert result["mcl_3dl_pid"] is None
     assert result["global_planner_pid"] is None
     assert result["p2p_move_base_pid"] is None
     assert result["cmd_vel_pid"] is None
@@ -85,9 +88,10 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
         lambda paths, timeout_s=20.0: {
             "livox_pid": 101,
             "relocation_pid": 102,
-            "global_planner_pid": 103,
-            "p2p_move_base_pid": 104,
-            "cmd_vel_pid": 105,
+            "mcl_3dl_pid": 103,
+            "global_planner_pid": 104,
+            "p2p_move_base_pid": 105,
+            "cmd_vel_pid": 106,
         },
     )
     monkeypatch.setattr(services_nav_localization, "_restart_proc", None)
@@ -117,7 +121,8 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
     assert str(result["ground_pcd"]).endswith("ground.pcd")
     assert result["navigation_ready"] is True
     assert result["process_pids"]["livox"] == 101
-    assert result["process_pids"]["cmd_vel"] == 105
+    assert result["process_pids"]["mcl_3dl"] == 103
+    assert result["process_pids"]["cmd_vel"] == 106
     assert result["message"] == "已启动重启脚本，导航链路 PID 已确认"
 
 
@@ -127,6 +132,7 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
     botdog_root = project_root / "BotDog"
     script_dir = botdog_root / "scripts"
     runtime_dir = botdog_root / "data" / "nav_runtime"
+    ros2_log_file = botdog_root / "ros2_invocations.log"
     fake_home = tmp_path / "home" / "jetson"
     fake_bin = tmp_path / "bin"
     scene_dir = tmp_path / "Scene1_测试"
@@ -154,7 +160,8 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
     fake_ros2 = fake_bin / "ros2"
     fake_ros2.write_text(
         "#!/usr/bin/env bash\n"
-        "tail -f /dev/null\n",
+        f"printf '%s\\n' \"$*\" >> '{ros2_log_file}'\n"
+        "exit 0\n",
         encoding="utf-8",
     )
     fake_ros2.chmod(0o755)
@@ -199,6 +206,7 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
         expected_pid_files = [
             runtime_dir / "livox.pid",
             runtime_dir / "relocation.pid",
+            runtime_dir / "mcl_3dl.pid",
             runtime_dir / "global_planner.pid",
             runtime_dir / "p2p_move_base.pid",
             runtime_dir / "cmd_vel.pid",
@@ -233,8 +241,18 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
         assert "Scene1_half_map.pcd" in output
         assert "当前 ground.pcd: " in output
         assert "Scene1_half_ground.pcd" in output
+        assert "Global Planner 参数: map_dir=" in output
+        assert "Global Planner 参数: ground_dir=" in output
+        assert "MCL3DL PID:" in output
         for path in expected_pid_files:
             assert path.exists()
+
+        ros2_invocations = ros2_log_file.read_text(encoding="utf-8")
+        assert "launch super_lio relocation.py" in ros2_invocations
+        assert "launch global_planner path_planning_with_polygon.launch" in ros2_invocations
+        assert "map_dir:=" in ros2_invocations
+        assert "ground_dir:=" in ros2_invocations
+        assert "run mcl_3dl mcl_3dl --ros-args --params-file" in ros2_invocations
     finally:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)

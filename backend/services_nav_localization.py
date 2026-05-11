@@ -368,6 +368,7 @@ def stop_navigation_processes() -> dict[str, Any]:
     pid_specs = [
         ("livox", _named_pid_path("livox"), ["ros2 launch livox_ros_driver2 msg_MID360_launch.py", "livox_ros_driver2_node"]),
         ("relocation", _named_pid_path("relocation"), ["ros2 launch super_lio relocation.py", "relocation_node"]),
+        ("mcl_3dl", _named_pid_path("mcl_3dl"), ["ros2 run mcl_3dl mcl_3dl", "/home/jetson/dddmr_navigation_new_local/install/mcl_3dl/lib/mcl_3dl/mcl_3dl"]),
         ("global_planner", _named_pid_path("global_planner"), ["ros2 launch global_planner path_planning_with_polygon.launch", "global_planner_node"]),
         ("p2p_move_base", _named_pid_path("p2p_move_base"), ["ros2 launch p2p_move_base go2_localization_launch.py", "clicked2goal.py", "p2p_move_base"]),
     ]
@@ -496,6 +497,7 @@ def restart_navigation_localization() -> dict[str, Any]:
         pid_files = {
             "livox_pid": _named_pid_path("livox"),
             "relocation_pid": _named_pid_path("relocation"),
+            "mcl_3dl_pid": _named_pid_path("mcl_3dl"),
             "global_planner_pid": _named_pid_path("global_planner"),
             "p2p_move_base_pid": _named_pid_path("p2p_move_base"),
             "cmd_vel_pid": _cmd_vel_pid_path(),
@@ -503,7 +505,7 @@ def restart_navigation_localization() -> dict[str, Any]:
         child_pids = _wait_for_pid_files(pid_files, timeout_s=20.0)
         navigation_ready = all(
             child_pids[key] is not None
-            for key in ("livox_pid", "relocation_pid", "global_planner_pid", "p2p_move_base_pid", "cmd_vel_pid")
+            for key in ("livox_pid", "relocation_pid", "mcl_3dl_pid", "global_planner_pid", "p2p_move_base_pid", "cmd_vel_pid")
         )
         if navigation_ready:
             message = "已启动重启脚本，导航链路 PID 已确认"
@@ -525,6 +527,7 @@ def restart_navigation_localization() -> dict[str, Any]:
             "process_pids": {
                 "livox": child_pids["livox_pid"],
                 "relocation": child_pids["relocation_pid"],
+                "mcl_3dl": child_pids["mcl_3dl_pid"],
                 "global_planner": child_pids["global_planner_pid"],
                 "p2p_move_base": child_pids["p2p_move_base_pid"],
                 "cmd_vel": child_pids["cmd_vel_pid"],
