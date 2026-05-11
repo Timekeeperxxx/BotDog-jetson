@@ -404,13 +404,10 @@ class NavWaypointGoToGoalDTO(BaseModel):
 
 class NavWaypointGoToResponse(BaseModel):
     success: bool
-    task_id: str | None = None
     topic: str
     waypoint_id: str
-    nav_start_topic: str
     xyz_topic: str
     yaw_topic: str
-    nav_start: NavTaskExecuteNavStartDTO
     goal: NavWaypointGoToGoalDTO
     message: str | None = None
 

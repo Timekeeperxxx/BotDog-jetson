@@ -185,14 +185,8 @@ export function goToWaypoint(
   success: boolean
   topic: string
   waypoint_id: string
-  nav_start_topic: string
   xyz_topic: string
   yaw_topic: string
-  nav_start: {
-    success: boolean
-    topic: string
-    data: boolean
-  }
   goal?: {
     success: boolean
     xyz_topic: string

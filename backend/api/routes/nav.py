@@ -546,7 +546,6 @@ async def nav_go_to_waypoint(
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        nav_start_result = bridge.publish_navigation_start(True)
         goal_result = bridge.publish_goal_xyz_yaw(waypoint)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -558,7 +557,6 @@ async def nav_go_to_waypoint(
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.go_to "
             f"目标={waypoint_id} map={map_id} 结果=success "
-            f"nav_start_topic={nav_start_result['topic']} "
             f"clicked_point_topic={goal_result['xyz_topic']} yaw_topic={goal_result['yaw_topic']}"
         ),
     )
@@ -568,7 +566,7 @@ async def nav_go_to_waypoint(
             "target_waypoint_id": waypoint["id"],
             "target_name": waypoint["name"],
             "message": (
-                f"已发布 nav_start，随后发布 clicked_point 和 goal_yaw: {waypoint['name']} "
+                f"已发布 clicked_point 和 goal_yaw: {waypoint['name']} "
                 f"x={float(waypoint['x']):.3f}, "
                 f"y={float(waypoint['y']):.3f}, "
                 f"z={float(waypoint.get('z', 0.0)):.3f}, "
@@ -580,12 +578,10 @@ async def nav_go_to_waypoint(
         "success": True,
         "topic": goal_result["xyz_topic"],
         "waypoint_id": waypoint["id"],
-        "nav_start_topic": nav_start_result["topic"],
         "xyz_topic": goal_result["xyz_topic"],
         "yaw_topic": goal_result["yaw_topic"],
-        "nav_start": nav_start_result,
         "goal": goal_result,
-        "message": "已发布 nav_start，随后发布 clicked_point 和 goal_yaw",
+        "message": "已发布 clicked_point 和 goal_yaw",
     }
 
 

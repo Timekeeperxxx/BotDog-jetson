@@ -23,13 +23,7 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
 
     class DummyBridge:
         def publish_navigation_start(self, enabled: bool = True) -> dict[str, object]:
-            publish_order.append("nav_start")
-            assert enabled is True
-            return {
-                "success": True,
-                "topic": "/nav_start",
-                "data": True,
-            }
+            raise AssertionError("go-to 不允许发布 /nav_start")
 
         def publish_goal_xyz_yaw(self, payload: dict[str, object]) -> dict[str, object]:
             publish_order.append("goal")
@@ -69,17 +63,21 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
 
     assert result["success"] is True
     assert result["topic"] == "/clicked_point"
-    assert result["nav_start_topic"] == "/nav_start"
-    assert result["nav_start"]["topic"] == "/nav_start"
-    assert result["nav_start"]["data"] is True
     assert result["xyz_topic"] == "/clicked_point"
     assert result["yaw_topic"] == "goal_yaw"
     assert result["goal"]["waypoint_id"] == "wp_001"
-    assert publish_order == ["nav_start", "goal"]
+    assert publish_order == ["goal"]
     assert audit_messages
-    assert "nav_start_topic=/nav_start" in audit_messages[0]
     assert "clicked_point_topic=/clicked_point" in audit_messages[0]
     assert "yaw_topic=goal_yaw" in audit_messages[0]
+    assert "nav_start_topic" not in audit_messages[0]
     assert nav_status_updates
     assert nav_status_updates[0]["status"] == "navigating"
-    assert "已发布 nav_start，随后发布 clicked_point 和 goal_yaw" in nav_status_updates[0]["message"]
+    assert "已发布 clicked_point 和 goal_yaw" in nav_status_updates[0]["message"]
+
+    try:
+        DummyBridge().publish_navigation_start()
+    except AssertionError as exc:
+        assert "go-to 不允许发布 /nav_start" in str(exc)
+    else:
+        raise AssertionError("go-to 调用 publish_navigation_start 时测试必须失败")
