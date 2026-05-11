@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Boxes,
@@ -10,14 +10,10 @@ import {
   LocateFixed,
   Square,
 } from 'lucide-react'
-import { getNavState } from '../api/navApi'
 import {
   createWaypoint,
   deleteWaypoint,
   goToWaypoint,
-  getPcdSceneMetadata,
-  getPcdScenePreview,
-  listPcdScenes,
   listNavTasks,
   listWaypoints,
   notifyNavPageOpen,
@@ -26,7 +22,6 @@ import {
   executeNavTask,
   saveNavTask,
   stopNavTask,
-  selectPcdScene,
   restartNavigationLocalization,
   setMappingEnabled,
   setLocalizationPose,
@@ -42,8 +37,9 @@ import { TaskDrawerPanel } from '../components/pcd/TaskDrawerPanel'
 import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
-import type { NavWaypoint, PcdSceneItem, PcdSceneMetadata, PcdScenePreview } from '../types/pcdMap'
+import type { NavWaypoint, PcdSceneItem } from '../types/pcdMap'
 import type { TaskDefinition, TaskDraft, TaskDraftStep, WorkflowStep } from '../types/taskWorkflow'
+import { useNavScenes } from './nav/useNavScenes'
 
 type LogItem = {
   id: number
@@ -85,8 +81,6 @@ function validateMappingSceneName(
   return { ok: true, value: sceneName }
 }
 
-const SELECTED_SCENE_STORAGE_KEY = 'botdog-nav-selected-scene'
-
 const emptyTaskDraft: TaskDraft = {
   name: '',
   mapId: '',
@@ -105,16 +99,7 @@ export function PcdMapDemoPage() {
   useAuthState()
   const canOperate = hasAuthSession() && hasRole('operator')
   const previewPointLimit = 15000
-  const [scenes, setScenes] = useState<PcdSceneItem[]>([])
-  const [root, setRoot] = useState('')
-  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null
-    return window.localStorage.getItem(SELECTED_SCENE_STORAGE_KEY)
-  })
-  const [metadata, setMetadata] = useState<PcdSceneMetadata | null>(null)
-  const [preview, setPreview] = useState<PcdScenePreview | null>(null)
   const [waypoints, setWaypoints] = useState<NavWaypoint[]>([])
-  const [loading, setLoading] = useState(false)
   const [addMode, setAddMode] = useState(false)
   const [tasks, setTasks] = useState<TaskDefinition[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
@@ -141,7 +126,6 @@ export function PcdMapDemoPage() {
   const [sceneDeleteConfirm, setSceneDeleteConfirm] = useState<PcdSceneItem | null>(null)
   // ── 高危操作确认 ──
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
-  const selectRequestRef = useRef(0)
   const navWs = useNavWebSocket()
   const { robotPose, globalPath, localizationStatus, setInitialState } = navWs
   const {
@@ -160,99 +144,29 @@ export function PcdMapDemoPage() {
     ].slice(0, 30))
   }, [])
 
-  const selectedScene = useMemo(
-    () => scenes.find((scene) => scene.id === selectedSceneId) ?? null,
-    [scenes, selectedSceneId],
-  )
-
-  const selectedSceneNavigable = selectedScene?.navigable ?? false
-  const selectedSceneReady = selectedScene?.ready ?? false
-  const selectedSceneMessage = selectedScene?.message ?? metadata?.message ?? null
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    if (selectedSceneId) {
-      window.localStorage.setItem(SELECTED_SCENE_STORAGE_KEY, selectedSceneId)
-    } else {
-      window.localStorage.removeItem(SELECTED_SCENE_STORAGE_KEY)
-    }
-  }, [selectedSceneId])
+  const {
+    scenes,
+    root,
+    selectedSceneId,
+    selectedSceneReady,
+    selectedSceneNavigable,
+    selectedSceneMessage,
+    metadata,
+    preview,
+    loading,
+    refreshScenes,
+    selectScene,
+    previewLayers,
+  } = useNavScenes({
+    previewPointLimit,
+    setInitialState,
+    onWaypointsLoaded: setWaypoints,
+    onLog: addLog,
+  })
 
   useEffect(() => {
     setWebglSupported(detectWebGLSupport())
   }, [])
-
-  const refreshScenes = useCallback(async () => {
-    setLoading(true)
-    try {
-      const data = await listPcdScenes()
-      setScenes(data.items)
-      setRoot(data.root)
-      addLog(`已刷新场景目录，共 ${data.items.length} 个场景文件夹`)
-    } catch (error) {
-      addLog(error instanceof Error ? error.message : '获取场景列表失败', 'error')
-    } finally {
-      setLoading(false)
-    }
-  }, [addLog])
-
-  const selectScene = useCallback(async (sceneId: string) => {
-    const requestId = ++selectRequestRef.current
-    setLoading(true)
-
-    try {
-      const currentScene = await selectPcdScene(sceneId)
-      if (requestId !== selectRequestRef.current) return
-
-      setSelectedSceneId(currentScene.scene_id)
-      setMetadata(null)
-      setPreview(null)
-      setWaypoints([])
-      setAddMode(false)
-      addLog(`当前选择导航场景：${currentScene.scene_id}`)
-      addLog(`当前场景 map.pcd：${currentScene.map_pcd}`)
-      addLog(`当前场景 ground.pcd：${currentScene.ground_pcd}`)
-
-      const nextMetadata = await getPcdSceneMetadata(sceneId)
-      if (requestId !== selectRequestRef.current) return
-      setMetadata(nextMetadata)
-      addLog(`已读取场景 metadata: ${sceneId}`)
-
-      const [nextPreview, nextWaypoints] = await Promise.all([
-        getPcdScenePreview(sceneId, previewPointLimit),
-        listWaypoints(sceneId).catch(() => ({ items: [] as NavWaypoint[] })),
-      ])
-      if (requestId !== selectRequestRef.current) return
-      setPreview(nextPreview)
-      setWaypoints(nextWaypoints.items)
-      const groundPoints = nextPreview.layers.ground?.points.length || 0
-      const wallPoints = nextPreview.layers.wall?.points.length || 0
-      addLog(`已加载场景预览点云：ground ${groundPoints.toLocaleString()} 点，wall ${wallPoints.toLocaleString()} 点`)
-
-      try {
-        const navState = await getNavState()
-        if (requestId !== selectRequestRef.current) return
-        setInitialState({
-          robotPose: navState.robot_pose,
-          globalPath: navState.global_path,
-          localizationStatus: navState.localization_status,
-          navigationStatus: navState.navigation_status,
-        })
-        addLog('已刷新导航实时状态')
-      } catch (error) {
-        if (requestId === selectRequestRef.current) {
-          addLog(error instanceof Error ? error.message : '刷新导航状态失败', 'error')
-        }
-      }
-    } catch (error) {
-      if (requestId !== selectRequestRef.current) return
-      addLog(error instanceof Error ? error.message : `加载场景失败: ${sceneId}`, 'error')
-    } finally {
-      if (requestId === selectRequestRef.current) {
-        setLoading(false)
-      }
-    }
-  }, [addLog, previewPointLimit, setInitialState])
 
   const handleAddWaypoint = useCallback(async (pos: { x: number; y: number; z: number; yaw: number }) => {
     if (!selectedSceneId) return
@@ -471,10 +385,6 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, canOperate, mappingSceneName, mappingSending])
 
-  useEffect(() => {
-    void refreshScenes()
-  }, [refreshScenes])
-
   const refreshTasks = useCallback(async () => {
     try {
       const data = await listNavTasks()
@@ -487,42 +397,6 @@ export function PcdMapDemoPage() {
   useEffect(() => {
     void refreshTasks()
   }, [refreshTasks])
-
-  useEffect(() => {
-    if (selectedSceneId && scenes.some((item) => item.id === selectedSceneId)) {
-      if (metadata?.scene_id !== selectedSceneId && !loading) {
-        void selectScene(selectedSceneId)
-      }
-      return
-    }
-
-    if (scenes.length === 0) return
-
-    const storedSceneId = typeof window === 'undefined'
-      ? null
-      : window.localStorage.getItem(SELECTED_SCENE_STORAGE_KEY)
-
-    if (storedSceneId && scenes.some((item) => item.id === storedSceneId)) {
-      void selectScene(storedSceneId)
-      return
-    }
-
-    const readyScene = scenes.find((item) => item.ready)
-    if (readyScene) {
-      void selectScene(readyScene.id)
-      return
-    }
-
-    if (selectedSceneId === null) {
-      return
-    }
-
-    setSelectedSceneId(null)
-    setMetadata(null)
-    setPreview(null)
-    setWaypoints([])
-    addLog('当前没有可用于导航的场景')
-  }, [addLog, loading, metadata?.scene_id, scenes, selectedSceneId, selectScene])
 
   useEffect(() => {
     if (!selectedTaskId && tasks.length > 0) {
@@ -554,33 +428,6 @@ export function PcdMapDemoPage() {
       cancelled = true
     }
   }, [addLog])
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadNavState() {
-      try {
-        const state = await getNavState()
-        if (cancelled) return
-        setInitialState({
-          robotPose: state.robot_pose,
-          globalPath: state.global_path,
-          localizationStatus: state.localization_status,
-          navigationStatus: state.navigation_status,
-        })
-        addLog('已同步导航实时状态')
-      } catch (error) {
-        if (!cancelled) {
-          addLog(error instanceof Error ? error.message : '同步导航状态失败', 'error')
-        }
-      }
-    }
-
-    void loadNavState()
-    return () => {
-      cancelled = true
-    }
-  }, [addLog, setInitialState])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -735,14 +582,6 @@ export function PcdMapDemoPage() {
   )
   const draftSceneNavigable = draftScene?.navigable ?? false
   const draftSceneMessage = draftScene?.message ?? null
-
-  const previewLayers = useMemo(
-    () => [
-      { role: 'ground' as const, points: preview?.layers.ground?.points ?? [] },
-      { role: 'wall' as const, points: preview?.layers.wall?.points ?? [] },
-    ],
-    [preview],
-  )
 
   const handleTaskDraftChange = useCallback((patch: Partial<TaskDraft>) => {
     setTaskDraft((current) => ({
