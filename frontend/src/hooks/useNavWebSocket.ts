@@ -26,8 +26,17 @@ export function useNavWebSocket() {
     lastMessageAt: null,
   })
   const processedEnvelopeIdRef = useRef(0)
+  const initializedRef = useRef(false)
 
   useEffect(() => {
+    const latestEnvelope = stream.envelopes[stream.envelopes.length - 1] ?? null
+
+    if (!initializedRef.current) {
+      processedEnvelopeIdRef.current = latestEnvelope?.id ?? 0
+      initializedRef.current = true
+      return
+    }
+
     const pending = stream.envelopes.filter((envelope) => envelope.id > processedEnvelopeIdRef.current)
     if (pending.length === 0) {
       return
@@ -75,8 +84,13 @@ export function useNavWebSocket() {
     }))
   }, [])
 
-  const connect = useCallback(() => {}, [])
-  const disconnect = useCallback(() => {}, [])
+  const connect = useCallback(() => {
+    stream.connect()
+  }, [stream.connect])
+
+  const disconnect = useCallback(() => {
+    stream.disconnect()
+  }, [stream.disconnect])
 
   return {
     connected: stream.connected,

@@ -29,6 +29,7 @@ export function useEventWebSocket(): EventHookState {
   const [trackDecision, setTrackDecision] = useState<TrackDecision | null>(null)
   const [trackOverlay, setTrackOverlay] = useState<TrackOverlayData | null>(null)
   const processedEnvelopeIdRef = useRef(0)
+  const initializedRef = useRef(false)
 
   const status = useMemo<EventWebSocketStatus>(() => {
     if (stream.error) {
@@ -50,6 +51,14 @@ export function useEventWebSocket(): EventHookState {
   }, [stream.connected, stream.connecting, stream.error, stream.reconnecting])
 
   useEffect(() => {
+    const latestEnvelope = stream.envelopes[stream.envelopes.length - 1] ?? null
+
+    if (!initializedRef.current) {
+      processedEnvelopeIdRef.current = latestEnvelope?.id ?? 0
+      initializedRef.current = true
+      return
+    }
+
     const pending = stream.envelopes.filter((envelope) => envelope.id > processedEnvelopeIdRef.current)
     if (pending.length === 0) {
       return
@@ -105,8 +114,13 @@ export function useEventWebSocket(): EventHookState {
     processedEnvelopeIdRef.current = pending[pending.length - 1].id
   }, [stream.envelopes])
 
-  const connect = useCallback(() => {}, [])
-  const disconnect = useCallback(() => {}, [])
+  const connect = useCallback(() => {
+    stream.connect()
+  }, [stream.connect])
+
+  const disconnect = useCallback(() => {
+    stream.disconnect()
+  }, [stream.disconnect])
 
   return {
     status,
