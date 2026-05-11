@@ -49,6 +49,14 @@ function formatModifiedAt(value: string) {
   return new Date(time).toLocaleString('zh-CN', { hour12: false })
 }
 
+function parseLogLineTimestamp(value: string): number {
+  const match = value.match(/^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?)/)
+  if (!match) return 0
+  const normalized = match[1].replace(',', '.')
+  const time = new Date(normalized).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
 export function AdminLogsPage({
   logs,
   loading,
@@ -142,11 +150,16 @@ export function AdminLogsPage({
     [runtimeFileName, runtimeFiles],
   )
 
+  const runtimeDisplayLines = useMemo(() => {
+    if (!runtimeTail) return []
+    return [...runtimeTail.lines].sort((left, right) => parseLogLineTimestamp(right) - parseLogLineTimestamp(left))
+  }, [runtimeTail])
+
   return (
     <div className="space-y-6">
       <AdminCard
         title="日志中心"
-        subtitle="审计日志来自 operation_logs；后端运行日志来自 logs/*.log 与 logs/scripts/*.log，二者分开查看。"
+        subtitle="审计日志用于记录操作轨迹；后端运行日志用于查看真实服务输出，两类日志分开查看。"
       >
         <div className="flex flex-wrap gap-3">
           <LogTabButton active={tab === 'audit'} label="审计日志" onClick={() => setTab('audit')} />
@@ -183,7 +196,7 @@ export function AdminLogsPage({
               <button
                 key={item.key}
                 onClick={() => setCategory(item.key)}
-                className={`rounded-lg border px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.15em] transition-all ${
+                className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition-all ${
                   category === item.key
                     ? 'border-white/30 bg-white/10 text-white'
                     : 'border-white/10 text-zinc-400 hover:border-white/20 hover:text-zinc-200'
@@ -219,7 +232,7 @@ export function AdminLogsPage({
                         <TableCell>{new Date(item.created_at).toLocaleString('zh-CN', { hour12: false })}</TableCell>
                         <TableCell>
                           <span
-                            className={`text-[10px] font-black uppercase tracking-wider ${
+                            className={`text-xs font-medium ${
                               item.level === 'CRITICAL'
                                 ? 'text-red-400'
                                 : item.level === 'ERROR'
@@ -265,7 +278,7 @@ export function AdminLogsPage({
           <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
             <div className="space-y-4">
               <div className="rounded-2xl border border-white/8 bg-black/40 p-4">
-                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">日志文件</div>
+                <div className="text-xs font-medium text-zinc-500">日志文件</div>
                 <div className="mt-3">
                   <select
                     value={runtimeFileName}
@@ -293,7 +306,7 @@ export function AdminLogsPage({
               </div>
 
               <div className="rounded-2xl border border-white/8 bg-black/40 p-4">
-                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-zinc-500">尾部行数</div>
+                <div className="text-xs font-medium text-zinc-500">尾部行数</div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {[100, 300, 500, 1000].map((value) => (
                     <ToolbarButton
@@ -312,7 +325,7 @@ export function AdminLogsPage({
             <div className="rounded-2xl border border-white/8 bg-black/40 p-4">
               <div className="flex items-center justify-between gap-3 border-b border-white/8 pb-3">
                 <div>
-                  <div className="text-sm font-black text-white">{runtimeFileName || '未选择日志文件'}</div>
+                  <div className="text-sm font-medium text-white">{runtimeFileName || '未选择日志文件'}</div>
                   <div className="mt-1 text-xs text-zinc-500">
                     {runtimeTail ? `最近 ${runtimeTail.line_count} 行${runtimeTail.truncated ? '（已截断）' : ''}` : '读取后端运行日志尾部内容'}
                   </div>
@@ -329,9 +342,9 @@ export function AdminLogsPage({
                 <EmptyState title="日志文件加载中" description="正在读取 logs 目录下可查看的运行日志文件。" />
               ) : runtimeFiles.length === 0 ? (
                 <EmptyState title="暂无可查看的运行日志" description="logs 目录中没有符合白名单的日志文件，或当前文件列表为空。" />
-              ) : runtimeTail && runtimeTail.lines.length > 0 ? (
+              ) : runtimeTail && runtimeDisplayLines.length > 0 ? (
                 <pre className="mt-4 max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-2xl border border-white/8 bg-black/80 p-4 font-mono text-[11px] leading-6 text-zinc-200">
-                  {runtimeTail.lines.join('\n')}
+                  {runtimeDisplayLines.join('\n')}
                 </pre>
               ) : (
                 <EmptyState
@@ -366,7 +379,7 @@ function LogTabButton({
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-xl border px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition-all ${
+      className={`rounded-xl border px-4 py-2 text-sm font-medium transition-all ${
         active
           ? 'border-white/30 bg-white/10 text-white'
           : 'border-white/10 text-zinc-400 hover:border-white/20 hover:bg-white/5 hover:text-zinc-200'
