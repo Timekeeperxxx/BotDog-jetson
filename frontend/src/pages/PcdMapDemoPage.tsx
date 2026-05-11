@@ -446,17 +446,17 @@ export function PcdMapDemoPage() {
                 />
               ) : null}
               {activeDrawer === 'map' ? (
-              <PcdFileListPanel
-                scenes={scenes}
-                root={root}
-                selectedSceneId={selectedSceneId}
-                loading={loading}
-                onRefresh={refreshScenes}
-                onSelect={selectScene}
-                onDeleteScene={requestDeleteScene}
-              />
-            ) : null}
-          </div>
+                <PcdFileListPanel
+                  scenes={scenes}
+                  root={root}
+                  selectedSceneId={selectedSceneId}
+                  loading={loading}
+                  onRefresh={refreshScenes}
+                  onSelect={selectScene}
+                  onDeleteScene={requestDeleteScene}
+                />
+              ) : null}
+            </div>
             {creatingTask ? (
               <div className="pcd-task-creator-drawer">
                 <TaskCreatorDrawer
@@ -664,7 +664,7 @@ export function PcdMapDemoPage() {
       </section>
       </div>
 
-      {/* ─── 导航到点二次确认弹窗 ─── */}
+      {/* ─── 删除场景二次确认弹窗 ─── */}
       {sceneDeleteConfirm !== null && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-[0_30px_120px_-30px_rgba(0,0,0,0.9)]">
