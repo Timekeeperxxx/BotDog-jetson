@@ -11,16 +11,15 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOTDOG_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-NAV_RUNTIME_DIR="$BOTDOG_ROOT/data/nav_runtime"
-CMD_VEL_PID_FILE="$NAV_RUNTIME_DIR/cmd_vel.pid"
-LIVOX_PID_FILE="$NAV_RUNTIME_DIR/livox.pid"
-RELOCATION_PID_FILE="$NAV_RUNTIME_DIR/relocation.pid"
-GLOBAL_PLANNER_PID_FILE="$NAV_RUNTIME_DIR/global_planner.pid"
-P2P_MOVE_BASE_PID_FILE="$NAV_RUNTIME_DIR/p2p_move_base.pid"
+RUNTIME_DIR="$BOTDOG_ROOT/data/nav_runtime"
+CMD_VEL_PID_FILE="$RUNTIME_DIR/cmd_vel.pid"
+LIVOX_PID_FILE="$RUNTIME_DIR/livox.pid"
+RELOCATION_PID_FILE="$RUNTIME_DIR/relocation.pid"
+GLOBAL_PLANNER_PID_FILE="$RUNTIME_DIR/global_planner.pid"
+P2P_MOVE_BASE_PID_FILE="$RUNTIME_DIR/p2p_move_base.pid"
 
-mkdir -p "$NAV_RUNTIME_DIR"
+mkdir -p "$RUNTIME_DIR"
 
-MAPS_ROOT="/home/jetson/Project/BOTDOG/MAPS"
 RAW_SCENE_DIR="$1"
 
 if [ ! -d "$RAW_SCENE_DIR" ]; then
@@ -30,17 +29,9 @@ fi
 
 SCENE_DIR="$(realpath "$RAW_SCENE_DIR")"
 
-case "$SCENE_DIR" in
-  "$MAPS_ROOT"/*) ;;
-  *)
-    echo "错误：场景目录必须位于 $MAPS_ROOT 下" >&2
-    exit 1
-    ;;
-esac
-
 find_scene_pcd_file() {
   local scene_dir="$1"
-  local suffix="$2"
+  local pattern="$2"
   local label="$3"
   local -a candidates=()
   local selected=""
@@ -48,7 +39,7 @@ find_scene_pcd_file() {
 
   while IFS= read -r -d '' file; do
     candidates+=("$file")
-  done < <(find "$scene_dir" -maxdepth 1 -type f -name "*$suffix" -print0)
+  done < <(find "$scene_dir" -maxdepth 1 -type f -name "$pattern" -print0)
 
   if [ "${#candidates[@]}" -eq 0 ]; then
     return 1
@@ -73,25 +64,32 @@ find_scene_pcd_file() {
   printf '%s\n' "$selected"
 }
 
-if ! MAP_PCD="$(find_scene_pcd_file "$SCENE_DIR" "map.pcd" "map.pcd")"; then
-  echo "错误：场景缺少 map.pcd：$SCENE_DIR" >&2
+if [ ! -d "$SCENE_DIR" ]; then
+  echo "错误：场景目录不存在：$SCENE_DIR" >&2
   exit 1
 fi
 
-if ! GROUND_PCD="$(find_scene_pcd_file "$SCENE_DIR" "ground.pcd" "ground.pcd")"; then
-  echo "错误：场景缺少 ground.pcd：$SCENE_DIR" >&2
+if ! MAP_PCD="$(find_scene_pcd_file "$SCENE_DIR" "*map.pcd" "map.pcd")"; then
+  echo "错误：场景缺少 *map.pcd：$SCENE_DIR" >&2
   exit 1
 fi
 
-if [ ! -f "$MAP_PCD" ]; then
-  echo "错误：场景缺少 map.pcd：$MAP_PCD" >&2
+if ! GROUND_PCD="$(find_scene_pcd_file "$SCENE_DIR" "*ground.pcd" "ground.pcd")"; then
+  echo "错误：场景缺少 *ground.pcd：$SCENE_DIR" >&2
   exit 1
 fi
 
-if [ ! -f "$GROUND_PCD" ]; then
-  echo "错误：场景缺少 ground.pcd：$GROUND_PCD" >&2
-  exit 1
-fi
+echo "当前场景目录: $SCENE_DIR"
+echo "当前 map.pcd: $MAP_PCD"
+echo "当前 ground.pcd: $GROUND_PCD"
+echo "PID 目录: $RUNTIME_DIR"
+
+rm -f \
+  "$LIVOX_PID_FILE" \
+  "$RELOCATION_PID_FILE" \
+  "$GLOBAL_PLANNER_PID_FILE" \
+  "$P2P_MOVE_BASE_PID_FILE" \
+  "$CMD_VEL_PID_FILE"
 
 echo "清理可能残留的 ROS2 导航定位进程..."
 
@@ -206,15 +204,15 @@ start_launch() {
   local pid=$!
   printf -v "$pid_var" '%s' "$pid"
   if [ -n "${pid_file:-}" ]; then
-    printf '%s\n' "$pid" > "$NAV_RUNTIME_DIR/$pid_file"
+    printf '%s\n' "$pid" > "$RUNTIME_DIR/$pid_file"
   fi
 }
 
 start_cmd_vel_test() {
   local title="$1"
   local pid_var="$2"
-  local cmd_vel_log_file="$NAV_RUNTIME_DIR/cmd_vel.log"
-  local cmd_vel_ros_log_dir="$NAV_RUNTIME_DIR/ros_logs/cmd_vel"
+  local cmd_vel_log_file="$RUNTIME_DIR/cmd_vel.log"
+  local cmd_vel_ros_log_dir="$RUNTIME_DIR/ros_logs/cmd_vel"
   local cmd_vel_script="$PROJECT_ROOT/test_cmd_vel_fixed.sh"
 
   if [ ! -d "$PROJECT_ROOT" ]; then
@@ -225,7 +223,7 @@ start_cmd_vel_test() {
   if [ -f "$CMD_VEL_PID_FILE" ]; then
     local existing_pid
     existing_pid="$(cat "$CMD_VEL_PID_FILE" 2>/dev/null || true)"
-    if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+  if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
       echo "已存在 cmd_vel.py，复用现有进程：PID=$existing_pid"
       printf -v "$pid_var" '%s' "$existing_pid"
       return
@@ -288,23 +286,22 @@ start_cmd_vel_test() {
 }
 
 start_launch "$HOME/superlio" livox_ros_driver2 msg_MID360_launch.py "启动 Livox MID360 驱动..." LIVOX_PID livox.pid
+echo "Livox PID: $LIVOX_PID"
 sleep 5
 
 start_launch "$HOME/superlio" super_lio relocation.py "启动 Super-LIO 重定位..." RELOCATION_PID relocation.pid "map_file:=$MAP_PCD"
+echo "Relocation PID: $RELOCATION_PID"
 sleep 5
 
-start_launch "$HOME/dddmr_navigation_new_local" global_planner path_planning_with_polygon.launch "启动全局路径规划..." GLOBAL_PLANNER_PID global_planner.pid "map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD"
+start_launch "$HOME/dddmr_navigation_new_local" global_planner path_planning_with_polygon.launch "启动全局路径规划..." GLOBAL_PLANNER_PID global_planner.pid "map_dir:=$GROUND_PCD"
+echo "Global Planner PID: $GLOBAL_PLANNER_PID"
 sleep 5
 
 start_launch "$HOME/dddmr_navigation_new_local" p2p_move_base go2_localization_launch.py "启动 P2P move base 定位导航..." P2P_MOVE_BASE_PID p2p_move_base.pid
+echo "P2P Move Base PID: $P2P_MOVE_BASE_PID"
 sleep 5
 
 start_cmd_vel_test "启动 cmd_vel 测试脚本..." CMD_VEL_TEST_PID
-
-echo "Livox PID: $LIVOX_PID"
-echo "Relocation PID: $RELOCATION_PID"
-echo "Global Planner PID: $GLOBAL_PLANNER_PID"
-echo "P2P Move Base PID: $P2P_MOVE_BASE_PID"
-echo "Cmd Vel Test PID: $CMD_VEL_TEST_PID"
+echo "Cmd Vel PID: $CMD_VEL_TEST_PID"
 
 wait

@@ -233,6 +233,23 @@ def _wait_for_pid_file(path: Path, timeout_s: float = 30.0) -> int | None:
     return None
 
 
+def _wait_for_pid_files(paths: dict[str, Path], timeout_s: float = 20.0) -> dict[str, int | None]:
+    deadline = time.time() + timeout_s
+    result: dict[str, int | None] = {name: None for name in paths}
+
+    while time.time() < deadline:
+        for name, path in paths.items():
+            if result[name] is None:
+                result[name] = _read_pid_file(path)
+
+        if all(pid is not None for pid in result.values()):
+            break
+
+        time.sleep(0.2)
+
+    return result
+
+
 def _find_cmd_vel_pids() -> list[int]:
     try:
         result = subprocess.run(
@@ -483,11 +500,15 @@ def restart_navigation_localization() -> dict[str, Any]:
             "p2p_move_base_pid": _named_pid_path("p2p_move_base"),
             "cmd_vel_pid": _cmd_vel_pid_path(),
         }
-        child_pids = {name: _wait_for_pid_file(path, timeout_s=30.0) for name, path in pid_files.items()}
+        child_pids = _wait_for_pid_files(pid_files, timeout_s=20.0)
         navigation_ready = all(
             child_pids[key] is not None
             for key in ("livox_pid", "relocation_pid", "global_planner_pid", "p2p_move_base_pid", "cmd_vel_pid")
         )
+        if navigation_ready:
+            message = "已启动重启脚本，导航链路 PID 已确认"
+        else:
+            message = "已启动重启脚本，部分子进程 PID 未确认，请查看日志"
 
         nav_logger.info("已启动导航定位重启脚本：pid={}", _restart_proc.pid)
         return {
@@ -508,5 +529,5 @@ def restart_navigation_localization() -> dict[str, Any]:
                 "p2p_move_base": child_pids["p2p_move_base_pid"],
                 "cmd_vel": child_pids["cmd_vel_pid"],
             },
-            "message": "已启动重启脚本，子进程状态需查看日志",
+            "message": message,
         }
