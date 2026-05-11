@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .logging_config import get_logs_dir
 
-TOP_LEVEL_LOG_NAMES = {"backend.log", "debug.log", "access.log", "ffmpeg.log"}
+TOP_LEVEL_LOG_NAMES = {"backend.log", "debug.log", "access.log", "ffmpeg.log", "restart_navigation_localization.log"}
 
 
 def _to_iso_utc(timestamp: float) -> str:
