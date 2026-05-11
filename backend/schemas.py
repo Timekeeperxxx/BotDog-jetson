@@ -383,6 +383,30 @@ class NavTaskUpsertRequest(BaseModel):
     task: NavTaskDefinitionDTO
 
 
+class NavTaskExecuteNavStartDTO(BaseModel):
+    success: bool
+    topic: str
+    data: bool
+
+
+class NavTaskExecuteResponse(BaseModel):
+    success: bool
+    task_id: str
+    topic: str
+    data: bool
+    nav_start: NavTaskExecuteNavStartDTO
+    message: str
+
+
+class NavTaskStopResponse(BaseModel):
+    success: bool
+    task_id: str
+    topic: str
+    data: bool
+    nav_start: NavTaskExecuteNavStartDTO
+    message: str
+
+
 class RobotPoseDTO(BaseModel):
     x: float
     y: float

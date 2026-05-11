@@ -31,8 +31,10 @@ from ...schemas import (
     PcdSceneMetadataResponse,
     PcdScenePreviewResponse,
     NavCurrentSceneResponse,
+    NavTaskExecuteResponse,
     NavTaskListResponse,
     NavTaskUpsertRequest,
+    NavTaskStopResponse,
 )
 from ...nav_bridge_state import get_ros_nav_bridge
 
@@ -76,6 +78,107 @@ async def nav_upsert_task(
         ),
     )
     return result
+
+
+@router.post("/tasks/{task_id}/execute", response_model=NavTaskExecuteResponse)
+async def nav_execute_task(
+    task_id: str,
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    from ...services_nav_state import update_navigation_status
+    from ...services_nav_tasks import NavTaskError, get_nav_task
+
+    bridge = get_ros_nav_bridge()
+    if bridge is None:
+        raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
+
+    try:
+        task = get_nav_task(task_id)
+        nav_start_result = bridge.publish_navigation_start()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except NavTaskError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    update_navigation_status(
+        {
+            "status": "navigating",
+            "target_waypoint_id": None,
+            "target_name": task.get("name"),
+            "message": "已发布导航启动信号",
+        }
+    )
+    await safe_write_audit_log(
+        db,
+        level="INFO",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.task.execute "
+            f"目标={task_id} 结果=success topic={nav_start_result['topic']}"
+        ),
+    )
+    return {
+        "success": True,
+        "task_id": task_id,
+        "topic": nav_start_result["topic"],
+        "data": nav_start_result["data"],
+        "nav_start": nav_start_result,
+        "message": "已发布导航启动信号",
+    }
+
+
+@router.post("/tasks/{task_id}/stop", response_model=NavTaskStopResponse)
+async def nav_stop_task(
+    task_id: str,
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    from ...services_nav_state import clear_global_path, update_navigation_status
+    from ...services_nav_tasks import NavTaskError, get_nav_task
+
+    bridge = get_ros_nav_bridge()
+    if bridge is None:
+        raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
+
+    try:
+        _task = get_nav_task(task_id)
+        nav_stop_result = bridge.publish_navigation_start(False)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except NavTaskError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    clear_global_path()
+    update_navigation_status(
+        {
+            "status": "idle",
+            "target_waypoint_id": None,
+            "target_name": None,
+            "message": "已发布导航停止信号",
+        }
+    )
+    await safe_write_audit_log(
+        db,
+        level="INFO",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.task.stop "
+            f"目标={task_id} 结果=success topic={nav_stop_result['topic']} data={nav_stop_result['data']}"
+        ),
+    )
+    return {
+        "success": True,
+        "task_id": task_id,
+        "topic": nav_stop_result["topic"],
+        "data": nav_stop_result["data"],
+        "nav_start": nav_stop_result,
+        "message": "已发布导航停止信号",
+    }
 
 
 @router.delete("/tasks/{task_id}")
@@ -436,7 +539,6 @@ async def nav_go_to_waypoint(
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        nav_start_result = bridge.publish_navigation_start()
         goal_result = bridge.publish_goal_xyz_yaw(waypoint)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -448,7 +550,6 @@ async def nav_go_to_waypoint(
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.go_to "
             f"目标={waypoint_id} map={map_id} 结果=success "
-            f"nav_start_topic={nav_start_result['topic']} "
             f"clicked_point_topic={goal_result['xyz_topic']} yaw_topic={goal_result['yaw_topic']}"
         ),
     )
@@ -458,7 +559,7 @@ async def nav_go_to_waypoint(
             "target_waypoint_id": waypoint["id"],
             "target_name": waypoint["name"],
             "message": (
-                f"已发布 nav_start，随后发布 clicked_point 和 goal_yaw: {waypoint['name']} "
+                f"已发布 clicked_point 和 goal_yaw: {waypoint['name']} "
                 f"x={float(waypoint['x']):.3f}, "
                 f"y={float(waypoint['y']):.3f}, "
                 f"z={float(waypoint.get('z', 0.0)):.3f}, "
@@ -470,10 +571,8 @@ async def nav_go_to_waypoint(
         "success": True,
         "topic": goal_result["xyz_topic"],
         "waypoint_id": waypoint["id"],
-        "nav_start_topic": nav_start_result["topic"],
         "xyz_topic": goal_result["xyz_topic"],
         "yaw_topic": goal_result["yaw_topic"],
-        "nav_start": nav_start_result,
         "goal": goal_result,
     }
 

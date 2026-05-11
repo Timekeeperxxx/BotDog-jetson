@@ -54,6 +54,42 @@ export function deleteNavTask(taskId: string): Promise<{ success: boolean; task_
   )
 }
 
+export function executeNavTask(taskId: string): Promise<{
+  success: boolean
+  task_id: string
+  topic: string
+  data: boolean
+  nav_start: {
+    success: boolean
+    topic: string
+    data: boolean
+  }
+  message: string
+}> {
+  return requestJson(
+    getApiUrl(`/api/v1/nav/tasks/${encodeURIComponent(taskId)}/execute`),
+    { method: 'POST' },
+  )
+}
+
+export function stopNavTask(taskId: string): Promise<{
+  success: boolean
+  task_id: string
+  topic: string
+  data: boolean
+  nav_start: {
+    success: boolean
+    topic: string
+    data: boolean
+  }
+  message: string
+}> {
+  return requestJson(
+    getApiUrl(`/api/v1/nav/tasks/${encodeURIComponent(taskId)}/stop`),
+    { method: 'POST' },
+  )
+}
+
 export function deletePcdScene(sceneId: string): Promise<{
   success: boolean
   scene_id: string

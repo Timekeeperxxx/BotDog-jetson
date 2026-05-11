@@ -1,4 +1,4 @@
-import { Info, Play, Plus, Trash2 } from 'lucide-react'
+import { Info, Pause, Play, Plus, Trash2 } from 'lucide-react'
 import type { TaskDefinition } from '../../types/taskWorkflow'
 
 type Props = {
@@ -6,9 +6,11 @@ type Props = {
   selectedTaskId: string | null
   canStartCreate: boolean
   canExecuteTask: boolean
+  canStopTask: boolean
   onSelectTask: (taskId: string) => void
   onEditTask: (taskId: string) => void
   onExecuteTask: (taskId: string) => void
+  onStopTask: (taskId: string) => void
   onDeleteTask: (taskId: string) => void
   onStartCreate: () => void
 }
@@ -35,9 +37,11 @@ export function TaskDrawerPanel({
   selectedTaskId,
   canStartCreate,
   canExecuteTask,
+  canStopTask,
   onSelectTask,
   onEditTask,
   onExecuteTask,
+  onStopTask,
   onDeleteTask,
   onStartCreate,
 }: Props) {
@@ -101,6 +105,17 @@ export function TaskDrawerPanel({
                   >
                     <Play size={14} />
                     <span>执行</span>
+                  </button>
+                  <button
+                    className="pcd-tool-button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onStopTask(task.id)
+                    }}
+                    disabled={!canStopTask}
+                  >
+                    <Pause size={14} />
+                    <span>停止任务</span>
                   </button>
                   <button
                     className="pcd-tool-button"

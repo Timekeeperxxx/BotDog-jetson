@@ -274,21 +274,21 @@ class RosNavBridge:
             "data": True,
         }
 
-    def publish_navigation_start(self) -> dict[str, Any]:
+    def publish_navigation_start(self, enabled: bool = True) -> dict[str, Any]:
         if self._node is None or self._nav_start_publisher is None:
             raise RuntimeError("ROS2 nav_start 发布器未就绪")
 
         from std_msgs.msg import Bool
 
         msg = Bool()
-        msg.data = True
+        msg.data = bool(enabled)
         with self._publisher_lock:
             self._nav_start_publisher.publish(msg)
 
         return {
             "success": True,
             "topic": settings.ROS_NAV_START_TOPIC,
-            "data": True,
+            "data": bool(enabled),
         }
 
     def publish_goal_xyz_yaw(self, waypoint: dict[str, Any]) -> dict[str, Any]:

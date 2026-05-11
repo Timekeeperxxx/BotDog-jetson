@@ -23,7 +23,9 @@ import {
   notifyNavPageOpen,
   deletePcdScene,
   deleteNavTask,
+  executeNavTask,
   saveNavTask,
+  stopNavTask,
   selectPcdScene,
   restartNavigationLocalization,
   setMappingEnabled,
@@ -56,20 +58,6 @@ type MappingSessionInfo = {
 
 function nowText() {
   return new Date().toLocaleTimeString()
-}
-
-function formatWaypointCoords(step: WorkflowStep): string | null {
-  if (step.type !== 'navigate_waypoint') return null
-  if (
-    step.x == null ||
-    step.y == null ||
-    step.z == null ||
-    step.yaw == null
-  ) {
-    return null
-  }
-  const frame = step.frameId ? `, frame=${step.frameId}` : ''
-  return `x=${step.x.toFixed(2)}, y=${step.y.toFixed(2)}, z=${step.z.toFixed(2)}, yaw=${step.yaw.toFixed(3)}${frame}`
 }
 
 function validateMappingSceneName(
@@ -964,33 +952,71 @@ export function PcdMapDemoPage() {
   }, [addLog, tasks])
 
   const handleExecuteTask = useCallback(async (taskId: string) => {
+    if (!canOperate) {
+      addLog('当前无操作权限，无法执行任务', 'error')
+      return
+    }
+
     const task = tasks.find((item) => item.id === taskId)
     if (!task) return
     setSelectedTaskId(task.id)
-    const selectedSceneItem = scenes.find((item) => item.id === task.mapId)
-    if (selectedSceneItem && !selectedSceneItem.navigable) {
+    const taskScene = scenes.find((item) => item.id === task.mapId)
+    if (!taskScene) {
+      addLog('任务关联场景不存在', 'error')
+      return
+    }
+    if (!taskScene.navigable) {
       addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
       return
     }
     if (task.mapId !== selectedSceneId) {
       await selectScene(task.mapId)
     }
-    const taskWaypoints = task.mapId === selectedSceneId ? waypoints : (await listWaypoints(task.mapId).catch(() => ({ items: [] as NavWaypoint[] }))).items
-    addLog(`开始执行场景任务 ${task.name}`)
-    task.steps.forEach((step, index) => {
-      const coordText =
-        formatWaypointCoords(step) ??
-        (step.type === 'navigate_waypoint'
-          ? (() => {
-              const waypoint = taskWaypoints.find((item) => item.id === step.waypointId)
-              return waypoint
-                ? `x=${waypoint.x.toFixed(2)}, y=${waypoint.y.toFixed(2)}, z=${waypoint.z.toFixed(2)}, yaw=${waypoint.yaw.toFixed(3)}, frame=${waypoint.frame_id}`
-                : null
-            })()
-          : null)
-      addLog(coordText ? `步骤 ${index + 1}: ${step.label} | ${coordText}` : `步骤 ${index + 1}: ${step.label}`)
-    })
-  }, [addLog, scenes, selectedSceneId, selectScene, tasks, waypoints])
+    try {
+      const result = await executeNavTask(task.id)
+      setNavigatingWaypointId(null)
+      setInitialState({
+        navigationStatus: {
+          status: 'navigating',
+          target_waypoint_id: null,
+          target_name: task.name,
+          message: result.message,
+          timestamp: Date.now() / 1000,
+        },
+      })
+      addLog(`已执行导航任务 ${task.name}，已发布 ${result.topic}=true`)
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '执行导航任务失败', 'error')
+    }
+  }, [addLog, canOperate, scenes, selectedSceneId, selectScene, setInitialState, tasks])
+
+  const handleStopTask = useCallback(async (taskId: string) => {
+    if (!canOperate) {
+      addLog('当前无操作权限，无法停止任务', 'error')
+      return
+    }
+
+    const task = tasks.find((item) => item.id === taskId)
+    if (!task) return
+
+    try {
+      const result = await stopNavTask(task.id)
+      setNavigatingWaypointId(null)
+      setInitialState({
+        globalPath: null,
+        navigationStatus: {
+          status: 'idle',
+          target_waypoint_id: null,
+          target_name: null,
+          message: result.message,
+          timestamp: Date.now() / 1000,
+        },
+      })
+      addLog(`已停止导航任务 ${task.name}，已发布 ${result.topic}=false`)
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '停止导航任务失败', 'error')
+    }
+  }, [addLog, canOperate, setInitialState, tasks])
 
   return (
     <main className="pcd-demo-page">
@@ -1091,10 +1117,12 @@ export function PcdMapDemoPage() {
                   tasks={tasks}
                   selectedTaskId={selectedTaskId}
                   canStartCreate={selectedSceneNavigable}
-                  canExecuteTask={selectedTaskSceneNavigable}
+                  canExecuteTask={canOperate && selectedTaskSceneNavigable}
+                  canStopTask={canOperate && Boolean(selectedTaskId)}
                   onSelectTask={setSelectedTaskId}
                   onEditTask={handleStartEditTask}
                   onExecuteTask={(taskId) => void handleExecuteTask(taskId)}
+                  onStopTask={(taskId) => void handleStopTask(taskId)}
                   onDeleteTask={handleDeleteTask}
                   onStartCreate={() => void handleStartCreateTask()}
                 />
@@ -1250,6 +1278,18 @@ export function PcdMapDemoPage() {
             >
               <Square size={15} />
               <span>{mappingSending ? (mappingActive ? '结束建图中' : '开始建图中') : (mappingActive ? '结束建图' : '开始建图')}</span>
+            </button>
+            <button
+              className="pcd-tool-button"
+              onClick={() => {
+                if (!selectedTaskId) return
+                void handleStopTask(selectedTaskId)
+              }}
+              disabled={!canOperate || !selectedTaskId}
+              title={!selectedTaskId ? '先选择一个任务' : undefined}
+            >
+              <Square size={15} />
+              <span>停止任务</span>
             </button>
             <div className="pcd-keyboard-hint">
               <Keyboard size={15} />

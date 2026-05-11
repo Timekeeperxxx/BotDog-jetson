@@ -64,6 +64,18 @@ def list_nav_tasks() -> dict[str, Any]:
     return {"items": _load_raw_tasks()}
 
 
+def get_nav_task(task_id: str) -> dict[str, Any]:
+    normalized = str(task_id).strip()
+    if not normalized:
+        raise NavTaskError("task_id 不能为空")
+
+    for task in _load_raw_tasks():
+        if str(task.get("id")) == normalized:
+            return task
+
+    raise FileNotFoundError(f"任务不存在: {normalized}")
+
+
 def save_nav_task(task: dict[str, Any]) -> dict[str, Any]:
     _validate_task_payload(task)
     tasks = _load_raw_tasks()
