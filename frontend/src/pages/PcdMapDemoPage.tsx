@@ -11,11 +11,7 @@ import {
   Square,
 } from 'lucide-react'
 import {
-  createWaypoint,
-  deleteWaypoint,
-  goToWaypoint,
   listNavTasks,
-  listWaypoints,
   notifyNavPageOpen,
   deletePcdScene,
   deleteNavTask,
@@ -40,6 +36,7 @@ import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
 import type { NavWaypoint, PcdSceneItem } from '../types/pcdMap'
 import type { TaskDefinition, TaskDraft, TaskDraftStep, WorkflowStep } from '../types/taskWorkflow'
 import { useNavScenes } from './nav/useNavScenes'
+import { useNavWaypoints } from './nav/useNavWaypoints'
 
 type LogItem = {
   id: number
@@ -169,40 +166,29 @@ export function PcdMapDemoPage() {
     onSceneChanging: handleSceneChanging,
   })
 
+  const {
+    handleAddWaypoint,
+    handleDeleteWaypoint,
+    requestGoToWaypoint,
+    handleGoToWaypoint,
+    handleToggleWaypointMode,
+    selectedSceneWaypoints,
+  } = useNavWaypoints({
+    selectedSceneId,
+    selectedSceneNavigable,
+    canOperate,
+    waypoints,
+    setWaypoints,
+    setAddMode,
+    setNavigatingWaypointId,
+    setGoToConfirm,
+    onLog: addLog,
+    onExitToolMode: () => setToolMode('none'),
+  })
+
   useEffect(() => {
     setWebglSupported(detectWebGLSupport())
   }, [])
-
-  const handleAddWaypoint = useCallback(async (pos: { x: number; y: number; z: number; yaw: number }) => {
-    if (!selectedSceneId) return
-    if (!selectedSceneNavigable) {
-      addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
-      return
-    }
-
-    const defaultName = `巡检点${waypoints.length + 1}`
-    const name = window.prompt('导航点名称', defaultName)?.trim()
-    if (!name) return
-
-    try {
-      await createWaypoint(selectedSceneId, {
-        name,
-        x: pos.x,
-        y: pos.y,
-        z: pos.z,
-        yaw: pos.yaw,
-        frame_id: 'map',
-      })
-      const nextWaypoints = await listWaypoints(selectedSceneId)
-      setWaypoints(nextWaypoints.items)
-      setAddMode(false)
-      addLog(
-        `已保存导航点 ${name}: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${pos.z.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
-      )
-    } catch (error) {
-      addLog(error instanceof Error ? error.message : '保存导航点失败', 'error')
-    }
-  }, [addLog, selectedSceneId, selectedSceneNavigable, waypoints.length])
 
   const handleSetPose = useCallback(async (pos: { x: number; y: number; yaw: number }) => {
     if (!selectedSceneId) return
@@ -227,46 +213,6 @@ export function PcdMapDemoPage() {
       addLog(error instanceof Error ? error.message : '设置重定位位姿失败', 'error')
     }
   }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable])
-
-  const handleDeleteWaypoint = useCallback(async (waypointId: string) => {
-    if (!selectedSceneId) return
-
-    try {
-      await deleteWaypoint(selectedSceneId, waypointId)
-      const nextWaypoints = await listWaypoints(selectedSceneId)
-      setWaypoints(nextWaypoints.items)
-      addLog(`已删除导航点 ${waypointId}`)
-    } catch (error) {
-      addLog(error instanceof Error ? error.message : '删除导航点失败', 'error')
-    }
-  }, [addLog, selectedSceneId])
-
-  // 中间层：拦截 go-to，先弹确认框
-  const requestGoToWaypoint = useCallback((waypointId: string) => {
-    if (!canOperate) return
-    const waypoint = waypoints.find((item) => item.id === waypointId)
-    if (!waypoint) return
-    setGoToConfirm(waypoint)
-  }, [canOperate, waypoints])
-
-  const handleGoToWaypoint = useCallback(async (waypointId: string) => {
-    if (!selectedSceneId) return
-    if (!canOperate || !selectedSceneNavigable) {
-      addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
-      return
-    }
-
-    setNavigatingWaypointId(waypointId)
-    try {
-      const result = await goToWaypoint(selectedSceneId, waypointId)
-      const waypoint = waypoints.find((item) => item.id === waypointId)
-      addLog(`已发布导航目标 ${waypoint?.name || waypointId} 到 ${result.topic}`)
-    } catch (error) {
-      addLog(error instanceof Error ? error.message : '发布导航目标失败', 'error')
-    } finally {
-      setNavigatingWaypointId(null)
-    }
-  }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable, waypoints])
 
   const handleEmergencyStop = useCallback(async () => {
     if (!canOperate) return
@@ -546,17 +492,6 @@ export function PcdMapDemoPage() {
     })
   }, [addLog])
 
-  const handleToggleWaypointMode = useCallback(() => {
-    setAddMode((value) => {
-      const nextValue = !value
-      if (nextValue) {
-        setToolMode('none')
-      }
-      addLog(nextValue ? '已切换到添加导航点模式' : '已退出标点')
-      return nextValue
-    })
-  }, [addLog])
-
   const interactionMode: 'none' | 'waypoint' | 'pose' =
     addMode ? 'waypoint' : (toolMode === 'pose' ? 'pose' : 'none')
 
@@ -574,11 +509,6 @@ export function PcdMapDemoPage() {
   const mapOptions = useMemo(
     () => scenes.map((scene) => ({ id: scene.id, name: scene.name })),
     [scenes],
-  )
-
-  const selectedSceneWaypoints = useMemo(
-    () => waypoints.map((waypoint) => ({ id: waypoint.id, name: waypoint.name })),
-    [waypoints],
   )
 
   const draftScene = useMemo(
