@@ -216,13 +216,14 @@ export function PcdMapDemoPage() {
         yaw: pos.yaw,
         frame_id: 'map',
       })
+      clearToolMode()
       addLog(
         `已保存重定位位姿并发送重定位信号: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
       )
     } catch (error) {
       addLog(error instanceof Error ? error.message : '设置重定位位姿失败', 'error')
     }
-  }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable])
+  }, [addLog, canOperate, clearToolMode, selectedSceneId, selectedSceneNavigable])
 
   const requestDeleteScene = useCallback((scene: PcdSceneItem) => {
     setSceneDeleteConfirm(scene)
