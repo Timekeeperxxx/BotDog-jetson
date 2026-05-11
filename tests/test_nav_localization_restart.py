@@ -122,24 +122,27 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
 
 
 def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
-    repo_root = Path("/home/jetson/Project/BOTDOG")
-    script_path = repo_root / "BotDog" / "scripts" / "restart_navigation_localization.sh"
-    runtime_dir = repo_root / "BotDog" / "data" / "nav_runtime"
+    real_repo_root = Path(__file__).resolve().parents[1]
+    project_root = tmp_path / "Project" / "BOTDOG"
+    botdog_root = project_root / "BotDog"
+    script_dir = botdog_root / "scripts"
+    runtime_dir = botdog_root / "data" / "nav_runtime"
     fake_home = tmp_path / "home" / "jetson"
     fake_bin = tmp_path / "bin"
     scene_dir = tmp_path / "Scene1_测试"
+    script_path = script_dir / "restart_navigation_localization.sh"
 
-    scene_dir.mkdir(parents=True)
+    script_dir.mkdir(parents=True)
     runtime_dir.mkdir(parents=True, exist_ok=True)
+    scene_dir.mkdir(parents=True)
     fake_bin.mkdir(parents=True)
     (scene_dir / "Scene1_half_map.pcd").write_text("", encoding="utf-8")
     (scene_dir / "Scene1_half_ground.pcd").write_text("", encoding="utf-8")
-
-    for pid_name in ("livox", "relocation", "global_planner", "p2p_move_base", "cmd_vel"):
-        try:
-            (runtime_dir / f"{pid_name}.pid").unlink()
-        except FileNotFoundError:
-            pass
+    script_path.write_text(
+        (real_repo_root / "scripts" / "restart_navigation_localization.sh").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    script_path.chmod(0o755)
 
     superlio_setup = fake_home / "superlio" / "install" / "setup.bash"
     navigation_setup = fake_home / "dddmr_navigation_new_local" / "install" / "setup.bash"
@@ -160,19 +163,19 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
     fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     fake_sleep.chmod(0o755)
 
-    fake_cmd_vel_runner = repo_root / "unitree_sdk2_python" / "example" / "scripts" / "cmd_vel.py"
+    fake_cmd_vel_runner = project_root / "unitree_sdk2_python" / "example" / "scripts" / "cmd_vel.py"
     fake_cmd_vel_runner.parent.mkdir(parents=True, exist_ok=True)
     fake_cmd_vel_runner.write_text(
         "#!/usr/bin/env bash\n"
-        "tail -f /dev/null\n",
+        "exec python -c 'import time; time.sleep(60)' /home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py\n",
         encoding="utf-8",
     )
     fake_cmd_vel_runner.chmod(0o755)
 
-    fake_cmd_vel_bootstrap = repo_root / "test_cmd_vel_fixed.sh"
+    fake_cmd_vel_bootstrap = project_root / "test_cmd_vel_fixed.sh"
     fake_cmd_vel_bootstrap.write_text(
         "#!/usr/bin/env bash\n"
-        "exec /home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py\n",
+        "exec python -c 'import time; time.sleep(60)' /home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py\n",
         encoding="utf-8",
     )
     fake_cmd_vel_bootstrap.chmod(0o755)
@@ -183,7 +186,7 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
 
     proc = subprocess.Popen(
         ["bash", str(script_path), str(scene_dir)],
-        cwd=str(repo_root),
+        cwd=str(project_root),
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -242,11 +245,6 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
             fake_cmd_vel_runner,
             fake_ros2,
             fake_sleep,
-            runtime_dir / "livox.pid",
-            runtime_dir / "relocation.pid",
-            runtime_dir / "global_planner.pid",
-            runtime_dir / "p2p_move_base.pid",
-            runtime_dir / "cmd_vel.pid",
         ):
             try:
                 path.unlink()
