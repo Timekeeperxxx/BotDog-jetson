@@ -49,6 +49,24 @@ export interface AdminLogEntry {
   created_at: string
 }
 
+export interface AdminLogFileInfo {
+  name: string
+  size_bytes: number
+  modified_at: string
+  lines_hint: number | null
+}
+
+export interface AdminLogFileTail {
+  name: string
+  lines: string[]
+  line_count: number
+  truncated: boolean
+}
+
+export interface AdminLogFilesResponse {
+  items: AdminLogFileInfo[]
+}
+
 export interface AdminDashboardData {
   health: HealthResponse | null
   navState: NavStateResponse | null

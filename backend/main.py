@@ -677,6 +677,7 @@ def register_routes(app: FastAPI) -> None:
     from .api.routes import evidence as _evidence_routes
     from .api.routes import focus_zones as _focus_zone_routes
     from .api.routes import guard_mission as _guard_mission_routes
+    from .api.routes import log_files as _log_files_routes
     from .api.routes import logs as _logs_routes
     from .api.routes import network_interfaces as _network_interface_routes
     from .api.routes import session as _session_routes
@@ -704,6 +705,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(_session_routes.router)
     app.include_router(_system_info_routes.router)
     app.include_router(_test_alert_routes.router)
+    app.include_router(_log_files_routes.router)
     app.include_router(_logs_routes.router)
     app.include_router(_websocket_routes.router)
 

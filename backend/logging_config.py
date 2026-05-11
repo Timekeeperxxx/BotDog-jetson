@@ -69,6 +69,10 @@ def get_access_logger():
     return logger.bind(domain="接口访问", access_log=True)
 
 
+def get_logs_dir() -> Path:
+    return Path(__file__).resolve().parent.parent / "logs"
+
+
 def _console_filter(record: dict[str, Any]) -> bool:
     if record["extra"].get("raw_ffmpeg"):
         return False
@@ -125,7 +129,7 @@ def _start_log_maintenance_thread(logs_dir: Path) -> None:
     def _loop() -> None:
         while True:
             try:
-                for log_path in logs_dir.glob("*.log"):
+                for log_path in logs_dir.rglob("*.log"):
                     trim_log_file_tail(log_path, _LOG_MAX_LINES)
             except Exception:
                 pass
@@ -145,8 +149,9 @@ def setup_logging() -> None:
 
     _logger.remove()
 
-    logs_dir = Path("logs")
+    logs_dir = get_logs_dir()
     logs_dir.mkdir(parents=True, exist_ok=True)
+    (logs_dir / "scripts").mkdir(parents=True, exist_ok=True)
 
     logger.add(
         sys.stdout,
@@ -217,4 +222,4 @@ def setup_logging() -> None:
     _LOGGING_READY = True
 
 
-__all__ = ["logger", "setup_logging", "get_logger", "get_access_logger", "trim_log_file_tail"]
+__all__ = ["logger", "setup_logging", "get_logger", "get_access_logger", "get_logs_dir", "trim_log_file_tail"]

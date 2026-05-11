@@ -66,6 +66,24 @@ class LogsPage(BaseModel):
     items: list[LogEntry]
 
 
+class LogFileInfo(BaseModel):
+    name: str
+    size_bytes: int
+    modified_at: str
+    lines_hint: int | None = None
+
+
+class LogFilesPage(BaseModel):
+    items: list[LogFileInfo]
+
+
+class LogFileTailPage(BaseModel):
+    name: str
+    lines: list[str]
+    line_count: int
+    truncated: bool
+
+
 class EvidenceItem(BaseModel):
     evidence_id: int
     task_id: Optional[int] = None    # 可为 NULL：AI/温度告警可在无巡检任务时触发

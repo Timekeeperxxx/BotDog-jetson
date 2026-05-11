@@ -81,6 +81,11 @@ LOGS_ROUTES = [
     ("GET", "/api/v1/logs"),
 ]
 
+LOG_FILES_ROUTES = [
+    ("GET", "/api/v1/log-files"),
+    ("GET", "/api/v1/log-files/{name:path}/tail"),
+]
+
 EVIDENCE_ROUTES = [
     ("GET", "/api/v1/evidence"),
     ("DELETE", "/api/v1/evidence/{evidence_id}"),
@@ -201,6 +206,14 @@ def test_logs_route_registered(route_index: dict, method: str, path: str) -> Non
     """logs 路由拆分后必须保持 method 与 path 不变。"""
     assert (method, path) in route_index, (
         f"{method} {path} 未注册 ── logs 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", LOG_FILES_ROUTES)
+def test_log_files_route_registered(route_index: dict, method: str, path: str) -> None:
+    """文件日志路由必须注册。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── 文件日志路由可能在拆分中丢失"
     )
 
 

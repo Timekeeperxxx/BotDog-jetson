@@ -12,13 +12,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BOTDOG_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNTIME_DIR="$BOTDOG_ROOT/data/nav_runtime"
+SCRIPT_LOG_DIR="$BOTDOG_ROOT/logs/scripts"
+SCRIPT_LOG_FILE="$SCRIPT_LOG_DIR/restart_navigation_localization.log"
 CMD_VEL_PID_FILE="$RUNTIME_DIR/cmd_vel.pid"
 LIVOX_PID_FILE="$RUNTIME_DIR/livox.pid"
 RELOCATION_PID_FILE="$RUNTIME_DIR/relocation.pid"
 GLOBAL_PLANNER_PID_FILE="$RUNTIME_DIR/global_planner.pid"
 P2P_MOVE_BASE_PID_FILE="$RUNTIME_DIR/p2p_move_base.pid"
 
-mkdir -p "$RUNTIME_DIR"
+mkdir -p "$RUNTIME_DIR" "$SCRIPT_LOG_DIR"
+exec > >(tee -a "$SCRIPT_LOG_FILE") 2>&1
 
 RAW_SCENE_DIR="$1"
 

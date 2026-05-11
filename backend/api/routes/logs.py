@@ -1,6 +1,6 @@
-"""系统日志路由。"""
+"""系统审计日志路由。"""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from ...auth.dependencies import require_viewer
 from ...auth.schemas import AuthUserInternal
@@ -15,9 +15,22 @@ router = APIRouter(prefix="/api/v1/logs", tags=["logs"])
 async def get_logs(
     user: AuthUserInternal = Depends(require_viewer),
     db=Depends(get_db),
+    limit: int = Query(100, ge=1, le=500),
+    level: str | None = Query(default=None, min_length=1, max_length=32),
+    module: str | None = Query(default=None, min_length=1, max_length=32),
+    keyword: str | None = Query(default=None, min_length=1, max_length=200),
 ) -> LogsPage:
-    """简单日志查询：返回最近 N 条日志（默认 50 条）。"""
-    rows = await list_logs(db, limit=50)
+    """返回 operation_logs 审计日志，不包含完整后端运行日志。"""
+    normalized_level = level.strip().upper() if level else None
+    normalized_module = module.strip().upper() if module else None
+    normalized_keyword = keyword.strip() if keyword else None
+    rows = await list_logs(
+        db,
+        limit=limit,
+        level=normalized_level,
+        module=normalized_module,
+        keyword=normalized_keyword,
+    )
     return LogsPage(
         items=[
             {
