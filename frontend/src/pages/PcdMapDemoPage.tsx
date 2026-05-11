@@ -18,7 +18,6 @@ import { NavWaypointPanel } from '../components/pcd/NavWaypointPanel'
 import { PcdFileListPanel } from '../components/pcd/PcdFileListPanel'
 import { PointCloud3DViewer } from '../components/pcd/PointCloud3DViewer'
 import { PointCloudTopDownCanvas } from '../components/pcd/PointCloudTopDownCanvas'
-import { detectWebGLSupport } from '../components/pcd/webglSupport'
 import { TaskCreatorDrawer } from '../components/pcd/TaskCreatorDrawer'
 import { TaskDrawerPanel } from '../components/pcd/TaskDrawerPanel'
 import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl'
@@ -30,6 +29,7 @@ import { useNavWaypoints } from './nav/useNavWaypoints'
 import { useNavTasks } from './nav/useNavTasks'
 import { useNavMapping } from './nav/useNavMapping'
 import { useNavRuntimeActions } from './nav/useNavRuntimeActions'
+import { useNavViewState } from './nav/useNavViewState'
 
 type LogItem = {
   id: number
@@ -47,14 +47,8 @@ export function PcdMapDemoPage() {
   const previewPointLimit = 15000
   const [waypoints, setWaypoints] = useState<NavWaypoint[]>([])
   const [addMode, setAddMode] = useState(false)
-  const [infoOpen, setInfoOpen] = useState(true)
-  const [followRobot, setFollowRobot] = useState(false)
-  const [toolMode, setToolMode] = useState<'none' | 'obstacle' | 'pose'>('none')
-  const [waypointZ, setWaypointZ] = useState(-0.83)
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
-  const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
-  const [webglSupported, setWebglSupported] = useState(true)
   const [sceneDeleteConfirm, setSceneDeleteConfirm] = useState<PcdSceneItem | null>(null)
   // ── 高危操作确认 ──
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
@@ -79,6 +73,26 @@ export function PcdMapDemoPage() {
   const handleSceneChanging = useCallback(() => {
     setAddMode(false)
   }, [])
+
+  const {
+    infoOpen,
+    setInfoOpen,
+    followRobot,
+    handleToggleFollowRobot,
+    toolMode,
+    clearToolMode,
+    waypointZ,
+    setWaypointZ,
+    mouseMapPosition,
+    setMouseMapPosition,
+    webglSupported,
+    handleToolMode,
+    interactionMode,
+  } = useNavViewState({
+    addMode,
+    setAddMode,
+    onLog: addLog,
+  })
 
   const {
     scenes,
@@ -118,7 +132,7 @@ export function PcdMapDemoPage() {
     setNavigatingWaypointId,
     setGoToConfirm,
     onLog: addLog,
-    onExitToolMode: () => setToolMode('none'),
+    onExitToolMode: clearToolMode,
   })
 
   const {
@@ -187,10 +201,6 @@ export function PcdMapDemoPage() {
     onLog: addLog,
   })
 
-  useEffect(() => {
-    setWebglSupported(detectWebGLSupport())
-  }, [])
-
   const handleSetPose = useCallback(async (pos: { x: number; y: number; yaw: number }) => {
     if (!selectedSceneId) return
     if (!canOperate || !selectedSceneNavigable) {
@@ -206,7 +216,6 @@ export function PcdMapDemoPage() {
         yaw: pos.yaw,
         frame_id: 'map',
       })
-      setToolMode('none')
       addLog(
         `已保存重定位位姿并发送重定位信号: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
       )
@@ -325,26 +334,6 @@ export function PcdMapDemoPage() {
       window.removeEventListener('keyup', handleKeyUp)
     }
   }, [currentCmd, startCommand, stopCommand])
-
-  const handleToolMode = useCallback((nextMode: 'obstacle' | 'pose') => {
-    setToolMode((current) => {
-      const resolved = current === nextMode ? 'none' : nextMode
-      if (resolved !== 'none') {
-        setAddMode(false)
-      }
-      addLog(
-        resolved === 'none'
-          ? '已退出工具模式'
-          : resolved === 'obstacle'
-            ? '已切换到添加障碍物模式'
-            : '已切换到设置位姿模式',
-      )
-      return resolved
-    })
-  }, [addLog])
-
-  const interactionMode: 'none' | 'waypoint' | 'pose' =
-    addMode ? 'waypoint' : (toolMode === 'pose' ? 'pose' : 'none')
 
   return (
     <main className="pcd-demo-page">
@@ -567,13 +556,7 @@ export function PcdMapDemoPage() {
           <section className="pcd-tool-strip">
             <button
               className={`pcd-tool-button ${followRobot ? 'is-active' : ''}`}
-              onClick={() => {
-                setFollowRobot((value) => {
-                  const nextValue = !value
-                  addLog(nextValue ? '已开启视角跟随' : '已关闭视角跟随')
-                  return nextValue
-                })
-              }}
+              onClick={handleToggleFollowRobot}
               disabled={!robotPose}
               title={!robotPose ? '等待机器狗定位数据' : undefined}
             >
