@@ -22,8 +22,9 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
     publish_order: list[str] = []
 
     class DummyBridge:
-        def publish_navigation_start(self) -> dict[str, object]:
+        def publish_navigation_start(self, enabled: bool = True) -> dict[str, object]:
             publish_order.append("nav_start")
+            assert enabled is True
             return {
                 "success": True,
                 "topic": "/nav_start",
@@ -70,6 +71,7 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
     assert result["topic"] == "/clicked_point"
     assert result["nav_start_topic"] == "/nav_start"
     assert result["nav_start"]["topic"] == "/nav_start"
+    assert result["nav_start"]["data"] is True
     assert result["xyz_topic"] == "/clicked_point"
     assert result["yaw_topic"] == "goal_yaw"
     assert result["goal"]["waypoint_id"] == "wp_001"

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from .config import settings
+from .repositories.json_store import atomic_write_json, read_json
 
 
 class NavTaskError(Exception):
@@ -28,8 +28,10 @@ def _validate_task_payload(task: dict[str, Any]) -> None:
         raise NavTaskError("任务 id 不能为空")
     if not str(task.get("name", "")).strip():
         raise NavTaskError("任务名称不能为空")
-    if not str(task.get("mapId", "")).strip():
-        raise NavTaskError("任务 mapId 不能为空")
+    scene_id = str(task.get("sceneId", "")).strip()
+    map_id = str(task.get("mapId", "")).strip()
+    if not scene_id and not map_id:
+        raise NavTaskError("任务 sceneId/mapId 不能为空")
     if not str(task.get("mapName", "")).strip():
         raise NavTaskError("任务 mapName 不能为空")
     if not str(task.get("createdAt", "")).strip():
@@ -44,13 +46,7 @@ def _validate_task_payload(task: dict[str, Any]) -> None:
 
 def _load_raw_tasks() -> list[dict[str, Any]]:
     path = _task_store_path()
-    if not path.exists():
-        return []
-
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise NavTaskError(f"任务 JSON 文件损坏: {path}") from exc
+    data = read_json(path, [])
 
     if not isinstance(data, list):
         raise NavTaskError("任务 JSON 根节点必须是数组")
@@ -78,25 +74,32 @@ def get_nav_task(task_id: str) -> dict[str, Any]:
 
 def save_nav_task(task: dict[str, Any]) -> dict[str, Any]:
     _validate_task_payload(task)
+    normalized = dict(task)
+    scene_id = str(normalized.get("sceneId", "")).strip()
+    map_id = str(normalized.get("mapId", "")).strip()
+    if not scene_id and map_id:
+        normalized["sceneId"] = map_id
+    elif scene_id and not map_id:
+        normalized["mapId"] = scene_id
+    elif scene_id and map_id and scene_id != map_id:
+        raise NavTaskError("任务 sceneId 与 mapId 不一致")
+
     tasks = _load_raw_tasks()
-    task_id = str(task["id"])
+    task_id = str(normalized["id"])
     replaced = False
 
     for index, current in enumerate(tasks):
         if str(current.get("id")) == task_id:
-            tasks[index] = task
+            tasks[index] = normalized
             replaced = True
             break
 
     if not replaced:
-        tasks.insert(0, task)
+        tasks.insert(0, normalized)
 
     path = _task_store_path()
-    path.write_text(
-        json.dumps(tasks, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    return {"success": True, "task": task}
+    atomic_write_json(path, tasks)
+    return {"success": True, "task": normalized}
 
 
 def delete_nav_task(task_id: str) -> dict[str, Any]:
@@ -110,8 +113,5 @@ def delete_nav_task(task_id: str) -> dict[str, Any]:
         raise FileNotFoundError(f"任务不存在: {normalized}")
 
     path = _task_store_path()
-    path.write_text(
-        json.dumps(next_tasks, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_write_json(path, next_tasks)
     return {"success": True, "task_id": normalized}

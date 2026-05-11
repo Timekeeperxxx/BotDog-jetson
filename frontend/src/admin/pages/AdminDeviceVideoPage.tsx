@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { HealthResponse, SystemInfoGroup } from '../adminTypes'
-import type { PcdMapItem } from '../../types/pcdMap'
+import type { PcdSceneItem } from '../../types/pcdMap'
 import type { SystemConfig } from '../../types/config'
 import type { VideoSource, NetworkInterface } from '../../types/admin'
 import type { NavStateResponse } from '../../types/navState'
@@ -18,8 +18,8 @@ interface AdminDeviceVideoPageProps {
     aiStatus: AIStatus | null
     autoTrackStatus: AutoTrackStatus | null
   }
-  maps: PcdMapItem[]
-  selectedMapId: string | null
+  scenes: PcdSceneItem[]
+  selectedSceneId: string | null
   onRefresh: () => void
   videoSources: VideoSource[]
   configs: SystemConfig[]
@@ -35,8 +35,8 @@ interface AdminDeviceVideoPageProps {
 
 export function AdminDeviceVideoPage({
   deviceData,
-  maps,
-  selectedMapId,
+  scenes,
+  selectedSceneId,
   onRefresh,
   videoSources,
   configs,
@@ -94,8 +94,8 @@ export function AdminDeviceVideoPage({
         subtitle="直接复用导航管理中的地图、点位和巡逻任务数据，不重复做一套管理界面。"
       >
         <div className="space-y-3">
-          <div className="text-sm text-zinc-400">当前可用地图：{maps.length}</div>
-          <div className="text-sm text-zinc-400">当前选择地图：{selectedMapId || '未选择'}</div>
+          <div className="text-sm text-zinc-400">当前可用场景：{scenes.length}</div>
+          <div className="text-sm text-zinc-400">当前选择场景：{selectedSceneId || '未选择'}</div>
           <div className="text-xs text-zinc-500">如需编辑地图点位，请切换到“导航管理”模块。</div>
         </div>
       </AdminCard>

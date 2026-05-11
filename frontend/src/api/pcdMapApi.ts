@@ -65,6 +65,8 @@ export function executeNavTask(taskId: string): Promise<{
     data: boolean
   }
   message: string
+  runtime_file?: string | null
+  runtime_task?: Record<string, unknown> | null
 }> {
   return requestJson(
     getApiUrl(`/api/v1/nav/tasks/${encodeURIComponent(taskId)}/execute`),
@@ -183,8 +185,14 @@ export function goToWaypoint(
   success: boolean
   topic: string
   waypoint_id: string
-  xyz_topic?: string
-  yaw_topic?: string
+  nav_start_topic: string
+  xyz_topic: string
+  yaw_topic: string
+  nav_start: {
+    success: boolean
+    topic: string
+    data: boolean
+  }
   goal?: {
     success: boolean
     xyz_topic: string
@@ -196,6 +204,7 @@ export function goToWaypoint(
     yaw: number
     frame_id: string
   }
+  message?: string | null
 }> {
   return requestJson(
     getApiUrl(
@@ -233,18 +242,18 @@ export function restartNavigationLocalization(): Promise<{
   success: boolean
   running: boolean
   pid: number | null
-  scene_id: string
-  scene_dir: string
-  map_pcd: string
-  ground_pcd: string
+  scene_id?: string | null
+  scene_dir?: string | null
+  map_pcd?: string | null
+  ground_pcd?: string | null
   livox_pid: number | null
   relocation_pid: number | null
   global_planner_pid: number | null
   p2p_move_base_pid: number | null
   cmd_vel_pid: number | null
-  cmd_vel_running: boolean
-  navigation_ready: boolean
-  process_pids: Record<string, number | null>
+  cmd_vel_running?: boolean | null
+  navigation_ready?: boolean | null
+  process_pids?: Record<string, number | null> | null
   message: string
 }> {
   return requestJson(

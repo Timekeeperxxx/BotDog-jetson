@@ -1,5 +1,5 @@
 export type WorkflowStep =
-  | { type: 'select_map'; label: string; mapId: string }
+  | { type: 'select_map'; label: string; mapId: string; sceneId?: string }
   | { type: 'relocalize'; label: string; mode: 'auto' | 'manual' | 'skip' }
   | {
       type: 'navigate_waypoint'
@@ -17,6 +17,7 @@ export type TaskDefinition = {
   id: string
   name: string
   mapId: string
+  sceneId?: string | null
   mapName: string
   createdAt: string
   steps: WorkflowStep[]

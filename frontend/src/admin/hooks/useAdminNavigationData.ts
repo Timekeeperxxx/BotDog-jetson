@@ -1,55 +1,58 @@
 import { useCallback, useEffect, useState } from 'react'
-import { deleteWaypoint, getPcdMetadata, listNavTasks, listPcdMaps, listWaypoints } from '../../api/pcdMapApi'
-import type { NavWaypoint, PcdMapItem, PcdMetadata } from '../../types/pcdMap'
+import { deleteWaypoint, getPcdSceneMetadata, listNavTasks, listPcdScenes, listWaypoints } from '../../api/pcdMapApi'
+import type { NavWaypoint, PcdSceneItem, PcdSceneMetadata } from '../../types/pcdMap'
 import type { TaskDefinition } from '../../types/taskWorkflow'
 
 export function useAdminNavigationData() {
-  const [maps, setMaps] = useState<PcdMapItem[]>([])
-  const [selectedMapId, setSelectedMapId] = useState<string | null>(null)
-  const [metadata, setMetadata] = useState<PcdMetadata | null>(null)
+  const [scenes, setScenes] = useState<PcdSceneItem[]>([])
+  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null)
+  const [metadata, setMetadata] = useState<PcdSceneMetadata | null>(null)
   const [waypoints, setWaypoints] = useState<NavWaypoint[]>([])
   const [tasks, setTasks] = useState<TaskDefinition[]>([])
   const [navSearch, setNavSearch] = useState('')
   const [waypointToDelete, setWaypointToDelete] = useState<NavWaypoint | null>(null)
 
-  const refreshMapDetails = useCallback(async (mapId: string) => {
+  const refreshSceneDetails = useCallback(async (sceneId: string) => {
     const [nextMetadata, nextWaypoints] = await Promise.all([
-      getPcdMetadata(mapId).catch(() => null),
-      listWaypoints(mapId).catch(() => ({ items: [] as NavWaypoint[] })),
+      getPcdSceneMetadata(sceneId).catch(() => null),
+      listWaypoints(sceneId).catch(() => ({ items: [] as NavWaypoint[] })),
     ])
     setMetadata(nextMetadata)
     setWaypoints(nextWaypoints.items || [])
   }, [])
 
   const refreshNavigationData = useCallback(async () => {
-    const [nextMaps, nextTasks] = await Promise.all([
-      listPcdMaps().catch(() => ({ root: '', items: [] as PcdMapItem[] })),
+    const [nextScenes, nextTasks] = await Promise.all([
+      listPcdScenes().catch(() => ({ root: '', items: [] as PcdSceneItem[] })),
       listNavTasks().catch(() => ({ items: [] as TaskDefinition[] })),
     ])
-    setMaps(nextMaps.items || [])
+    setScenes(nextScenes.items || [])
     setTasks(nextTasks.items || [])
-    setSelectedMapId((current) => current || nextMaps.items[0]?.id || null)
+    setSelectedSceneId((current) => current || nextScenes.items[0]?.id || null)
   }, [])
 
   const deleteSelectedWaypoint = useCallback(async () => {
-    if (!selectedMapId || !waypointToDelete) return
-    await deleteWaypoint(selectedMapId, waypointToDelete.id)
-    await refreshMapDetails(selectedMapId)
-  }, [refreshMapDetails, selectedMapId, waypointToDelete])
+    if (!selectedSceneId || !waypointToDelete) return
+    await deleteWaypoint(selectedSceneId, waypointToDelete.id)
+    await refreshSceneDetails(selectedSceneId)
+  }, [refreshSceneDetails, selectedSceneId, waypointToDelete])
 
   useEffect(() => {
     void refreshNavigationData()
   }, [refreshNavigationData])
 
   useEffect(() => {
-    if (!selectedMapId) return
-    void refreshMapDetails(selectedMapId)
-  }, [refreshMapDetails, selectedMapId])
+    if (!selectedSceneId) return
+    void refreshSceneDetails(selectedSceneId)
+  }, [refreshSceneDetails, selectedSceneId])
 
   return {
-    maps,
-    selectedMapId,
-    setSelectedMapId,
+    scenes,
+    maps: scenes,
+    selectedSceneId,
+    selectedMapId: selectedSceneId,
+    setSelectedSceneId,
+    setSelectedMapId: setSelectedSceneId,
     metadata,
     waypoints,
     tasks,
@@ -58,7 +61,8 @@ export function useAdminNavigationData() {
     waypointToDelete,
     setWaypointToDelete,
     refreshNavigationData,
-    refreshMapDetails,
+    refreshSceneDetails,
+    refreshMapDetails: refreshSceneDetails,
     deleteSelectedWaypoint,
   }
 }

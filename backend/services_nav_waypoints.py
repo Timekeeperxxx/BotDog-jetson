@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .config import settings
+from .repositories.json_store import atomic_write_json, read_json, safe_json_path_name
 from .services_pcd_maps import resolve_scene_ground_path
 
 
@@ -22,18 +22,14 @@ def _store_dir() -> Path:
 
 def _safe_waypoint_file(map_id: str) -> Path:
     resolve_scene_ground_path(map_id)
-    safe_name = map_id.replace("/", "_").replace("\\", "_")
-    return _store_dir() / f"{safe_name}.json"
+    return _store_dir() / f"{safe_json_path_name(map_id)}.json"
 
 
 def list_waypoints(map_id: str) -> dict[str, Any]:
     path = _safe_waypoint_file(map_id)
-    if not path.exists():
-        return {"items": []}
-
-    with path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-
+    data = read_json(path, {"map_id": map_id, "items": []})
+    if not isinstance(data, dict):
+        data = {"map_id": map_id, "items": []}
     return {"items": data.get("items", [])}
 
 
@@ -48,9 +44,7 @@ def get_waypoint(map_id: str, waypoint_id: str) -> dict[str, Any]:
 def _write_waypoints(map_id: str, items: list[dict[str, Any]]) -> None:
     path = _safe_waypoint_file(map_id)
     payload = {"map_id": map_id, "items": items}
-
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2)
+    atomic_write_json(path, payload)
 
 
 def create_waypoint(map_id: str, payload: dict[str, Any]) -> dict[str, Any]:

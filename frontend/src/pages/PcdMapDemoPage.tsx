@@ -382,10 +382,10 @@ export function PcdMapDemoPage() {
     try {
       const result = await restartNavigationLocalization()
       addLog(
-        `导航定位已重启：${result.scene_id}，map=${result.map_pcd}，ground=${result.ground_pcd}，` +
-          `livox=${result.livox_pid}，relocation=${result.relocation_pid}，` +
-          `global_planner=${result.global_planner_pid}，p2p_move_base=${result.p2p_move_base_pid}，` +
-          `cmd_vel=${result.cmd_vel_pid}，ready=${result.navigation_ready}`,
+        `导航定位已重启：${result.scene_id ?? '--'}，map=${result.map_pcd ?? '--'}，ground=${result.ground_pcd ?? '--'}，` +
+          `livox=${result.livox_pid ?? 'null'}，relocation=${result.relocation_pid ?? 'null'}，` +
+          `global_planner=${result.global_planner_pid ?? 'null'}，p2p_move_base=${result.p2p_move_base_pid ?? 'null'}，` +
+          `cmd_vel=${result.cmd_vel_pid ?? 'null'}，ready=${result.navigation_ready ?? false}`,
       )
     } catch (error) {
       addLog(error instanceof Error ? error.message : '重启导航定位失败', 'error')
@@ -714,7 +714,7 @@ export function PcdMapDemoPage() {
   )
 
   const selectedTaskScene = useMemo(
-    () => (selectedTask ? scenes.find((scene) => scene.id === selectedTask.mapId) ?? null : null),
+    () => (selectedTask ? scenes.find((scene) => scene.id === (selectedTask.sceneId || selectedTask.mapId)) ?? null : null),
     [scenes, selectedTask],
   )
   const selectedTaskSceneNavigable = selectedTaskScene?.navigable ?? false
@@ -812,7 +812,7 @@ export function PcdMapDemoPage() {
     if (!task) return
     const nextDraft: TaskDraft = {
       name: task.name,
-      mapId: task.mapId,
+      mapId: task.sceneId || task.mapId,
       steps: task.steps
         .filter((step) => step.type !== 'select_map')
         .map((step) => (
@@ -906,13 +906,14 @@ export function PcdMapDemoPage() {
       id: taskEditorMode === 'edit' && selectedTaskId ? selectedTaskId : `task-${Date.now()}`,
       name,
       mapId: scene.id,
+      sceneId: scene.id,
       mapName: scene.name,
       createdAt:
         taskEditorMode === 'edit'
           ? tasks.find((item) => item.id === selectedTaskId)?.createdAt || new Date().toISOString()
           : new Date().toISOString(),
       steps: [
-        { type: 'select_map', label: `选择场景 ${scene.name}`, mapId: scene.id },
+        { type: 'select_map', label: `选择场景 ${scene.name}`, mapId: scene.id, sceneId: scene.id },
         ...workflowSteps,
       ],
     }

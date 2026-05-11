@@ -6,7 +6,7 @@ import type { SourceFormState } from '../hooks/useAdminVideoConfigData'
 
 interface AdminModalsHostProps {
   waypointToDelete: NavWaypoint | null
-  selectedMapId: string | null
+  selectedSceneId: string | null
   onCancelDeleteWaypoint: () => void
   onConfirmDeleteWaypoint: () => void
   sourceToDelete: VideoSource | null
@@ -22,7 +22,7 @@ interface AdminModalsHostProps {
 
 export function AdminModalsHost({
   waypointToDelete,
-  selectedMapId,
+  selectedSceneId,
   onCancelDeleteWaypoint,
   onConfirmDeleteWaypoint,
   sourceToDelete,
@@ -44,7 +44,7 @@ export function AdminModalsHost({
           ? [
             `点位名称：${waypointToDelete.name}`,
             `waypoint_id：${waypointToDelete.id}`,
-            `map_id：${waypointToDelete.map_id || selectedMapId || '--'}`,
+            `map_id：${waypointToDelete.map_id || selectedSceneId || '--'}`,
             `位置：${waypointToDelete.x.toFixed(2)} / ${waypointToDelete.y.toFixed(2)} / ${waypointToDelete.z.toFixed(2)}`,
             `yaw：${waypointToDelete.yaw.toFixed(3)}`,
             '提示：该操作会修改地图对应的 JSON 存储，不可恢复。',

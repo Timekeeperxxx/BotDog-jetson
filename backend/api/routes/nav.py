@@ -35,6 +35,7 @@ from ...schemas import (
     NavTaskListResponse,
     NavTaskUpsertRequest,
     NavTaskStopResponse,
+    NavWaypointGoToResponse,
 )
 from ...nav_bridge_state import get_ros_nav_bridge
 
@@ -88,6 +89,7 @@ async def nav_execute_task(
 ):
     from ...services_nav_state import update_navigation_status
     from ...services_nav_tasks import NavTaskError, get_nav_task
+    from ...services_nav_task_runtime import materialize_nav_task_runtime
 
     bridge = get_ros_nav_bridge()
     if bridge is None:
@@ -95,9 +97,12 @@ async def nav_execute_task(
 
     try:
         task = get_nav_task(task_id)
-        nav_start_result = bridge.publish_navigation_start()
+        runtime_result = materialize_nav_task_runtime(task_id)
+        nav_start_result = bridge.publish_navigation_start(True)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"导航点不存在: {exc}")
     except NavTaskError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
@@ -108,7 +113,7 @@ async def nav_execute_task(
             "status": "navigating",
             "target_waypoint_id": None,
             "target_name": task.get("name"),
-            "message": "已发布导航启动信号",
+            "message": "已发布导航启动信号并生成任务运行时文件",
         }
     )
     await safe_write_audit_log(
@@ -126,7 +131,9 @@ async def nav_execute_task(
         "topic": nav_start_result["topic"],
         "data": nav_start_result["data"],
         "nav_start": nav_start_result,
-        "message": "已发布导航启动信号",
+        "message": "已发布导航启动信号并生成任务运行时文件",
+        "runtime_file": runtime_result["runtime_file"],
+        "runtime_task": runtime_result["runtime_task"],
     }
 
 
@@ -514,7 +521,7 @@ async def nav_create_waypoint(
 
 
 @router.post("/pcd-maps/{map_id}/waypoints/{waypoint_id}")
-@router.post("/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to")
+@router.post("/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to", response_model=NavWaypointGoToResponse)
 async def nav_go_to_waypoint(
     map_id: str,
     waypoint_id: str,
@@ -539,6 +546,7 @@ async def nav_go_to_waypoint(
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
+        nav_start_result = bridge.publish_navigation_start(True)
         goal_result = bridge.publish_goal_xyz_yaw(waypoint)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -550,6 +558,7 @@ async def nav_go_to_waypoint(
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.go_to "
             f"目标={waypoint_id} map={map_id} 结果=success "
+            f"nav_start_topic={nav_start_result['topic']} "
             f"clicked_point_topic={goal_result['xyz_topic']} yaw_topic={goal_result['yaw_topic']}"
         ),
     )
@@ -559,7 +568,7 @@ async def nav_go_to_waypoint(
             "target_waypoint_id": waypoint["id"],
             "target_name": waypoint["name"],
             "message": (
-                f"已发布 clicked_point 和 goal_yaw: {waypoint['name']} "
+                f"已发布 nav_start，随后发布 clicked_point 和 goal_yaw: {waypoint['name']} "
                 f"x={float(waypoint['x']):.3f}, "
                 f"y={float(waypoint['y']):.3f}, "
                 f"z={float(waypoint.get('z', 0.0)):.3f}, "
@@ -571,9 +580,12 @@ async def nav_go_to_waypoint(
         "success": True,
         "topic": goal_result["xyz_topic"],
         "waypoint_id": waypoint["id"],
+        "nav_start_topic": nav_start_result["topic"],
         "xyz_topic": goal_result["xyz_topic"],
         "yaw_topic": goal_result["yaw_topic"],
+        "nav_start": nav_start_result,
         "goal": goal_result,
+        "message": "已发布 nav_start，随后发布 clicked_point 和 goal_yaw",
     }
 
 

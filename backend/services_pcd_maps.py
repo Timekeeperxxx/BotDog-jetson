@@ -201,9 +201,9 @@ def list_pcd_scenes() -> dict[str, Any]:
         navigable = ground_info is not None
 
         if not wall_info and not ground_info:
-            message = "缺少 wall/map.pcd，缺少 ground.pcd"
+            message = "缺少 map.pcd，缺少 ground.pcd"
         elif not wall_info:
-            message = "缺少 wall/map.pcd"
+            message = "缺少 map.pcd"
         elif not ground_info:
             message = "缺少 ground.pcd"
         else:

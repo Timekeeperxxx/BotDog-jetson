@@ -3,7 +3,7 @@ import type { AlertEvent, AIStatus, AutoTrackStatus } from '../types/event'
 import type { EvidenceItem } from '../types/evidence'
 import type { NavigationStatus, NavStateResponse } from '../types/navState'
 import type { VideoSource, NetworkInterface } from '../types/admin'
-import type { PcdMapItem, NavWaypoint, PcdMetadata } from '../types/pcdMap'
+import type { PcdSceneItem, NavWaypoint, PcdSceneMetadata } from '../types/pcdMap'
 import type { TaskDefinition } from '../types/taskWorkflow'
 
 export type AdminSection =
@@ -69,9 +69,9 @@ export interface AdminServiceCard {
 }
 
 export interface AdminNavigationData {
-  maps: PcdMapItem[]
-  selectedMapId: string | null
-  metadata: PcdMetadata | null
+  scenes: PcdSceneItem[]
+  selectedSceneId: string | null
+  metadata: PcdSceneMetadata | null
   waypoints: NavWaypoint[]
   tasks: TaskDefinition[]
 }

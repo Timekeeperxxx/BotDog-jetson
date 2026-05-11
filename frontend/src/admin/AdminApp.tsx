@@ -39,9 +39,9 @@ export function AdminApp() {
     refreshAdminCore,
   } = useAdminCoreData()
   const {
-    maps,
-    selectedMapId,
-    setSelectedMapId,
+    scenes,
+    selectedSceneId,
+    setSelectedSceneId,
     metadata,
     waypoints,
     tasks,
@@ -50,7 +50,7 @@ export function AdminApp() {
     waypointToDelete,
     setWaypointToDelete,
     refreshNavigationData,
-    refreshMapDetails,
+    refreshSceneDetails,
     deleteSelectedWaypoint,
   } = useAdminNavigationData()
   const {
@@ -164,8 +164,8 @@ export function AdminApp() {
     if (activeSection === 'navigation') {
       return (
         <AdminNavigationPage
-          maps={maps}
-          selectedMapId={selectedMapId}
+          scenes={scenes}
+          selectedSceneId={selectedSceneId}
           metadata={metadata}
           waypoints={waypoints}
           tasks={tasks}
@@ -175,9 +175,9 @@ export function AdminApp() {
           onRefresh={() => {
             void refreshNavigationData()
             void refreshAdminCore()
-            if (selectedMapId) void refreshMapDetails(selectedMapId)
+            if (selectedSceneId) void refreshSceneDetails(selectedSceneId)
           }}
-          onSelectMap={setSelectedMapId}
+          onSelectScene={setSelectedSceneId}
           onDeleteWaypoint={setWaypointToDelete}
           canOperate={role !== 'viewer'}
         />
@@ -195,8 +195,8 @@ export function AdminApp() {
             aiStatus: eventState.aiStatus,
             autoTrackStatus: eventState.autoTrackStatus,
           }}
-          maps={maps}
-          selectedMapId={selectedMapId}
+          scenes={scenes}
+          selectedSceneId={selectedSceneId}
           onRefresh={() => {
             void refreshAdminCore()
             void videoSources.fetchInterfaces()
@@ -282,7 +282,7 @@ export function AdminApp() {
     eventState.autoTrackStatus,
     health,
     logs,
-    maps,
+    scenes,
     mergedNavState,
     metadata,
     navSearch,
@@ -291,14 +291,14 @@ export function AdminApp() {
     refreshAdminCore,
     refreshEvidence,
     refreshNavigationData,
-    refreshMapDetails,
+    refreshSceneDetails,
     saveConfigValue,
     setEvidenceSearch,
     setNavSearch,
-    selectedMapId,
+    selectedSceneId,
     systemInfo,
     setSourceToDelete,
-    setSelectedMapId,
+    setSelectedSceneId,
     setSourceForm,
     setVideoSearch,
     setWaypointToDelete,
@@ -329,7 +329,7 @@ export function AdminApp() {
       {content}
       <AdminModalsHost
         waypointToDelete={waypointToDelete}
-        selectedMapId={selectedMapId}
+        selectedSceneId={selectedSceneId}
         onCancelDeleteWaypoint={() => setWaypointToDelete(null)}
         onConfirmDeleteWaypoint={() => {
           void deleteSelectedWaypoint()

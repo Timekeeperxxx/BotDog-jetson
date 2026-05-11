@@ -7,7 +7,7 @@ Pydantic 模型层（I/O 契约）。
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -370,6 +370,7 @@ class NavTaskDefinitionDTO(BaseModel):
     id: str = Field(..., min_length=1)
     name: str = Field(..., min_length=1, max_length=255)
     mapId: str = Field(..., min_length=1)
+    sceneId: str | None = Field(default=None, min_length=1)
     mapName: str = Field(..., min_length=1)
     createdAt: str = Field(..., min_length=1)
     steps: list[NavTaskStepDTO] = Field(default_factory=list)
@@ -389,6 +390,31 @@ class NavTaskExecuteNavStartDTO(BaseModel):
     data: bool
 
 
+class NavWaypointGoToGoalDTO(BaseModel):
+    success: bool
+    xyz_topic: str
+    yaw_topic: str
+    waypoint_id: str | None = None
+    x: float
+    y: float
+    z: float
+    yaw: float
+    frame_id: str
+
+
+class NavWaypointGoToResponse(BaseModel):
+    success: bool
+    task_id: str | None = None
+    topic: str
+    waypoint_id: str
+    nav_start_topic: str
+    xyz_topic: str
+    yaw_topic: str
+    nav_start: NavTaskExecuteNavStartDTO
+    goal: NavWaypointGoToGoalDTO
+    message: str | None = None
+
+
 class NavTaskExecuteResponse(BaseModel):
     success: bool
     task_id: str
@@ -396,6 +422,8 @@ class NavTaskExecuteResponse(BaseModel):
     data: bool
     nav_start: NavTaskExecuteNavStartDTO
     message: str
+    runtime_file: str | None = None
+    runtime_task: dict[str, Any] | None = None
 
 
 class NavTaskStopResponse(BaseModel):
