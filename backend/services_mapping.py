@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .logging_config import get_logger
+from .services_nav_localization import stop_cmd_vel_script, stop_navigation_processes
 
 
 mapping_logger = get_logger("建图服务")
@@ -167,6 +168,14 @@ class MappingService:
 
             map_dir = resolve_map_dir(normalized_scene_name)
             map_dir.mkdir(parents=True, exist_ok=True)
+            mapping_logger.info("开始建图前，准备停止导航相关后台进程")
+            nav_stop_result = stop_navigation_processes()
+            cmd_vel_stop_result = stop_cmd_vel_script()
+            mapping_logger.info(
+                "导航后台进程停止结果：nav_pids={} cmd_vel_pid={}",
+                nav_stop_result.get("pids"),
+                cmd_vel_stop_result.get("pid"),
+            )
             command = ["bash", str(START_MAPPING_SCRIPT), str(map_dir)]
             mapping_logger.info(
                 "开始建图：scene_name={}，map_dir={}，command={}",

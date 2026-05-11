@@ -69,7 +69,7 @@ async def control_stop(
     if svc is None:
         raise HTTPException(status_code=503, detail="控制服务未就绪")
 
-    ack = await svc.handle_command("stop")
+    ack = await svc.force_stop()
     await safe_write_audit_log(
         db,
         level="INFO" if ack.result == "ACCEPTED" else "WARN",

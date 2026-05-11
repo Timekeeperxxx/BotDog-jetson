@@ -32,6 +32,14 @@ export type PcdSceneListResponse = {
   items: PcdSceneItem[]
 }
 
+export type NavCurrentScene = {
+  scene_id: string
+  scene_dir: string
+  map_pcd: string
+  ground_pcd: string
+  updated_at: string
+}
+
 export type PcdSceneLayerMetadata = PcdSceneFile & {
   frame_id: string
   type: 'pcd'

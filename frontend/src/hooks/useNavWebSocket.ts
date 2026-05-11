@@ -135,10 +135,10 @@ export function useNavWebSocket() {
   }) => {
     setState((prev) => ({
       ...prev,
-      robotPose: next.robotPose ?? prev.robotPose,
-      globalPath: next.globalPath ?? prev.globalPath,
-      localizationStatus: next.localizationStatus ?? prev.localizationStatus,
-      navigationStatus: next.navigationStatus ?? prev.navigationStatus,
+      robotPose: Object.prototype.hasOwnProperty.call(next, 'robotPose') ? next.robotPose ?? null : prev.robotPose,
+      globalPath: Object.prototype.hasOwnProperty.call(next, 'globalPath') ? next.globalPath ?? null : prev.globalPath,
+      localizationStatus: Object.prototype.hasOwnProperty.call(next, 'localizationStatus') ? next.localizationStatus ?? null : prev.localizationStatus,
+      navigationStatus: Object.prototype.hasOwnProperty.call(next, 'navigationStatus') ? next.navigationStatus ?? null : prev.navigationStatus,
     }))
   }, [])
 

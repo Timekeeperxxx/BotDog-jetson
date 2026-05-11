@@ -1079,8 +1079,8 @@
 }
 
 .pcd-right-rail {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 0.92fr) auto;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   overflow: hidden;
 }
@@ -1090,6 +1090,11 @@
   border: 1px solid rgba(148, 163, 184, 0.18);
   background: rgba(8, 15, 19, 0.9);
   border-radius: 8px;
+}
+
+.pcd-topdown-shell {
+  flex: 0 0 340px;
+  min-height: 340px;
 }
 
 .pcd-topdown-toolbar {
@@ -1114,12 +1119,18 @@
 }
 
 .pcd-waypoint-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
 }
 
 .pcd-waypoint-list {
-  max-height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  max-height: none;
 }
 
 .pcd-waypoint-item {
@@ -1151,6 +1162,7 @@
 .pcd-rail-footer {
   display: flex;
   justify-content: stretch;
+  flex: 0 0 auto;
 }
 
 .pcd-estop-button {
@@ -1387,7 +1399,8 @@
   }
 
   .pcd-right-rail {
-    grid-template-rows: 340px minmax(260px, auto) auto;
+    display: flex;
+    flex-direction: column;
   }
 
   .pcd-main-stage {

@@ -51,6 +51,13 @@ def update_global_path(path: dict[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(next_path)
 
 
+def clear_global_path() -> None:
+    global _latest_global_path
+
+    with _lock:
+        _latest_global_path = None
+
+
 def update_navigation_status(status: dict[str, Any]) -> dict[str, Any]:
     global _latest_navigation_status
 
@@ -64,6 +71,17 @@ def update_navigation_status(status: dict[str, Any]) -> dict[str, Any]:
         _latest_navigation_status = next_status
 
     return copy.deepcopy(next_status)
+
+
+def set_navigation_idle(message: str = "导航空闲") -> dict[str, Any]:
+    return update_navigation_status(
+        {
+            "status": "idle",
+            "target_waypoint_id": None,
+            "target_name": None,
+            "message": message,
+        }
+    )
 
 
 def update_localization_status(status: dict[str, Any]) -> dict[str, Any]:

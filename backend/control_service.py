@@ -194,6 +194,52 @@ class ControlService:
             latency_ms=_elapsed_ms(start_ts),
         )
 
+    async def force_stop(self) -> ControlAckDTO:
+        """
+        直接调用底层适配器的 stop，用于紧急停止。
+
+        这条路径不走通用命令分发，避免把 stop 当成普通控制命令处理。
+        """
+        start_ts = time.monotonic()
+        control_logger = get_logger("机器人控制")
+
+        if self._adapter is None:
+            control_logger.warning("控制适配器未配置，拒绝直接 stop")
+            return ControlAckDTO(
+                ack_cmd="stop",
+                result=RESULT_REJECTED_ADAPTER_NOT_READY,
+                latency_ms=_elapsed_ms(start_ts),
+            )
+
+        if not self._adapter.is_ready():
+            control_logger.warning("控制适配器未就绪，拒绝直接 stop")
+            return ControlAckDTO(
+                ack_cmd="stop",
+                result=RESULT_REJECTED_ADAPTER_NOT_READY,
+                latency_ms=_elapsed_ms(start_ts),
+            )
+
+        try:
+            control_logger.warning("直接调用 SDK stop：adapter.stop()")
+            await self._adapter.stop()
+        except Exception as exc:  # noqa: BLE001
+            control_logger.exception("直接 stop 执行失败：{}", exc)
+            return ControlAckDTO(
+                ack_cmd="stop",
+                result=RESULT_REJECTED_ADAPTER_ERROR,
+                latency_ms=_elapsed_ms(start_ts),
+            )
+
+        self._watchdog_last_reset = time.monotonic()
+        self._watchdog_active = False
+        self._last_request_time = time.monotonic()
+
+        return ControlAckDTO(
+            ack_cmd="stop",
+            result=RESULT_ACCEPTED,
+            latency_ms=_elapsed_ms(start_ts),
+        )
+
     async def run_watchdog(self, stop_event: asyncio.Event) -> None:
         """
         Watchdog 后台任务。

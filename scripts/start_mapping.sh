@@ -40,6 +40,75 @@ MAP_DIR="${MAP_DIR/#\~/$HOME}"
 
 echo "本次建图目录：$MAP_DIR"
 
+echo "开始建图前，清理导航相关后台进程..."
+
+find_matching_pids() {
+  local needle="$1"
+  ps -eo pid=,args= | awk -v needle="$needle" 'index($0, needle) {print $1}'
+}
+
+kill_pid_tree() {
+  local pid="$1"
+  local child
+
+  while IFS= read -r child; do
+    [ -n "$child" ] || continue
+    kill_pid_tree "$child"
+  done < <(pgrep -P "$pid" 2>/dev/null || true)
+
+  kill -TERM "$pid" 2>/dev/null || true
+}
+
+kill_needle_term() {
+  local needle="$1"
+  local pid
+
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    kill_pid_tree "$pid"
+  done < <(find_matching_pids "$needle" | sort -u)
+}
+
+kill_needle_kill() {
+  local needle="$1"
+  local pid
+
+  while IFS= read -r pid; do
+    [ -n "$pid" ] || continue
+    kill -KILL "$pid" 2>/dev/null || true
+    while IFS= read -r child; do
+      [ -n "$child" ] || continue
+      kill -KILL "$child" 2>/dev/null || true
+    done < <(pgrep -P "$pid" 2>/dev/null || true)
+  done < <(find_matching_pids "$needle" | sort -u)
+}
+
+NAV_NEEDLES=(
+  "ros2 launch livox_ros_driver2 msg_MID360_launch.py"
+  "ros2 launch super_lio relocation.py"
+  "ros2 launch global_planner path_planning_with_polygon.launch"
+  "ros2 launch p2p_move_base go2_localization_launch.py"
+  "/home/jetson/superlio/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node"
+  "/home/jetson/superlio/install/super_lio/lib/super_lio/relocation_node"
+  "/home/jetson/dddmr_navigation_new_local/install/global_planner/lib/global_planner/global_planner_node"
+  "/home/jetson/dddmr_navigation_new_local/install/mcl_3dl/lib/mcl_3dl/pcl_publisher"
+  "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/clicked2goal.py"
+  "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py"
+  "/home/jetson/Project/BOTDOG/test_cmd_vel_fixed.sh"
+)
+
+for needle in "${NAV_NEEDLES[@]}"; do
+  kill_needle_term "$needle"
+done
+
+sleep 3
+
+for needle in "${NAV_NEEDLES[@]}"; do
+  kill_needle_kill "$needle"
+done
+
+sleep 1
+
 mkdir -p "$MAP_DIR"
 
 cd "$HOME/superlio"
