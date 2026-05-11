@@ -11,11 +11,8 @@ import {
   Square,
 } from 'lucide-react'
 import {
-  notifyNavPageOpen,
   deletePcdScene,
-  restartNavigationLocalization,
   setLocalizationPose,
-  triggerNavEmergencyStop,
 } from '../api/pcdMapApi'
 import { NavWaypointPanel } from '../components/pcd/NavWaypointPanel'
 import { PcdFileListPanel } from '../components/pcd/PcdFileListPanel'
@@ -32,6 +29,7 @@ import { useNavScenes } from './nav/useNavScenes'
 import { useNavWaypoints } from './nav/useNavWaypoints'
 import { useNavTasks } from './nav/useNavTasks'
 import { useNavMapping } from './nav/useNavMapping'
+import { useNavRuntimeActions } from './nav/useNavRuntimeActions'
 
 type LogItem = {
   id: number
@@ -54,8 +52,6 @@ export function PcdMapDemoPage() {
   const [toolMode, setToolMode] = useState<'none' | 'obstacle' | 'pose'>('none')
   const [waypointZ, setWaypointZ] = useState(-0.83)
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
-  const [estopSending, setEstopSending] = useState(false)
-  const [restartLocalizationSending, setRestartLocalizationSending] = useState(false)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
   const [webglSupported, setWebglSupported] = useState(true)
@@ -179,6 +175,18 @@ export function PcdMapDemoPage() {
     onLog: addLog,
   })
 
+  const {
+    estopSending,
+    restartLocalizationSending,
+    handleEmergencyStop,
+    handleRestartNavigationLocalization,
+  } = useNavRuntimeActions({
+    canOperate,
+    setNavigatingWaypointId,
+    setInitialState,
+    onLog: addLog,
+  })
+
   useEffect(() => {
     setWebglSupported(detectWebGLSupport())
   }, [])
@@ -207,51 +215,6 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable])
 
-  const handleEmergencyStop = useCallback(async () => {
-    if (!canOperate) return
-    if (estopSending) return
-    setEstopSending(true)
-    try {
-      const result = await triggerNavEmergencyStop()
-      setNavigatingWaypointId(null)
-      setInitialState({
-        globalPath: null,
-        navigationStatus: {
-          status: 'idle',
-          target_waypoint_id: null,
-          target_name: null,
-          message: '已执行导航急停',
-          timestamp: Date.now() / 1000,
-        },
-      })
-      addLog(`已执行导航急停：${result.message}`, 'error')
-    } catch (error) {
-      addLog(error instanceof Error ? error.message : '执行导航急停失败', 'error')
-    } finally {
-      setEstopSending(false)
-    }
-  }, [addLog, canOperate, estopSending, setInitialState])
-
-  const handleRestartNavigationLocalization = useCallback(async () => {
-    if (!canOperate) return
-    if (restartLocalizationSending) return
-
-    setRestartLocalizationSending(true)
-    try {
-      const result = await restartNavigationLocalization()
-      addLog(
-        `导航定位已重启：${result.scene_id ?? '--'}，map=${result.map_pcd ?? '--'}，ground=${result.ground_pcd ?? '--'}，` +
-          `livox=${result.livox_pid ?? 'null'}，relocation=${result.relocation_pid ?? 'null'}，` +
-          `global_planner=${result.global_planner_pid ?? 'null'}，p2p_move_base=${result.p2p_move_base_pid ?? 'null'}，` +
-          `cmd_vel=${result.cmd_vel_pid ?? 'null'}，ready=${result.navigation_ready ?? false}`,
-      )
-    } catch (error) {
-      addLog(error instanceof Error ? error.message : '重启导航定位失败', 'error')
-    } finally {
-      setRestartLocalizationSending(false)
-    }
-  }, [addLog, canOperate, restartLocalizationSending])
-
   const requestDeleteScene = useCallback((scene: PcdSceneItem) => {
     setSceneDeleteConfirm(scene)
   }, [])
@@ -267,28 +230,6 @@ export function PcdMapDemoPage() {
       addLog(error instanceof Error ? error.message : '删除场景失败', 'error')
     }
   }, [addLog, refreshScenes, sceneDeleteConfirm])
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function sendPageOpenSignal() {
-      try {
-        const result = await notifyNavPageOpen()
-        if (!cancelled) {
-          addLog(`已发送页面启动信号到 ${result.topic}`)
-        }
-      } catch (error) {
-        if (!cancelled) {
-          addLog(error instanceof Error ? error.message : '发送页面启动信号失败', 'error')
-        }
-      }
-    }
-
-    void sendPageOpenSignal()
-    return () => {
-      cancelled = true
-    }
-  }, [addLog])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
