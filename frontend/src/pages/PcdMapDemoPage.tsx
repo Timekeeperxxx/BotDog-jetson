@@ -14,7 +14,6 @@ import {
   notifyNavPageOpen,
   deletePcdScene,
   restartNavigationLocalization,
-  setMappingEnabled,
   setLocalizationPose,
   triggerNavEmergencyStop,
 } from '../api/pcdMapApi'
@@ -32,6 +31,7 @@ import type { NavWaypoint, PcdSceneItem } from '../types/pcdMap'
 import { useNavScenes } from './nav/useNavScenes'
 import { useNavWaypoints } from './nav/useNavWaypoints'
 import { useNavTasks } from './nav/useNavTasks'
+import { useNavMapping } from './nav/useNavMapping'
 
 type LogItem = {
   id: number
@@ -39,38 +39,8 @@ type LogItem = {
   message: string
 }
 
-type MappingSessionInfo = {
-  sceneName: string
-  mapDir: string
-}
-
 function nowText() {
   return new Date().toLocaleTimeString()
-}
-
-function validateMappingSceneName(
-  rawValue: string,
-): { ok: false; message: string } | { ok: true; value: string } {
-  const sceneName = rawValue.trim()
-  if (!sceneName) {
-    return { ok: false, message: '请输入场景名称' }
-  }
-  if (sceneName === '.' || sceneName === '..') {
-    return { ok: false, message: '场景名称非法' }
-  }
-  if (sceneName.includes('/') || sceneName.includes('\\')) {
-    return { ok: false, message: '场景名称不能包含 / 或 \\' }
-  }
-  if (sceneName.includes('..')) {
-    return { ok: false, message: '场景名称不能包含 ..' }
-  }
-  if (Array.from(sceneName).some((char) => char.charCodeAt(0) < 32)) {
-    return { ok: false, message: '场景名称包含非法控制字符' }
-  }
-  if (sceneName.length > 100) {
-    return { ok: false, message: '场景名称过长' }
-  }
-  return { ok: true, value: sceneName }
 }
 
 export function PcdMapDemoPage() {
@@ -86,12 +56,6 @@ export function PcdMapDemoPage() {
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
   const [estopSending, setEstopSending] = useState(false)
   const [restartLocalizationSending, setRestartLocalizationSending] = useState(false)
-  const [mappingActive, setMappingActive] = useState(false)
-  const [mappingSending, setMappingSending] = useState(false)
-  const [mappingDialogOpen, setMappingDialogOpen] = useState(false)
-  const [mappingSceneName, setMappingSceneName] = useState('')
-  const [mappingSceneError, setMappingSceneError] = useState<string | null>(null)
-  const [mappingSessionInfo, setMappingSessionInfo] = useState<MappingSessionInfo | null>(null)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
   const [webglSupported, setWebglSupported] = useState(true)
@@ -159,6 +123,24 @@ export function PcdMapDemoPage() {
     setGoToConfirm,
     onLog: addLog,
     onExitToolMode: () => setToolMode('none'),
+  })
+
+  const {
+    mappingActive,
+    mappingSending,
+    mappingDialogOpen,
+    setMappingDialogOpen,
+    mappingSceneName,
+    setMappingSceneName,
+    mappingSceneError,
+    setMappingSceneError,
+    mappingSessionInfo,
+    handleStopMapping,
+    handleOpenMappingDialog,
+    handleConfirmStartMapping,
+  } = useNavMapping({
+    canOperate,
+    onLog: addLog,
   })
 
   const {
@@ -285,67 +267,6 @@ export function PcdMapDemoPage() {
       addLog(error instanceof Error ? error.message : '删除场景失败', 'error')
     }
   }, [addLog, refreshScenes, sceneDeleteConfirm])
-
-  const handleStopMapping = useCallback(async () => {
-    if (!canOperate) return
-    if (mappingSending) return
-
-    setMappingSending(true)
-    try {
-      const result = await setMappingEnabled(false)
-      setMappingActive(false)
-      setMappingSessionInfo(null)
-      addLog(result.message || '已停止建图')
-    } catch (error) {
-      addLog(error instanceof Error ? error.message : '停止建图失败', 'error')
-    } finally {
-      setMappingSending(false)
-    }
-  }, [addLog, canOperate, mappingSending])
-
-  const handleOpenMappingDialog = useCallback(() => {
-    if (!canOperate) return
-    if (mappingSending) return
-    setMappingSceneError(null)
-    setMappingSceneName('')
-    setMappingDialogOpen(true)
-  }, [canOperate, mappingSending])
-
-  const handleConfirmStartMapping = useCallback(async () => {
-    if (!canOperate) return
-    if (mappingSending) return
-
-    const validated = validateMappingSceneName(mappingSceneName)
-    if (!validated.ok) {
-      setMappingSceneError(validated.message)
-      return
-    }
-
-    setMappingSceneError(null)
-    setMappingSending(true)
-    try {
-      const result = await setMappingEnabled(true, validated.value)
-      setMappingActive(true)
-      setMappingSessionInfo({
-        sceneName: result.scene_name || validated.value,
-        mapDir: result.map_dir || '',
-      })
-      setMappingDialogOpen(false)
-      addLog(
-        result.message
-          ? `${result.message}：${result.scene_name}，目录=${result.map_dir}`
-          : `建图已启动：${result.scene_name}，目录=${result.map_dir}`,
-      )
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '启动建图失败'
-      addLog(message, 'error')
-      if (message.includes('建图已在进行中')) {
-        setMappingActive(true)
-      }
-    } finally {
-      setMappingSending(false)
-    }
-  }, [addLog, canOperate, mappingSceneName, mappingSending])
 
   useEffect(() => {
     let cancelled = false

@@ -369,7 +369,7 @@ export function useNavTasks({
       })
       onLog(`已停止导航任务 ${task.name}，已发布 ${result.topic}=false`)
     } catch (error) {
-      onLog(error instanceof Error ? error.message : '停止任务失败', 'error')
+      onLog(error instanceof Error ? error.message : '停止导航任务失败', 'error')
     }
   }, [canOperate, onLog, setInitialState, setNavigatingWaypointId, tasks])
 
