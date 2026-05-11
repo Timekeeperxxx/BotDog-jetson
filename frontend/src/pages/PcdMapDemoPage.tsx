@@ -334,7 +334,7 @@ export function PcdMapDemoPage() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [currentCmd, startCommand, stopCommand])
+  }, [currentCmd, startCommand, stopCommand, canOperate])
 
   return (
     <main className="pcd-demo-page">
