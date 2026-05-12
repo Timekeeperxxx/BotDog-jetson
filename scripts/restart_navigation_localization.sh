@@ -243,22 +243,6 @@ start_cmd_vel_test() {
     exit 1
   fi
 
-  find_cmd_vel_python_pid() {
-    local line
-    local pid=""
-    while IFS= read -r line; do
-      [ -n "$line" ] || continue
-      pid="${line%% *}"
-    done < <(pgrep -af "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py" || true)
-
-    if [ -n "$pid" ]; then
-      printf '%s\n' "$pid"
-      return 0
-    fi
-
-    return 1
-  }
-
   nohup env -i \
     HOME="${HOME:-/home/jetson}" \
     USER="${USER:-jetson}" \
@@ -271,23 +255,15 @@ start_cmd_vel_test() {
   local launcher_pid=$!
   echo "cmd_vel.py PID: $launcher_pid"
 
-  local cmd_vel_pid=""
-  local attempt
-  for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    if cmd_vel_pid="$(find_cmd_vel_python_pid)"; then
-      break
-    fi
-    sleep 1
-  done
-
-  if [ -z "$cmd_vel_pid" ]; then
+  sleep 1
+  if ! kill -0 "$launcher_pid" 2>/dev/null; then
     rm -f "$CMD_VEL_PID_FILE"
-    echo "错误: cmd_vel.py 启动失败，请检查 $cmd_vel_log_file" >&2
+    echo "错误: cmd_vel 测试脚本启动后立即退出，请检查 $cmd_vel_log_file" >&2
     exit 1
   fi
 
-  printf '%s\n' "$cmd_vel_pid" > "$CMD_VEL_PID_FILE"
-  printf -v "$pid_var" '%s' "$cmd_vel_pid"
+  printf '%s\n' "$launcher_pid" > "$CMD_VEL_PID_FILE"
+  printf -v "$pid_var" '%s' "$launcher_pid"
 }
 
 start_launch "$HOME/superlio" livox_ros_driver2 msg_MID360_launch.py "启动 Livox MID360 驱动..." LIVOX_PID livox.pid

@@ -163,19 +163,10 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
     fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     fake_sleep.chmod(0o755)
 
-    fake_cmd_vel_runner = project_root / "unitree_sdk2_python" / "example" / "scripts" / "cmd_vel.py"
-    fake_cmd_vel_runner.parent.mkdir(parents=True, exist_ok=True)
-    fake_cmd_vel_runner.write_text(
-        "#!/usr/bin/env bash\n"
-        "exec python -c 'import time; time.sleep(60)' /home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py\n",
-        encoding="utf-8",
-    )
-    fake_cmd_vel_runner.chmod(0o755)
-
     fake_cmd_vel_bootstrap = project_root / "test_cmd_vel_fixed.sh"
     fake_cmd_vel_bootstrap.write_text(
         "#!/usr/bin/env bash\n"
-        "exec python -c 'import time; time.sleep(60)' /home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py\n",
+        "exec python -c 'import time; time.sleep(60)'\n",
         encoding="utf-8",
     )
     fake_cmd_vel_bootstrap.chmod(0o755)
@@ -235,6 +226,7 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
         assert "Scene1_half_ground.pcd" in output
         for path in expected_pid_files:
             assert path.exists()
+        assert int((runtime_dir / "cmd_vel.pid").read_text(encoding="utf-8").strip()) > 0
     finally:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -242,7 +234,6 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
             pass
         for path in (
             fake_cmd_vel_bootstrap,
-            fake_cmd_vel_runner,
             fake_ros2,
             fake_sleep,
         ):
