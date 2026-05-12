@@ -79,6 +79,9 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
     monkeypatch.setattr(services_nav_localization.settings, "NAV_RUNTIME_DIR", str(runtime_root))
     monkeypatch.setattr(services_nav_localization, "_restart_script_path", lambda: script_path)
     monkeypatch.setattr(services_nav_localization, "_project_root", lambda: tmp_path)
+    monkeypatch.setattr(services_nav_localization, "_is_pid_alive", lambda pid: pid is not None)
+    monkeypatch.setattr(services_nav_localization, "_find_cmd_vel_test_publisher_pids", lambda: [])
+    monkeypatch.setattr(services_nav_localization, "_inspect_tf_health", lambda: (True, [], []))
     monkeypatch.setattr(
         services_nav_localization,
         "_wait_for_pid_files",
@@ -116,9 +119,197 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
     assert str(result["map_pcd"]).endswith("map.pcd")
     assert str(result["ground_pcd"]).endswith("ground.pcd")
     assert result["navigation_ready"] is True
+    assert result["health"]["scene_ok"] is True
+    assert result["health"]["map_pcd_ok"] is True
+    assert result["health"]["ground_pcd_ok"] is True
+    assert result["health"]["livox_ok"] is True
+    assert result["health"]["relocation_ok"] is True
+    assert result["health"]["global_planner_ok"] is True
+    assert result["health"]["p2p_move_base_ok"] is True
+    assert result["health"]["cmd_vel_test_publisher_running"] is False
+    assert result["health"]["tf_ok"] is True
+    assert result["warnings"] == []
+    assert result["errors"] == []
     assert result["process_pids"]["livox"] == 101
     assert result["process_pids"]["cmd_vel"] == 105
-    assert result["message"] == "已启动重启脚本，导航链路 PID 已确认"
+    assert result["message"] == "已启动重启脚本，导航可用"
+
+
+def test_restart_navigation_localization_marks_missing_ground_unavailable(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    scene_dir = scene_root / "Scene1_测试"
+    runtime_root = tmp_path / "data" / "nav_runtime"
+    script_path = tmp_path / "restart_navigation_localization.sh"
+
+    scene_dir.mkdir(parents=True)
+    runtime_root.mkdir(parents=True)
+    (scene_dir / "map.pcd").write_text("", encoding="utf-8")
+    script_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    atomic_write_json(
+        runtime_root / "current_scene.json",
+        {
+            "scene_id": "Scene1_测试",
+            "scene_dir": str(scene_dir),
+            "map_pcd": str(scene_dir / "map.pcd"),
+            "ground_pcd": str(scene_dir / "ground.pcd"),
+            "updated_at": "2026-05-11T00:00:00.000Z",
+        },
+    )
+
+    monkeypatch.setattr(services_nav_localization.settings, "NAV_RUNTIME_DIR", str(runtime_root))
+    monkeypatch.setattr(services_nav_localization, "_restart_script_path", lambda: script_path)
+    monkeypatch.setattr(services_nav_localization, "_project_root", lambda: tmp_path)
+    monkeypatch.setattr(services_nav_localization, "_is_pid_alive", lambda pid: pid is not None)
+    monkeypatch.setattr(services_nav_localization, "_find_cmd_vel_test_publisher_pids", lambda: [])
+    monkeypatch.setattr(services_nav_localization, "_inspect_tf_health", lambda: (True, [], []))
+    monkeypatch.setattr(
+        services_nav_localization,
+        "_wait_for_pid_files",
+        lambda paths, timeout_s=20.0: {
+            "livox_pid": 101,
+            "relocation_pid": 102,
+            "global_planner_pid": 103,
+            "p2p_move_base_pid": 104,
+            "cmd_vel_pid": 105,
+        },
+    )
+    monkeypatch.setattr(services_nav_localization, "_restart_proc", None)
+
+    class DummyProc:
+        pid = 999
+        stdout = None
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(services_nav_localization.subprocess, "Popen", lambda *args, **kwargs: DummyProc())
+
+    result = services_nav_localization.restart_navigation_localization()
+
+    assert result["health"]["scene_ok"] is True
+    assert result["health"]["map_pcd_ok"] is True
+    assert result["health"]["ground_pcd_ok"] is False
+    assert result["navigation_ready"] is False
+    assert "ground.pcd 缺失" in result["errors"]
+    assert "ground.pcd 缺失" in result["message"]
+
+
+def test_restart_navigation_localization_detects_cmd_vel_test_publisher_residual(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    scene_dir = scene_root / "Scene1_测试"
+    runtime_root = tmp_path / "data" / "nav_runtime"
+    script_path = tmp_path / "restart_navigation_localization.sh"
+
+    scene_dir.mkdir(parents=True)
+    runtime_root.mkdir(parents=True)
+    (scene_dir / "map.pcd").write_text("", encoding="utf-8")
+    (scene_dir / "ground.pcd").write_text("", encoding="utf-8")
+    script_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    atomic_write_json(
+        runtime_root / "current_scene.json",
+        {
+            "scene_id": "Scene1_测试",
+            "scene_dir": str(scene_dir),
+            "map_pcd": str(scene_dir / "map.pcd"),
+            "ground_pcd": str(scene_dir / "ground.pcd"),
+            "updated_at": "2026-05-11T00:00:00.000Z",
+        },
+    )
+
+    monkeypatch.setattr(services_nav_localization.settings, "NAV_RUNTIME_DIR", str(runtime_root))
+    monkeypatch.setattr(services_nav_localization, "_restart_script_path", lambda: script_path)
+    monkeypatch.setattr(services_nav_localization, "_project_root", lambda: tmp_path)
+    monkeypatch.setattr(services_nav_localization, "_is_pid_alive", lambda pid: pid is not None)
+    monkeypatch.setattr(services_nav_localization, "_find_cmd_vel_test_publisher_pids", lambda: [7777])
+    monkeypatch.setattr(services_nav_localization, "_inspect_tf_health", lambda: (True, [], []))
+    monkeypatch.setattr(
+        services_nav_localization,
+        "_wait_for_pid_files",
+        lambda paths, timeout_s=20.0: {
+            "livox_pid": 101,
+            "relocation_pid": 102,
+            "global_planner_pid": 103,
+            "p2p_move_base_pid": 104,
+            "cmd_vel_pid": 105,
+        },
+    )
+    monkeypatch.setattr(services_nav_localization, "_restart_proc", None)
+
+    class DummyProc:
+        pid = 999
+        stdout = None
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(services_nav_localization.subprocess, "Popen", lambda *args, **kwargs: DummyProc())
+
+    result = services_nav_localization.restart_navigation_localization()
+
+    assert result["health"]["cmd_vel_test_publisher_running"] is True
+    assert result["navigation_ready"] is False
+    assert any("cmd_vel 测试发布器残留" in warning for warning in result["warnings"])
+    assert "cmd_vel 测试发布器残留" in result["message"]
+
+
+def test_restart_navigation_localization_marks_missing_pid_false(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    scene_dir = scene_root / "Scene1_测试"
+    runtime_root = tmp_path / "data" / "nav_runtime"
+    script_path = tmp_path / "restart_navigation_localization.sh"
+
+    scene_dir.mkdir(parents=True)
+    runtime_root.mkdir(parents=True)
+    (scene_dir / "map.pcd").write_text("", encoding="utf-8")
+    (scene_dir / "ground.pcd").write_text("", encoding="utf-8")
+    script_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    atomic_write_json(
+        runtime_root / "current_scene.json",
+        {
+            "scene_id": "Scene1_测试",
+            "scene_dir": str(scene_dir),
+            "map_pcd": str(scene_dir / "map.pcd"),
+            "ground_pcd": str(scene_dir / "ground.pcd"),
+            "updated_at": "2026-05-11T00:00:00.000Z",
+        },
+    )
+
+    monkeypatch.setattr(services_nav_localization.settings, "NAV_RUNTIME_DIR", str(runtime_root))
+    monkeypatch.setattr(services_nav_localization, "_restart_script_path", lambda: script_path)
+    monkeypatch.setattr(services_nav_localization, "_project_root", lambda: tmp_path)
+    monkeypatch.setattr(services_nav_localization, "_find_cmd_vel_test_publisher_pids", lambda: [])
+    monkeypatch.setattr(services_nav_localization, "_inspect_tf_health", lambda: (True, [], []))
+    monkeypatch.setattr(
+        services_nav_localization,
+        "_wait_for_pid_files",
+        lambda paths, timeout_s=20.0: {
+            "livox_pid": 101,
+            "relocation_pid": 102,
+            "global_planner_pid": 103,
+            "p2p_move_base_pid": 104,
+            "cmd_vel_pid": 105,
+        },
+    )
+    monkeypatch.setattr(services_nav_localization, "_restart_proc", None)
+
+    class DummyProc:
+        pid = 999
+        stdout = None
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(services_nav_localization.subprocess, "Popen", lambda *args, **kwargs: DummyProc())
+    monkeypatch.setattr(services_nav_localization, "_is_pid_alive", lambda pid: pid not in {103})
+
+    result = services_nav_localization.restart_navigation_localization()
+
+    assert result["health"]["global_planner_ok"] is False
+    assert result["navigation_ready"] is False
+    assert any("global_planner 未就绪" in error for error in result["errors"])
 
 
 def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):

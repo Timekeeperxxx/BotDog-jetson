@@ -170,6 +170,81 @@ export function PcdMapDemoPage() {
     ? '-'
     : `${navigationStatus.distance_to_goal.toFixed(3)} m`
 
+  const formatRestartHealthLog = useCallback((result: Awaited<ReturnType<typeof restartNavigationLocalization>>) => {
+    const health = result.health
+    if (!health) {
+      return `导航定位已重启：${result.scene_id ?? '--'}，ready=${result.navigation_ready ?? false}`
+    }
+
+    const okParts: string[] = []
+    const badParts: string[] = []
+
+    if (health.scene_ok && health.scene_id) {
+      okParts.push(`场景：${health.scene_id}`)
+    } else if (!health.scene_ok) {
+      badParts.push('场景目录不存在')
+    }
+
+    if (health.map_pcd_ok) {
+      okParts.push('map.pcd：正常')
+    } else {
+      badParts.push('map.pcd 缺失')
+    }
+
+    if (health.ground_pcd_ok) {
+      okParts.push('ground.pcd：正常')
+    } else {
+      badParts.push('ground.pcd 缺失')
+    }
+
+    if (health.tf_ok === true) {
+      okParts.push('TF：正常')
+    } else if (health.tf_ok === false) {
+      badParts.push('TF 未就绪')
+    } else {
+      okParts.push('TF：未确认')
+    }
+
+    const processOk = [
+      health.livox_ok,
+      health.relocation_ok,
+      health.global_planner_ok,
+      health.p2p_move_base_ok,
+    ].every(Boolean)
+
+    if (processOk) {
+      okParts.push('进程：livox / relocation / global_planner / p2p_move_base 正常')
+    } else {
+      const processIssues = [
+        health.livox_ok ? null : 'livox',
+        health.relocation_ok ? null : 'relocation',
+        health.global_planner_ok ? null : 'global_planner',
+        health.p2p_move_base_ok ? null : 'p2p_move_base',
+      ].filter(Boolean)
+      if (processIssues.length > 0) {
+        badParts.push(`进程异常：${processIssues.join(' / ')}`)
+      }
+    }
+
+    if (health.cmd_vel_test_publisher_running) {
+      badParts.push('检测到 cmd_vel 测试发布器残留')
+    }
+
+    if (health.warnings.length > 0) {
+      badParts.push(...health.warnings)
+    }
+    if (health.errors.length > 0) {
+      badParts.push(...health.errors)
+    }
+
+    if (result.navigation_ready) {
+      return `导航定位已重启：导航可用${okParts.length > 0 ? `；${okParts.join('；')}` : ''}`
+    }
+
+    const reasons = badParts.length > 0 ? badParts : ['健康检查未通过']
+    return `导航定位已重启，但导航不可用：${reasons.join('；')}`
+  }, [])
+
   const handleSceneChanging = useCallback(() => {
     setAddMode(false)
   }, [])
@@ -332,18 +407,13 @@ export function PcdMapDemoPage() {
     setRestartLocalizationSending(true)
     try {
       const result = await restartNavigationLocalization()
-      addLog(
-        `导航定位已重启：${result.scene_id ?? '--'}，map=${result.map_pcd ?? '--'}，ground=${result.ground_pcd ?? '--'}，` +
-          `livox=${result.livox_pid ?? 'null'}，relocation=${result.relocation_pid ?? 'null'}，` +
-          `global_planner=${result.global_planner_pid ?? 'null'}，p2p_move_base=${result.p2p_move_base_pid ?? 'null'}，` +
-          `cmd_vel=${result.cmd_vel_pid ?? 'null'}，ready=${result.navigation_ready ?? false}`,
-      )
+      addLog(formatRestartHealthLog(result), result.navigation_ready ? 'info' : 'error')
     } catch (error) {
       addLog(error instanceof Error ? error.message : '重启导航定位失败', 'error')
     } finally {
       setRestartLocalizationSending(false)
     }
-  }, [addLog, canOperate, restartLocalizationSending])
+  }, [addLog, canOperate, formatRestartHealthLog, restartLocalizationSending])
 
   const requestDeleteScene = useCallback((scene: PcdSceneItem) => {
     setSceneDeleteConfirm(scene)

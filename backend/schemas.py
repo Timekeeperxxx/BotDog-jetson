@@ -352,6 +352,9 @@ class LocalizationRestartResponse(BaseModel):
     cmd_vel_running: bool = Field(default=False, description="cmd_vel 脚本是否已拉起")
     navigation_ready: bool = Field(default=False, description="导航链路是否已恢复")
     process_pids: dict[str, int | None] = Field(default_factory=dict, description="子进程 PID 摘要")
+    health: dict[str, Any] | None = Field(default=None, description="导航定位健康检查结果")
+    warnings: list[str] | None = Field(default=None, description="健康检查警告")
+    errors: list[str] | None = Field(default=None, description="健康检查错误")
     message: str = Field(..., description="响应消息")
 
 

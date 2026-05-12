@@ -133,7 +133,7 @@ def save_current_scene(scene_id: str) -> dict[str, Any]:
     return payload
 
 
-def load_current_scene() -> dict[str, Any]:
+def load_current_scene(strict: bool = True) -> dict[str, Any]:
     path = _current_scene_path()
     if not path.exists():
         raise FileNotFoundError(f"当前场景运行态文件不存在: {path}")
@@ -161,12 +161,13 @@ def load_current_scene() -> dict[str, Any]:
     map_pcd = Path(map_pcd_raw).expanduser()
     ground_pcd = Path(ground_pcd_raw).expanduser()
 
-    if not scene_dir.exists() or not scene_dir.is_dir():
-        raise FileNotFoundError(f"场景目录不存在: {scene_dir}")
-    if not map_pcd.exists():
-        raise FileNotFoundError(f"场景缺少 map.pcd: {map_pcd}")
-    if not ground_pcd.exists():
-        raise FileNotFoundError(f"场景缺少 ground.pcd: {ground_pcd}")
+    if strict:
+        if not scene_dir.exists() or not scene_dir.is_dir():
+            raise FileNotFoundError(f"场景目录不存在: {scene_dir}")
+        if not map_pcd.exists():
+            raise FileNotFoundError(f"场景缺少 map.pcd: {map_pcd}")
+        if not ground_pcd.exists():
+            raise FileNotFoundError(f"场景缺少 ground.pcd: {ground_pcd}")
 
     return {
         "scene_id": scene_id,
@@ -174,6 +175,9 @@ def load_current_scene() -> dict[str, Any]:
         "map_pcd": str(map_pcd),
         "ground_pcd": str(ground_pcd),
         "updated_at": str(data.get("updated_at") or ""),
+        "scene_ok": scene_dir.exists() and scene_dir.is_dir(),
+        "map_pcd_ok": map_pcd.exists(),
+        "ground_pcd_ok": ground_pcd.exists(),
     }
 
 
@@ -250,33 +254,170 @@ def _wait_for_pid_files(paths: dict[str, Path], timeout_s: float = 20.0) -> dict
     return result
 
 
-def _find_cmd_vel_pids() -> list[int]:
-    try:
-        result = subprocess.run(
-            [
-                "pgrep",
-                "-af",
-                "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except Exception as exc:
-        nav_logger.warning("搜索 cmd_vel 进程失败：{}", exc)
-        return []
+def _is_pid_alive(pid: int | None) -> bool:
+    if pid is None or pid <= 0:
+        return False
 
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except Exception:
+        return False
+
+
+def _find_pids_by_needles(needles: list[str]) -> list[int]:
     pids: list[int] = []
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        pid_text = line.split(maxsplit=1)[0]
+
+    for needle in needles:
         try:
-            pids.append(int(pid_text))
-        except ValueError:
+            result = subprocess.run(
+                ["pgrep", "-af", needle],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception as exc:
+            nav_logger.warning("搜索进程失败：needle={} err={}", needle, exc)
             continue
-    return pids
+
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            pid_text = line.split(maxsplit=1)[0]
+            try:
+                pids.append(int(pid_text))
+            except ValueError:
+                continue
+
+    return sorted(set(pids))
+
+
+def _find_cmd_vel_pids() -> list[int]:
+    return _find_pids_by_needles([
+        "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py",
+    ])
+
+
+def _find_cmd_vel_test_publisher_pids() -> list[int]:
+    return _find_pids_by_needles([
+        "test_cmd_vel_publisher.py",
+        "cmd_vel_publisher",
+        "test_ros2_cmd_vel_bridge.py",
+    ])
+
+
+def _inspect_tf_health() -> tuple[bool | None, list[str], list[str]]:
+    warnings: list[str] = []
+    errors: list[str] = []
+
+    try:
+        from .services_nav_state import get_nav_state
+
+        nav_state = get_nav_state()
+        robot_pose = nav_state.get("robot_pose") or {}
+        localization_status = nav_state.get("localization_status") or {}
+
+        robot_frame = str(robot_pose.get("frame_id") or "").strip()
+        localization_source = str(localization_status.get("source") or "").strip()
+        localization_status_name = str(localization_status.get("status") or "").strip().lower()
+
+        if robot_frame == settings.ROS_NAV_FRAME_ID:
+            return True, warnings, errors
+        if localization_source.startswith("tf:") and localization_status_name == "ok":
+            return True, warnings, errors
+        if localization_source.startswith("tf:") and localization_status_name in {"error", "failed"}:
+            errors.append("TF 未就绪")
+            return False, warnings, errors
+
+        warnings.append("TF 状态未确认，需等待 /nav_status 或 robot_pose 验证")
+        return None, warnings, errors
+    except Exception as exc:
+        warnings.append(f"TF 状态未确认：{exc}")
+        return None, warnings, errors
+
+
+def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | None]) -> dict[str, Any]:
+    scene_dir = Path(str(scene.get("scene_dir") or "")).expanduser()
+    map_pcd = Path(str(scene.get("map_pcd") or "")).expanduser()
+    ground_pcd = Path(str(scene.get("ground_pcd") or "")).expanduser()
+
+    scene_ok = scene_dir.exists() and scene_dir.is_dir()
+    map_pcd_ok = map_pcd.exists()
+    ground_pcd_ok = ground_pcd.exists()
+
+    livox_ok = _is_pid_alive(child_pids.get("livox_pid"))
+    relocation_ok = _is_pid_alive(child_pids.get("relocation_pid"))
+    global_planner_ok = _is_pid_alive(child_pids.get("global_planner_pid"))
+    p2p_move_base_ok = _is_pid_alive(child_pids.get("p2p_move_base_pid"))
+    cmd_vel_pid = child_pids.get("cmd_vel_pid")
+    cmd_vel_running = _is_pid_alive(cmd_vel_pid)
+
+    tf_ok, tf_warnings, tf_errors = _inspect_tf_health()
+
+    warnings: list[str] = list(tf_warnings)
+    errors: list[str] = list(tf_errors)
+
+    if not scene_ok:
+        errors.append("场景目录不存在")
+    if not map_pcd_ok:
+        errors.append("map.pcd 缺失")
+    if not ground_pcd_ok:
+        errors.append("ground.pcd 缺失")
+    if not livox_ok:
+        errors.append("livox 未就绪")
+    if not relocation_ok:
+        errors.append("relocation 未就绪")
+    if not global_planner_ok:
+        errors.append("global_planner 未就绪")
+    if not p2p_move_base_ok:
+        errors.append("p2p_move_base 未就绪")
+
+    cmd_vel_test_publisher_pids = _find_cmd_vel_test_publisher_pids()
+    cmd_vel_test_publisher_running = len(cmd_vel_test_publisher_pids) > 0
+    if cmd_vel_test_publisher_running:
+        warnings.append("检测到 cmd_vel 测试发布器残留，请先停止，否则可能导致机器狗异常移动")
+
+    navigation_ready = (
+        scene_ok
+        and map_pcd_ok
+        and ground_pcd_ok
+        and livox_ok
+        and relocation_ok
+        and global_planner_ok
+        and p2p_move_base_ok
+        and not cmd_vel_test_publisher_running
+        and tf_ok is not False
+    )
+
+    health = {
+        "scene_ok": scene_ok,
+        "scene_id": scene.get("scene_id"),
+        "scene_dir": str(scene_dir),
+        "map_pcd_ok": map_pcd_ok,
+        "map_pcd": str(map_pcd),
+        "ground_pcd_ok": ground_pcd_ok,
+        "ground_pcd": str(ground_pcd),
+        "livox_ok": livox_ok,
+        "relocation_ok": relocation_ok,
+        "global_planner_ok": global_planner_ok,
+        "p2p_move_base_ok": p2p_move_base_ok,
+        "cmd_vel_test_publisher_running": cmd_vel_test_publisher_running,
+        "cmd_vel_running": cmd_vel_running,
+        "cmd_vel_pid": cmd_vel_pid,
+        "tf_ok": tf_ok,
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+    return {
+        "health": health,
+        "navigation_ready": navigation_ready,
+        "warnings": warnings,
+        "errors": errors,
+    }
 
 
 def _kill_pid_tree(pid: int, sig: int) -> None:
@@ -458,7 +599,7 @@ def restart_navigation_localization() -> dict[str, Any]:
         raise FileNotFoundError(f"重启脚本不是文件: {script_path}")
 
     with _restart_lock:
-        scene = load_current_scene()
+        scene = load_current_scene(strict=False)
         nav_logger.info("收到导航定位重启请求，准备清理旧进程并启动脚本")
         nav_logger.info("准备重启导航定位")
         _stop_restart_proc(_restart_proc)
@@ -501,14 +642,15 @@ def restart_navigation_localization() -> dict[str, Any]:
             "cmd_vel_pid": _cmd_vel_pid_path(),
         }
         child_pids = _wait_for_pid_files(pid_files, timeout_s=20.0)
-        navigation_ready = all(
-            child_pids[key] is not None
-            for key in ("livox_pid", "relocation_pid", "global_planner_pid", "p2p_move_base_pid", "cmd_vel_pid")
-        )
+        health_result = _build_restart_health(scene, child_pids)
+        navigation_ready = bool(health_result["navigation_ready"])
+        warnings = list(health_result["warnings"] or [])
+        errors = list(health_result["errors"] or [])
         if navigation_ready:
-            message = "已启动重启脚本，导航链路 PID 已确认"
+            message = "已启动重启脚本，导航可用"
         else:
-            message = "已启动重启脚本，部分子进程 PID 未确认，请查看日志"
+            details = errors or warnings or ["健康状态未确认"]
+            message = "已启动重启脚本，但导航不可用：" + "；".join(details)
 
         nav_logger.info("已启动导航定位重启脚本：pid={}", _restart_proc.pid)
         return {
@@ -520,7 +662,7 @@ def restart_navigation_localization() -> dict[str, Any]:
             "map_pcd": scene["map_pcd"],
             "ground_pcd": scene["ground_pcd"],
             **child_pids,
-            "cmd_vel_running": child_pids["cmd_vel_pid"] is not None,
+            "cmd_vel_running": health_result["health"]["cmd_vel_running"],
             "navigation_ready": navigation_ready,
             "process_pids": {
                 "livox": child_pids["livox_pid"],
@@ -529,5 +671,8 @@ def restart_navigation_localization() -> dict[str, Any]:
                 "p2p_move_base": child_pids["p2p_move_base_pid"],
                 "cmd_vel": child_pids["cmd_vel_pid"],
             },
+            "health": health_result["health"],
+            "warnings": warnings,
+            "errors": errors,
             "message": message,
         }

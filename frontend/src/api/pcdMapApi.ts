@@ -232,6 +232,26 @@ export function triggerControlEmergencyStop(): Promise<{
   )
 }
 
+export type LocalizationRestartHealth = {
+  scene_ok: boolean
+  scene_id: string | null
+  scene_dir: string | null
+  map_pcd_ok: boolean
+  map_pcd: string | null
+  ground_pcd_ok: boolean
+  ground_pcd: string | null
+  livox_ok: boolean
+  relocation_ok: boolean
+  global_planner_ok: boolean
+  p2p_move_base_ok: boolean
+  cmd_vel_test_publisher_running: boolean
+  cmd_vel_running?: boolean | null
+  cmd_vel_pid?: number | null
+  tf_ok: boolean | null
+  warnings: string[]
+  errors: string[]
+}
+
 export function restartNavigationLocalization(): Promise<{
   success: boolean
   running: boolean
@@ -248,6 +268,9 @@ export function restartNavigationLocalization(): Promise<{
   cmd_vel_running?: boolean | null
   navigation_ready?: boolean | null
   process_pids?: Record<string, number | null> | null
+  health?: LocalizationRestartHealth | null
+  warnings?: string[] | null
+  errors?: string[] | null
   message: string
 }> {
   return requestJson(
