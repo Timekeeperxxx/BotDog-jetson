@@ -29,11 +29,6 @@ type Props = {
 }
 
 function stepValueLabel(step: TaskDraftStep) {
-  if (step.type === 'relocalize') {
-    if (step.relocalizeMode === 'auto') return '自动重定位'
-    if (step.relocalizeMode === 'manual') return '手动确认'
-    return '跳过重定位'
-  }
   return step.waypointId || '未选择导航点'
 }
 
@@ -116,43 +111,21 @@ export function TaskCreatorDrawer({
                   <div className="pcd-flow-card-content">
                     <div className="pcd-flow-card-selects">
                       <select
-                        className="pcd-task-type-select"
-                        value={step.type}
-                        onChange={(event) => onDraftWaypointChange(index, { type: event.target.value as TaskDraftStep['type'] })}
-                      >
-                        <option value="relocalize">重定位</option>
-                        <option value="navigate_waypoint">导航到导航点</option>
-                      </select>
-                      <select
                         className="pcd-task-value-select"
-                        value={step.type === 'relocalize' ? step.relocalizeMode : step.waypointId}
-                        onChange={(event) => (
-                          step.type === 'relocalize'
-                            ? onDraftWaypointChange(index, { relocalizeMode: event.target.value as TaskDraftStep['relocalizeMode'] })
-                            : onDraftWaypointChange(index, { waypointId: event.target.value })
-                        )}
-                        disabled={step.type === 'navigate_waypoint' && !draft.mapId}
+                        value={step.waypointId}
+                        onChange={(event) => onDraftWaypointChange(index, { waypointId: event.target.value })}
+                        disabled={!draft.mapId}
                       >
-                        {step.type === 'relocalize' ? (
-                          <>
-                            <option value="auto">自动重定位</option>
-                            <option value="manual">手动确认</option>
-                            <option value="skip">跳过重定位</option>
-                          </>
-                        ) : (
-                          <>
-                            <option value="">{draft.mapId ? '请选择导航点' : '请先绑定场景'}</option>
-                            {selectedSceneWaypoints.map((waypoint) => (
-                              <option key={waypoint.id} value={waypoint.id}>
-                                {waypoint.name}
-                              </option>
-                            ))}
-                          </>
-                        )}
+                        <option value="">{draft.mapId ? '请选择导航点' : '请先绑定场景'}</option>
+                        {selectedSceneWaypoints.map((waypoint) => (
+                          <option key={waypoint.id} value={waypoint.id}>
+                            {waypoint.name}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div className="pcd-flow-card-meta">
-                      <span>{step.type === 'relocalize' ? '初始化定位步骤' : `已选：${stepValueLabel(step)}`}</span>
+                      <span>{`已选：${stepValueLabel(step)}`}</span>
                     </div>
                   </div>
                 </div>

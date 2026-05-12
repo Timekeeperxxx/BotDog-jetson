@@ -21,13 +21,10 @@ function waypointCount(task: TaskDefinition) {
 
 function taskSummary(task: TaskDefinition) {
   return task.steps
-    .filter((step) => step.type !== 'select_map')
     .map((step) =>
       step.type === 'navigate_waypoint'
-        ? step.x != null && step.y != null && step.z != null && step.yaw != null
-          ? `${step.waypointName} (${step.x.toFixed(2)}, ${step.y.toFixed(2)}, ${step.z.toFixed(2)}, ${step.yaw.toFixed(3)})`
-          : step.waypointName
-        : step.label,
+        ? step.waypointName || step.waypointId || '导航点'
+        : '导航点',
     )
     .join(' -> ')
 }

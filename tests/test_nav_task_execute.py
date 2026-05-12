@@ -74,13 +74,9 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
         "mapName": scene_id,
         "createdAt": "2026-05-11T10:00:00.000Z",
         "steps": [
-            {"type": "select_map", "label": "选择场景", "mapId": scene_id, "sceneId": scene_id},
-            {"type": "relocalize", "label": "自动重定位", "mode": "auto"},
             {
                 "type": "navigate_waypoint",
-                "label": "导航到巡检点1",
                 "waypointId": waypoint["id"],
-                "waypointName": waypoint["name"],
             },
         ],
     }
@@ -113,15 +109,7 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
     runtime = read_json(Path(result["runtime_file"]), {})
     assert runtime["task_id"] == "task_001"
     assert runtime["scene_id"] == scene_id
-    assert runtime["steps"][0] == {"type": "select_map", "scene_id": scene_id}
-    assert runtime["steps"][1] == {"type": "relocalize", "mode": "auto"}
-    assert runtime["steps"][2]["waypoint_id"] == waypoint["id"]
-    assert runtime["steps"][2]["waypoint_name"] == waypoint["name"]
-    assert runtime["steps"][2]["x"] == pytest.approx(1.0)
-    assert runtime["steps"][2]["y"] == pytest.approx(2.0)
-    assert runtime["steps"][2]["z"] == pytest.approx(-0.83)
-    assert runtime["steps"][2]["yaw"] == pytest.approx(1.57)
-    assert runtime["steps"][2]["frame_id"] == "map"
+    assert runtime["steps"] == [{"type": "navigate_waypoint", "waypoint_id": waypoint["id"]}]
 
 
 def test_nav_execute_task_missing_waypoint_returns_404(monkeypatch, tmp_path):
@@ -152,8 +140,7 @@ def test_nav_execute_task_missing_waypoint_returns_404(monkeypatch, tmp_path):
             "mapName": scene_id,
             "createdAt": "2026-05-11T10:00:00.000Z",
             "steps": [
-                {"type": "select_map", "label": "选择场景", "mapId": scene_id, "sceneId": scene_id},
-                {"type": "navigate_waypoint", "label": "导航到缺失点位", "waypointId": "wp_missing", "waypointName": "缺失点位"},
+                {"type": "navigate_waypoint", "waypointId": "wp_missing"},
             ],
         }
     )

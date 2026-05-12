@@ -7,11 +7,7 @@ import { AdminCard, EmptyState, SearchInput, StatusBadge, TableCell, TableHead, 
 
 function summarizeSteps(task: TaskDefinition) {
   return task.steps.map((step) => {
-    if (step.type === 'select_map') return `切换场景 ${step.sceneId || step.mapId}`
-    if (step.type === 'relocalize') return `重定位 ${step.mode}`
-    return step.x != null && step.y != null && step.z != null && step.yaw != null
-      ? `导航至 ${step.waypointName} (${step.x.toFixed(2)}, ${step.y.toFixed(2)}, ${step.z.toFixed(2)}, ${step.yaw.toFixed(3)})`
-      : `导航至 ${step.waypointName}`
+    return `导航至 ${step.waypointName || step.waypointId}`
   })
 }
 

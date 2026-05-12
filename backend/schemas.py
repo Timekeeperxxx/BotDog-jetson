@@ -372,10 +372,7 @@ class MappingControlResponse(BaseModel):
 
 class NavTaskStepDTO(BaseModel):
     type: str
-    label: str
-    mapId: str | None = None
-    mode: str | None = None
-    waypointId: str | None = None
+    waypointId: str
     waypointName: str | None = None
     x: float | None = None
     y: float | None = None

@@ -25,38 +25,20 @@ def _runtime_file() -> Path:
     return _runtime_dir() / "current_task.json"
 
 
-def _materialize_step(scene_id: str, step: dict[str, Any]) -> dict[str, Any]:
+def _materialize_step(_scene_id: str, step: dict[str, Any]) -> dict[str, Any] | None:
     step_type = str(step.get("type") or "").strip()
-
-    if step_type == "select_map":
-        return {
-            "type": "select_map",
-            "scene_id": scene_id,
-        }
-
-    if step_type == "relocalize":
-        return {
-            "type": "relocalize",
-            "mode": str(step.get("mode") or "auto"),
-        }
 
     if step_type == "navigate_waypoint":
         waypoint_id = str(step.get("waypointId") or step.get("waypoint_id") or "").strip()
         if not waypoint_id:
             raise NavTaskError("navigate_waypoint 步骤缺少 waypointId")
-        waypoint = get_waypoint(scene_id, waypoint_id)
+        get_waypoint(_scene_id, waypoint_id)
         return {
             "type": "navigate_waypoint",
-            "waypoint_id": waypoint["id"],
-            "waypoint_name": waypoint["name"],
-            "x": float(waypoint["x"]),
-            "y": float(waypoint["y"]),
-            "z": float(waypoint.get("z", 0.0)),
-            "yaw": float(waypoint.get("yaw", 0.0)),
-            "frame_id": str(waypoint.get("frame_id") or settings.PCD_FRAME_ID),
+            "waypoint_id": waypoint_id,
         }
 
-    raise NavTaskError(f"不支持的任务步骤类型: {step_type or 'unknown'}")
+    return None
 
 
 def materialize_nav_task_runtime(task_id: str) -> dict[str, Any]:
@@ -70,7 +52,11 @@ def materialize_nav_task_runtime(task_id: str) -> dict[str, Any]:
     if files["ground"] is None:
         raise FileNotFoundError(f"场景缺少 ground.pcd: {scene_id}")
 
-    runtime_steps = [_materialize_step(scene_id, step) for step in list(task.get("steps") or [])]
+    runtime_steps = [
+        materialized
+        for step in list(task.get("steps") or [])
+        if (materialized := _materialize_step(scene_id, step)) is not None
+    ]
     if not runtime_steps:
         raise NavTaskError("任务 steps 不能为空")
 

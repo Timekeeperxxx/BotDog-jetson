@@ -39,6 +39,7 @@ import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
 import type { NavWaypoint, PcdSceneItem } from '../types/pcdMap'
 import type { TaskDefinition, TaskDraft, TaskDraftStep, WorkflowStep } from '../types/taskWorkflow'
+import { validateWaypointName } from '../utils/navWaypointValidation'
 import { useNavScenes } from './nav/useNavScenes'
 
 type LogItem = {
@@ -89,8 +90,7 @@ const emptyTaskDraft: TaskDraft = {
 
 function createEmptyDraftStep(): TaskDraftStep {
   return {
-    type: 'relocalize',
-    relocalizeMode: 'auto',
+    type: 'navigate_waypoint',
     waypointId: '',
   }
 }
@@ -184,9 +184,15 @@ export function PcdMapDemoPage() {
     const name = window.prompt('导航点名称', defaultName)?.trim()
     if (!name) return
 
+    const validatedName = validateWaypointName(name, waypoints.map((waypoint) => waypoint.name))
+    if (!validatedName.ok) {
+      addLog(validatedName.message, 'error')
+      return
+    }
+
     try {
       await createWaypoint(selectedSceneId, {
-        name,
+        name: validatedName.value,
         x: pos.x,
         y: pos.y,
         z: pos.z,
@@ -197,7 +203,7 @@ export function PcdMapDemoPage() {
       setWaypoints(nextWaypoints.items)
       setAddMode(false)
       addLog(
-        `已保存导航点 ${name}: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${pos.z.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
+        `已保存导航点 ${validatedName.value}: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${pos.z.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
       )
     } catch (error) {
       addLog(error instanceof Error ? error.message : '保存导航点失败', 'error')
@@ -621,8 +627,7 @@ export function PcdMapDemoPage() {
           ? {
               ...item,
               ...patch,
-              waypointId: patch.type === 'relocalize' ? '' : (patch.waypointId ?? item.waypointId),
-              relocalizeMode: patch.type === 'navigate_waypoint' ? item.relocalizeMode : (patch.relocalizeMode ?? item.relocalizeMode),
+              waypointId: patch.waypointId ?? item.waypointId,
             }
           : item
       )),
@@ -658,12 +663,8 @@ export function PcdMapDemoPage() {
       name: task.name,
       mapId: task.sceneId || task.mapId,
       steps: task.steps
-        .filter((step) => step.type !== 'select_map')
-        .map((step) => (
-          step.type === 'relocalize'
-            ? { type: 'relocalize', relocalizeMode: step.mode, waypointId: '' }
-            : { type: 'navigate_waypoint', relocalizeMode: 'auto', waypointId: step.waypointId }
-        )),
+        .filter((step) => step.type === 'navigate_waypoint' && Boolean(step.waypointId))
+        .map((step) => ({ type: 'navigate_waypoint', waypointId: step.waypointId })),
     }
     setSelectedTaskId(task.id)
     setTaskDraft(nextDraft)
@@ -708,38 +709,15 @@ export function PcdMapDemoPage() {
       return
     }
 
-    const waypointSource = taskDraft.mapId === selectedSceneId ? waypoints : []
-    const workflowSteps: WorkflowStep[] = []
-    taskDraft.steps.forEach((step) => {
-      if (step.type === 'relocalize') {
-        workflowSteps.push({
-          type: 'relocalize' as const,
-          label:
-            step.relocalizeMode === 'auto'
-              ? '自动重定位'
-              : step.relocalizeMode === 'manual'
-                ? '手动确认重定位'
-                : '跳过重定位',
-          mode: step.relocalizeMode,
-        })
-        return
-      }
-
-      if (!step.waypointId.trim()) return
-      const waypoint = waypointSource.find((item) => item.id === step.waypointId)
-      if (!waypoint) return
-      workflowSteps.push({
-        type: 'navigate_waypoint' as const,
-        label: `导航到 ${waypoint.name} (x=${waypoint.x.toFixed(2)}, y=${waypoint.y.toFixed(2)}, z=${waypoint.z.toFixed(2)}, yaw=${waypoint.yaw.toFixed(3)})`,
-        waypointId: waypoint.id,
-        waypointName: waypoint.name,
-        x: waypoint.x,
-        y: waypoint.y,
-        z: waypoint.z,
-        yaw: waypoint.yaw,
-        frameId: waypoint.frame_id,
+    const workflowSteps: WorkflowStep[] = taskDraft.steps
+      .map((step) => {
+        if (!step.waypointId.trim()) return null
+        return {
+          type: 'navigate_waypoint' as const,
+          waypointId: step.waypointId.trim(),
+        }
       })
-    })
+      .filter((step): step is WorkflowStep => step !== null)
 
     if (workflowSteps.length === 0) {
       addLog('任务流程至少需要一个有效步骤', 'error')
@@ -757,7 +735,6 @@ export function PcdMapDemoPage() {
           ? tasks.find((item) => item.id === selectedTaskId)?.createdAt || new Date().toISOString()
           : new Date().toISOString(),
       steps: [
-        { type: 'select_map', label: `选择场景 ${scene.name}`, mapId: scene.id, sceneId: scene.id },
         ...workflowSteps,
       ],
     }

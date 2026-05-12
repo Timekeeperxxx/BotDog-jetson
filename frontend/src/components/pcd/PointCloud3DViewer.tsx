@@ -11,6 +11,16 @@ type PointCloudLayer = {
   points: [number, number, number][]
 }
 
+const WAYPOINT_COLOR = 0xfbbf24
+const ROBOT_BODY_COLOR = 0xf97316
+const ROBOT_ARROW_COLOR = 0xf97316
+const WAYPOINT_ARROW_LENGTH = 0.62
+const WAYPOINT_ARROW_HEAD_LENGTH = 0.22
+const WAYPOINT_ARROW_HEAD_WIDTH = 0.12
+const ROBOT_ARROW_LENGTH = 0.62
+const ROBOT_ARROW_HEAD_LENGTH = 0.22
+const ROBOT_ARROW_HEAD_WIDTH = 0.12
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
@@ -46,7 +56,20 @@ function disposeObject3D(object: THREE.Object3D) {
     const material = object.material
     material.map?.dispose()
     material.dispose()
+    return
   }
+
+  if (object instanceof THREE.ArrowHelper) {
+    object.line.geometry.dispose()
+    object.cone.geometry.dispose()
+    disposeMaterial(object.line.material)
+    disposeMaterial(object.cone.material)
+    return
+  }
+}
+
+function createMapYawDirection(yaw: number) {
+  return new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)).normalize()
 }
 
 function createWaypointLabelSprite(text: string) {
@@ -85,7 +108,7 @@ function createWaypointLabelSprite(text: string) {
   })
   const sprite = new THREE.Sprite(material)
   sprite.scale.set(1.8, 0.45, 1)
-  sprite.renderOrder = 10
+  sprite.renderOrder = 50
   return sprite
 }
 
@@ -183,19 +206,21 @@ export function PointCloud3DViewer({
     robotGroup.visible = false
     const body = new THREE.Mesh(
       new THREE.CylinderGeometry(0.18, 0.18, 0.18, 18),
-      new THREE.MeshBasicMaterial({ color: 0xf97316 }),
+      new THREE.MeshBasicMaterial({ color: ROBOT_BODY_COLOR }),
     )
     body.position.y = 0.09
+    body.renderOrder = 30
     robotGroup.add(body)
 
     const direction = new THREE.ArrowHelper(
       new THREE.Vector3(1, 0, 0),
       new THREE.Vector3(0, 0.18, 0),
-      0.62,
-      0x22c55e,
-      0.22,
-      0.12,
+      ROBOT_ARROW_LENGTH,
+      ROBOT_ARROW_COLOR,
+      ROBOT_ARROW_HEAD_LENGTH,
+      ROBOT_ARROW_HEAD_WIDTH,
     )
+    direction.renderOrder = 31
     robotGroup.add(direction)
     robotGroupRef.current = robotGroup
     scene.add(robotGroup)
@@ -231,17 +256,7 @@ export function PointCloud3DViewer({
       pathGroup.clear()
       waypointGroup.children.forEach(disposeObject3D)
       waypointGroup.clear()
-      robotGroup.children.forEach((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.geometry.dispose()
-          disposeMaterial(child.material)
-        } else if (child instanceof THREE.ArrowHelper) {
-          child.line.geometry.dispose()
-          child.cone.geometry.dispose()
-          disposeMaterial(child.line.material)
-          disposeMaterial(child.cone.material)
-        }
-      })
+      robotGroup.children.forEach(disposeObject3D)
       renderer.dispose()
       renderer.domElement.remove()
     }
@@ -397,24 +412,34 @@ export function PointCloud3DViewer({
     group.children.forEach(disposeObject3D)
     group.clear()
 
-    const geometry = new THREE.SphereGeometry(0.16, 16, 12)
     waypoints.forEach((waypoint) => {
       const pos = mapToThree(waypoint.x, waypoint.y, waypoint.z)
-      const material = new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
-      const sphere = new THREE.Mesh(geometry.clone(), material)
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.16, 16, 12),
+        new THREE.MeshBasicMaterial({ color: WAYPOINT_COLOR }),
+      )
       sphere.position.set(pos.x, pos.y + 0.12, pos.z)
+      sphere.renderOrder = 40
       group.add(sphere)
+
+      const arrow = new THREE.ArrowHelper(
+        createMapYawDirection(waypoint.yaw),
+        new THREE.Vector3(pos.x, pos.y + 0.18, pos.z),
+        WAYPOINT_ARROW_LENGTH,
+        WAYPOINT_COLOR,
+        WAYPOINT_ARROW_HEAD_LENGTH,
+        WAYPOINT_ARROW_HEAD_WIDTH,
+      )
+      arrow.renderOrder = 41
+      group.add(arrow)
 
       const label = createWaypointLabelSprite(waypoint.name)
       if (label) {
         label.position.set(pos.x, pos.y + 0.58, pos.z)
+        label.renderOrder = 50
         group.add(label)
       }
     })
-
-    return () => {
-      geometry.dispose()
-    }
   }, [waypoints, webglSupported])
 
   useEffect(() => {
