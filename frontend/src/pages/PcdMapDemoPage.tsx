@@ -237,12 +237,14 @@ export function PcdMapDemoPage() {
       badParts.push(...health.errors)
     }
 
+    const reasons = Array.from(new Set(badParts.filter(Boolean)))
+
     if (result.navigation_ready) {
       return `导航定位已重启：导航可用${okParts.length > 0 ? `；${okParts.join('；')}` : ''}`
     }
 
-    const reasons = badParts.length > 0 ? badParts : ['健康检查未通过']
-    return `导航定位已重启，但导航不可用：${reasons.join('；')}`
+    const nextReasons = reasons.length > 0 ? reasons : ['健康检查未通过']
+    return `导航定位已重启，但导航不可用：${nextReasons.join('；')}`
   }, [])
 
   const handleSceneChanging = useCallback(() => {

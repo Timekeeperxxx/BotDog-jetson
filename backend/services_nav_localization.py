@@ -303,8 +303,8 @@ def _find_cmd_vel_pids() -> list[int]:
 
 def _find_cmd_vel_test_publisher_pids() -> list[int]:
     return _find_pids_by_needles([
+        "/home/jetson/Project/BOTDOG/backend/scripts/test_cmd_vel_publisher.py",
         "test_cmd_vel_publisher.py",
-        "cmd_vel_publisher",
         "test_ros2_cmd_vel_bridge.py",
     ])
 

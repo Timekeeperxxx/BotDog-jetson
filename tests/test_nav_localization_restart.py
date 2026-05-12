@@ -254,6 +254,28 @@ def test_restart_navigation_localization_detects_cmd_vel_test_publisher_residual
     assert "cmd_vel 测试发布器残留" in result["message"]
 
 
+def test_find_cmd_vel_test_publisher_pids_ignores_generic_cmd_vel_publisher(monkeypatch):
+    seen_needles: list[str] = []
+
+    class DummyCompletedProcess:
+        stdout = ""
+
+    def fake_run(args, **kwargs):
+        seen_needles.append(args[-1])
+        if args[-1] == "cmd_vel_publisher":
+            return DummyCompletedProcess()
+        if "test_cmd_vel_publisher.py" in args[-1]:
+            return type("Completed", (), {"stdout": "1234 python backend/scripts/test_cmd_vel_publisher.py"})()
+        return DummyCompletedProcess()
+
+    monkeypatch.setattr(services_nav_localization.subprocess, "run", fake_run)
+
+    pids = services_nav_localization._find_cmd_vel_test_publisher_pids()
+
+    assert "cmd_vel_publisher" not in seen_needles
+    assert pids == [1234]
+
+
 def test_restart_navigation_localization_marks_missing_pid_false(monkeypatch, tmp_path):
     scene_root = tmp_path / "MAPS"
     scene_dir = scene_root / "Scene1_测试"
