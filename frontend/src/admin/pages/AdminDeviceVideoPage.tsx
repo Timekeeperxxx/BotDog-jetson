@@ -55,7 +55,7 @@ export function AdminDeviceVideoPage({
     <div className="space-y-6">
       <AdminCard
         title="设备与视频"
-        subtitle="把主机信息、网络接口、视频源和 AI 配置放在同一模块下，方便统一排查。"
+        subtitle="保留真实可用的主机、网络和视频信息。"
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <ToolbarButton onClick={onRefresh}>刷新设备</ToolbarButton>
@@ -91,12 +91,12 @@ export function AdminDeviceVideoPage({
 
       <AdminCard
         title="地图与点位快捷入口"
-        subtitle="直接复用导航管理中的地图、点位和巡逻任务数据，不重复做一套管理界面。"
+        subtitle="地图、点位和巡逻任务仍统一放在导航管理。"
       >
         <div className="space-y-3">
           <div className="text-sm text-zinc-400">当前可用场景：{scenes.length}</div>
           <div className="text-sm text-zinc-400">当前选择场景：{selectedSceneId || '未选择'}</div>
-          <div className="text-xs text-zinc-500">如需编辑地图点位，请切换到“导航管理”模块。</div>
+          <div className="text-xs text-zinc-500">如需编辑地图点位，请切换到“导航管理”。</div>
         </div>
       </AdminCard>
     </div>

@@ -63,7 +63,7 @@ export function AdminNavigationPage({
     <div className="space-y-6">
       <AdminCard
         title="导航资源管理"
-        subtitle={loading ? '导航资源加载中…' : '场景、点位和巡逻任务属于后台核心资源；任务历史目前缺少后端接口，只做明确占位。'}
+        subtitle={loading ? '导航资源加载中…' : '场景、点位和巡逻任务是后台核心资源。'}
         actions={
           <div className="flex items-center gap-3">
             <div className="w-72">
@@ -77,7 +77,6 @@ export function AdminNavigationPage({
           <NavTabButton active={tab === 'maps'} label="场景管理" onClick={() => setTab('maps')} />
           <NavTabButton active={tab === 'waypoints'} label="点位管理" onClick={() => setTab('waypoints')} />
           <NavTabButton active={tab === 'tasks'} label="巡逻任务" onClick={() => setTab('tasks')} />
-          <NavTabButton active={tab === 'history'} label="任务历史" onClick={() => setTab('history')} />
         </div>
       </AdminCard>
 
@@ -100,7 +99,7 @@ export function AdminNavigationPage({
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <div className="text-sm font-black text-white">{item.name}</div>
+                        <div className="text-sm font-medium text-white">{item.name}</div>
                         <div className="mt-2 text-xs text-zinc-500">{item.id}</div>
                       </div>
                       <StatusBadge status={selectedSceneId === item.id ? 'normal' : 'waiting'} />
@@ -127,7 +126,7 @@ export function AdminNavigationPage({
             ) : (
               <div className="space-y-4">
                 <div className="rounded-2xl border border-white/8 bg-black/40 p-4">
-                  <div className="text-sm font-black text-white">{selectedSceneId}</div>
+                  <div className="text-sm font-medium text-white">{selectedSceneId}</div>
                   <div className="mt-4 grid gap-3 md:grid-cols-2">
                     <InfoChip label="frame_id" value={metadata?.frame_id || 'map'} />
                     <InfoChip label="点数量" value={metadata?.point_count?.toLocaleString?.() || '--'} />
@@ -136,7 +135,7 @@ export function AdminNavigationPage({
                   </div>
                 </div>
                 <div className="rounded-2xl border border-white/8 bg-black/40 p-4">
-                  <div className="text-sm font-black text-white">边界信息</div>
+                  <div className="text-sm font-medium text-white">边界信息</div>
                   {metadata?.bounds ? (
                     <div className="mt-4 grid gap-3 md:grid-cols-2">
                       <InfoChip label="X" value={`${metadata.bounds.min_x.toFixed(2)} ~ ${metadata.bounds.max_x.toFixed(2)}`} />
@@ -204,7 +203,7 @@ export function AdminNavigationPage({
       ) : null}
 
       {tab === 'tasks' ? (
-        <AdminCard title="巡逻任务" subtitle="当前任务定义由后端统一保存在 data 目录下的 JSON 文件中；这里展示的是同一份后端数据。">
+        <AdminCard title="巡逻任务" subtitle="当前任务定义由后端统一保存在 data 目录下的 JSON 文件中。">
           {filteredTasks.length === 0 ? (
             <EmptyState title="暂无巡逻任务" description="当前 JSON 任务文件里没有任务定义。" />
           ) : (
@@ -213,18 +212,18 @@ export function AdminNavigationPage({
                 <div key={task.id} className="rounded-2xl border border-white/8 bg-black/40 p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="text-sm font-black text-white">{task.name}</div>
+                      <div className="text-sm font-medium text-white">{task.name}</div>
                       <div className="mt-2 text-xs text-zinc-500">场景={task.sceneId || task.mapId || task.mapName} · 创建时间={new Date(task.createdAt).toLocaleString('zh-CN', { hour12: false })}</div>
                     </div>
                     <StatusBadge status="todo" />
                   </div>
                   <div className="mt-4 grid gap-3 md:grid-cols-3">
                     <InfoChip label="任务类型" value="巡逻导航" />
-                    <InfoChip label="循环模式" value="TODO：当前结构未记录" />
-                    <InfoChip label="失败策略" value="TODO：当前结构未记录" />
+                    <InfoChip label="循环模式" value="当前版本未接入" />
+                    <InfoChip label="失败策略" value="当前版本未接入" />
                   </div>
                   <div className="mt-4">
-                    <div className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">步骤</div>
+                    <div className="text-xs font-medium text-zinc-500">步骤</div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {summarizeSteps(task).map((step, index) => (
                         <span key={`${task.id}-${index}`} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-300">
@@ -241,8 +240,8 @@ export function AdminNavigationPage({
       ) : null}
 
       {tab === 'history' ? (
-        <AdminCard title="任务历史" subtitle="当前项目没有任务历史查询接口，因此这里只展示明确占位，不伪造运行记录。">
-          <EmptyState title="任务历史待接入" description="建议后续新增任务执行记录表和 /api/v1/nav/tasks/history 接口，再在后台管理里做筛选、耗时统计和失败原因追踪。" />
+        <AdminCard title="任务历史" subtitle="当前版本未接入任务历史查询。">
+          <EmptyState title="任务历史暂未启用" description="后续如果接入任务执行记录表，这里再补充筛选和统计能力。" />
         </AdminCard>
       ) : null}
     </div>
@@ -261,7 +260,7 @@ function NavTabButton({
   return (
     <button
       onClick={onClick}
-      className={`rounded-full border px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] transition-all ${
+      className={`rounded-full border px-4 py-2 text-sm font-medium transition-all ${
         active ? 'border-white/30 bg-white/10 text-white' : 'border-white/10 text-zinc-500 hover:border-white/20 hover:text-white'
       }`}
     >
@@ -279,7 +278,7 @@ function InfoChip({
 }) {
   return (
     <div className="rounded-xl border border-white/8 bg-black/50 p-3">
-      <div className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">{label}</div>
+      <div className="text-xs font-medium text-zinc-500">{label}</div>
       <div className="mt-2 text-sm text-zinc-200">{value}</div>
     </div>
   )

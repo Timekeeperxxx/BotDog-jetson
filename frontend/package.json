@@ -8,8 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest",
-    "check:event-stream": "node ../scripts/check-event-stream-singleton.mjs"
+    "test": "vitest"
   },
   "dependencies": {
     "lucide-react": "^0.577.0",

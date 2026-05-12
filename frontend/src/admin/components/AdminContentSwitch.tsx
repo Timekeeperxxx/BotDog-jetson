@@ -26,6 +26,7 @@ type AdminEvidenceData = ReturnType<typeof useAdminEvidenceData>
 type AdminContentSwitchProps = {
   activeSection: AdminSection
   role: AdminRole
+  onSectionChange: (section: AdminSection) => void
   coreData: AdminCoreData
   navigationData: AdminNavigationData
   videoConfigData: AdminVideoConfigData
@@ -39,6 +40,7 @@ type AdminContentSwitchProps = {
 export function AdminContentSwitch({
   activeSection,
   role,
+  onSectionChange,
   coreData,
   navigationData,
   videoConfigData,
@@ -63,6 +65,8 @@ export function AdminContentSwitch({
           evidence: evidenceData.evidenceHook.evidenceItems,
           videoSources: videoConfigData.videoSources.sources,
         }}
+        onSectionChange={onSectionChange}
+        onRefresh={coreData.refreshAdminCore}
       />
     )
   }
