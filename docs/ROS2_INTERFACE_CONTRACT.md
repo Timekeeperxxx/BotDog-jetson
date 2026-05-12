@@ -54,7 +54,22 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 - `ground_pcd`
 - `source_waypoints`
 
-当前实现中，`steps` 只保留巡检点步骤，步骤内容应只包含巡检点标识，不再扩展其他业务信息。
+当前实现中，`steps` 只保留 `navigate_waypoint` 步骤，但每个步骤必须包含完整导航字段，不再只保留 waypoint 标识。
+
+`navigate_waypoint` 步骤推荐结构：
+
+```json
+{
+  "type": "navigate_waypoint",
+  "waypoint_id": "xxx",
+  "waypoint_name": "巡检点1",
+  "x": 1.0,
+  "y": 2.0,
+  "z": -0.83,
+  "yaw": 1.57,
+  "frame_id": "map"
+}
+```
 
 补充说明：
 
@@ -105,7 +120,7 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 - `task_id`：任务 ID
 - `task_name`：任务名称
 - `scene_id`：场景 ID
-- `steps`：任务步骤数组，当前只保留巡检点步骤
+- `steps`：任务步骤数组，当前只保留 `navigate_waypoint` 步骤，且每个步骤包含完整导航坐标字段
 - `scene_dir`：场景目录
 - `map_pcd`：地图点云文件
 - `ground_pcd`：地面点云文件
@@ -122,6 +137,7 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 - 单点导航 go-to 走实时 topic 发布
 - 任务导航 execute task 走 `current_task.json + /nav_start`
 - 不应再把 `current_goal.json + /nav_start` 作为当前主链路写进文档
+- ROS2 侧执行任务时，优先只读 `current_task.json` 即可拿到 `waypoint_id`、`waypoint_name`、`x/y/z/yaw/frame_id`
 
 如果历史环境中仍存在 `current_goal.json`，也只应视为兼容历史，不应作为新的对接依据。
 

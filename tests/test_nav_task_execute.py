@@ -109,7 +109,18 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
     runtime = read_json(Path(result["runtime_file"]), {})
     assert runtime["task_id"] == "task_001"
     assert runtime["scene_id"] == scene_id
-    assert runtime["steps"] == [{"type": "navigate_waypoint", "waypoint_id": waypoint["id"]}]
+    assert runtime["steps"] == [
+        {
+            "type": "navigate_waypoint",
+            "waypoint_id": waypoint["id"],
+            "waypoint_name": waypoint["name"],
+            "x": waypoint["x"],
+            "y": waypoint["y"],
+            "z": waypoint["z"],
+            "yaw": waypoint["yaw"],
+            "frame_id": waypoint["frame_id"],
+        }
+    ]
 
 
 def test_nav_execute_task_missing_waypoint_returns_404(monkeypatch, tmp_path):

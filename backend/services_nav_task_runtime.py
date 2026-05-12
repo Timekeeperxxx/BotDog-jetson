@@ -32,10 +32,16 @@ def _materialize_step(_scene_id: str, step: dict[str, Any]) -> dict[str, Any] | 
         waypoint_id = str(step.get("waypointId") or step.get("waypoint_id") or "").strip()
         if not waypoint_id:
             raise NavTaskError("navigate_waypoint 步骤缺少 waypointId")
-        get_waypoint(_scene_id, waypoint_id)
+        waypoint = get_waypoint(_scene_id, waypoint_id)
         return {
             "type": "navigate_waypoint",
             "waypoint_id": waypoint_id,
+            "waypoint_name": str(waypoint.get("name") or ""),
+            "x": float(waypoint["x"]),
+            "y": float(waypoint["y"]),
+            "z": float(waypoint["z"]),
+            "yaw": float(waypoint["yaw"]),
+            "frame_id": str(waypoint["frame_id"]),
         }
 
     return None
