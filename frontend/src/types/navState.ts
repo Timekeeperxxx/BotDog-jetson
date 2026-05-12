@@ -26,6 +26,12 @@ export type NavigationStatus = {
   target_name: string | null
   message: string
   timestamp: number | null
+  ros_status?: string | null
+  task_id?: string | null
+  waypoint_id?: string | null
+  distance_to_goal?: number | null
+  error_code?: string | null
+  source?: string | null
 }
 
 export type LocalizationStatus = {

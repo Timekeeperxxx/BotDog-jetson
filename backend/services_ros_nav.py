@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import threading
 import time
@@ -11,8 +12,10 @@ from .logging_config import get_logger
 from .services_nav_state import (
     update_global_path,
     get_robot_pose,
+    get_nav_state,
     update_localization_status,
     update_robot_pose,
+    update_navigation_status,
 )
 from .ws_event_broadcaster import EventBroadcaster
 
@@ -65,6 +68,7 @@ class RosNavBridge:
         self._goal_xyz_publisher: Any | None = None
         self._goal_yaw_publisher: Any | None = None
         self._global_path_subscription: Any | None = None
+        self._nav_status_subscription: Any | None = None
         self._estop_publisher: Any | None = None
         self._set_pose_publisher: Any | None = None
         self._mapping_publisher: Any | None = None
@@ -129,6 +133,7 @@ class RosNavBridge:
             self._node = rclpy.create_node("botdog_nav_state_bridge")
             self._setup_publishers()
             self._setup_global_path_subscription(Path)
+            self._setup_nav_status_subscription()
 
             if self._use_tf_pose():
                 self._setup_tf_listener()
@@ -246,7 +251,7 @@ class RosNavBridge:
             10,
         )
         nav_logger.info(
-            "ROS2 导航发布器已启动：page_open_topic={}，nav_start_topic={}，clicked_point_topic={}，goal_yaw_topic={}，stop_topic={}，set_pose_topic={}，mapping_topic={}，global_path_topic={}",
+            "ROS2 导航发布器已启动：page_open_topic={}，nav_start_topic={}，clicked_point_topic={}，goal_yaw_topic={}，stop_topic={}，set_pose_topic={}，mapping_topic={}，status_topic={}，global_path_topic={}",
             settings.ROS_NAV_PAGE_OPEN_TOPIC,
             settings.ROS_NAV_START_TOPIC,
             settings.ROS_NAV_GOAL_XYZ_TOPIC,
@@ -254,6 +259,7 @@ class RosNavBridge:
             settings.ROS_NAV_STOP_TOPIC,
             settings.ROS_NAV_SET_POSE_TOPIC,
             settings.ROS_NAV_MAPPING_TOPIC,
+            settings.ROS_NAV_STATUS_TOPIC,
             settings.ROS_NAV_GLOBAL_PATH_TOPIC,
         )
 
@@ -395,6 +401,26 @@ class RosNavBridge:
             settings.ROS_NAV_GLOBAL_PATH_TOPIC,
         )
 
+    def _setup_nav_status_subscription(self) -> None:
+        if self._node is None:
+            return
+
+        try:
+            from std_msgs.msg import String
+        except Exception as exc:
+            raise RuntimeError(f"nav_status 消息类型不可用: {exc}") from exc
+
+        self._nav_status_subscription = self._node.create_subscription(
+            String,
+            settings.ROS_NAV_STATUS_TOPIC,
+            self._handle_nav_status_message,
+            10,
+        )
+        nav_logger.info(
+            "ROS2 nav_status 订阅已启动：topic={}",
+            settings.ROS_NAV_STATUS_TOPIC,
+        )
+
     def _handle_global_path_message(self, msg: Any) -> None:
         try:
             path = self._extract_global_path(msg)
@@ -404,6 +430,75 @@ class RosNavBridge:
 
         update_global_path(path)
         self._submit_broadcast("nav.global_path", path)
+
+    def _handle_nav_status_message(self, msg: Any) -> None:
+        raw_data = str(getattr(msg, "data", "") or "").strip()
+        if not raw_data:
+            nav_logger.warning("nav_status 消息为空")
+            return
+
+        try:
+            payload = json.loads(raw_data)
+        except Exception as exc:
+            nav_logger.warning("nav_status JSON 解析失败：{}", exc)
+            return
+
+        if not isinstance(payload, dict):
+            nav_logger.warning("nav_status JSON 结构错误：期望对象，实际为 {}", type(payload).__name__)
+            return
+
+        nav_status = self._normalize_nav_status(payload)
+        updated_status = update_navigation_status(nav_status)
+        self._submit_broadcast("nav.navigation_status", updated_status)
+
+    def _normalize_nav_status(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raw_status = str(payload.get("status") or "").strip().lower()
+        status_map = {
+            "accepted": "navigating",
+            "moving": "navigating",
+            "reached": "reached",
+            "failed": "error",
+            "canceled": "idle",
+            "estop": "estop",
+        }
+        mapped_status = status_map.get(raw_status)
+        if mapped_status is None:
+            mapped_status = "error"
+            nav_logger.warning("收到未知 nav_status：{}", raw_status or "<empty>")
+
+        def _to_optional_float(value: Any) -> float | None:
+            if value in (None, ""):
+                return None
+            try:
+                return float(value)
+            except Exception:
+                return None
+
+        def _to_optional_str(value: Any) -> str | None:
+            if value in (None, ""):
+                return None
+            return str(value)
+
+        waypoint_id = _to_optional_str(payload.get("waypoint_id"))
+        target_waypoint_id = _to_optional_str(payload.get("target_waypoint_id")) or waypoint_id
+        target_name = _to_optional_str(payload.get("target_name") or payload.get("waypoint_name"))
+        message = _to_optional_str(payload.get("message")) or ""
+        timestamp_value = _to_optional_float(payload.get("timestamp"))
+        timestamp = timestamp_value if timestamp_value is not None else time.time()
+
+        return {
+            "status": mapped_status,
+            "target_waypoint_id": target_waypoint_id,
+            "target_name": target_name,
+            "message": message,
+            "timestamp": timestamp,
+            "ros_status": raw_status or None,
+            "task_id": _to_optional_str(payload.get("task_id")),
+            "waypoint_id": waypoint_id,
+            "distance_to_goal": _to_optional_float(payload.get("distance_to_goal")),
+            "error_code": _to_optional_str(payload.get("error_code")),
+            "source": settings.ROS_NAV_STATUS_TOPIC,
+        }
 
     def _extract_global_path(self, msg: Any) -> dict[str, Any]:
         poses = getattr(msg, "poses", []) or []
@@ -635,8 +730,6 @@ class RosNavBridge:
 
         if now - self._last_localization_broadcast_at >= 1.0:
             self._last_localization_broadcast_at = now
-            from .services_nav_state import get_nav_state
-
             localization_status = get_nav_state()["localization_status"]
             self._submit_broadcast("nav.localization_status", localization_status)
 

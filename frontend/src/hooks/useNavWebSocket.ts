@@ -70,19 +70,18 @@ export function useNavWebSocket() {
 
         const navEvent = message as NavWebSocketEvent
         setState((prev) => {
-          if (navEvent.type === 'nav.robot_pose') {
-            return { ...prev, robotPose: navEvent.data, lastMessageAt: Date.now() }
+          switch (navEvent.type) {
+            case 'nav.robot_pose':
+              return { ...prev, robotPose: navEvent.data, lastMessageAt: Date.now() }
+            case 'nav.global_path':
+              return { ...prev, globalPath: navEvent.data, lastMessageAt: Date.now() }
+            case 'nav.localization_status':
+              return { ...prev, localizationStatus: navEvent.data, lastMessageAt: Date.now() }
+            case 'nav.navigation_status':
+              return { ...prev, navigationStatus: navEvent.data, lastMessageAt: Date.now() }
+            default:
+              return prev
           }
-          if (navEvent.type === 'nav.global_path') {
-            return { ...prev, globalPath: navEvent.data, lastMessageAt: Date.now() }
-          }
-          if (navEvent.type === 'nav.localization_status') {
-            return { ...prev, localizationStatus: navEvent.data, lastMessageAt: Date.now() }
-          }
-          if (navEvent.type === 'nav.navigation_status') {
-            return { ...prev, navigationStatus: navEvent.data, lastMessageAt: Date.now() }
-          }
-          return prev
         })
       } catch (error) {
         console.error('解析导航 WebSocket 消息失败:', error)

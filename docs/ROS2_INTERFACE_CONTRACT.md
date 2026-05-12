@@ -102,11 +102,51 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 - 消息类型：`std_msgs/msg/Bool`
 - 数据：`true` 或 `false`
 
-### 2.7 当前运行时状态
+### 2.7 导航状态闭环
 
-当前实现里，导航状态的前后端联动仍以现有后端状态与页面推送为主。
+当前真实链路是：
 
-- 当前不要把 `/nav_status` 视为已完成主链路。
+- ROS2 通过 `/nav_status std_msgs/msg/String` 向后端推送导航状态 JSON
+- 后端订阅 `/nav_status`，解析后更新 `navigation_status`
+- 后端向前端广播 WebSocket 事件 `nav.navigation_status`
+- 前端通过现有导航 WebSocket 更新导航状态展示
+
+`/nav_status` 支持的原始状态：
+
+- `accepted`
+- `moving`
+- `reached`
+- `failed`
+- `canceled`
+- `estop`
+
+后端映射后的状态：
+
+- `accepted` -> `navigating`
+- `moving` -> `navigating`
+- `reached` -> `reached`
+- `failed` -> `error`
+- `canceled` -> `idle`
+- `estop` -> `estop`
+
+`/nav_status` JSON 示例：
+
+```json
+{
+  "status": "moving",
+  "task_id": "task_001",
+  "waypoint_id": "wp_001",
+  "message": "导航中",
+  "distance_to_goal": 1.25,
+  "error_code": null,
+  "timestamp": 1770000000.123
+}
+```
+
+补充说明：
+
+- 非法 JSON 只记录 warning，不会让 ROS bridge 崩溃。
+- 未知 `status` 只记录 warning，并映射为 `error`。
 - 当前不要把 `current_goal.json` 视为任务执行主路径。
 
 ## 三、运行时文件
@@ -180,38 +220,7 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 
 以下内容是推荐补充方向，不是当前主路径。
 
-### 6.1 `/nav_status`
-
-建议增加：
-
-- topic：`/nav_status`
-- 消息类型：`std_msgs/msg/String`
-- 内容：JSON 字符串
-- 方向：ROS2 -> BotDog 后端
-
-建议用途：
-
-- `accepted`
-- `moving`
-- `reached`
-- `failed`
-- `canceled`
-- `estop`
-
-建议 JSON 字段示例：
-
-```json
-{
-  "status": "moving",
-  "goal_id": "wp_001",
-  "distance_to_goal": 1.25,
-  "message": "导航中",
-  "error_code": null,
-  "timestamp": 1770000000.123
-}
-```
-
-### 6.2 `/nav_goal_json`
+### 6.1 `/nav_goal_json`
 
 建议在跨机器部署、或后端与 ROS2 模块不能共享文件系统时，增加：
 
@@ -222,7 +231,7 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 
 这属于跨机器传递目标点信息的可选方案，不是当前主路径。
 
-### 6.3 `/initialpose_json`
+### 6.2 `/initialpose_json`
 
 建议在需要传递重定位坐标时，增加：
 

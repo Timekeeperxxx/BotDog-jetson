@@ -17,6 +17,12 @@ _latest_navigation_status: dict[str, Any] = {
     "target_name": None,
     "message": "导航空闲",
     "timestamp": None,
+    "ros_status": None,
+    "task_id": None,
+    "waypoint_id": None,
+    "distance_to_goal": None,
+    "error_code": None,
+    "source": "backend",
 }
 _latest_localization_status: dict[str, Any] = {
     "status": "unknown",
@@ -66,6 +72,8 @@ def update_navigation_status(status: dict[str, Any]) -> dict[str, Any]:
         **copy.deepcopy(status),
         "timestamp": status.get("timestamp", time.time()),
     }
+    if next_status.get("source") in (None, ""):
+        next_status["source"] = "backend"
 
     with _lock:
         _latest_navigation_status = next_status
@@ -80,6 +88,12 @@ def set_navigation_idle(message: str = "导航空闲") -> dict[str, Any]:
             "target_waypoint_id": None,
             "target_name": None,
             "message": message,
+            "ros_status": None,
+            "task_id": None,
+            "waypoint_id": None,
+            "distance_to_goal": None,
+            "error_code": None,
+            "source": "backend",
         }
     )
 

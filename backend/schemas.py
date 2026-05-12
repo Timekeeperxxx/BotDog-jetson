@@ -463,6 +463,12 @@ class NavigationStatusDTO(BaseModel):
     target_name: str | None = None
     message: str
     timestamp: float | None = None
+    ros_status: str | None = None
+    task_id: str | None = None
+    waypoint_id: str | None = None
+    distance_to_goal: float | None = None
+    error_code: str | None = None
+    source: str | None = None
 
 
 class LocalizationStatusDTO(BaseModel):
