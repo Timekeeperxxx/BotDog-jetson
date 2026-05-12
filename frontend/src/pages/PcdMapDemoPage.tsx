@@ -664,17 +664,6 @@ export function PcdMapDemoPage() {
   const interactionMode: 'none' | 'waypoint' | 'pose' =
     addMode ? 'waypoint' : (toolMode === 'pose' ? 'pose' : 'none')
 
-  const selectedTask = useMemo(
-    () => tasks.find((task) => task.id === selectedTaskId) ?? null,
-    [selectedTaskId, tasks],
-  )
-
-  const selectedTaskScene = useMemo(
-    () => (selectedTask ? scenes.find((scene) => scene.id === (selectedTask.sceneId || selectedTask.mapId)) ?? null : null),
-    [scenes, selectedTask],
-  )
-  const selectedTaskSceneNavigable = selectedTaskScene?.navigable ?? false
-
   const mapOptions = useMemo(
     () => scenes.map((scene) => ({ id: scene.id, name: scene.name })),
     [scenes],
@@ -1037,7 +1026,7 @@ export function PcdMapDemoPage() {
                   tasks={tasks}
                   selectedTaskId={selectedTaskId}
                   canStartCreate={selectedSceneNavigable}
-                  canExecuteTask={canOperate && selectedTaskSceneNavigable}
+                  canExecuteTask={canOperate}
                   canStopTask={canOperate && Boolean(selectedTaskId)}
                   onSelectTask={setSelectedTaskId}
                   onEditTask={handleStartEditTask}
