@@ -1,32 +1,131 @@
 # ROS2 接口契约
 
-## 一、总体职责
+本文只描述当前 BotDog-jetson 项目中 ROS2 对接的真实实现与后续建议，不作为业务代码实现说明。
 
-BotDog 后端与 ROS2 / 同事导航模块之间的职责边界如下：
+## 一、契约范围
 
-- BotDog 后端接收前端导航相关操作。
-- BotDog 后端根据操作发布 ROS2 topic。
-- BotDog 后端通过 TF 或位姿 topic 获取机器人当前位置。
-- BotDog 后端将位姿、定位状态、导航状态转发给前端。
-- BotDog 后端不直接实现路径规划。
-- BotDog 后端不替代同事的导航模块、雷达模块、建图模块。
+BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 topic 发布或运行时文件写入。
 
-同机部署默认方案：
+- 后端不直接实现路径规划。
+- 后端不替代 ROS2 导航、雷达、建图模块。
+- 本文不修改任何业务代码，只约定接口行为。
 
-1. 导航点列表：`data/nav_waypoints/{map_id}.json`
-2. 当前目标点：`data/nav_runtime/current_goal.json`
-3. 开始导航：`/nav_start std_msgs/msg/Bool true`
-4. 停止导航：`/nav_stop std_msgs/msg/Bool true`
-5. 状态反馈：`/nav_status std_msgs/msg/String(JSON)`
+## 二、当前已实现
 
-说明：
+### 2.1 页面打开
 
-- 同事模块收到 `/nav_start` 后，读取 `data/nav_runtime/current_goal.json`。
-- `current_goal.json` 中已经包含 `waypoint_id`、`map_id`、`x/y/z/yaw`。
-- 同事模块可以直接使用 `current_goal.json` 中的坐标，也可以用 `waypoint_id` 回查 `data/nav_waypoints/{map_id}.json`。
-- `/nav_goal_json` 仅作为跨机器部署或不共享文件时的可选方案，不是当前主路径。
+- 前端打开导航页后，后端发布 `/lidar_start`，或配置项 `ROS_NAV_PAGE_OPEN_TOPIC` 指定的 topic。
+- 消息类型：`std_msgs/msg/Bool`
+- 数据：`true`
+- 作用：通知雷达或导航侧开始准备。
 
-## 二、统一消息规则
+### 2.2 单点导航 go-to waypoint
+
+当前真实链路是：
+
+- 前端调用 `/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to`
+- 后端发布目标点位置信息到 clicked_point 对应 topic，语义上等价于 `goal_xyz`
+- 后端同步发布 `goal_yaw`
+- **go-to 不发布 `/nav_start`**
+
+补充说明：
+
+- 这一行为已经被 `tests/test_nav_go_to.py` 保护。
+- go-to 是单点目标触发，不是任务执行入口。
+
+### 2.3 任务导航 execute task
+
+当前真实链路是：
+
+- 前端调用 `/api/v1/nav/tasks/{task_id}/execute`
+- 后端根据任务和导航点生成 `data/nav_runtime/current_task.json`
+- 后端发布 `/nav_start`，消息为 `std_msgs/msg/Bool` 的 `true`
+
+`current_task.json` 是当前任务主路径文件，建议视为任务执行上下文，而不是单点导航上下文。
+
+`current_task.json` 当前应包含的核心字段：
+
+- `task_id`
+- `task_name`
+- `scene_id`
+- `steps`
+- `scene_dir`
+- `map_pcd`
+- `ground_pcd`
+- `source_waypoints`
+
+当前实现中，`steps` 只保留巡检点步骤，步骤内容应只包含巡检点标识，不再扩展其他业务信息。
+
+补充说明：
+
+- 这一行为已经被 `tests/test_nav_task_execute.py` 保护。
+- `execute task` 才是当前会发布 `/nav_start true` 的入口。
+
+### 2.4 停止任务
+
+当前真实链路是：
+
+- 前端调用 `/api/v1/nav/tasks/{task_id}/stop`
+- 后端发布 `/nav_start false`
+- 后端清理 `global_path`
+- 后端将 `navigation_status` 置为 `idle`
+
+### 2.5 重定位
+
+当前真实链路是：
+
+- 后端保存 localization pose
+- 后端发布 `/initialpose_start`，或配置项 `ROS_NAV_SET_POSE_TOPIC` 指定的 topic
+- 消息类型：`std_msgs/msg/Bool`
+- 数据：`true`
+
+### 2.6 建图
+
+当前真实链路是：
+
+- 后端发布 `/mapping_start`，或配置项 `ROS_NAV_MAPPING_TOPIC` 指定的 topic
+- 消息类型：`std_msgs/msg/Bool`
+- 数据：`true` 或 `false`
+
+### 2.7 当前运行时状态
+
+当前实现里，导航状态的前后端联动仍以现有后端状态与页面推送为主。
+
+- 当前不要把 `/nav_status` 视为已完成主链路。
+- 当前不要把 `current_goal.json` 视为任务执行主路径。
+
+## 三、运行时文件
+
+### 3.1 `data/nav_runtime/current_task.json`
+
+这是当前任务执行的运行时文件，由任务执行接口生成。
+
+建议字段语义如下：
+
+- `task_id`：任务 ID
+- `task_name`：任务名称
+- `scene_id`：场景 ID
+- `steps`：任务步骤数组，当前只保留巡检点步骤
+- `scene_dir`：场景目录
+- `map_pcd`：地图点云文件
+- `ground_pcd`：地面点云文件
+- `source_waypoints`：来源巡检点列表
+
+如果需要附加元信息，可以继续保留 `frame_id`、`created_at`、`updated_at` 等字段，但不要把无关字段写成主流程依赖。
+
+### 3.2 `current_goal.json`
+
+`current_goal.json` 不再应被描述为当前主路径。
+
+在当前实现语境里：
+
+- 单点导航 go-to 走实时 topic 发布
+- 任务导航 execute task 走 `current_task.json + /nav_start`
+- 不应再把 `current_goal.json + /nav_start` 作为当前主链路写进文档
+
+如果历史环境中仍存在 `current_goal.json`，也只应视为兼容历史，不应作为新的对接依据。
+
+## 四、统一消息规则
 
 | 数据类型 | ROS2 消息类型 | 使用场景 |
 |---|---|---|
@@ -45,7 +144,7 @@ BotDog 后端与 ROS2 / 同事导航模块之间的职责边界如下：
 - `Bool` topic 即使用于触发动作，也只能表达 `true/false`，不扩展其他字段。
 - JSON topic 不用于简单开关，不应用 `String("true")` / `String("false")` 替代 `Bool`。
 
-## 三、坐标系约定
+## 五、坐标系约定
 
 - 默认地图坐标系：`map`
 - 默认机器人本体坐标系：`base_link`
@@ -61,286 +160,106 @@ BotDog 后端与 ROS2 / 同事导航模块之间的职责边界如下：
 - 当前后端 TF 模式下查询的是 `ROS_NAV_FRAME_ID -> ROS_NAV_BASE_FRAME_ID`，默认即 `map -> base_link`。
 - 如果 ROS2 侧输出的是 `PoseStamped`、`PoseWithCovarianceStamped`、`Odometry`，其 `frame_id` 必须与地图坐标系约定一致，默认应为 `map`。
 
-## 四、Bool 指令类 topic 契约
+## 六、后续建议
 
-### 1. 页面打开 / 雷达准备
+以下内容是推荐补充方向，不是当前主路径。
 
-| 项目 | 内容 |
-|---|---|
-| 配置项 | `ROS_NAV_PAGE_OPEN_TOPIC` |
-| 默认 topic | `/lidar_start` |
-| 方向 | BotDog 后端 -> ROS2 |
-| 消息类型 | `std_msgs/msg/Bool` |
-| 数据 | `true` |
-| 触发时机 | 前端打开导航页或刷新导航页 |
-| 作用 | 通知雷达/导航侧准备工作 |
+### 6.1 `/nav_status`
 
-### 2. 导航开始
+建议增加：
 
-| 项目 | 内容 |
-|---|---|
-| 配置项 | `ROS_NAV_START_TOPIC` |
-| 默认 topic | `/nav_start` |
-| 方向 | BotDog 后端 -> ROS2 |
-| 消息类型 | `std_msgs/msg/Bool` |
-| 数据 | `true` |
-| 触发时机 | 用户点击开始导航 |
-| 作用 | 通知导航模块进入导航流程 |
+- topic：`/nav_status`
+- 消息类型：`std_msgs/msg/String`
+- 内容：JSON 字符串
+- 方向：ROS2 -> BotDog 后端
 
-### 3. 导航停止 / 急停
+建议用途：
 
-| 项目 | 内容 |
-|---|---|
-| 配置项 | `ROS_NAV_STOP_TOPIC` |
-| 默认 topic | `/nav_stop` |
-| 方向 | BotDog 后端 -> ROS2 |
-| 消息类型 | `std_msgs/msg/Bool` |
-| 数据 | `true` |
-| 触发时机 | 用户点击导航停止或急停 |
-| 作用 | 通知导航模块停止当前导航动作 |
+- `accepted`
+- `moving`
+- `reached`
+- `failed`
+- `canceled`
+- `estop`
 
-### 4. 重定位触发
-
-| 项目 | 内容 |
-|---|---|
-| 配置项 | `ROS_NAV_SET_POSE_TOPIC` |
-| 默认 topic | `/initialpose_start` |
-| 方向 | BotDog 后端 -> ROS2 |
-| 消息类型 | `std_msgs/msg/Bool` |
-| 数据 | `true` |
-| 触发时机 | 用户设置重定位位姿后 |
-| 作用 | 通知 ROS2 侧执行重定位流程 |
-
-### 5. 建图开关
-
-| 项目 | 内容 |
-|---|---|
-| 配置项 | `ROS_NAV_MAPPING_TOPIC` |
-| 默认 topic | `/mapping_start` |
-| 方向 | BotDog 后端 -> ROS2 |
-| 消息类型 | `std_msgs/msg/Bool` |
-| 数据 | `true/false` |
-| 触发时机 | 用户开启或关闭建图 |
-| 作用 | 通知建图模块开始或停止 |
-
-## 五、JSON 数据类 topic 契约
-
-约定：
-
-- Demo 阶段 ROS2 复杂数据统一采用 `std_msgs/msg/String`。
-- `data` 字段中放 JSON 字符串。
-- 复杂数据包括坐标、参数、状态、结果、错误原因。
-
-注意：
-
-- 当前代码里的 `/goal_pose` 仍是 `geometry_msgs/msg/PoseStamped`。
-- 团队后续约定是：凡是传递坐标或复杂数据，优先使用 JSON 文档。
-- 当前 `PoseStamped` 方案属于“当前实现兼容项”，不是后续统一契约的推荐终态。
-
-### 1. 导航目标点，当前主方案与可选方案
-
-当前主方案：
-
-- 后端在用户点击导航点后，先生成或覆盖 `data/nav_runtime/current_goal.json`
-- 然后发布 `/nav_start` 的 `Bool(true)`
-- 同事模块收到 `/nav_start` 后读取 `current_goal.json`
-- `/goal_pose` 属于兼容发布路径，即使失败也不影响 `current_goal.json + /nav_start` 主路径
-
-`current_goal.json` 示例：
+建议 JSON 字段示例：
 
 ```json
 {
-  "schema_version": 1,
-  "event": "nav_goal",
-  "map_id": "ground.pcd",
-  "waypoint_id": "wp_e804097a1549",
-  "waypoint_name": "巡检点1",
-  "frame_id": "map",
-  "x": 6.068818594663197,
-  "y": -2.9097979096055937,
-  "z": -0.83,
-  "yaw": -1.5707963267948966,
-  "selected_at": "2026-05-06T12:00:00.000Z",
-  "source": "botdog-backend"
-}
-```
-
-字段说明：
-
-- `schema_version`：当前 `current_goal.json` 契约版本，当前为 `1`
-- `event`：固定为 `nav_goal`
-- `map_id`：地图 ID
-- `waypoint_id`：导航点 ID
-- `waypoint_name`：导航点名称
-- `frame_id`：默认 `map`
-- `x/y/z`：单位米
-- `yaw`：单位弧度
-- `selected_at`：用户在前端选择该目标点的 UTC ISO8601 时间
-- `source`：固定为 `botdog-backend`
-
-可选方案：
-
-- 当 BotDog 后端与导航模块不在同一台机器、或不能共享文件系统时，才推荐使用 JSON topic 传输目标点。
-
-### 2. `/nav_goal_json`，可选方案
-
-| 项目 | 内容 |
-|---|---|
-| 推荐 topic | `/nav_goal_json` |
-| 方向 | BotDog 后端 -> ROS2 |
-| 消息类型 | `std_msgs/msg/String` |
-| data | JSON 字符串 |
-| 用途 | 传递目标点坐标和导航点信息 |
-
-JSON 示例：
-
-```json
-{
-  "goal_id": "wp_001",
-  "map_id": "map_001",
-  "name": "门口巡逻点",
-  "frame_id": "map",
-  "x": 1.25,
-  "y": 3.40,
-  "z": 0.0,
-  "yaw": 1.57,
-  "timestamp": 1770000000.123
-}
-```
-
-字段说明：
-
-- `goal_id`：导航点 ID
-- `map_id`：地图 ID
-- `name`：导航点名称
-- `frame_id`：默认 `map`
-- `x/y/z`：单位米
-- `yaw`：单位弧度
-- `timestamp`：Unix seconds
-
-当前兼容说明：
-
-- 当前 `services_ros_nav.py` 仍通过 `ROS_NAV_GOAL_TOPIC`，默认 `/goal_pose`，发布 `geometry_msgs/msg/PoseStamped`。
-- 如果暂时继续使用 `/goal_pose`，它属于当前兼容实现。
-- `/goal_pose` 发布失败时，不应影响 `current_goal.json + /nav_start` 主路径。
-- 后续如果改成 JSON，建议新增 `ROS_NAV_GOAL_JSON_TOPIC` 配置，不要直接破坏旧接口。
-
-### 3. 重定位位姿，推荐新增
-
-| 项目 | 内容 |
-|---|---|
-| 推荐 topic | `/initialpose_json` |
-| 方向 | BotDog 后端 -> ROS2 |
-| 消息类型 | `std_msgs/msg/String` |
-| data | JSON 字符串 |
-
-JSON 示例：
-
-```json
-{
-  "map_id": "map_001",
-  "frame_id": "map",
-  "x": 1.25,
-  "y": 3.40,
-  "yaw": 1.57,
-  "timestamp": 1770000000.123
-}
-```
-
-说明：
-
-- 当前 `/initialpose_start` 只负责 `Bool` 触发。
-- 真正的重定位坐标建议通过 `/initialpose_json` 传递。
-
-### 4. 导航状态反馈，推荐新增
-
-| 项目 | 内容 |
-|---|---|
-| 推荐 topic | `/nav_status` |
-| 方向 | ROS2 -> BotDog 后端 |
-| 消息类型 | `std_msgs/msg/String` |
-| data | JSON 字符串 |
-
-JSON 示例：
-
-```json
-{
-  "status": "accepted",
+  "status": "moving",
   "goal_id": "wp_001",
   "distance_to_goal": 1.25,
-  "message": "导航目标已接收",
+  "message": "导航中",
   "error_code": null,
   "timestamp": 1770000000.123
 }
 ```
 
-状态枚举：
+### 6.2 `/nav_goal_json`
 
-- `accepted`：导航模块已接收目标
-- `moving`：正在导航
-- `reached`：到达目标点
-- `failed`：导航失败
-- `canceled`：用户取消
-- `estop`：急停中断
+建议在跨机器部署、或后端与 ROS2 模块不能共享文件系统时，增加：
 
-### 5. 错误反馈，推荐通过 `/nav_status` 承载
+- topic：`/nav_goal_json`
+- 消息类型：`std_msgs/msg/String`
+- 内容：JSON 字符串
+- 方向：BotDog 后端 -> ROS2
 
-JSON 示例：
+这属于跨机器传递目标点信息的可选方案，不是当前主路径。
 
-```json
-{
-  "status": "failed",
-  "goal_id": "wp_001",
-  "error_code": "PLAN_FAILED",
-  "message": "路径规划失败",
-  "timestamp": 1770000000.123
-}
-```
+### 6.3 `/initialpose_json`
 
-## 六、当前实现与推荐契约的差异
+建议在需要传递重定位坐标时，增加：
 
-当前代码已实现：
+- topic：`/initialpose_json`
+- 消息类型：`std_msgs/msg/String`
+- 内容：JSON 字符串
+- 方向：BotDog 后端 -> ROS2
 
-- `/lidar_start`：`Bool`
-- `/nav_start`：`Bool`
-- `/nav_stop`：`Bool`
-- `/initialpose_start`：`Bool`
-- `/mapping_start`：`Bool`
-- `data/nav_runtime/current_goal.json`：运行时当前目标点文件
-- `/goal_pose`：`PoseStamped`
-- 位姿来源：TF 或 pose topic
+这属于后续增强方案，不是当前主路径。
 
-推荐后续补充：
+## 七、对接关系总览
 
-- `/nav_goal_json`：`String(JSON)`，用于跨机器部署或不共享文件时传递目标点完整信息
-- `/initialpose_json`：`String(JSON)`，用于传递重定位坐标
-- `/nav_status`：`String(JSON)`，用于 ROS2 向后端反馈导航状态
-
-说明：
-
-- 为了避免一次性破坏已有功能，当前阶段不强制删除 `/goal_pose`。
-- 当前主路径是“共享文件 + Bool 触发”。
-- `/goal_pose` 是兼容发布路径，失败不应影响主路径。
-- 后续如需跨机器部署，可以采用“双发模式”：
-- 继续发布 `/goal_pose` 给 Nav2 兼容
-- 同时发布 `/nav_goal_json` 给不能共享文件的模块读取完整字段
-
-## 七、前后端完整链路
+### 7.1 当前已实现链路
 
 ```text
-前端点击导航点
-  -> FastAPI nav go-to 接口
-  -> 后端写入 data/nav_runtime/current_goal.json
+前端打开导航页
+  -> 后端发布 /lidar_start Bool(true)
+
+前端点击单个巡检点 go-to
+  -> 后端发布 clicked_point/goal_xyz 对应 topic
+  -> 后端发布 goal_yaw
+  -> 不发布 /nav_start
+
+前端执行任务 execute task
+  -> 后端生成 data/nav_runtime/current_task.json
   -> 后端发布 /nav_start Bool(true)
-  -> 后端发布目标点信息
-     当前兼容：/goal_pose PoseStamped
-     可选：/nav_goal_json String(JSON)
-  -> ROS2 导航模块执行
-  -> ROS2 发布 /nav_status String(JSON)
+
+前端停止任务
+  -> 后端发布 /nav_start Bool(false)
+  -> 后端清理 global_path
+  -> 后端将 navigation_status 置为 idle
+
+前端设置重定位
+  -> 后端保存 localization pose
+  -> 后端发布 /initialpose_start Bool(true)
+
+前端开启/关闭建图
+  -> 后端发布 /mapping_start Bool(true/false)
+```
+
+### 7.2 后续建议链路
+
+```text
+ROS2 发布 /nav_status String(JSON)
   -> 后端订阅 /nav_status
-  -> 更新 navigation_status
+  -> 后端更新 navigation_status
   -> WebSocket 推送给前端
-  -> 前端显示导航进度、到达、失败原因
+
+需要跨机器传递目标点时
+  -> 可选发布 /nav_goal_json String(JSON)
+
+需要传递重定位坐标时
+  -> 可选发布 /initialpose_json String(JSON)
 ```
 
 ## 八、同事接入 checklist
@@ -350,15 +269,16 @@ JSON 示例：
 - topic 名称是否和 `.env` 配置一致
 - `Bool` topic 是否只用 `true/false`
 - JSON topic 是否是合法 JSON
-- 是否能读取 `data/nav_runtime/current_goal.json`
+- 是否能读取 `data/nav_runtime/current_task.json`
+- 单点 go-to 是否只发 clicked_point/goal_xyz 和 `goal_yaw`
+- 单点 go-to 是否不会发 `/nav_start`
+- execute task 是否会发 `/nav_start true`
 - 坐标系是否统一 `map`
 - `x/y/z` 是否为米
 - `yaw` 是否为弧度
 - 是否能查到 `map -> base_link` TF
-- 是否能收到 `/nav_start`
-- 是否能收到 `/nav_stop`
-- 如果采用可选方案，是否能解析 `/nav_goal_json`
-- 是否能发布 `/nav_status`
+- 如果采用后续建议，是否能解析 `/nav_goal_json`
+- 如果采用后续建议，是否能发布 `/nav_status`
 
 ## 九、排查命令
 
@@ -368,9 +288,10 @@ ros2 topic echo /lidar_start
 ros2 topic echo /nav_start
 ros2 topic echo /nav_stop
 ros2 topic echo /mapping_start
-ros2 topic echo /goal_pose
-ros2 topic echo /nav_goal_json
+ros2 topic echo /initialpose_start
 ros2 topic echo /nav_status
+ros2 topic echo /nav_goal_json
+ros2 topic echo /initialpose_json
 ros2 run tf2_ros tf2_echo map base_link
 ```
 
