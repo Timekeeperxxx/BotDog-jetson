@@ -153,7 +153,7 @@ class MAVLinkGateway:
                 "lat": position.lat if position else None,
                 "lon": position.lon if position else None,
             } if position else None,
-            task_id=None,  # TODO: 获取当前任务 ID
+            task_id=None,  # 当前未绑定巡检任务上下文
         )
 
     async def _start_simulation_mode(self, stop_event: asyncio.Event) -> None:

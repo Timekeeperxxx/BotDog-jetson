@@ -85,7 +85,7 @@ class AlertService:
             severity="CRITICAL" if alert.temperature > 80 else "WARNING",
             message=f"检测到目标温度过高 ({alert.temperature:.1f}°C)",
             confidence=min(1.0, alert.temperature / alert.threshold),
-            file_path=None,  # TODO: 实现截图功能
+            file_path=None,  # 当前证据图片由抓拍链路补齐
             image_url=None,
             gps_lat=position.get("lat") if position else None,
             gps_lon=position.get("lon") if position else None,
@@ -227,7 +227,7 @@ class AlertService:
             event_code=evidence.event_code,
             severity=evidence.severity,
             message=evidence.message,
-            evidence_id=None,  # TODO: 从数据库获取
+            evidence_id=None,  # 当前广播不附带数据库主键
             image_url=evidence.image_url,
             gps_lat=evidence.gps_lat,
             gps_lon=evidence.gps_lon,

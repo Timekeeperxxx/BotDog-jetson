@@ -2,12 +2,13 @@
 
 import time
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from ...app_runtime_state import APP_START_MONO
 from ...control_service import get_control_service
 from ...safety_supervisor import get_safety_supervisor
-from ...schemas import SystemHealthResponse, SystemSafetyResponse
+from ...schemas import SystemHealthResponse, SystemSafetyResponse, SystemStartupResponse, StartupSummaryItem
+from ...startup_summary import coerce_startup_summary
 from ...state_machine import SystemState
 from ...state_machine_state import get_state_machine
 
@@ -45,6 +46,23 @@ async def system_health() -> SystemHealthResponse:
         status=status,
         mavlink_connected=mavlink_connected,
         uptime=round(uptime, 3),
+    )
+
+
+@router.get("/api/v1/system/startup", response_model=SystemStartupResponse)
+async def system_startup(request: Request) -> SystemStartupResponse:
+    """返回启动摘要，便于运维和排障时直接查看模块启动结果。"""
+    summary = coerce_startup_summary(getattr(request.app.state, "startup_summary", None))
+    items = [
+        StartupSummaryItem(name=item.name, status=item.status, detail=item.detail)
+        for item in summary.items()
+    ]
+    return SystemStartupResponse(
+        status=summary.overall_status(),
+        uptime=round(time.monotonic() - APP_START_MONO, 3),
+        generated_at=getattr(request.app.state, "startup_summary_generated_at", None),
+        snapshot_file=getattr(request.app.state, "startup_summary_snapshot_file", None),
+        items=items,
     )
 
 

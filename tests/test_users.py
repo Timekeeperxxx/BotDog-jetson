@@ -11,6 +11,11 @@ settings.DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
 settings.AUTH_ENABLED = True
 settings.AUTH_ADMIN_USERNAME = "admin"
 settings.AUTH_ADMIN_PASSWORD = "ValidPassword123!"
+settings.CONTROL_ADAPTER_TYPE = "simulation"
+settings.ROS_NAV_ENABLED = False
+settings.SIMULATION_WORKER_ENABLED = False
+settings.AI_ENABLED = False
+settings.MAVLINK_SOURCE = "simulation"
 
 from backend.main import create_app
 from backend.database import get_engine, Base

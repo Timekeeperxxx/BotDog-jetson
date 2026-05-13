@@ -202,6 +202,7 @@ config/
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/v1/system/health` | 健康检查 |
+| GET | `/api/v1/system/startup` | 启动摘要 |
 | GET | `/api/v1/system/status` | 系统完整状态 |
 
 ### 任务管理

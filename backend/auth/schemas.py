@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AuthUserInternal(BaseModel):
@@ -21,6 +21,8 @@ class AuthStatusResponse(BaseModel):
     current_user: AuthUserResponse
 
 class UserResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     username: str
     role: str
@@ -29,9 +31,6 @@ class UserResponse(BaseModel):
     created_at: str
     updated_at: str
     last_login_at: str | None = None
-
-    class Config:
-        from_attributes = True
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=1, max_length=50, pattern="^[A-Za-z0-9_-]+$")

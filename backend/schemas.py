@@ -22,6 +22,20 @@ class SystemHealthResponse(BaseModel):
     uptime: float = Field(..., description="服务运行秒数")
 
 
+class StartupSummaryItem(BaseModel):
+    name: str = Field(..., description="模块名称")
+    status: str = Field(..., description="启动状态：ready/waiting/degraded/failed/disabled")
+    detail: str = Field(..., description="状态说明")
+
+
+class SystemStartupResponse(BaseModel):
+    status: str = Field(..., description="整体启动状态：全部模块正常/部分模块等待中/部分模块降级/存在模块失败")
+    uptime: float = Field(..., description="服务运行秒数")
+    generated_at: str | None = Field(default=None, description="启动摘要生成时间")
+    snapshot_file: str | None = Field(default=None, description="启动摘要快照文件")
+    items: list[StartupSummaryItem] = Field(..., description="启动摘要明细")
+
+
 class SystemSafetyResponse(BaseModel):
     safe_to_move: bool = Field(..., description="当前是否允许执行运动命令")
     reasons: list[str] = Field(default_factory=list, description="阻止运动的原因列表")

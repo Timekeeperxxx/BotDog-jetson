@@ -14,6 +14,7 @@ from .models import User
 from .services_config import get_config_service
 from .services_tasks import cleanup_stale_tasks
 from .services_video_sources import get_network_interface_service, get_video_source_service
+from .startup_summary import StartupSummary
 
 startup_logger = get_logger("启动环境")
 config_logger = get_logger("核心配置")
@@ -21,7 +22,7 @@ db_logger = get_logger("数据库")
 cleanup_logger = get_logger("启动清理")
 
 
-async def prepare_bootstrap_state() -> tuple[dict[str, tuple[str, str]], Path]:
+async def prepare_bootstrap_state() -> tuple[StartupSummary, Path]:
     """
     初始化与业务运行态无关的持久化基础状态。
 
@@ -49,10 +50,10 @@ async def prepare_bootstrap_state() -> tuple[dict[str, tuple[str, str]], Path]:
         if settings.AUTH_ENABLED:
             config_logger.warning("AUTH_ENABLED=true 且 JWT_SECRET 为默认值，这属于高风险配置！")
 
-    startup_summary: dict[str, tuple[str, str]] = {}
+    startup_summary = StartupSummary()
     await init_db()
     db_logger.info("数据库初始化完成")
-    startup_summary["数据库"] = ("ready", "数据库连接可用")
+    startup_summary.set("数据库", "ready", "数据库连接可用")
 
     async with get_session_factory()() as session:
         user_count = await session.scalar(select(func.count(User.id)))

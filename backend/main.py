@@ -11,7 +11,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -30,6 +31,7 @@ from .ws_event_broadcaster import EventBroadcaster
 from .app_bootstrap import prepare_bootstrap_state
 from .app_runtime import initialize_runtime_services
 from .app_shutdown import shutdown_runtime_services
+from .startup_summary import StartupSummary, coerce_startup_summary
 
 # 全局组件（在 lifespan 中初始化）
 _state_machine: StateMachine | None = None
@@ -81,23 +83,49 @@ def _format_status_text(status: str) -> str:
     return mapping.get(status, status)
 
 
-def _log_startup_summary(summary: dict[str, tuple[str, str]]) -> None:
-    normalized_states = [state for state, _ in summary.values()]
-    if "failed" in normalized_states:
-        overall = "存在模块失败"
-    elif "degraded" in normalized_states:
-        overall = "部分模块降级"
-    elif "waiting" in normalized_states:
-        overall = "部分模块等待中"
-    else:
-        overall = "全部模块正常"
+def _format_http_error_code(status_code: int) -> str:
+    if status_code == 400:
+        return "bad_request"
+    if status_code == 401:
+        return "unauthorized"
+    if status_code == 403:
+        return "forbidden"
+    if status_code == 404:
+        return "not_found"
+    if status_code == 409:
+        return "conflict"
+    if status_code == 422:
+        return "validation_error"
+    if status_code == 503:
+        return "service_unavailable"
+    return "http_error"
 
+
+def _log_startup_summary(summary: StartupSummary) -> None:
     summary_logger.info("=" * 80)
-    summary_logger.info("BotDog 后端启动完成：{}", overall)
+    summary_logger.info("BotDog 后端启动完成：{}", summary.overall_status())
     summary_logger.info("=" * 80)
-    for name, (state, detail) in summary.items():
-        summary_logger.info("{:<12} {}，{}", f"{name}：", _format_status_text(state), detail)
+    for item in summary.items():
+        summary_logger.info("{:<12} {}，{}", f"{item.name}：", _format_status_text(item.status), item.detail)
     summary_logger.info("=" * 80)
+
+
+def _write_startup_summary_snapshot(summary: StartupSummary | dict[str, tuple[str, str]], snapshot_dir: Path) -> tuple[str, str]:
+    return coerce_startup_summary(summary).write_snapshot(snapshot_dir)
+
+
+def _render_http_exception(exc: HTTPException) -> JSONResponse:
+    detail = exc.detail
+    message = detail if isinstance(detail, str) else str(detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": detail,
+            "message": message,
+            "status_code": exc.status_code,
+            "error": _format_http_error_code(exc.status_code),
+        },
+    )
 
 
 @asynccontextmanager
@@ -151,7 +179,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             settings.TELEMETRY_SAMPLING_HZ,
             settings.TELEMETRY_BROADCAST_HZ,
         )
-        startup_summary["遥测服务"] = (
+        startup_summary.set(
+            "遥测服务",
             "ready",
             f"DDS/数据源已启动，WebSocket 广播频率={settings.TELEMETRY_BROADCAST_HZ}Hz",
         )
@@ -227,12 +256,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
             tasks.append(asyncio.create_task(_ai_worker.start(stop_event)))
             ai_status = _ai_worker.get_startup_status()
-            startup_summary["AI识别"] = (
+            startup_summary.set(
+                "AI识别",
                 ai_status["status"],
                 ai_status["detail"],
             )
         else:
-            startup_summary["AI识别"] = ("disabled", "AI_ENABLED=false")
+            startup_summary.set("AI识别", "disabled", "AI_ENABLED=false")
             ai_logger.info("AI 识别已禁用：AI_ENABLED=false")
 
         await initialize_runtime_services(
@@ -246,20 +276,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             tasks=tasks,
         )
 
-        startup_summary["API 服务"] = (
+        startup_summary.set(
+            "API 服务",
             "ready",
             f"地址=http://{settings.BACKEND_HOST}:{settings.BACKEND_PORT}",
         )
-        startup_summary["接口文档"] = (
+        startup_summary.set(
+            "接口文档",
             "ready",
             f"地址=http://{settings.BACKEND_HOST}:{settings.BACKEND_PORT}/api/docs",
         )
         frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
         if frontend_dist.is_dir():
-            startup_summary["前端页面"] = ("ready", f"目录={frontend_dist}")
+            startup_summary.set("前端页面", "ready", f"目录={frontend_dist}")
         else:
-            startup_summary["前端页面"] = ("degraded", f"未找到构建产物：目录={frontend_dist}")
+            startup_summary.set("前端页面", "degraded", f"未找到构建产物：目录={frontend_dist}")
 
+        startup_generated_at, startup_snapshot_file = _write_startup_summary_snapshot(startup_summary, snapshot_dir)
+        app.state.startup_summary = startup_summary
+        app.state.startup_summary_generated_at = startup_generated_at
+        app.state.startup_summary_snapshot_file = startup_snapshot_file
         _log_startup_summary(startup_summary)
 
         yield
@@ -294,6 +330,10 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(_: Request, exc: HTTPException):
+        return _render_http_exception(exc)
 
     cors_allow_origins = settings.CORS_ALLOW_ORIGINS
     cors_allow_credentials = settings.CORS_ALLOW_CREDENTIALS

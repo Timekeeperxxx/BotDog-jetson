@@ -29,6 +29,7 @@ def test_start_mapping_creates_directory_and_launches_script(monkeypatch, tmp_pa
     script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
 
     started: list[tuple[list[str], bool]] = []
+    calls: list[str] = []
 
     def fake_popen(command, start_new_session=False, stdout=None, stderr=None, text=None, bufsize=None):
         started.append((command, start_new_session))
@@ -38,10 +39,20 @@ def test_start_mapping_creates_directory_and_launches_script(monkeypatch, tmp_pa
         assert bufsize == 1
         return DummyProcess()
 
+    def fake_stop_navigation_processes():
+        calls.append("stop_navigation_processes")
+        return {"pids": [123, 456]}
+
+    def fake_stop_cmd_vel_script():
+        calls.append("stop_cmd_vel_script")
+        return {"pid": 789}
+
     maps_root = tmp_path / "MAPS"
     monkeypatch.setattr(mapping_service_module, "MAPS_ROOT", maps_root)
     monkeypatch.setattr(mapping_service_module, "START_MAPPING_SCRIPT", script)
     monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(mapping_service_module, "stop_navigation_processes", fake_stop_navigation_processes)
+    monkeypatch.setattr(mapping_service_module, "stop_cmd_vel_script", fake_stop_cmd_vel_script)
 
     service = mapping_service_module.MappingService()
     result = service.start("实验室一楼")
@@ -52,6 +63,7 @@ def test_start_mapping_creates_directory_and_launches_script(monkeypatch, tmp_pa
     assert result["map_dir"] == str(expected_dir)
     assert result["enabled"] is True
     assert result["pid"] == 4321
+    assert calls == ["stop_navigation_processes", "stop_cmd_vel_script"]
     assert started == [(["bash", str(script), str(expected_dir)], True)]
 
 

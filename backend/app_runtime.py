@@ -17,6 +17,7 @@ from .services_ros_nav import RosNavBridge
 from .state_machine import StateMachine
 from .stranger_policy import StrangerPolicy, set_stranger_policy
 from .target_manager import TargetManager
+from .startup_summary import StartupSummary
 from .ws_broadcaster import WebSocketBroadcaster
 from .ws_event_broadcaster import EventBroadcaster
 from .ws_runtime_state import set_ws_runtime
@@ -38,7 +39,7 @@ async def initialize_runtime_services(
     session_factory,
     snapshot_dir: Path,
     stop_event: asyncio.Event,
-    startup_summary: dict[str, tuple[str, str]],
+    startup_summary: StartupSummary,
     mavlink_gateway,
     tasks: list[asyncio.Task[None]],
 ) -> tuple[Any, Any, Any, Any, Any, Any, Any]:
@@ -78,17 +79,19 @@ async def initialize_runtime_services(
             settings.ROS_NAV_POSE_TYPE,
         )
         if settings.ROS_NAV_POSE_TYPE.strip().lower() in ("tf", "tf2", "transform", "transformstamped"):
-            startup_summary["ROS导航"] = (
+            startup_summary.set(
+                "ROS导航",
                 "waiting",
                 f"等待 TF：target={settings.ROS_NAV_FRAME_ID}，source={settings.ROS_NAV_BASE_FRAME_ID}",
             )
         else:
-            startup_summary["ROS导航"] = (
+            startup_summary.set(
+                "ROS导航",
                 "waiting",
                 f"等待定位数据：topic={settings.ROS_NAV_POSE_TOPIC}，type={settings.ROS_NAV_POSE_TYPE}",
             )
     else:
-        startup_summary["ROS导航"] = ("disabled", "ROS_NAV_ENABLED=false")
+        startup_summary.set("ROS导航", "disabled", "ROS_NAV_ENABLED=false")
         ros_logger.info("ROS2 导航桥已禁用：ROS_NAV_ENABLED=false")
 
     # 3) 告警服务
@@ -118,7 +121,8 @@ async def initialize_runtime_services(
         set_control_service(control_service)
         tasks.append(asyncio.create_task(control_service.run_watchdog(stop_event)))
         control_logger.info("控制服务已启动：等待 Unitree B2 适配器完成初始化")
-        startup_summary["机器人控制"] = (
+        startup_summary.set(
+            "机器人控制",
             "waiting",
             f"适配器=UnitreeB2，网卡={settings.UNITREE_NETWORK_IFACE}，运控模式=ai",
         )
@@ -147,7 +151,8 @@ async def initialize_runtime_services(
             settings.CONTROL_ADAPTER_TYPE,
             settings.CONTROL_WATCHDOG_TIMEOUT_MS,
         )
-        startup_summary["机器人控制"] = (
+        startup_summary.set(
+            "机器人控制",
             "ready",
             f"适配器={settings.CONTROL_ADAPTER_TYPE}，watchdog={settings.CONTROL_WATCHDOG_TIMEOUT_MS}ms",
         )
@@ -158,7 +163,7 @@ async def initialize_runtime_services(
         await _zone_service.load_from_db(zone_session)
     set_zone_service(_zone_service)
     zone_logger.info("重点区服务已初始化：已加载区域数={}", _zone_service.zone_count)
-    startup_summary["重点区服务"] = ("ready", f"已加载区域数={_zone_service.zone_count}")
+    startup_summary.set("重点区服务", "ready", f"已加载区域数={_zone_service.zone_count}")
 
     _target_manager = TargetManager(
         frame_width=settings.AI_FRAME_WIDTH,
@@ -198,7 +203,8 @@ async def initialize_runtime_services(
         "自动跟踪服务已初始化：默认启用={}，多目标模式=true",
         settings.AUTO_TRACK_ENABLED,
     )
-    startup_summary["自动跟踪"] = (
+    startup_summary.set(
+        "自动跟踪",
         "ready",
         f"默认启用={settings.AUTO_TRACK_ENABLED}，多目标模式=true",
     )
@@ -216,10 +222,7 @@ async def initialize_runtime_services(
     )
     set_guard_mission_service(_guard_mission_service)
     guard_logger.info("驱离任务服务已初始化：默认启用={}", settings.GUARD_MISSION_ENABLED)
-    startup_summary["驱离任务"] = (
-        "ready",
-        f"默认启用={settings.GUARD_MISSION_ENABLED}",
-    )
+    startup_summary.set("驱离任务", "ready", f"默认启用={settings.GUARD_MISSION_ENABLED}")
 
     return (
         ws_broadcaster,

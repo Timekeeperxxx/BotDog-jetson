@@ -101,7 +101,7 @@ class MAVLinkRobotAdapter(BaseRobotAdapter):
     """
     MAVLink 真实硬件适配器（预留骨架）。
 
-    TODO: 真实硬件接入时实现此类。
+    真实硬件接入时可在此扩展。
     需要注入 MAVLink 连接对象，通过发送相应的 MAVLink 消息控制机器狗。
     """
 
@@ -130,7 +130,7 @@ class MAVLinkRobotAdapter(BaseRobotAdapter):
             vx:   可选速度覆盖（待实现时使用）
             vyaw: 可选速度覆盖（待实现时使用）
         """
-        # TODO: 实现具体的 MAVLink 命令映射
+        # 具体的 MAVLink 命令映射后续接入真实硬件时补齐
         # 例如：forward -> SET_POSITION_TARGET_LOCAL_NED with vx=1.0
         control_logger.warning("MAVLink 适配器尚未实现控制命令：command={}", cmd)
 
