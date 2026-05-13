@@ -127,7 +127,7 @@ export function PcdMapDemoPage() {
   // ── 高危操作确认 ──
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
   const navWs = useNavWebSocket()
-  const { robotPose, globalPath, localizationStatus, navigationStatus, setInitialState } = navWs
+  const { robotPose, globalPath, localizationStatus, setInitialState } = navWs
   const {
     startCommand,
     stopCommand,
@@ -143,32 +143,6 @@ export function PcdMapDemoPage() {
       ...items,
     ].slice(0, 30))
   }, [])
-
-  const navigationStatusLabel = navigationStatus
-    ? (navigationStatus.status === 'reached'
-      ? '已到达'
-      : navigationStatus.status === 'failed' || navigationStatus.status === 'error'
-        ? '导航失败'
-        : navigationStatus.status === 'canceled'
-          ? '已取消'
-          : navigationStatus.status === 'estop'
-            ? '急停中'
-            : navigationStatus.status === 'navigating'
-              ? '导航中'
-              : navigationStatus.status)
-    : null
-
-  const navigationStatusTone = navigationStatus
-    ? (navigationStatus.status === 'failed' || navigationStatus.status === 'error'
-      ? 'pcd-warning'
-      : navigationStatus.status === 'canceled' || navigationStatus.status === 'estop'
-        ? 'pcd-warning'
-        : 'pcd-bounds')
-    : 'pcd-bounds'
-
-  const navigationDistanceText = navigationStatus?.distance_to_goal == null
-    ? '-'
-    : `${navigationStatus.distance_to_goal.toFixed(3)} m`
 
   const formatRestartHealthLog = useCallback((result: Awaited<ReturnType<typeof restartNavigationLocalization>>) => {
     const health = result.health
@@ -664,6 +638,17 @@ export function PcdMapDemoPage() {
   const interactionMode: 'none' | 'waypoint' | 'pose' =
     addMode ? 'waypoint' : (toolMode === 'pose' ? 'pose' : 'none')
 
+  const selectedTask = useMemo(
+    () => tasks.find((task) => task.id === selectedTaskId) ?? null,
+    [selectedTaskId, tasks],
+  )
+
+  const selectedTaskScene = useMemo(
+    () => (selectedTask ? scenes.find((scene) => scene.id === (selectedTask.sceneId || selectedTask.mapId)) ?? null : null),
+    [scenes, selectedTask],
+  )
+  const selectedTaskSceneNavigable = selectedTaskScene?.navigable ?? false
+
   const mapOptions = useMemo(
     () => scenes.map((scene) => ({ id: scene.id, name: scene.name })),
     [scenes],
@@ -1026,7 +1011,7 @@ export function PcdMapDemoPage() {
                   tasks={tasks}
                   selectedTaskId={selectedTaskId}
                   canStartCreate={selectedSceneNavigable}
-                  canExecuteTask={canOperate}
+                  canExecuteTask={canOperate && selectedTaskSceneNavigable}
                   canStopTask={canOperate && Boolean(selectedTaskId)}
                   onSelectTask={setSelectedTaskId}
                   onEditTask={handleStartEditTask}
@@ -1138,18 +1123,6 @@ export function PcdMapDemoPage() {
                   {localizationStatus ? (
                     <div className={localizationStatus.status === 'ok' ? 'pcd-bounds' : 'pcd-warning'}>
                       {localizationStatus.message}
-                    </div>
-                  ) : null}
-                  {navigationStatus ? (
-                    <div className={navigationStatusTone}>
-                      <div>导航状态：{navigationStatusLabel}</div>
-                      <div>ROS 状态：{navigationStatus.ros_status || '-'}</div>
-                      <div>任务 ID：{navigationStatus.task_id || '-'}</div>
-                      <div>点位 ID：{navigationStatus.waypoint_id || navigationStatus.target_waypoint_id || '-'}</div>
-                      <div>距离目标：{navigationDistanceText}</div>
-                      <div>message：{navigationStatus.message || '-'}</div>
-                      <div>error_code：{navigationStatus.error_code || '-'}</div>
-                      {navigationStatus.source ? <div>source：{navigationStatus.source}</div> : null}
                     </div>
                   ) : null}
                 </div>
