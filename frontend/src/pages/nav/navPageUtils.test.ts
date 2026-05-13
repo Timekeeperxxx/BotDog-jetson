@@ -1,0 +1,96 @@
+import { describe, expect, it } from 'vitest'
+import {
+  applyTaskDraftPatch,
+  appendTaskDraftStep,
+  buildWorkflowStepsFromDraft,
+  findSceneById,
+  findTaskById,
+  formatRestartHealthLog,
+  resolveInitialTaskMapId,
+  resolveTaskSceneId,
+  removeTaskDraftStep,
+  patchTaskDraftStep,
+  validateMappingSceneName,
+} from './navPageUtils'
+
+describe('navPageUtils', () => {
+  it('validates mapping scene names', () => {
+    expect(validateMappingSceneName('')).toEqual({ ok: false, message: '请输入场景名称' })
+    expect(validateMappingSceneName('  实验室一楼  ')).toEqual({ ok: true, value: '实验室一楼' })
+    expect(validateMappingSceneName('../bad')).toEqual({ ok: false, message: '场景名称不能包含 / 或 \\' })
+  })
+
+  it('formats restart health logs', () => {
+    expect(
+      formatRestartHealthLog({
+        success: true,
+        running: true,
+        pid: 123,
+        livox_pid: 1,
+        relocation_pid: 2,
+        global_planner_pid: 3,
+        p2p_move_base_pid: 4,
+        cmd_vel_pid: null,
+        scene_id: 'Scene1_实验室一楼',
+        navigation_ready: true,
+        message: 'ok',
+        health: null,
+      }),
+    ).toContain('导航定位已重启')
+  })
+
+  it('builds workflow steps from task draft steps', () => {
+    expect(
+      buildWorkflowStepsFromDraft([
+        { type: 'navigate_waypoint', waypointId: '  wp-1  ' },
+        { type: 'navigate_waypoint', waypointId: '' },
+      ]),
+    ).toEqual([{ type: 'navigate_waypoint', waypointId: 'wp-1' }])
+  })
+
+  it('resolves task scene identifiers', () => {
+    expect(resolveTaskSceneId({ sceneId: 'scene-a', mapId: 'map-a' })).toBe('scene-a')
+    expect(resolveTaskSceneId({ sceneId: null, mapId: 'map-a' })).toBe('map-a')
+  })
+
+  it('resolves initial task map id', () => {
+    expect(resolveInitialTaskMapId('scene-a', ['map-a'])).toBe('scene-a')
+    expect(resolveInitialTaskMapId(null, ['map-a', 'map-b'])).toBe('map-a')
+    expect(resolveInitialTaskMapId(null, [])).toBe('')
+  })
+
+  it('finds tasks and scenes by id', () => {
+    expect(findTaskById([{ id: 'task-a' } as never], 'task-a')).toEqual({ id: 'task-a' })
+    expect(findTaskById([{ id: 'task-a' } as never], null)).toBeNull()
+    expect(findSceneById([{ id: 'scene-a' } as never], 'scene-a')).toEqual({ id: 'scene-a' })
+    expect(findSceneById([{ id: 'scene-a' } as never], undefined)).toBeNull()
+  })
+
+  it('updates task drafts immutably', () => {
+    expect(
+      applyTaskDraftPatch(
+        { name: 'n', mapId: 'map-a', steps: [{ type: 'navigate_waypoint', waypointId: 'wp-1' }] },
+        { mapId: 'map-b' },
+      ),
+    ).toEqual({ name: 'n', mapId: 'map-b', steps: [] })
+
+    expect(
+      appendTaskDraftStep({ name: 'n', mapId: 'map-a', steps: [] }).steps,
+    ).toEqual([{ type: 'navigate_waypoint', waypointId: '' }])
+
+    expect(
+      removeTaskDraftStep(
+        { name: 'n', mapId: 'map-a', steps: [{ type: 'navigate_waypoint', waypointId: 'wp-1' }] },
+        0,
+      ).steps,
+    ).toEqual([])
+
+    expect(
+      patchTaskDraftStep(
+        { name: 'n', mapId: 'map-a', steps: [{ type: 'navigate_waypoint', waypointId: 'wp-1' }] },
+        0,
+        { waypointId: 'wp-2' },
+      ).steps,
+    ).toEqual([{ type: 'navigate_waypoint', waypointId: 'wp-2' }])
+  })
+})

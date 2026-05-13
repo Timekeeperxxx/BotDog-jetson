@@ -34,13 +34,30 @@ import { PointCloudTopDownCanvas } from '../components/pcd/PointCloudTopDownCanv
 import { detectWebGLSupport } from '../components/pcd/webglSupport'
 import { TaskCreatorDrawer } from '../components/pcd/TaskCreatorDrawer'
 import { TaskDrawerPanel } from '../components/pcd/TaskDrawerPanel'
-import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl'
+import { useRobotControl } from '../hooks/useRobotControl'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
 import type { NavWaypoint, PcdSceneItem } from '../types/pcdMap'
-import type { TaskDefinition, TaskDraft, TaskDraftStep, WorkflowStep } from '../types/taskWorkflow'
+import type { TaskDefinition, TaskDraft, TaskDraftStep } from '../types/taskWorkflow'
 import { validateWaypointName } from '../utils/navWaypointValidation'
 import { useNavScenes } from './nav/useNavScenes'
+import {
+  buildTaskDraftFromTask,
+  buildTaskDefinitionFromDraft,
+  applyTaskDraftPatch,
+  appendTaskDraftStep,
+  findSceneById,
+  findTaskById,
+  emptyTaskDraft,
+  formatRestartHealthLog,
+  nowText,
+  resolveRobotCommandFromKey,
+  resolveInitialTaskMapId,
+  resolveTaskSceneId,
+  patchTaskDraftStep,
+  removeTaskDraftStep,
+  validateMappingSceneName,
+} from './nav/navPageUtils'
 
 type LogItem = {
   id: number
@@ -51,48 +68,6 @@ type LogItem = {
 type MappingSessionInfo = {
   sceneName: string
   mapDir: string
-}
-
-function nowText() {
-  return new Date().toLocaleTimeString()
-}
-
-function validateMappingSceneName(
-  rawValue: string,
-): { ok: false; message: string } | { ok: true; value: string } {
-  const sceneName = rawValue.trim()
-  if (!sceneName) {
-    return { ok: false, message: '请输入场景名称' }
-  }
-  if (sceneName === '.' || sceneName === '..') {
-    return { ok: false, message: '场景名称非法' }
-  }
-  if (sceneName.includes('/') || sceneName.includes('\\')) {
-    return { ok: false, message: '场景名称不能包含 / 或 \\' }
-  }
-  if (sceneName.includes('..')) {
-    return { ok: false, message: '场景名称不能包含 ..' }
-  }
-  if (Array.from(sceneName).some((char) => char.charCodeAt(0) < 32)) {
-    return { ok: false, message: '场景名称包含非法控制字符' }
-  }
-  if (sceneName.length > 100) {
-    return { ok: false, message: '场景名称过长' }
-  }
-  return { ok: true, value: sceneName }
-}
-
-const emptyTaskDraft: TaskDraft = {
-  name: '',
-  mapId: '',
-  steps: [],
-}
-
-function createEmptyDraftStep(): TaskDraftStep {
-  return {
-    type: 'navigate_waypoint',
-    waypointId: '',
-  }
 }
 
 export function PcdMapDemoPage() {
@@ -144,82 +119,7 @@ export function PcdMapDemoPage() {
     ].slice(0, 30))
   }, [])
 
-  const formatRestartHealthLog = useCallback((result: Awaited<ReturnType<typeof restartNavigationLocalization>>) => {
-    const health = result.health
-    if (!health) {
-      return `导航定位已重启：${result.scene_id ?? '--'}，ready=${result.navigation_ready ?? false}`
-    }
-
-    const okParts: string[] = []
-    const badParts: string[] = []
-
-    if (health.scene_ok && health.scene_id) {
-      okParts.push(`场景：${health.scene_id}`)
-    } else if (!health.scene_ok) {
-      badParts.push('场景目录不存在')
-    }
-
-    if (health.map_pcd_ok) {
-      okParts.push('map.pcd：正常')
-    } else {
-      badParts.push('map.pcd 缺失')
-    }
-
-    if (health.ground_pcd_ok) {
-      okParts.push('ground.pcd：正常')
-    } else {
-      badParts.push('ground.pcd 缺失')
-    }
-
-    if (health.tf_ok === true) {
-      okParts.push('TF：正常')
-    } else if (health.tf_ok === false) {
-      badParts.push('TF 未就绪')
-    } else {
-      okParts.push('TF：未确认')
-    }
-
-    const processOk = [
-      health.livox_ok,
-      health.relocation_ok,
-      health.global_planner_ok,
-      health.p2p_move_base_ok,
-    ].every(Boolean)
-
-    if (processOk) {
-      okParts.push('进程：livox / relocation / global_planner / p2p_move_base 正常')
-    } else {
-      const processIssues = [
-        health.livox_ok ? null : 'livox',
-        health.relocation_ok ? null : 'relocation',
-        health.global_planner_ok ? null : 'global_planner',
-        health.p2p_move_base_ok ? null : 'p2p_move_base',
-      ].filter(Boolean)
-      if (processIssues.length > 0) {
-        badParts.push(`进程异常：${processIssues.join(' / ')}`)
-      }
-    }
-
-    if (health.cmd_vel_test_publisher_running) {
-      badParts.push('检测到 cmd_vel 测试发布器残留')
-    }
-
-    if (health.warnings.length > 0) {
-      badParts.push(...health.warnings)
-    }
-    if (health.errors.length > 0) {
-      badParts.push(...health.errors)
-    }
-
-    const reasons = Array.from(new Set(badParts.filter(Boolean)))
-
-    if (result.navigation_ready) {
-      return `导航定位已重启：导航可用${okParts.length > 0 ? `；${okParts.join('；')}` : ''}`
-    }
-
-    const nextReasons = reasons.length > 0 ? reasons : ['健康检查未通过']
-    return `导航定位已重启，但导航不可用：${nextReasons.join('；')}`
-  }, [])
+  const formatRestartHealth = formatRestartHealthLog
 
   const handleSceneChanging = useCallback(() => {
     setAddMode(false)
@@ -383,13 +283,13 @@ export function PcdMapDemoPage() {
     setRestartLocalizationSending(true)
     try {
       const result = await restartNavigationLocalization()
-      addLog(formatRestartHealthLog(result), result.navigation_ready ? 'info' : 'error')
+      addLog(formatRestartHealth(result), result.navigation_ready ? 'info' : 'error')
     } catch (error) {
       addLog(error instanceof Error ? error.message : '重启导航定位失败', 'error')
     } finally {
       setRestartLocalizationSending(false)
     }
-  }, [addLog, canOperate, formatRestartHealthLog, restartLocalizationSending])
+  }, [addLog, canOperate, formatRestartHealth, restartLocalizationSending])
 
   const requestDeleteScene = useCallback((scene: PcdSceneItem) => {
     setSceneDeleteConfirm(scene)
@@ -519,37 +419,7 @@ export function PcdMapDemoPage() {
       // 未登录或无 operator 权限：不响应控制快捷键
       if (!canOperate) return
 
-      let cmd: RobotCommand | null = null
-      switch (event.key.toLowerCase()) {
-        case 'w':
-        case 'arrowup':
-          cmd = 'forward'
-          break
-        case 's':
-        case 'arrowdown':
-          cmd = 'backward'
-          break
-        case 'a':
-          cmd = 'strafe_left'
-          break
-        case 'd':
-          cmd = 'strafe_right'
-          break
-        case 'q':
-        case 'arrowleft':
-          cmd = 'left'
-          break
-        case 'e':
-        case 'arrowright':
-          cmd = 'right'
-          break
-        case 'control':
-          cmd = 'sit'
-          break
-        case 'shift':
-          cmd = 'stand'
-          break
-      }
+      const cmd = resolveRobotCommandFromKey(event.key)
 
       if (cmd) {
         event.preventDefault()
@@ -560,37 +430,7 @@ export function PcdMapDemoPage() {
     const handleKeyUp = (event: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((event.target as HTMLElement).tagName)) return
 
-      let cmd: RobotCommand | null = null
-      switch (event.key.toLowerCase()) {
-        case 'w':
-        case 'arrowup':
-          cmd = 'forward'
-          break
-        case 's':
-        case 'arrowdown':
-          cmd = 'backward'
-          break
-        case 'a':
-          cmd = 'strafe_left'
-          break
-        case 'd':
-          cmd = 'strafe_right'
-          break
-        case 'q':
-        case 'arrowleft':
-          cmd = 'left'
-          break
-        case 'e':
-        case 'arrowright':
-          cmd = 'right'
-          break
-        case 'control':
-          cmd = 'sit'
-          break
-        case 'shift':
-          cmd = 'stand'
-          break
-      }
+      const cmd = resolveRobotCommandFromKey(event.key)
 
       if (cmd && currentCmd === cmd) {
         event.preventDefault()
@@ -605,7 +445,7 @@ export function PcdMapDemoPage() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [currentCmd, startCommand, stopCommand])
+  }, [canOperate, currentCmd, startCommand, stopCommand])
 
   const handleToolMode = useCallback((nextMode: 'obstacle' | 'pose') => {
     setToolMode((current) => {
@@ -639,12 +479,12 @@ export function PcdMapDemoPage() {
     addMode ? 'waypoint' : (toolMode === 'pose' ? 'pose' : 'none')
 
   const selectedTask = useMemo(
-    () => tasks.find((task) => task.id === selectedTaskId) ?? null,
+    () => findTaskById(tasks, selectedTaskId),
     [selectedTaskId, tasks],
   )
 
   const selectedTaskScene = useMemo(
-    () => (selectedTask ? scenes.find((scene) => scene.id === (selectedTask.sceneId || selectedTask.mapId)) ?? null : null),
+    () => findSceneById(scenes, selectedTask ? resolveTaskSceneId(selectedTask) : null),
     [scenes, selectedTask],
   )
   const selectedTaskSceneNavigable = selectedTaskScene?.navigable ?? false
@@ -660,50 +500,29 @@ export function PcdMapDemoPage() {
   )
 
   const draftScene = useMemo(
-    () => scenes.find((scene) => scene.id === taskDraft.mapId) ?? null,
+    () => findSceneById(scenes, taskDraft.mapId),
     [scenes, taskDraft.mapId],
   )
   const draftSceneNavigable = draftScene?.navigable ?? false
   const draftSceneMessage = draftScene?.message ?? null
 
   const handleTaskDraftChange = useCallback((patch: Partial<TaskDraft>) => {
-    setTaskDraft((current) => ({
-      ...current,
-      ...patch,
-      steps: patch.mapId && patch.mapId !== current.mapId ? [] : (patch.steps ?? current.steps),
-    }))
+    setTaskDraft((current) => applyTaskDraftPatch(current, patch))
     if (patch.mapId && patch.mapId !== selectedSceneId) {
       void selectScene(patch.mapId)
     }
   }, [selectedSceneId, selectScene])
 
   const handleAddDraftWaypoint = useCallback(() => {
-    setTaskDraft((current) => ({
-      ...current,
-      steps: [...current.steps, createEmptyDraftStep()],
-    }))
+    setTaskDraft((current) => appendTaskDraftStep(current))
   }, [])
 
   const handleRemoveDraftWaypoint = useCallback((index: number) => {
-    setTaskDraft((current) => ({
-      ...current,
-      steps: current.steps.filter((_, itemIndex) => itemIndex !== index),
-    }))
+    setTaskDraft((current) => removeTaskDraftStep(current, index))
   }, [])
 
   const handleDraftWaypointChange = useCallback((index: number, patch: Partial<TaskDraftStep>) => {
-    setTaskDraft((current) => ({
-      ...current,
-      steps: current.steps.map((item, itemIndex) => (
-        itemIndex === index
-          ? {
-              ...item,
-              ...patch,
-              waypointId: patch.waypointId ?? item.waypointId,
-            }
-          : item
-      )),
-    }))
+    setTaskDraft((current) => patchTaskDraftStep(current, index, patch))
   }, [])
 
   const handleStartCreateTask = useCallback(async () => {
@@ -712,32 +531,19 @@ export function PcdMapDemoPage() {
       return
     }
 
-    if (!selectedSceneId && scenes[0]?.id) {
-      setTaskDraft({
-        ...emptyTaskDraft,
-        mapId: scenes[0].id,
-      })
-    } else {
-      setTaskDraft({
-        ...emptyTaskDraft,
-        mapId: selectedSceneId ?? '',
-      })
-    }
+    setTaskDraft({
+      ...emptyTaskDraft,
+      mapId: resolveInitialTaskMapId(selectedSceneId, scenes.map((scene) => scene.id)),
+    })
     setCreatingTask(true)
     setTaskEditorMode('create')
     setActiveDrawer('task')
   }, [addLog, scenes, selectedSceneId, selectedSceneNavigable])
 
   const handleStartEditTask = useCallback((taskId: string) => {
-    const task = tasks.find((item) => item.id === taskId)
+    const task = findTaskById(tasks, taskId)
     if (!task) return
-    const nextDraft: TaskDraft = {
-      name: task.name,
-      mapId: task.sceneId || task.mapId,
-      steps: task.steps
-        .filter((step) => step.type === 'navigate_waypoint' && Boolean(step.waypointId))
-        .map((step) => ({ type: 'navigate_waypoint', waypointId: step.waypointId })),
-    }
+    const nextDraft: TaskDraft = buildTaskDraftFromTask(task)
     setSelectedTaskId(task.id)
     setTaskDraft(nextDraft)
     setCreatingTask(true)
@@ -755,61 +561,20 @@ export function PcdMapDemoPage() {
   }, [])
 
   const handleCreateTask = useCallback(async () => {
-    const name = taskDraft.name.trim()
-    if (!name) {
-      addLog('任务名称不能为空', 'error')
-      return
-    }
-    if (!taskDraft.mapId) {
-      addLog('任务必须先绑定场景', 'error')
-      return
-    }
-
-    const scene = scenes.find((item) => item.id === taskDraft.mapId)
-    if (!scene) {
-      addLog('任务关联场景不存在', 'error')
+    const result = buildTaskDefinitionFromDraft({
+      draft: taskDraft,
+      scenes,
+      tasks,
+      taskEditorMode,
+      selectedTaskId,
+    })
+    if (!result.ok) {
+      addLog(result.message, 'error')
       return
     }
 
-    if (!scene.navigable) {
-      addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
-      return
-    }
-
-    if (taskDraft.steps.length === 0) {
-      addLog('任务流程至少需要一个步骤', 'error')
-      return
-    }
-
-    const workflowSteps: WorkflowStep[] = taskDraft.steps
-      .map((step) => {
-        if (!step.waypointId.trim()) return null
-        return {
-          type: 'navigate_waypoint' as const,
-          waypointId: step.waypointId.trim(),
-        }
-      })
-      .filter((step): step is WorkflowStep => step !== null)
-
-    if (workflowSteps.length === 0) {
-      addLog('任务流程至少需要一个有效步骤', 'error')
-      return
-    }
-
-    const nextTask: TaskDefinition = {
-      id: taskEditorMode === 'edit' && selectedTaskId ? selectedTaskId : `task-${Date.now()}`,
-      name,
-      mapId: scene.id,
-      sceneId: scene.id,
-      mapName: scene.name,
-      createdAt:
-        taskEditorMode === 'edit'
-          ? tasks.find((item) => item.id === selectedTaskId)?.createdAt || new Date().toISOString()
-          : new Date().toISOString(),
-      steps: [
-        ...workflowSteps,
-      ],
-    }
+    const nextTask = result.task
+    const name = nextTask.name
 
     try {
       await saveNavTask(nextTask)
@@ -829,10 +594,10 @@ export function PcdMapDemoPage() {
     setTaskDraft(emptyTaskDraft)
     setActiveDrawer('task')
     addLog(taskEditorMode === 'edit' ? `已更新任务 ${name}` : `已创建任务工作流 ${name}`)
-  }, [addLog, scenes, selectedSceneId, selectedTaskId, taskDraft, taskEditorMode, tasks, waypoints])
+  }, [addLog, scenes, selectedTaskId, taskDraft, taskEditorMode, tasks, waypoints])
 
   const handleDeleteTask = useCallback(async (taskId: string) => {
-    const task = tasks.find((item) => item.id === taskId)
+    const task = findTaskById(tasks, taskId)
     if (!task) return
     try {
       await deleteNavTask(task.id)
@@ -851,10 +616,10 @@ export function PcdMapDemoPage() {
       return
     }
 
-    const task = tasks.find((item) => item.id === taskId)
+    const task = findTaskById(tasks, taskId)
     if (!task) return
     setSelectedTaskId(task.id)
-    const taskScene = scenes.find((item) => item.id === task.mapId)
+    const taskScene = findSceneById(scenes, task.mapId)
     if (!taskScene) {
       addLog('任务关联场景不存在', 'error')
       return
@@ -890,7 +655,7 @@ export function PcdMapDemoPage() {
       return
     }
 
-    const task = tasks.find((item) => item.id === taskId)
+    const task = findTaskById(tasks, taskId)
     if (!task) return
 
     try {

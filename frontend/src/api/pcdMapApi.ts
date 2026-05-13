@@ -252,7 +252,7 @@ export type LocalizationRestartHealth = {
   errors: string[]
 }
 
-export function restartNavigationLocalization(): Promise<{
+export type LocalizationRestartResponse = {
   success: boolean
   running: boolean
   pid: number | null
@@ -272,7 +272,9 @@ export function restartNavigationLocalization(): Promise<{
   warnings?: string[] | null
   errors?: string[] | null
   message: string
-}> {
+}
+
+export function restartNavigationLocalization(): Promise<LocalizationRestartResponse> {
   return requestJson(
     getApiUrl('/api/v1/nav/localization/restart'),
     { method: 'POST' },

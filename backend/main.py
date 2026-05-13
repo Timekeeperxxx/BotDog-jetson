@@ -16,11 +16,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
-from .database import init_db, get_session_factory
+from .database import get_session_factory
 from .logging_config import get_access_logger, get_logger, setup_logging
-from .services_tasks import cleanup_stale_tasks
 from .state_machine_state import set_state_machine
-from .alert_service import AlertService
+from .control_service import ControlService
 from .mavlink_gateway import MAVLinkGateway
 
 from .state_machine import StateMachine
@@ -28,9 +27,9 @@ from .telemetry_queue import TelemetryQueueManager, set_telemetry_queue_manager
 from .workers_telemetry import TelemetryPersistenceWorker
 from .ws_broadcaster import WebSocketBroadcaster
 from .ws_event_broadcaster import EventBroadcaster
-from .ws_runtime_state import clear_ws_runtime, set_ws_runtime
-from .control_service import ControlService, set_control_service
-from .robot_adapter import create_adapter
+from .app_bootstrap import prepare_bootstrap_state
+from .app_runtime import initialize_runtime_services
+from .app_shutdown import shutdown_runtime_services
 
 # 全局组件（在 lifespan 中初始化）
 _state_machine: StateMachine | None = None
@@ -120,69 +119,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     setup_logging()
     app_logger.info("开始初始化 FastAPI 生命周期")
-    config_logger.info(
-        "加载配置文件：path={}，THERMAL_THRESHOLD={}°C",
-        Path(__file__).resolve().parent / ".env",
-        settings.THERMAL_THRESHOLD,
-    )
-    if not settings.AUTH_ENABLED:
-        config_logger.warning("鉴权已关闭，仅限开发环境：AUTH_ENABLED=false")
-    if settings.AUTH_ADMIN_PASSWORD == "please_change_me":
-        config_logger.warning("AUTH_ADMIN_PASSWORD 仍为默认值，生产环境必须修改")
-    if settings.JWT_SECRET == "please_change_me":
-        config_logger.warning("JWT_SECRET 仍为默认值，生产环境必须修改")
-        if settings.AUTH_ENABLED:
-            config_logger.warning("AUTH_ENABLED=true 且 JWT_SECRET 为默认值，这属于高风险配置！")
-    startup_summary: dict[str, tuple[str, str]] = {}
-    await init_db()
-    db_logger.info("数据库初始化完成")
-    startup_summary["数据库"] = ("ready", "数据库连接可用")
-
-    from sqlalchemy import select, func
-    from .models import User
-    from .auth.security import get_password_hash
-    async with get_session_factory()() as _session:
-        user_count = await _session.scalar(select(func.count(User.id)))
-        if user_count == 0:
-            config_logger.info("检测到 users 表为空，准备从 .env 创建 Bootstrap Admin...")
-            default_username = settings.AUTH_ADMIN_USERNAME
-            default_password = settings.AUTH_ADMIN_PASSWORD
-            new_admin = User(
-                username=default_username,
-                password_hash=get_password_hash(default_password),
-                role="admin",
-                enabled=1,
-            )
-            _session.add(new_admin)
-            await _session.commit()
-            config_logger.info("已创建初始 Admin 账号：{}", default_username)
-
-    from .services_config import get_config_service
-    config_service = get_config_service()
-    async with get_session_factory()() as _session:
-        await config_service.initialize_defaults(_session)
-        await config_service.get_all_configs(_session)
-    config_logger.info("系统配置已加载完成")
-
-    # 初始化视频源和网口默认数据
-    from .services_video_sources import get_video_source_service, get_network_interface_service
-    _vs_service = get_video_source_service()
-    _ni_service = get_network_interface_service()
-    async with get_session_factory()() as _vs_session:
-        await _vs_service.initialize_defaults(_vs_session)
-        await _ni_service.initialize_defaults(_vs_session)
-    config_logger.info("视频源与网口默认配置已初始化")
-
-    # 清理上次进程遗留的僵尸任务（防止 AI Worker 误认为任务仍在运行）
-    async with get_session_factory()() as _startup_session:
-        _stale_count = await cleanup_stale_tasks(_startup_session)
-        if _stale_count:
-            cleanup_logger.warning("发现并关闭遗留任务：数量={}", _stale_count)
-        else:
-            cleanup_logger.info("未发现遗留任务")
-
-    snapshot_dir = Path(settings.SNAPSHOT_DIR)
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    startup_summary, snapshot_dir = await prepare_bootstrap_state()
 
     # 全局停止事件
     global stop_event
@@ -298,187 +235,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             startup_summary["AI识别"] = ("disabled", "AI_ENABLED=false")
             ai_logger.info("AI 识别已禁用：AI_ENABLED=false")
 
-        # 8. 初始化事件广播器（阶段 4）
-        from .global_event_broadcaster import set_global_event_broadcaster
-        from .alert_service import set_alert_service
-        global _event_broadcaster
-        _event_broadcaster = EventBroadcaster()
-        set_global_event_broadcaster(_event_broadcaster)  # 设置全局单例
-        set_ws_runtime(_queue_manager, _state_machine, _event_broadcaster)
-        get_logger("WebSocket事件").info("事件广播器已初始化")
-
-        # 8.1 初始化 ROS2 导航状态订阅转发（可选）
-        if settings.ROS_NAV_ENABLED:
-            from .services_ros_nav import RosNavBridge
-
-            _ros_nav_bridge = RosNavBridge(
-                broadcaster=_event_broadcaster,
-                loop=asyncio.get_running_loop(),
-            )
-            _ros_nav_bridge.start()
-            from .nav_bridge_state import set_ros_nav_bridge as _set_nav_bridge
-            _set_nav_bridge(_ros_nav_bridge)
-            ros_logger.info(
-                "ROS2 导航桥启动请求已提交：topic={}，type={}",
-                settings.ROS_NAV_POSE_TOPIC,
-                settings.ROS_NAV_POSE_TYPE,
-            )
-            if settings.ROS_NAV_POSE_TYPE.strip().lower() in ("tf", "tf2", "transform", "transformstamped"):
-                startup_summary["ROS导航"] = (
-                    "waiting",
-                    f"等待 TF：target={settings.ROS_NAV_FRAME_ID}，source={settings.ROS_NAV_BASE_FRAME_ID}",
-                )
-            else:
-                startup_summary["ROS导航"] = (
-                    "waiting",
-                    f"等待定位数据：topic={settings.ROS_NAV_POSE_TOPIC}，type={settings.ROS_NAV_POSE_TYPE}",
-                )
-        else:
-            startup_summary["ROS导航"] = ("disabled", "ROS_NAV_ENABLED=false")
-            ros_logger.info("ROS2 导航桥已禁用：ROS_NAV_ENABLED=false")
-
-        # 8. 初始化告警服务并注入 broadcaster
-        alert_service_instance = AlertService(event_broadcaster=_event_broadcaster)
-        set_alert_service(alert_service_instance)
-        get_logger("应用服务").info("告警服务已初始化")
-
-        # 9. 初始化控制服务（阶段 6）
-        global _control_service
-        _adapter_kwargs = {}
-        if settings.CONTROL_ADAPTER_TYPE == "unitree_b2":
-            _adapter_kwargs = {
-                "network_interface": settings.UNITREE_NETWORK_IFACE,
-                "vx": settings.UNITREE_B2_VX,
-                "vyaw": settings.UNITREE_B2_VYAW,
-            }
-
-        if settings.CONTROL_ADAPTER_TYPE == "unitree_b2":
-            # UnitreeB2Adapter.__init__ 含同步阻塞 SDK 调用（约 20s）。
-            # 先以 adapter=None 启动 ControlService；后台初始化成功后热替换。
-            # 初始化期间控制命令返回 REJECTED_ADAPTER_NOT_READY，语义正确。
-            _control_service = ControlService(
-                adapter=None,
-                state_machine=_state_machine,
-                watchdog_timeout_ms=settings.CONTROL_WATCHDOG_TIMEOUT_MS,
-                cmd_rate_limit_ms=settings.CONTROL_CMD_RATE_LIMIT_MS,
-            )
-            set_control_service(_control_service)
-            tasks.append(asyncio.create_task(_control_service.run_watchdog(stop_event)))
-            control_logger.info(
-                "控制服务已启动：等待 Unitree B2 适配器完成初始化"
-            )
-            startup_summary["机器人控制"] = (
-                "waiting",
-                f"适配器=UnitreeB2，网卡={settings.UNITREE_NETWORK_IFACE}，运控模式=ai",
-            )
-
-            async def _init_b2_adapter_background() -> None:
-                """后台初始化 B2 适配器，完成后热替换到 ControlService。"""
-                try:
-                    real_adapter = create_adapter("unitree_b2", **_adapter_kwargs)
-                    _control_service.set_adapter(real_adapter)
-                    control_logger.info("UnitreeB2 适配器初始化完成，控制能力已恢复可用")
-                except Exception as exc:
-                    control_logger.error("UnitreeB2 适配器初始化失败，控制命令将继续被拒绝：{}", exc)
-
-            tasks.append(asyncio.create_task(_init_b2_adapter_background()))
-        else:
-            _adapter = create_adapter(settings.CONTROL_ADAPTER_TYPE, **_adapter_kwargs)
-            _control_service = ControlService(
-                adapter=_adapter,
-                state_machine=_state_machine,
-                watchdog_timeout_ms=settings.CONTROL_WATCHDOG_TIMEOUT_MS,
-                cmd_rate_limit_ms=settings.CONTROL_CMD_RATE_LIMIT_MS,
-            )
-            set_control_service(_control_service)
-            tasks.append(asyncio.create_task(_control_service.run_watchdog(stop_event)))
-            control_logger.info(
-                "控制服务已启动：适配器={}，watchdog={}ms",
-                settings.CONTROL_ADAPTER_TYPE,
-                settings.CONTROL_WATCHDOG_TIMEOUT_MS,
-            )
-            startup_summary["机器人控制"] = (
-                "ready",
-                f"适配器={settings.CONTROL_ADAPTER_TYPE}，watchdog={settings.CONTROL_WATCHDOG_TIMEOUT_MS}ms",
-            )
-
-
-        # 10. 初始化区域判断服务，从数据库加载重点区
-        from .zone_service import ZoneService, set_zone_service
-        _zone_service = ZoneService()
-        async with get_session_factory()() as _zone_session:
-            await _zone_service.load_from_db(_zone_session)
-        set_zone_service(_zone_service)
-        zone_logger.info("重点区服务已初始化：已加载区域数={}", _zone_service.zone_count)
-        startup_summary["重点区服务"] = ("ready", f"已加载区域数={_zone_service.zone_count}")
-
-        # 11. 初始化自动跟踪服务（始终装配，运行时启停由内部状态控制）
-        from .target_manager import TargetManager
-        from .control_arbiter import ControlArbiter, set_control_arbiter
-        from .stranger_policy import StrangerPolicy, set_stranger_policy
-        from .auto_track_service import AutoTrackService, set_auto_track_service
-
-        _target_manager = TargetManager(
-            frame_width=settings.AI_FRAME_WIDTH,
-            frame_height=settings.AI_FRAME_HEIGHT,
-        )
-        _arbiter = ControlArbiter()
-        set_control_arbiter(_arbiter)
-
-        _stranger_policy = StrangerPolicy()
-        set_stranger_policy(_stranger_policy)
-
-        _auto_track_service = AutoTrackService(
-            zone_service=_zone_service,
-            control_service=_control_service,
-            event_broadcaster=_event_broadcaster,
+        await initialize_runtime_services(
+            queue_manager=_queue_manager,
             state_machine=_state_machine,
             session_factory=get_session_factory(),
             snapshot_dir=snapshot_dir,
-            frame_width=settings.AI_FRAME_WIDTH,
-            frame_height=settings.AI_FRAME_HEIGHT,
-            stable_hits=settings.AI_STABLE_HITS,
-            reset_misses=settings.AI_RESET_MISSES,
-            out_of_zone_frames=settings.AUTO_TRACK_OUT_OF_ZONE_FRAMES,
-            lost_timeout_frames=settings.AUTO_TRACK_LOST_TIMEOUT_FRAMES,
-            command_interval_ms=settings.AUTO_TRACK_COMMAND_INTERVAL_MS,
-            yaw_deadband_px=settings.AUTO_TRACK_YAW_DEADBAND_PX,
-            forward_area_ratio=settings.AUTO_TRACK_FORWARD_AREA_RATIO,
-            anchor_y_stop_ratio=settings.AUTO_TRACK_ANCHOR_Y_STOP_RATIO,
-            stop_snapshot_enabled=settings.AUTO_TRACK_STOP_SNAPSHOT_ENABLED,
-            default_enabled=settings.AUTO_TRACK_ENABLED,
-            yaw_pulse_ms=settings.AUTO_TRACK_YAW_PULSE_MS,
-            target_manager=_target_manager,
-            control_arbiter=_arbiter,
-        )
-        set_auto_track_service(_auto_track_service)
-        auto_track_logger.info(
-            "自动跟踪服务已初始化：默认启用={}，多目标模式=true",
-            settings.AUTO_TRACK_ENABLED,
-        )
-        startup_summary["自动跟踪"] = (
-            "ready",
-            f"默认启用={settings.AUTO_TRACK_ENABLED}，多目标模式=true",
-        )
-        
-        # 12. 初始化自动驱离主脑服务
-        from .guard_mission_service import GuardMissionService, set_guard_mission_service
-        _guard_mission_service = GuardMissionService(
-            zone_service=_zone_service,
-            control_service=_control_service,
-            control_arbiter=_arbiter,
-            event_broadcaster=_event_broadcaster,
-            config=settings,
-            session_factory=get_session_factory(),
-            snapshot_dir=snapshot_dir,
-            frame_width=settings.AI_FRAME_WIDTH,
-            frame_height=settings.AI_FRAME_HEIGHT,
-        )
-        set_guard_mission_service(_guard_mission_service)
-        guard_logger.info("驱离任务服务已初始化：默认启用={}", settings.GUARD_MISSION_ENABLED)
-        startup_summary["驱离任务"] = (
-            "ready",
-            f"默认启用={settings.GUARD_MISSION_ENABLED}",
+            stop_event=stop_event,
+            startup_summary=startup_summary,
+            mavlink_gateway=_mavlink_gateway,
+            tasks=tasks,
         )
 
         startup_summary["API 服务"] = (
@@ -503,40 +268,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Shutdown
         app_logger.info("开始关闭 FastAPI 生命周期")
         stop_event.set()
-        set_state_machine(None)
-        clear_ws_runtime()
         _state_machine = None
-
-        try:
-            from .services_mapping import get_mapping_service
-
-            mapping_service = get_mapping_service()
-            mapping_status = mapping_service.get_status()
-            if mapping_status["running"]:
-                mapping_logger = get_logger("建图服务")
-                mapping_logger.info("应用关闭时停止建图流程")
-                await asyncio.to_thread(mapping_service.stop)
-        except Exception as exc:
-            app_logger.warning("关闭建图服务时发生异常：{}", exc)
-
-        if _ros_nav_bridge is not None:
-            _ros_nav_bridge.stop()
-            from .nav_bridge_state import set_ros_nav_bridge as _set_nav_bridge
-            _set_nav_bridge(None)
-            _ros_nav_bridge = None
-
-        # 取消所有任务
-        for task in tasks:
-            task.cancel()
-
-        # 等待所有任务完成
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for result in results:
-            if isinstance(result, Exception):
-                app_logger.warning("后台任务关闭时出现异常：{}", result)
-
-        app_logger.info("所有后台任务已停止")
+        await shutdown_runtime_services(
+            tasks=tasks,
+            ros_nav_bridge=_ros_nav_bridge,
+        )
+        _ros_nav_bridge = None
 
 
 def create_app() -> FastAPI:
