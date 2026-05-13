@@ -2,14 +2,21 @@ import { describe, expect, it } from 'vitest'
 import {
   applyTaskDraftPatch,
   appendTaskDraftStep,
+  buildTaskDefinitionFromDraft,
   buildWorkflowStepsFromDraft,
   findSceneById,
   findTaskById,
   formatRestartHealthLog,
+  getWorkflowStepTargetLabel,
+  getWorkflowStepTypeLabel,
+  insertTaskDraftStep,
+  summarizeWorkflowSteps,
+  taskContainsPostureControl,
   resolveInitialTaskMapId,
   resolveTaskSceneId,
   removeTaskDraftStep,
   patchTaskDraftStep,
+  validateWorkflowStepsFromDraft,
   validateMappingSceneName,
 } from './navPageUtils'
 
@@ -43,9 +50,97 @@ describe('navPageUtils', () => {
     expect(
       buildWorkflowStepsFromDraft([
         { type: 'navigate_waypoint', waypointId: '  wp-1  ' },
+        { type: 'posture_control', posture: 'crouch' },
         { type: 'navigate_waypoint', waypointId: '' },
       ]),
-    ).toEqual([{ type: 'navigate_waypoint', waypointId: 'wp-1' }])
+    ).toEqual([
+      { type: 'navigate_waypoint', waypointId: 'wp-1' },
+      { type: 'posture_control', posture: 'crouch' },
+    ])
+  })
+
+  it('validates workflow draft steps', () => {
+    expect(
+      validateWorkflowStepsFromDraft([
+        { type: 'navigate_waypoint', waypointId: 'wp-1' },
+        { type: 'posture_control', posture: 'stand' },
+      ]),
+    ).toEqual({
+      ok: true,
+      steps: [
+        { type: 'navigate_waypoint', waypointId: 'wp-1', waypointName: undefined, x: undefined, y: undefined, z: undefined, yaw: undefined, frameId: undefined },
+        { type: 'posture_control', posture: 'stand' },
+      ],
+    })
+
+    expect(
+      validateWorkflowStepsFromDraft([{ type: 'posture_control', posture: 'invalid' as never }]),
+    ).toEqual({ ok: false, message: '第 1 步姿态控制步骤必须选择姿态' })
+  })
+
+  it('summarizes mixed workflow steps', () => {
+    expect(
+      summarizeWorkflowSteps(
+        [
+          { type: 'navigate_waypoint', waypointId: 'wp-1', waypointName: '巡检点1' },
+          { type: 'posture_control', posture: 'stand' },
+          { type: 'posture_control', posture: 'crouch' },
+        ],
+        [{ id: 'wp-1', name: '巡检点1' }],
+      ),
+    ).toBe('导航到巡检点1 -> 站立 -> 蹲下')
+    expect(getWorkflowStepTypeLabel('navigate_waypoint')).toBe('导航到定点')
+    expect(getWorkflowStepTargetLabel({ type: 'posture_control', posture: 'stand' })).toBe('站立')
+    expect(taskContainsPostureControl({ steps: [{ type: 'posture_control', posture: 'stand' }] as any })).toBe(true)
+  })
+
+  it('builds task definitions with mixed workflow steps', () => {
+    const result = buildTaskDefinitionFromDraft({
+      draft: {
+        name: '巡检任务',
+        mapId: 'scene-a',
+        steps: [
+          { type: 'navigate_waypoint', waypointId: 'wp-1' },
+          { type: 'posture_control', posture: 'stand' },
+          { type: 'navigate_waypoint', waypointId: 'wp-2' },
+        ],
+      },
+      scenes: [{ id: 'scene-a', name: '实验室一楼', navigable: true } as any],
+      waypoints: [
+        { id: 'wp-1', name: '巡检点1' },
+        { id: 'wp-2', name: '巡检点2' },
+      ],
+      tasks: [],
+      taskEditorMode: 'create',
+      selectedTaskId: null,
+    })
+
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.task.steps).toEqual([
+        {
+          type: 'navigate_waypoint',
+          waypointId: 'wp-1',
+          waypointName: '巡检点1',
+          x: undefined,
+          y: undefined,
+          z: undefined,
+          yaw: undefined,
+          frameId: undefined,
+        },
+        { type: 'posture_control', posture: 'stand' },
+        {
+          type: 'navigate_waypoint',
+          waypointId: 'wp-2',
+          waypointName: '巡检点2',
+          x: undefined,
+          y: undefined,
+          z: undefined,
+          yaw: undefined,
+          frameId: undefined,
+        },
+      ])
+    }
   })
 
   it('resolves task scene identifiers', () => {
@@ -79,6 +174,16 @@ describe('navPageUtils', () => {
     ).toEqual([{ type: 'navigate_waypoint', waypointId: '' }])
 
     expect(
+      insertTaskDraftStep(
+        { name: 'n', mapId: 'map-a', steps: [{ type: 'navigate_waypoint', waypointId: 'wp-1' }] },
+        0,
+      ).steps,
+    ).toEqual([
+      { type: 'navigate_waypoint', waypointId: 'wp-1' },
+      { type: 'navigate_waypoint', waypointId: '' },
+    ])
+
+    expect(
       removeTaskDraftStep(
         { name: 'n', mapId: 'map-a', steps: [{ type: 'navigate_waypoint', waypointId: 'wp-1' }] },
         0,
@@ -92,5 +197,13 @@ describe('navPageUtils', () => {
         { waypointId: 'wp-2' },
       ).steps,
     ).toEqual([{ type: 'navigate_waypoint', waypointId: 'wp-2' }])
+
+    expect(
+      patchTaskDraftStep(
+        { name: 'n', mapId: 'map-a', steps: [{ type: 'navigate_waypoint', waypointId: 'wp-1' }] },
+        0,
+        { type: 'posture_control' },
+      ).steps,
+    ).toEqual([{ type: 'posture_control', posture: 'stand' }])
   })
 })

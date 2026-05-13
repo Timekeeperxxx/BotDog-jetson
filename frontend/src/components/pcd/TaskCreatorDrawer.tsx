@@ -1,5 +1,10 @@
 import { ArrowLeft, Plus, Trash2, X } from 'lucide-react'
 import type { TaskDraft, TaskDraftStep } from '../../types/taskWorkflow'
+import {
+  getWorkflowStepTargetLabel,
+  getWorkflowStepTypeLabel,
+  POSTURE_LABELS,
+} from '../../pages/nav/navPageUtils'
 
 type MapOption = {
   id: string
@@ -21,15 +26,11 @@ type Props = {
   selectedSceneMessage: string | null
   canSaveTask: boolean
   onDraftChange: (patch: Partial<TaskDraft>) => void
-  onAddDraftWaypoint: () => void
+  onAddDraftStep: (index?: number) => void
   onRemoveDraftWaypoint: (index: number) => void
-  onDraftWaypointChange: (index: number, patch: Partial<TaskDraftStep>) => void
+  onDraftStepChange: (index: number, patch: Partial<TaskDraftStep>) => void
   onCancelCreate: () => void
   onCreateTask: () => void
-}
-
-function stepValueLabel(step: TaskDraftStep) {
-  return step.waypointId || '未选择导航点'
 }
 
 export function TaskCreatorDrawer({
@@ -42,9 +43,9 @@ export function TaskCreatorDrawer({
   selectedSceneMessage,
   canSaveTask,
   onDraftChange,
-  onAddDraftWaypoint,
+  onAddDraftStep,
   onRemoveDraftWaypoint,
-  onDraftWaypointChange,
+  onDraftStepChange,
   onCancelCreate,
   onCreateTask,
 }: Props) {
@@ -98,9 +99,9 @@ export function TaskCreatorDrawer({
 
           <div className="pcd-task-flow-list">
             {draft.steps.length === 0 ? (
-              <button className="pcd-task-add-row" onClick={onAddDraftWaypoint}>
+              <button className="pcd-task-add-row" onClick={() => onAddDraftStep()}>
                 <Plus size={16} />
-                <span>添加导航点</span>
+                <span>添加步骤</span>
               </button>
             ) : null}
 
@@ -111,26 +112,49 @@ export function TaskCreatorDrawer({
                   <div className="pcd-flow-card-content">
                     <div className="pcd-flow-card-selects">
                       <select
-                        className="pcd-task-value-select"
-                        value={step.waypointId}
-                        onChange={(event) => onDraftWaypointChange(index, { waypointId: event.target.value })}
+                        className="pcd-task-type-select"
+                        value={step.type}
+                        onChange={(event) => onDraftStepChange(index, { type: event.target.value as TaskDraftStep['type'] })}
                         disabled={!draft.mapId}
                       >
-                        <option value="">{draft.mapId ? '请选择导航点' : '请先绑定场景'}</option>
-                        {selectedSceneWaypoints.map((waypoint) => (
-                          <option key={waypoint.id} value={waypoint.id}>
-                            {waypoint.name}
-                          </option>
-                        ))}
+                        <option value="navigate_waypoint">{getWorkflowStepTypeLabel('navigate_waypoint')}</option>
+                        <option value="posture_control">{getWorkflowStepTypeLabel('posture_control')}</option>
                       </select>
+                      {step.type === 'navigate_waypoint' ? (
+                        <select
+                          className="pcd-task-value-select"
+                          value={step.waypointId}
+                          onChange={(event) => onDraftStepChange(index, { waypointId: event.target.value })}
+                          disabled={!draft.mapId}
+                        >
+                          <option value="">{draft.mapId ? '请选择导航点' : '请先绑定场景'}</option>
+                          {selectedSceneWaypoints.map((waypoint) => (
+                            <option key={waypoint.id} value={waypoint.id}>
+                              {waypoint.name}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <select
+                          className="pcd-task-value-select"
+                          value={step.posture}
+                          onChange={(event) =>
+                            onDraftStepChange(index, { posture: event.target.value as 'stand' | 'crouch' })
+                          }
+                          disabled={!draft.mapId}
+                        >
+                          <option value="stand">{POSTURE_LABELS.stand}</option>
+                          <option value="crouch">{POSTURE_LABELS.crouch}</option>
+                        </select>
+                      )}
                     </div>
                     <div className="pcd-flow-card-meta">
-                      <span>{`已选：${stepValueLabel(step)}`}</span>
+                      <span>{`已选：${getWorkflowStepTargetLabel(step, selectedSceneWaypoints)}`}</span>
                     </div>
                   </div>
                 </div>
                 <div className="pcd-flow-card-actions">
-                  <button className="pcd-inline-icon-button" onClick={onAddDraftWaypoint} title="添加步骤">
+                  <button className="pcd-inline-icon-button" onClick={() => onAddDraftStep(index)} title="在此后插入步骤">
                     <Plus size={14} />
                   </button>
                   <button
@@ -147,9 +171,9 @@ export function TaskCreatorDrawer({
           </div>
 
           {draft.steps.length > 0 ? (
-            <button className="pcd-task-add-row" onClick={onAddDraftWaypoint}>
+            <button className="pcd-task-add-row" onClick={() => onAddDraftStep()}>
               <Plus size={16} />
-              <span>添加导航点</span>
+              <span>添加步骤</span>
             </button>
           ) : null}
         </div>

@@ -1,5 +1,6 @@
 import { Info, Pause, Play, Plus, Trash2 } from 'lucide-react'
 import type { TaskDefinition } from '../../types/taskWorkflow'
+import { summarizeWorkflowSteps } from '../../pages/nav/navPageUtils'
 
 type Props = {
   tasks: TaskDefinition[]
@@ -13,20 +14,6 @@ type Props = {
   onStopTask: (taskId: string) => void
   onDeleteTask: (taskId: string) => void
   onStartCreate: () => void
-}
-
-function waypointCount(task: TaskDefinition) {
-  return task.steps.filter((step) => step.type === 'navigate_waypoint').length
-}
-
-function taskSummary(task: TaskDefinition) {
-  return task.steps
-    .map((step) =>
-      step.type === 'navigate_waypoint'
-        ? step.waypointName || step.waypointId || '导航点'
-        : '导航点',
-    )
-    .join(' -> ')
 }
 
 export function TaskDrawerPanel({
@@ -86,8 +73,8 @@ export function TaskDrawerPanel({
 
                 <div className="pcd-task-card-grid">
                   <span>场景：{task.mapName}</span>
-                  <span>导航点：{waypointCount(task)} 个</span>
-                  <span className="pcd-task-card-flow">流程：{taskSummary(task) || '未配置'}</span>
+                  <span>步骤：{task.steps.length} 个</span>
+                  <span className="pcd-task-card-flow">流程：{summarizeWorkflowSteps(task.steps) || '未配置'}</span>
                   <span>状态：<strong className="pcd-task-status-pending">未执行</strong></span>
                 </div>
 

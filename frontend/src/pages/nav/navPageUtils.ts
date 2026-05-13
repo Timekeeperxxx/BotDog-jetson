@@ -1,12 +1,34 @@
 import type { LocalizationRestartResponse } from '../../api/pcdMapApi'
 import type { RobotCommand } from '../../hooks/useRobotControl'
 import type { PcdSceneItem } from '../../types/pcdMap'
-import type { TaskDefinition, TaskDraft, TaskDraftStep, WorkflowStep } from '../../types/taskWorkflow'
+import type {
+  TaskDefinition,
+  TaskDraft,
+  TaskDraftStep,
+  WorkflowNavigateWaypointStep,
+  WorkflowPostureControlStep,
+  WorkflowStep,
+} from '../../types/taskWorkflow'
+
+type WaypointOption = {
+  id: string
+  name: string
+}
 
 export const emptyTaskDraft: TaskDraft = {
   name: '',
   mapId: '',
   steps: [],
+}
+
+export const WORKFLOW_STEP_TYPE_LABELS: Record<WorkflowStep['type'], string> = {
+  navigate_waypoint: '导航到定点',
+  posture_control: '姿态控制',
+}
+
+export const POSTURE_LABELS: Record<'stand' | 'crouch', string> = {
+  stand: '站立',
+  crouch: '蹲下',
 }
 
 export function resolveTaskSceneId(task: Pick<TaskDefinition, 'sceneId' | 'mapId'>) {
@@ -31,6 +53,16 @@ export function findTaskById(tasks: TaskDefinition[], taskId: string | null | un
 }
 
 export function createEmptyDraftStep(): TaskDraftStep {
+  return createDraftStepByType('navigate_waypoint')
+}
+
+export function createDraftStepByType(type: WorkflowStep['type']): TaskDraftStep {
+  if (type === 'posture_control') {
+    return {
+      type: 'posture_control',
+      posture: 'stand',
+    }
+  }
   return {
     type: 'navigate_waypoint',
     waypointId: '',
@@ -52,6 +84,23 @@ export function appendTaskDraftStep(current: TaskDraft): TaskDraft {
   }
 }
 
+export function insertTaskDraftStep(current: TaskDraft, index: number | null | undefined): TaskDraft {
+  const nextStep = createEmptyDraftStep()
+  if (index == null || index < 0 || index >= current.steps.length - 1) {
+    return {
+      ...current,
+      steps: [...current.steps, nextStep],
+    }
+  }
+
+  const steps = current.steps.slice()
+  steps.splice(index + 1, 0, nextStep)
+  return {
+    ...current,
+    steps,
+  }
+}
+
 export function removeTaskDraftStep(current: TaskDraft, index: number): TaskDraft {
   return {
     ...current,
@@ -68,11 +117,19 @@ export function patchTaskDraftStep(
     ...current,
     steps: current.steps.map((item, itemIndex) => (
       itemIndex === index
-        ? {
-            ...item,
-            ...patch,
-            waypointId: patch.waypointId ?? item.waypointId,
-          }
+        ? patch.type && patch.type !== item.type
+          ? createDraftStepByType(patch.type)
+          : item.type === 'posture_control'
+            ? {
+                ...item,
+                ...(patch as Partial<WorkflowPostureControlStep>),
+                posture: (patch as Partial<WorkflowPostureControlStep>).posture ?? item.posture,
+              }
+            : {
+                ...item,
+                ...(patch as Partial<WorkflowNavigateWaypointStep>),
+                waypointId: (patch as Partial<WorkflowNavigateWaypointStep>).waypointId ?? item.waypointId,
+              }
         : item
     )),
   }
@@ -212,32 +269,127 @@ export function resolveRobotCommandFromKey(key: string): RobotCommand | null {
 }
 
 export function buildTaskDraftFromTask(task: TaskDefinition): TaskDraft {
+  const steps: TaskDraftStep[] = []
+
+  for (const step of task.steps) {
+    if (step.type === 'navigate_waypoint') {
+      const waypointId = String(step.waypointId || '').trim()
+      if (!waypointId) continue
+      steps.push({
+        type: 'navigate_waypoint',
+        waypointId,
+        waypointName: step.waypointName?.trim() || undefined,
+        x: step.x,
+        y: step.y,
+        z: step.z,
+        yaw: step.yaw,
+        frameId: step.frameId,
+      })
+      continue
+    }
+
+    if (step.type === 'posture_control' && (step.posture === 'stand' || step.posture === 'crouch')) {
+      steps.push({
+        type: 'posture_control',
+        posture: step.posture,
+      })
+    }
+  }
+
   return {
     name: task.name,
     mapId: resolveTaskSceneId(task),
-    steps: task.steps
-      .filter((step) => step.type === 'navigate_waypoint' && Boolean(step.waypointId))
-      .map((step) => ({ type: 'navigate_waypoint', waypointId: step.waypointId })),
+    steps,
   }
 }
 
 export function buildWorkflowStepsFromDraft(steps: TaskDraftStep[]): WorkflowStep[] {
-  return steps
-    .map((step) => {
-      const waypointId = step.waypointId.trim()
-      if (!waypointId) return null
-      return {
-        type: 'navigate_waypoint' as const,
+  const workflowSteps: WorkflowStep[] = []
+
+  for (const step of steps) {
+    if (step.type === 'navigate_waypoint') {
+      const waypointId = String(step.waypointId || '').trim()
+      if (!waypointId) continue
+      workflowSteps.push({
+        type: 'navigate_waypoint',
         waypointId,
+        waypointName: step.waypointName?.trim() || undefined,
+        x: step.x,
+        y: step.y,
+        z: step.z,
+        yaw: step.yaw,
+        frameId: step.frameId,
+      })
+      continue
+    }
+
+    if (step.type === 'posture_control' && (step.posture === 'stand' || step.posture === 'crouch')) {
+      workflowSteps.push({
+        type: 'posture_control',
+        posture: step.posture,
+      })
+    }
+  }
+
+  return workflowSteps
+}
+
+export function validateWorkflowStepsFromDraft(
+  steps: TaskDraftStep[],
+): { ok: false; message: string } | { ok: true; steps: WorkflowStep[] } {
+  if (steps.length === 0) {
+    return { ok: false, message: '任务流程至少需要一个步骤' }
+  }
+
+  const workflowSteps: WorkflowStep[] = []
+
+  for (const [index, step] of steps.entries()) {
+    const stepLabel = `第 ${index + 1} 步`
+
+    if (step.type === 'navigate_waypoint') {
+      const waypointId = String(step.waypointId || '').trim()
+      if (!waypointId) {
+        return { ok: false, message: `${stepLabel}导航到定点步骤必须选择导航点` }
       }
-    })
-    .filter((step): step is WorkflowStep => step !== null)
+      workflowSteps.push({
+        type: 'navigate_waypoint',
+        waypointId,
+        waypointName: step.waypointName?.trim() || undefined,
+        x: step.x,
+        y: step.y,
+        z: step.z,
+        yaw: step.yaw,
+        frameId: step.frameId,
+      })
+      continue
+    }
+
+    if (step.type === 'posture_control') {
+      if (step.posture !== 'stand' && step.posture !== 'crouch') {
+        return { ok: false, message: `${stepLabel}姿态控制步骤必须选择姿态` }
+      }
+      workflowSteps.push({
+        type: 'posture_control',
+        posture: step.posture,
+      })
+      continue
+    }
+
+    return { ok: false, message: `${stepLabel}步骤类型无效` }
+  }
+
+  if (workflowSteps.length === 0) {
+    return { ok: false, message: '任务流程至少需要一个有效步骤' }
+  }
+
+  return { ok: true, steps: workflowSteps }
 }
 
 export function buildTaskDefinitionFromDraft(params: {
   draft: TaskDraft
   scenes: PcdSceneItem[]
   tasks: TaskDefinition[]
+  waypoints: WaypointOption[]
   taskEditorMode: 'create' | 'edit' | null
   selectedTaskId: string | null
 }): { ok: false; message: string } | { ok: true; task: TaskDefinition } {
@@ -260,10 +412,21 @@ export function buildTaskDefinitionFromDraft(params: {
     return { ok: false, message: '任务流程至少需要一个步骤' }
   }
 
-  const workflowSteps = buildWorkflowStepsFromDraft(params.draft.steps)
-  if (workflowSteps.length === 0) {
-    return { ok: false, message: '任务流程至少需要一个有效步骤' }
+  const validatedWorkflowSteps = validateWorkflowStepsFromDraft(params.draft.steps)
+  if (!validatedWorkflowSteps.ok) {
+    return validatedWorkflowSteps
   }
+
+  const waypointNameMap = new Map(params.waypoints.map((waypoint) => [waypoint.id, waypoint.name]))
+  const workflowSteps = validatedWorkflowSteps.steps.map((step) => {
+    if (step.type === 'navigate_waypoint') {
+      return {
+        ...step,
+        waypointName: step.waypointName || waypointNameMap.get(step.waypointId) || undefined,
+      }
+    }
+    return step
+  })
 
   const nextTaskId =
     params.taskEditorMode === 'edit' && params.selectedTaskId ? params.selectedTaskId : `task-${Date.now()}`
@@ -284,4 +447,40 @@ export function buildTaskDefinitionFromDraft(params: {
       steps: workflowSteps,
     },
   }
+}
+
+export function getWorkflowStepTypeLabel(type: WorkflowStep['type']) {
+  return WORKFLOW_STEP_TYPE_LABELS[type] || type
+}
+
+export function getWorkflowStepTargetLabel(step: TaskDraftStep | WorkflowStep, waypoints: WaypointOption[] = []) {
+  if (step.type === 'posture_control') {
+    return POSTURE_LABELS[step.posture]
+  }
+
+  const waypointName = waypoints.find((waypoint) => waypoint.id === step.waypointId)?.name
+  return waypointName || step.waypointName || step.waypointId || '未选择导航点'
+}
+
+export function summarizeWorkflowSteps(steps: Array<TaskDraftStep | WorkflowStep>, waypoints: WaypointOption[] = []) {
+  return steps
+    .map((step) => {
+      if (step.type === 'navigate_waypoint') {
+        const target = getWorkflowStepTargetLabel(step, waypoints)
+        return `导航到${target}`
+      }
+      if (step.type === 'posture_control') {
+        return POSTURE_LABELS[step.posture] || '姿态控制'
+      }
+      return '无效步骤'
+    })
+    .join(' -> ')
+}
+
+export function taskContainsPostureControl(task: Pick<TaskDefinition, 'steps'>) {
+  return task.steps.some((step) => step.type === 'posture_control')
+}
+
+export function countNavigateSteps(task: Pick<TaskDefinition, 'steps'>) {
+  return task.steps.filter((step) => step.type === 'navigate_waypoint').length
 }

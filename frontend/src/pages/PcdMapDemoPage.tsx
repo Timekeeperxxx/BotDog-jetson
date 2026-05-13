@@ -54,8 +54,10 @@ import {
   resolveRobotCommandFromKey,
   resolveInitialTaskMapId,
   resolveTaskSceneId,
+  insertTaskDraftStep,
   patchTaskDraftStep,
   removeTaskDraftStep,
+  taskContainsPostureControl,
   validateMappingSceneName,
 } from './nav/navPageUtils'
 
@@ -513,15 +515,19 @@ export function PcdMapDemoPage() {
     }
   }, [selectedSceneId, selectScene])
 
-  const handleAddDraftWaypoint = useCallback(() => {
-    setTaskDraft((current) => appendTaskDraftStep(current))
+  const handleAddDraftStep = useCallback((index?: number) => {
+    setTaskDraft((current) => (
+      typeof index === 'number'
+        ? insertTaskDraftStep(current, index)
+        : appendTaskDraftStep(current)
+    ))
   }, [])
 
   const handleRemoveDraftWaypoint = useCallback((index: number) => {
     setTaskDraft((current) => removeTaskDraftStep(current, index))
   }, [])
 
-  const handleDraftWaypointChange = useCallback((index: number, patch: Partial<TaskDraftStep>) => {
+  const handleDraftStepChange = useCallback((index: number, patch: Partial<TaskDraftStep>) => {
     setTaskDraft((current) => patchTaskDraftStep(current, index, patch))
   }, [])
 
@@ -564,6 +570,7 @@ export function PcdMapDemoPage() {
     const result = buildTaskDefinitionFromDraft({
       draft: taskDraft,
       scenes,
+      waypoints: selectedSceneWaypoints,
       tasks,
       taskEditorMode,
       selectedTaskId,
@@ -594,7 +601,7 @@ export function PcdMapDemoPage() {
     setTaskDraft(emptyTaskDraft)
     setActiveDrawer('task')
     addLog(taskEditorMode === 'edit' ? `已更新任务 ${name}` : `已创建任务工作流 ${name}`)
-  }, [addLog, scenes, selectedTaskId, taskDraft, taskEditorMode, tasks, waypoints])
+  }, [addLog, scenes, selectedSceneWaypoints, selectedTaskId, taskDraft, taskEditorMode, tasks])
 
   const handleDeleteTask = useCallback(async (taskId: string) => {
     const task = findTaskById(tasks, taskId)
@@ -626,6 +633,10 @@ export function PcdMapDemoPage() {
     }
     if (!taskScene.navigable) {
       addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
+      return
+    }
+    if (taskContainsPostureControl(task)) {
+      addLog('当前任务包含姿态控制步骤，姿态控制仅完成前端配置，暂未接入后端执行。', 'error')
       return
     }
     if (task.mapId !== selectedSceneId) {
@@ -810,9 +821,9 @@ export function PcdMapDemoPage() {
                   selectedSceneMessage={draftSceneMessage}
                   canSaveTask={draftSceneNavigable}
                   onDraftChange={handleTaskDraftChange}
-                  onAddDraftWaypoint={handleAddDraftWaypoint}
+                  onAddDraftStep={handleAddDraftStep}
                   onRemoveDraftWaypoint={handleRemoveDraftWaypoint}
-                  onDraftWaypointChange={handleDraftWaypointChange}
+                  onDraftStepChange={handleDraftStepChange}
                   onCancelCreate={handleCancelCreateTask}
                   onCreateTask={handleCreateTask}
                 />

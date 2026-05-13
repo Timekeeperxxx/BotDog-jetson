@@ -4,12 +4,7 @@ import type { NavWaypoint, PcdSceneItem, PcdSceneMetadata } from '../../types/pc
 import type { TaskDefinition } from '../../types/taskWorkflow'
 import type { SortableNavigationTab } from '../adminTypes'
 import { AdminCard, EmptyState, SearchInput, StatusBadge, TableCell, TableHead, ToolbarButton } from '../AdminUi'
-
-function summarizeSteps(task: TaskDefinition) {
-  return task.steps.map((step) => {
-    return `导航至 ${step.waypointName || step.waypointId}`
-  })
-}
+import { summarizeWorkflowSteps } from '../../pages/nav/navPageUtils'
 
 export function AdminNavigationPage({
   scenes,
@@ -218,10 +213,16 @@ export function AdminNavigationPage({
                     <InfoChip label="循环模式" value="当前版本未接入" />
                     <InfoChip label="失败策略" value="当前版本未接入" />
                   </div>
+                  <div className="mt-4 rounded-xl border border-white/8 bg-white/3 px-4 py-3 text-sm text-zinc-200">
+                    流程：{summarizeWorkflowSteps(task.steps) || '未配置'}
+                  </div>
                   <div className="mt-4">
                     <div className="text-xs font-medium text-zinc-500">步骤</div>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {summarizeSteps(task).map((step, index) => (
+                      {summarizeWorkflowSteps(task.steps)
+                        .split(' -> ')
+                        .filter(Boolean)
+                        .map((step, index) => (
                         <span key={`${task.id}-${index}`} className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-300">
                           {step}
                         </span>

@@ -1,4 +1,4 @@
-export type WorkflowStep = {
+export type WorkflowNavigateWaypointStep = {
   type: 'navigate_waypoint'
   waypointId: string
   waypointName?: string
@@ -8,6 +8,13 @@ export type WorkflowStep = {
   yaw?: number
   frameId?: string
 }
+
+export type WorkflowPostureControlStep = {
+  type: 'posture_control'
+  posture: 'stand' | 'crouch'
+}
+
+export type WorkflowStep = WorkflowNavigateWaypointStep | WorkflowPostureControlStep
 
 export type TaskDefinition = {
   id: string
@@ -19,10 +26,7 @@ export type TaskDefinition = {
   steps: WorkflowStep[]
 }
 
-export type TaskDraftStep = {
-  type: 'navigate_waypoint'
-  waypointId: string
-}
+export type TaskDraftStep = WorkflowStep
 
 export type TaskDraft = {
   name: string
