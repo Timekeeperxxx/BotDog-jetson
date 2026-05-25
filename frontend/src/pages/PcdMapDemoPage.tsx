@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Boxes,
@@ -97,6 +97,7 @@ export function PcdMapDemoPage() {
   const [mappingSceneName, setMappingSceneName] = useState('')
   const [mappingSceneError, setMappingSceneError] = useState<string | null>(null)
   const [mappingSessionInfo, setMappingSessionInfo] = useState<MappingSessionInfo | null>(null)
+  const [keyboardControlEnabled, setKeyboardControlEnabled] = useState(false)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
   const [webglSupported, setWebglSupported] = useState(true)
@@ -104,7 +105,7 @@ export function PcdMapDemoPage() {
   // ── 高危操作确认 ──
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
   const navWs = useNavWebSocket()
-  const { robotPose, globalPath, localizationStatus, setInitialState } = navWs
+  const { robotPose, globalPath, localizationStatus, mappingCloudPoints, setInitialState, clearMappingCloud } = navWs
   const {
     startCommand,
     stopCommand,
@@ -113,6 +114,14 @@ export function PcdMapDemoPage() {
     lastResult,
     resultMessage,
   } = useRobotControl()
+
+  const prevMappingActiveRef = useRef(mappingActive)
+  useEffect(() => {
+    if (prevMappingActiveRef.current !== mappingActive) {
+      prevMappingActiveRef.current = mappingActive
+      clearMappingCloud()
+    }
+  }, [mappingActive, clearMappingCloud])
 
   const addLog = useCallback((message: string, level: LogItem['level'] = 'info') => {
     setLogs((items) => [
@@ -201,12 +210,13 @@ export function PcdMapDemoPage() {
         map_id: selectedSceneId,
         x: pos.x,
         y: pos.y,
+        z: waypointZ,
         yaw: pos.yaw,
         frame_id: 'map',
       })
       setToolMode('none')
       addLog(
-        `已保存重定位位姿并发送重定位信号: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
+        `已发送重定位: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${waypointZ.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
       )
     } catch (error) {
       addLog(error instanceof Error ? error.message : '设置重定位位姿失败', 'error')
@@ -415,11 +425,14 @@ export function PcdMapDemoPage() {
   }, [addLog])
 
   useEffect(() => {
+    if (!keyboardControlEnabled && isControlling) stopCommand()
+  }, [keyboardControlEnabled, isControlling, stopCommand])
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((event.target as HTMLElement).tagName)) return
       if (event.repeat) return
-      // 未登录或无 operator 权限：不响应控制快捷键
-      if (!canOperate) return
+      if (!canOperate || !keyboardControlEnabled) return
 
       const cmd = resolveRobotCommandFromKey(event.key)
 
@@ -447,7 +460,7 @@ export function PcdMapDemoPage() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [canOperate, currentCmd, startCommand, stopCommand])
+  }, [canOperate, keyboardControlEnabled, currentCmd, startCommand, stopCommand])
 
   const handleToolMode = useCallback((nextMode: 'obstacle' | 'pose') => {
     setToolMode((current) => {
@@ -460,7 +473,7 @@ export function PcdMapDemoPage() {
           ? '已退出工具模式'
           : resolved === 'obstacle'
             ? '已切换到添加障碍物模式'
-            : '已切换到设置位姿模式',
+            : '已切换到重定位模式，在地图上点选机器人当前位置',
       )
       return resolved
     })
@@ -490,6 +503,12 @@ export function PcdMapDemoPage() {
     [scenes, selectedTask],
   )
   const selectedTaskSceneNavigable = selectedTaskScene?.navigable ?? false
+
+  const allLayers = useMemo(() => {
+    const base = previewLayers ?? []
+    if (!mappingActive || mappingCloudPoints.length === 0) return base
+    return [...base, { role: 'live' as const, points: mappingCloudPoints }]
+  }, [previewLayers, mappingActive, mappingCloudPoints])
 
   const mapOptions = useMemo(
     () => scenes.map((scene) => ({ id: scene.id, name: scene.name })),
@@ -694,7 +713,7 @@ export function PcdMapDemoPage() {
         <div className="pcd-title-row">
           <div className="pcd-title-block">
             <h1>BotDog 导航巡逻</h1>
-            <p>场景地图预览、标点、导航、位姿和日志统一压缩到单屏工作区</p>
+            <p>from 西部泰力</p>
           </div>
         </div>
         <div className="pcd-header-actions">
@@ -736,7 +755,7 @@ export function PcdMapDemoPage() {
           <div className="pcd-main-viewer">
             {webglSupported ? (
               <PointCloud3DViewer
-                layers={previewLayers}
+                layers={allLayers}
                 waypoints={waypoints}
                 robotPose={robotPose}
                 globalPath={globalPath}
@@ -933,9 +952,19 @@ export function PcdMapDemoPage() {
               className={`pcd-tool-button ${toolMode === 'pose' ? 'is-active' : ''}`}
               onClick={() => handleToolMode('pose')}
               disabled={!canOperate || !selectedSceneNavigable}
+              title={!selectedSceneNavigable ? '当前场景缺少 ground.pcd' : undefined}
             >
-              <Square size={15} />
-              <span>设置位姿</span>
+              <Crosshair size={15} />
+              <span>重定位</span>
+            </button>
+            <button
+              className={`pcd-tool-button ${keyboardControlEnabled ? 'is-active' : ''}`}
+              onClick={() => setKeyboardControlEnabled((v) => !v)}
+              disabled={!canOperate}
+              title={keyboardControlEnabled ? '关闭键盘控制' : '开启键盘控制 (WASD/QE)'}
+            >
+              <Keyboard size={15} />
+              <span>{keyboardControlEnabled ? '控制中' : '移动控制'}</span>
             </button>
             <button
               className={`pcd-tool-button ${mappingActive ? 'is-active' : ''}`}
@@ -963,12 +992,13 @@ export function PcdMapDemoPage() {
               <Square size={15} />
               <span>停止任务</span>
             </button>
-            <div className="pcd-keyboard-hint">
-              <Keyboard size={15} />
-              <span>{isControlling ? `键盘控制中: ${currentCmd}` : '键盘控制: WASD / QE / Shift / Ctrl'}</span>
-              {resultMessage ? <small>{resultMessage}</small> : null}
-              {!resultMessage && lastResult ? <small>{lastResult.result}</small> : null}
-            </div>
+            {keyboardControlEnabled && (
+              <div className="pcd-keyboard-hint">
+                <span>{isControlling ? `控制中: ${currentCmd}` : 'WASD / QE / Shift / Ctrl'}</span>
+                {resultMessage ? <small>{resultMessage}</small> : null}
+                {!resultMessage && lastResult ? <small>{lastResult.result}</small> : null}
+              </div>
+            )}
           </section>
           {mappingSessionInfo ? (
             <section className="pcd-mapping-session">

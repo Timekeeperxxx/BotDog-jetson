@@ -7,7 +7,7 @@ export type PcdBounds = {
   max_z: number
 }
 
-export type PcdSceneLayerRole = 'ground' | 'wall'
+export type PcdSceneLayerRole = 'ground' | 'wall' | 'live'
 
 export type PcdSceneFile = {
   name: string
@@ -143,6 +143,7 @@ export type LocalizationPosePayload = {
   map_id: string
   x: number
   y: number
+  z: number
   yaw: number
   frame_id: 'map'
 }

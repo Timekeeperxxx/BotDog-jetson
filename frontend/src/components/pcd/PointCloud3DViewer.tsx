@@ -113,7 +113,9 @@ function createWaypointLabelSprite(text: string) {
 }
 
 function getLayerColor(role: PcdSceneLayerRole) {
-  return role === 'ground' ? 0x38bdf8 : 0x166534
+  if (role === 'ground') return 0x38bdf8
+  if (role === 'live') return 0xf97316
+  return 0x166534
 }
 
 type Props = {
@@ -307,12 +309,12 @@ export function PointCloud3DViewer({
 
       const material = new THREE.PointsMaterial({
         color: getLayerColor(layer.role),
-        size: 0.07,
+        size: 0.2,
         sizeAttenuation: true,
       })
 
       const cloud = new THREE.Points(geometry, material)
-      cloud.renderOrder = layer.role === 'ground' ? 1 : 2
+      cloud.renderOrder = layer.role === 'ground' ? 1 : layer.role === 'live' ? 3 : 2
       cloudGroup.add(cloud)
 
       if (!hasPoints) {

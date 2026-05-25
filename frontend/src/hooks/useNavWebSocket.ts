@@ -3,10 +3,12 @@ import { getWsUrl } from '../config/api'
 import type {
   GlobalPath,
   LocalizationStatus,
+  MappingCloud,
   NavigationStatus,
   NavWebSocketEvent,
   RobotPose,
 } from '../types/navState'
+
 
 type NavWebSocketState = {
   connected: boolean
@@ -14,6 +16,7 @@ type NavWebSocketState = {
   globalPath: GlobalPath | null
   localizationStatus: LocalizationStatus | null
   navigationStatus: NavigationStatus | null
+  mappingCloudPoints: [number, number, number][]
   lastMessageAt: number | null
 }
 
@@ -24,6 +27,7 @@ export function useNavWebSocket() {
     globalPath: null,
     localizationStatus: null,
     navigationStatus: null,
+    mappingCloudPoints: [],
     lastMessageAt: null,
   })
 
@@ -79,6 +83,11 @@ export function useNavWebSocket() {
               return { ...prev, localizationStatus: navEvent.data, lastMessageAt: Date.now() }
             case 'nav.navigation_status':
               return { ...prev, navigationStatus: navEvent.data, lastMessageAt: Date.now() }
+            case 'nav.mapping_cloud': {
+              // 后端每 3 秒推送一次全量体素降采样地图，直接替换显示
+              const newPts = (navEvent.data as MappingCloud).points as [number, number, number][]
+              return { ...prev, mappingCloudPoints: newPts, lastMessageAt: Date.now() }
+            }
             default:
               return prev
           }
@@ -141,6 +150,10 @@ export function useNavWebSocket() {
     }))
   }, [])
 
+  const clearMappingCloud = useCallback(() => {
+    setState((prev) => ({ ...prev, mappingCloudPoints: [] }))
+  }, [])
+
   useEffect(() => {
     connect()
     return disconnect
@@ -149,6 +162,7 @@ export function useNavWebSocket() {
   return {
     ...state,
     setInitialState,
+    clearMappingCloud,
     connect,
     disconnect,
   }

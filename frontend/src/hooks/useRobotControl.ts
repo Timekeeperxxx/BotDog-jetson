@@ -124,7 +124,7 @@ export function useRobotControl(): UseRobotControlReturn {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cmd }),
-        signal: AbortSignal.timeout(1000),
+        signal: AbortSignal.timeout(2000),
       });
 
       if (res.ok) {
@@ -149,7 +149,7 @@ export function useRobotControl(): UseRobotControlReturn {
     try {
       const res = await fetch(STOP_URL, {
         method: 'POST',
-        signal: AbortSignal.timeout(1000),
+        signal: AbortSignal.timeout(2000),
       });
 
       if (res.ok) {
