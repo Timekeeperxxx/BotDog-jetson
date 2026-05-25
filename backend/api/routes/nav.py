@@ -331,6 +331,13 @@ async def nav_set_localization_pose(
 
     try:
         pose = save_localization_pose(body.model_dump())
+        initial_pose_result = bridge.publish_initial_pose(
+            x=pose["x"],
+            y=pose["y"],
+            z=pose["z"],
+            yaw=pose["yaw"],
+            frame_id=pose["frame_id"],
+        )
         result = bridge.publish_set_pose()
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {body.map_id}")
@@ -343,9 +350,9 @@ async def nav_set_localization_pose(
         {
             "status": "initializing",
             "frame_id": pose["frame_id"],
-            "source": result["topic"],
+            "source": initial_pose_result["topic"],
             "message": (
-                f"已保存重定位位姿并发布重定位信号: "
+                f"已发布 initialpose 并触发重定位: "
                 f"x={pose['x']:.3f}, y={pose['y']:.3f}, yaw={pose['yaw']:.3f}"
             ),
         }

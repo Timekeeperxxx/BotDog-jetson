@@ -104,6 +104,7 @@ class Settings(BaseSettings):
     ROS_NAV_GLOBAL_PATH_TOPIC: str = "/global_path"
     ROS_NAV_STOP_TOPIC: str = "/nav_stop"
     ROS_NAV_SET_POSE_TOPIC: str = "/initialpose_start"
+    ROS_NAV_INITIAL_POSE_TOPIC: str = "/initialpose"
     ROS_NAV_MAPPING_TOPIC: str = "/mapping_start"
     ROS_NAV_STATUS_TOPIC: str = "/nav_status"
 

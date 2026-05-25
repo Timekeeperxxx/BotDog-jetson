@@ -337,6 +337,7 @@ class LocalizationPoseSetRequest(BaseModel):
     map_id: str = Field(..., min_length=1)
     x: float
     y: float
+    z: float = 0.0
     yaw: float = 0.0
     frame_id: str = "map"
 

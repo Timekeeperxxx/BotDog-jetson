@@ -50,12 +50,14 @@ async def control_command(
             arbiter.request_control(ControlOwner.WEB_MANUAL)
 
     ack = await svc.handle_command(body.cmd)
-    await safe_write_audit_log(
-        db,
-        level="INFO" if ack.result == "ACCEPTED" else "WARN",
-        module="BACKEND",
-        message=f"用户={user.username} 角色={user.role} 操作=control.command 目标={body.cmd} 结果={ack.result}",
-    )
+    # 只对失败/拒绝命令写审计日志；ACCEPTED 跳过，避免高频写 SQLite 阻塞响应
+    if ack.result != "ACCEPTED":
+        await safe_write_audit_log(
+            db,
+            level="WARN",
+            module="BACKEND",
+            message=f"用户={user.username} 角色={user.role} 操作=control.command 目标={body.cmd} 结果={ack.result}",
+        )
     return ack
 
 
@@ -70,12 +72,13 @@ async def control_stop(
         raise HTTPException(status_code=503, detail="控制服务未就绪")
 
     ack = await svc.force_stop()
-    await safe_write_audit_log(
-        db,
-        level="INFO" if ack.result == "ACCEPTED" else "WARN",
-        module="BACKEND",
-        message=f"用户={user.username} 角色={user.role} 操作=control.stop 目标=stop 结果={ack.result}",
-    )
+    if ack.result != "ACCEPTED":
+        await safe_write_audit_log(
+            db,
+            level="WARN",
+            module="BACKEND",
+            message=f"用户={user.username} 角色={user.role} 操作=control.stop 目标=stop 结果={ack.result}",
+        )
     return ack
 
 
