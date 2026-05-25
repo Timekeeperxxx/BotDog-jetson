@@ -23,6 +23,8 @@ export function useMissionControl(addLog: (message: string, level: 'info' | 'war
         setMissionTaskId(null);
         addLog('任务已停止，AI 跟踪已禁用', 'info', 'MISSION');
       } else {
+        await fetch(getApiUrl('/api/v1/auto-track/disable'), { method: 'POST' })
+          .catch(err => console.error('停用跟踪失败', err));
         const res = await fetch(getApiUrl('/api/v1/session/start'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -30,7 +32,7 @@ export function useMissionControl(addLog: (message: string, level: 'info' | 'war
         });
         const data = await res.json();
         setMissionTaskId(data.task_id);
-        addLog(`任务已启动: ${data.task_name}`, 'info', 'MISSION');
+        addLog(`任务已启动: ${data.task_name}，AI 跟踪已禁用`, 'info', 'MISSION');
       }
     } catch (err) {
       addLog(`任务操作失败: ${err}`, 'error', 'MISSION');

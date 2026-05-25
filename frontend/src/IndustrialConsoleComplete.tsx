@@ -19,6 +19,7 @@ import { useWebSocketStatusLogger } from './hooks/useWebSocketStatusLogger';
 import { useWhepStatusLogger } from './hooks/useWhepStatusLogger';
 import { useVideoReconnectEffects } from './hooks/useVideoReconnectEffects';
 import { useStartupLog } from './hooks/useStartupLog';
+import { getApiUrl } from './config/api';
 import { Sidebar, type SidebarTab } from './components/layout/Sidebar';
 import { TopHeader } from './components/layout/TopHeader';
 import { AuthStatusBar } from './components/AuthStatusBar';
@@ -60,11 +61,10 @@ export default function IndustrialConsoleComplete() {
   const [activeTab, setActiveTab] = useState<SidebarTab>('console');
   const [isLogExpanded, setIsLogExpanded] = useState(false);
   const [isAiStatsExpanded, setIsAiStatsExpanded] = useState(false);
-  const [isZoneDrawing, setIsZoneDrawing] = useState(false);
 
   const evidence = useEvidence();
   const { fetchEvidence } = evidence;
-  const { isMissionRunning, toggleMission } = useMissionControl(addLog);
+  const { missionTaskId, isMissionRunning, toggleMission } = useMissionControl(addLog);
   const { isAudioPlaying, toggleAudio } = useAudioControl();
   const { guardStatus, toggleGuardMission, abortGuardMission } = useGuardMissionControl();
   const { isUiFullscreen, toggleFullscreen } = useFullscreenControl();
@@ -77,9 +77,22 @@ export default function IndustrialConsoleComplete() {
     window.location.assign('/admin');
   }, []);
 
-  const triggerSnapshot = useCallback(() => {
-    addLog('手动拍照请求已发送', 'info', 'SNAPSHOT');
-  }, [addLog]);
+  const triggerSnapshot = useCallback(async () => {
+    try {
+      const url = missionTaskId
+        ? getApiUrl(`/api/v1/snapshot?task_id=${missionTaskId}`)
+        : getApiUrl('/api/v1/snapshot');
+      const res = await fetch(url, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        addLog(`拍照失败: ${err.detail ?? res.statusText}`, 'error', 'SNAPSHOT');
+        return;
+      }
+      addLog('拍照成功，已保存至证据库', 'info', 'SNAPSHOT');
+    } catch (err) {
+      addLog(`拍照请求失败: ${err}`, 'error', 'SNAPSHOT');
+    }
+  }, [missionTaskId, addLog]);
 
   // WebSocket 连接
   useEffect(() => { connectWs(); return () => { disconnectWs(); }; }, []);
@@ -142,8 +155,6 @@ export default function IndustrialConsoleComplete() {
               trackOverlay,
               autoTrackEnabled: autoTrack.status?.enabled ?? false,
               guardEnabled: guardStatus?.enabled ?? false,
-              isZoneDrawing,
-              onToggleZoneDrawing: () => setIsZoneDrawing(v => !v),
               whepStatus,
               currentWhep,
               videoLatencyMs,

@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { Camera, Maximize2, Minimize2, PenLine, Play, Square } from 'lucide-react';
+import { Camera, Maximize2, Minimize2, Play, Square } from 'lucide-react';
 import { TrackOverlay } from '../TrackOverlay1';
-import { ZoneDrawer } from '../ZoneDrawer';
 import { CameraVideo } from './CameraVideo';
 import { OmniMonitorEntry } from './OmniMonitorEntry';
 import { OmniMonitorOverlay } from './OmniMonitorOverlay';
@@ -15,8 +14,6 @@ export function VideoStage({
   trackOverlay,
   autoTrackEnabled,
   guardEnabled,
-  isZoneDrawing,
-  onToggleZoneDrawing,
   whepStatus,
   currentWhep,
   videoLatencyMs,
@@ -47,13 +44,6 @@ export function VideoStage({
         {trackOverlay && mainOverlayEnabled && (
           <TrackOverlay data={trackOverlay} videoRef={videoRef} />
         )}
-        <ZoneDrawer
-          frameW={trackOverlay?.frame_w ?? 1280}
-          frameH={trackOverlay?.frame_h ?? 720}
-          active={isZoneDrawing}
-          onClose={onToggleZoneDrawing}
-        />
-
         {whepStatus.status !== 'connected' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/88 z-5">
             <div className="text-5xl mb-4 opacity-50">
@@ -118,18 +108,6 @@ export function VideoStage({
               <div className="h-8 w-px bg-white/30" />
               <button onClick={triggerSnapshot} className="p-2 hover:bg-white hover:text-black rounded-lg transition-all" title="拍照">
                 <Camera size={22} />
-              </button>
-              <div className="h-8 w-px bg-white/30" />
-              <button
-                onClick={onToggleZoneDrawing}
-                className={`p-2 rounded-lg transition-all ${
-                  isZoneDrawing
-                    ? 'bg-green-500 text-black'
-                    : 'hover:bg-white hover:text-black text-white'
-                }`}
-                title={isZoneDrawing ? '退出画禁区模式' : '画禁区'}
-              >
-                <PenLine size={22} />
               </button>
             </div>
             <div className="flex items-center space-x-3">

@@ -465,6 +465,7 @@ def register_routes(app: FastAPI) -> None:
     from .api.routes import video_sources as _video_source_routes
     from .api.routes import websocket as _websocket_routes
     from .api.routes import users as _users_routes
+    from .api.routes import snapshot as _snapshot_routes
     app.include_router(_auth_routes.router)
     app.include_router(_users_routes.router)
     app.include_router(_nav_routes.router)
@@ -484,6 +485,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(_test_alert_routes.router)
     app.include_router(_log_files_routes.router)
     app.include_router(_logs_routes.router)
+    app.include_router(_snapshot_routes.router)
     app.include_router(_websocket_routes.router)
 
 

@@ -457,14 +457,20 @@ class RosNavBridge:
             nav_logger.warning("PointCloud2 不可用，跳过建图点云订阅：{}", exc)
             return
 
+        from rclpy.qos import qos_profile_sensor_data
+
+        # /lio/cloud_world 是全局累积云，体积可达数十 MB，DDS UDP 分片在
+        # BEST_EFFORT 下丢包后 CDR 重组失败 → "sequence size exceeds remaining buffer"
+        # 改订阅当前帧（每帧 5k-20k 点），由 Python 端自行累积
+        cloud_topic = settings.ROS_NAV_MAPPING_CLOUD_TOPIC
         self.clear_accumulated_cloud()
         self._cloud_subscription = self._node.create_subscription(
             PointCloud2,
-            "/lio/cloud_world",
+            cloud_topic,
             self._handle_cloud_message,
-            2,
+            qos_profile_sensor_data,
         )
-        nav_logger.info("ROS2 建图实时点云订阅已启动：topic=/lio/cloud_world")
+        nav_logger.info("ROS2 建图实时点云订阅已启动：topic={}", cloud_topic)
 
     def clear_accumulated_cloud(self) -> None:
         self._accumulated_cloud = np.empty((0, 3), dtype=np.float32)

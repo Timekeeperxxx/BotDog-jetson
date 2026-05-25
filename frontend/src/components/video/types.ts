@@ -38,8 +38,6 @@ export interface VideoStageProps {
   trackOverlay: TrackOverlayData | null;
   autoTrackEnabled: boolean;
   guardEnabled: boolean;
-  isZoneDrawing: boolean;
-  onToggleZoneDrawing: () => void;
   whepStatus: WhepState;
   currentWhep: CurrentWhepInfo;
   videoLatencyMs: number | null;
