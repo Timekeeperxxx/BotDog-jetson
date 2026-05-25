@@ -23,22 +23,16 @@ class VideoSourceService:
 
     async def initialize_defaults(self, session: AsyncSession) -> None:
         """
-        初始化默认视频源。
+        初始化/补齐默认视频源。
 
-        如果数据库中没有任何视频源记录，则根据 .env 配置和硬编码默认值
-        创建 cam1（主摄像头）和 cam2（画中画）两个默认视频源。
+        cam1=AI 主画面，cam2=后视，cam3=左视，cam4=右视。
+        已存在的记录保持原样，仅补齐缺失的默认项，便于线上无损升级。
         """
         result = await session.execute(select(VideoSource))
-        existing = result.scalars().all()
-        if existing:
-            logger.info(f"视频源已存在 {len(existing)} 条，跳过默认初始化")
-            return
+        existing_by_name = {s.name: s for s in result.scalars().all()}
 
         # 从 .env 推算 WHEP 基础地址
-        # AI_RTSP_URL 格式: rtsp://127.0.0.1:8554/cam
         rtsp_url = settings.AI_RTSP_URL
-        # WHEP URL 与 RTSP 在同一主机，默认端口 8889
-        # 尝试从 RTSP URL 提取主机名
         whep_host = "127.0.0.1"
         try:
             from urllib.parse import urlparse
@@ -50,38 +44,65 @@ class VideoSourceService:
 
         ts = utc_now_iso()
 
-        cam1 = VideoSource(
-            name="cam1",
-            label="主摄像头",
-            source_type="whep",
-            whep_url=f"http://{whep_host}:8889/cam/whep",
-            rtsp_url=rtsp_url,
-            enabled=1,
-            is_primary=1,
-            is_ai_source=1,
-            sort_order=0,
-            created_at=ts,
-            updated_at=ts,
-        )
+        defaults = [
+            {
+                "name": "cam1",
+                "label": "主摄像头",
+                "source_type": "whep",
+                "whep_url": f"http://{whep_host}:8889/cam/whep",
+                "rtsp_url": rtsp_url,
+                "enabled": 1,
+                "is_primary": 1,
+                "is_ai_source": 1,
+                "sort_order": 0,
+            },
+            {
+                "name": "cam2",
+                "label": "后视摄像头",
+                "source_type": "whep",
+                "whep_url": f"http://{whep_host}:8889/cam2/whep",
+                "rtsp_url": None,
+                "enabled": 1,
+                "is_primary": 0,
+                "is_ai_source": 0,
+                "sort_order": 1,
+            },
+            {
+                "name": "cam3",
+                "label": "左视摄像头",
+                "source_type": "whep",
+                "whep_url": f"http://{whep_host}:8889/cam3/whep",
+                "rtsp_url": None,
+                "enabled": 1,
+                "is_primary": 0,
+                "is_ai_source": 0,
+                "sort_order": 2,
+            },
+            {
+                "name": "cam4",
+                "label": "右视摄像头",
+                "source_type": "whep",
+                "whep_url": f"http://{whep_host}:8889/cam4/whep",
+                "rtsp_url": None,
+                "enabled": 1,
+                "is_primary": 0,
+                "is_ai_source": 0,
+                "sort_order": 3,
+            },
+        ]
 
-        cam2 = VideoSource(
-            name="cam2",
-            label="图传摄像头",
-            source_type="whep",
-            whep_url=f"http://{whep_host}:8889/cam2/whep",
-            rtsp_url=None,
-            enabled=1,
-            is_primary=0,
-            is_ai_source=0,
-            sort_order=1,
-            created_at=ts,
-            updated_at=ts,
-        )
+        added = []
+        for d in defaults:
+            if d["name"] in existing_by_name:
+                continue
+            session.add(VideoSource(created_at=ts, updated_at=ts, **d))
+            added.append(d["name"])
 
-        session.add(cam1)
-        session.add(cam2)
-        await session.commit()
-        logger.info(f"已初始化默认视频源: cam1 (主画面+AI), cam2 (画中画)")
+        if added:
+            await session.commit()
+            logger.info(f"已初始化视频源: {', '.join(added)}")
+        else:
+            logger.info(f"视频源已齐全 ({len(existing_by_name)} 条)，跳过默认初始化")
 
     async def list_all(self, session: AsyncSession) -> List[Dict[str, Any]]:
         """获取所有视频源。"""

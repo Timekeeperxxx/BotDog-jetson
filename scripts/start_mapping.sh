@@ -16,15 +16,32 @@ cleanup() {
   local exit_code=$?
   echo "收到停止信号，正在终止建图相关进程..."
 
-  for pid in "$TERRAIN_PID" "$SUPERLIO_PID" "$LIVOX_PID"; do
+  # terrain_analysis 需要时间把 ground.pcd 写完，优先用 SIGINT 触发 ROS2 优雅退出
+  if [ -n "$TERRAIN_PID" ] && kill -0 "$TERRAIN_PID" 2>/dev/null; then
+    echo "等待 terrain_analysis 保存 ground.pcd (最长 15 秒)..."
+    kill -INT "$TERRAIN_PID" 2>/dev/null || true
+    local waited=0
+    while [ $waited -lt 15 ] && kill -0 "$TERRAIN_PID" 2>/dev/null; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if kill -0 "$TERRAIN_PID" 2>/dev/null; then
+      echo "terrain_analysis 15 秒未退出，强制终止"
+      kill -KILL "$TERRAIN_PID" 2>/dev/null || true
+    else
+      echo "terrain_analysis 已退出 (耗时 ${waited}s)"
+    fi
+  fi
+
+  for pid in "$SUPERLIO_PID" "$LIVOX_PID"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      kill -TERM "$pid" 2>/dev/null || true
+      kill -INT "$pid" 2>/dev/null || true
     fi
   done
 
-  sleep 2
+  sleep 5
 
-  for pid in "$TERRAIN_PID" "$SUPERLIO_PID" "$LIVOX_PID"; do
+  for pid in "$SUPERLIO_PID" "$LIVOX_PID"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       kill -KILL "$pid" 2>/dev/null || true
     fi
@@ -86,10 +103,15 @@ kill_needle_kill() {
 NAV_NEEDLES=(
   "ros2 launch livox_ros_driver2 msg_MID360_launch.py"
   "ros2 launch super_lio relocation.py"
+  "ros2 launch super_lio Livox_mid360.py"
+  "ros2 launch terrain_analysis terrain_analysis_with_save.launch"
   "ros2 launch global_planner path_planning_with_polygon.launch"
   "ros2 launch p2p_move_base go2_localization_launch.py"
   "/home/jetson/superlio/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node"
+  "/home/jetson/superlio/install/super_lio/lib/super_lio/super_lio_node"
   "/home/jetson/superlio/install/super_lio/lib/super_lio/relocation_node"
+  "/home/jetson/superlio/install/terrain_analysis/lib/terrain_analysis/terrainAnalysis"
+  "/home/jetson/superlio/install/terrain_analysis/lib/terrain_analysis/save_terrain_map"
   "/home/jetson/dddmr_navigation_new_local/install/global_planner/lib/global_planner/global_planner_node"
   "/home/jetson/dddmr_navigation_new_local/install/mcl_3dl/lib/mcl_3dl/pcl_publisher"
   "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/clicked2goal.py"
