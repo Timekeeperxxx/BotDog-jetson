@@ -8,6 +8,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+try:
+    import numpy as np
+    _NUMPY_AVAILABLE = True
+except ImportError:
+    _NUMPY_AVAILABLE = False
+
+# 内存缓存：key=(path_str, mtime, max_points) → (points, bounds)
+# 后端进程存活期间有效；文件修改后 mtime 变化自动失效
+_preview_cache: dict[tuple, tuple] = {}
+
 from .config import settings
 from .logging_config import get_logger
 
@@ -464,6 +474,70 @@ def read_binary_preview(
     data_start_offset: int,
     max_points: int,
 ) -> tuple[list[list[float]], dict[str, float]]:
+    if _NUMPY_AVAILABLE:
+        return _read_binary_preview_numpy(path, header, data_start_offset, max_points)
+    return _read_binary_preview_python(path, header, data_start_offset, max_points)
+
+
+def _read_binary_preview_numpy(
+    path: Path,
+    header: dict[str, list[str]],
+    data_start_offset: int,
+    max_points: int,
+) -> tuple[list[list[float]], dict[str, float]]:
+    fields = header["FIELDS"]
+    sizes = [int(s) for s in header.get("SIZE", [])]
+    types = [t.upper() for t in header.get("TYPE", [])]
+
+    _type_map: dict[str, dict[int, Any]] = {
+        "F": {4: np.float32, 8: np.float64},
+        "I": {1: np.int8,   2: np.int16,  4: np.int32,  8: np.int64},
+        "U": {1: np.uint8,  2: np.uint16, 4: np.uint32, 8: np.uint64},
+    }
+    try:
+        np_dtype = np.dtype([
+            (f, _type_map[t][s])
+            for f, s, t in zip(fields, sizes, types)
+        ])
+    except KeyError:
+        return _read_binary_preview_python(path, header, data_start_offset, max_points)
+
+    if "x" not in fields or "y" not in fields or "z" not in fields:
+        raise PcdMapError("PCD 文件缺少 x/y/z 字段")
+
+    with path.open("rb") as f:
+        f.seek(data_start_offset)
+        raw = f.read()
+
+    arr = np.frombuffer(raw, dtype=np_dtype)
+    step = max(1, math.ceil(len(arr) / max_points))
+    sampled = arr[::step]
+
+    x = sampled["x"].astype(np.float64)
+    y = sampled["y"].astype(np.float64)
+    z = sampled["z"].astype(np.float64)
+
+    valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+    x, y, z = x[valid], y[valid], z[valid]
+
+    if len(x) == 0:
+        return [], _finalize_bounds(_empty_bounds())
+
+    points: list[list[float]] = np.column_stack([x, y, z]).tolist()
+    bounds = {
+        "min_x": float(x.min()), "max_x": float(x.max()),
+        "min_y": float(y.min()), "max_y": float(y.max()),
+        "min_z": float(z.min()), "max_z": float(z.max()),
+    }
+    return points, bounds
+
+
+def _read_binary_preview_python(
+    path: Path,
+    header: dict[str, list[str]],
+    data_start_offset: int,
+    max_points: int,
+) -> tuple[list[list[float]], dict[str, float]]:
     normalized = normalize_pcd_header(header)
     point_count = max(1, normalized["point_count"])
     point_struct, value_offsets = _binary_layout(header)
@@ -509,25 +583,43 @@ def _read_preview_by_type(
     data_start_offset: int,
     max_points: int,
 ) -> tuple[list[list[float]], dict[str, float]]:
+    # 缓存命中：以文件 mtime 为失效依据，文件更新后自动重读
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    cache_key = (str(path), mtime, max_points)
+    cached = _preview_cache.get(cache_key)
+    if cached is not None:
+        pcd_logger.debug("点云预览缓存命中：{}", path.name)
+        return cached
+
     data_type = normalize_pcd_header(header)["data_type"]
 
     if data_type == "ascii":
-        return read_ascii_preview(
+        result = read_ascii_preview(
             path=path,
             header=header,
             data_start_offset=data_start_offset,
             max_points=max_points,
         )
-
-    if data_type == "binary":
-        return read_binary_preview(
+    elif data_type == "binary":
+        result = read_binary_preview(
             path=path,
             header=header,
             data_start_offset=data_start_offset,
             max_points=max_points,
         )
+    else:
+        raise PcdMapError(f"当前 Demo 暂不支持 DATA {data_type} PCD")
 
-    raise PcdMapError(f"当前 Demo 暂不支持 DATA {data_type} PCD")
+    # 写入缓存，同时清除同一文件的旧 mtime 条目
+    stale = [k for k in _preview_cache if k[0] == str(path) and k != cache_key]
+    for k in stale:
+        del _preview_cache[k]
+    _preview_cache[cache_key] = result
+    pcd_logger.debug("点云预览已缓存：{}，采样点数={}", path.name, len(result[0]))
+    return result
 
 
 def _build_file_metadata(path: Path) -> dict[str, Any]:

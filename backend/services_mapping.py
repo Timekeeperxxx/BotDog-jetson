@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .logging_config import get_logger
+from .nav_bridge_state import get_ros_nav_bridge
 from .services_nav_localization import stop_cmd_vel_script, stop_navigation_processes
 
 
@@ -176,6 +177,9 @@ class MappingService:
                 nav_stop_result.get("pids"),
                 cmd_vel_stop_result.get("pid"),
             )
+            bridge = get_ros_nav_bridge()
+            if bridge is not None:
+                bridge.clear_accumulated_cloud()
             command = ["bash", str(START_MAPPING_SCRIPT), str(map_dir)]
             mapping_logger.info(
                 "开始建图：scene_name={}，map_dir={}，command={}",
@@ -244,23 +248,40 @@ class MappingService:
             )
 
             try:
-                os.killpg(os.getpgid(pid), signal.SIGTERM)
+                # SIGINT 触发 ROS2 rclcpp::shutdown()，节点析构函数能正常保存文件；
+                # SIGTERM 对许多 ROS2 节点无效，会导致 ground.pcd 来不及落盘。
+                os.killpg(os.getpgid(pid), signal.SIGINT)
             except ProcessLookupError:
                 mapping_logger.warning("建图进程已不存在：pid={}", pid)
             except Exception as exc:
                 mapping_logger.warning("发送建图进程终止信号失败：pid={}，原因={}", pid, exc)
 
-            try:
-                process.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                mapping_logger.warning("建图进程组未能及时退出，准备强制终止：pid={}", pid)
-                try:
-                    os.killpg(os.getpgid(pid), signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait(timeout=8)
-
+            # 立即清除 session，避免阻塞 HTTP 响应；等待和文件校验在后台线程完成
             self._session = None
+            map_dir_path = Path(map_dir)
+
+            def _wait_and_verify() -> None:
+                try:
+                    process.wait(timeout=25)
+                except subprocess.TimeoutExpired:
+                    mapping_logger.warning("建图进程组未能及时退出，准备强制终止：pid={}", pid)
+                    try:
+                        os.killpg(os.getpgid(pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                for fname in ("map.pcd", "ground.pcd"):
+                    fpath = map_dir_path / fname
+                    if fpath.exists():
+                        mapping_logger.info("文件已保存：{} ({} 字节)", fpath, fpath.stat().st_size)
+                    else:
+                        mapping_logger.warning("文件未生成：{}，请检查 terrain_analysis 日志", fpath)
+
+            threading.Thread(target=_wait_and_verify, daemon=True).start()
+
             return {
                 "success": True,
                 "enabled": False,
