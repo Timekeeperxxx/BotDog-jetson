@@ -50,6 +50,8 @@ export function TopHeader({
           <span className="text-[11px] font-black text-white uppercase tracking-widest">BotDog</span>
           <div className="h-4 w-px bg-white/30" />
           <span className="text-[10px] font-mono text-slate-300 font-bold tracking-tight">V5.0-核心终端</span>
+          <div className="h-4 w-px bg-white/30" />
+          <span className="text-[10px] font-black text-slate-400 tracking-widest">西部泰力</span>
         </div>
         {isMissionRunning && (
           <div className="flex items-center space-x-2 px-2.5 py-1 bg-white rounded-sm border border-white shadow-[0_0_10px_rgba(255,255,255,0.2)]">

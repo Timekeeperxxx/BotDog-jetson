@@ -20,7 +20,7 @@ interface RemoteInboundRtpStats {
   roundTripTime?: number;
 }
 
-export function useWhepVideo(customWhepUrl?: string) {
+export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boolean }) {
   const [state, setState] = useState<WhepState>({
     status: 'disconnected',
     error: null,
@@ -154,7 +154,7 @@ export function useWhepVideo(customWhepUrl?: string) {
           retryAttemptsRef.current = 0;
           connectingRef.current = false;
           setWhepStatus('connected');
-          if (!statsTimerRef.current) {
+          if (!statsTimerRef.current && !options?.skipStats) {
             statsTimerRef.current = window.setInterval(async () => {
               // 旧 session 的定时器自我清除
               if (connectSessionIdRef.current !== sessionId) {

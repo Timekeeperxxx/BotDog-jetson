@@ -1,20 +1,15 @@
+import { useState } from 'react';
 import { Camera, Maximize2, Minimize2, PenLine, Play, Square } from 'lucide-react';
 import { TrackOverlay } from '../TrackOverlay1';
 import { ZoneDrawer } from '../ZoneDrawer';
 import { CameraVideo } from './CameraVideo';
-import { PipControls } from './PipControls';
+import { OmniMonitorEntry } from './OmniMonitorEntry';
+import { OmniMonitorOverlay } from './OmniMonitorOverlay';
 import { VideoHud } from './VideoHud';
 import type { VideoStageProps } from './types';
 
 export function VideoStage({
   videoRef,
-  videoRef2,
-  isCamSwapped,
-  onSwapCamera,
-  isPipLarge,
-  onTogglePipSize,
-  isPipHidden,
-  onTogglePipHidden,
   isUiFullscreen,
   toggleFullscreen,
   trackOverlay,
@@ -23,7 +18,6 @@ export function VideoStage({
   isZoneDrawing,
   onToggleZoneDrawing,
   whepStatus,
-  whepStatus2,
   currentWhep,
   videoLatencyMs,
   videoResolution,
@@ -35,32 +29,22 @@ export function VideoStage({
   autoTrack,
   connectWs,
   connectWhep,
-  connectWhep2,
   isMissionRunning,
   triggerSnapshot,
   toggleMission,
+  frontWhepUrl,
+  omniUrls,
 }: VideoStageProps) {
-  const mainStatus = isCamSwapped ? whepStatus2 : whepStatus;
-  const mainConnect = isCamSwapped ? connectWhep2 : connectWhep;
-  const pipStatus = isCamSwapped ? whepStatus : whepStatus2;
-  const pipLabel = isCamSwapped ? 'CAM1' : 'CAM2';
+  const [isOmniOpen, setIsOmniOpen] = useState(false);
+
   const mainOverlayEnabled = autoTrackEnabled || guardEnabled;
   const stageResolutionChip = resolutionChip || (videoResolution.height ? `${videoResolution.height}p` : '--');
-  const pipDimensions = isCamSwapped
-    ? { smallWidth: 270, smallHeight: 152, largeWidth: 480, largeHeight: 270 }
-    : { smallWidth: 240, smallHeight: 135, largeWidth: 480, largeHeight: 270 };
 
   return (
     <div className="flex-1 flex min-h-0 relative">
       <div className={`flex-1 bg-black relative overflow-hidden transition-all duration-300 ${isUiFullscreen ? 'fixed inset-0 z-[100]' : 'border-r border-white/20'}`}>
-        <CameraVideo
-          videoRef={videoRef}
-          isMain={!isCamSwapped}
-          isPipLarge={isPipLarge}
-          isPipHidden={isPipHidden}
-          pipDimensions={{ smallWidth: 270, smallHeight: 152, largeWidth: 480, largeHeight: 270 }}
-        />
-        {!isCamSwapped && trackOverlay && mainOverlayEnabled && (
+        <CameraVideo videoRef={videoRef} />
+        {trackOverlay && mainOverlayEnabled && (
           <TrackOverlay data={trackOverlay} videoRef={videoRef} />
         )}
         <ZoneDrawer
@@ -69,44 +53,28 @@ export function VideoStage({
           active={isZoneDrawing}
           onClose={onToggleZoneDrawing}
         />
-        <CameraVideo
-          videoRef={videoRef2}
-          isMain={isCamSwapped}
-          isPipLarge={isPipLarge}
-          isPipHidden={isPipHidden}
-          pipDimensions={{ smallWidth: 240, smallHeight: 135, largeWidth: 480, largeHeight: 270 }}
-        />
 
-        {mainStatus.status !== 'connected' && (
+        {whepStatus.status !== 'connected' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/88 z-5">
             <div className="text-5xl mb-4 opacity-50">
-              {mainStatus.status === 'connecting' ? (
+              {whepStatus.status === 'connecting' ? (
                 <div className="w-12 h-12 rounded-full border-4 border-slate-200/20 border-t-slate-200 mx-auto" style={{ animation: 'videoSpin 1s linear infinite' }} />
-              ) : mainStatus.status === 'error' ? (
+              ) : whepStatus.status === 'error' ? (
                 <span className="text-red-400 font-bold">x</span>
               ) : (
                 <Camera size={48} className="text-white/30" />
               )}
             </div>
-            <div className="text-lg font-bold text-slate-200 mb-2">视频流 {mainStatus.status === 'connecting' ? '连接中...' : mainStatus.error || '未连接'}</div>
-            {mainStatus.error && (
-              <div className="text-sm text-red-500 mb-4 px-4 py-2 bg-red-500/10 rounded">{mainStatus.error}</div>
+            <div className="text-lg font-bold text-slate-200 mb-2">视频流 {whepStatus.status === 'connecting' ? '连接中...' : whepStatus.error || '未连接'}</div>
+            {whepStatus.error && (
+              <div className="text-sm text-red-500 mb-4 px-4 py-2 bg-red-500/10 rounded">{whepStatus.error}</div>
             )}
             <div className="text-xs text-slate-500">{isConnected ? '等待WHEP连接...' : '等待后端连接...'}</div>
-            <button onClick={mainConnect} className="mt-4 px-4 py-2 text-[10px] font-black uppercase tracking-widest border border-white/20 text-white/80 hover:text-white hover:border-white/60 transition-all">重新连接</button>
+            <button onClick={connectWhep} className="mt-4 px-4 py-2 text-[10px] font-black uppercase tracking-widest border border-white/20 text-white/80 hover:text-white hover:border-white/60 transition-all">重新连接</button>
           </div>
         )}
 
-        <PipControls
-          isPipLarge={isPipLarge}
-          isPipHidden={isPipHidden}
-          pipLabel={pipLabel}
-          pipStatus={pipStatus}
-          pipDimensions={pipDimensions}
-          onTogglePipSize={onTogglePipSize}
-          onTogglePipHidden={onTogglePipHidden}
-          onSwapCamera={onSwapCamera}
-        />
+        <OmniMonitorEntry onOpen={() => setIsOmniOpen(true)} />
 
         <div className="absolute inset-0 pointer-events-none p-6">
           <div className="h-full flex flex-col justify-between items-center relative">
@@ -187,6 +155,14 @@ export function VideoStage({
           </div>
         </div>
       </div>
+
+      <OmniMonitorOverlay
+        open={isOmniOpen}
+        onClose={() => setIsOmniOpen(false)}
+        frontWhepUrl={frontWhepUrl}
+        frontVideoRef={videoRef}
+        omniUrls={omniUrls}
+      />
     </div>
   );
 }

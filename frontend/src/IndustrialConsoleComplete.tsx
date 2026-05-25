@@ -54,20 +54,7 @@ export default function IndustrialConsoleComplete() {
     connect: connectWhep,
     disconnect: disconnectWhep,
   } = useWhepVideo();
-  const { cam2WhepUrl } = useCameraSources();
-
-  // 第二路摄像头 (PiP)
-  const {
-    status: whepStatus2,
-    videoRef: videoRef2,
-    connect: connectWhep2,
-    disconnect: disconnectWhep2,
-  } = useWhepVideo(cam2WhepUrl);
-  // isCamSwapped: false = cam1主画面+cam2 PiP, true = cam2主画面+cam1 PiP
-  const [isCamSwapped, setIsCamSwapped] = useState(false);
-  // PiP 窗口状态
-  const [isPipLarge, setIsPipLarge] = useState(false);  // false=240×135, true=480×270
-  const [isPipHidden, setIsPipHidden] = useState(false); // 折叠到右下角图标
+  const { frontWhepUrl, omniUrls } = useCameraSources();
 
   const [showConfigPanel, setShowConfigPanel] = useState(false);
   const [activeTab, setActiveTab] = useState<SidebarTab>('console');
@@ -97,7 +84,6 @@ export default function IndustrialConsoleComplete() {
   // WebSocket 连接
   useEffect(() => { connectWs(); return () => { disconnectWs(); }; }, []);
   useEffect(() => { connectWhep(); return () => { disconnectWhep(); }; }, []);
-  useEffect(() => { connectWhep2(); return () => { disconnectWhep2(); }; }, []);
 
   useEffect(() => {
     if (activeTab !== 'history') return;
@@ -108,8 +94,6 @@ export default function IndustrialConsoleComplete() {
     activeTab,
     connectWhep,
     disconnectWhep,
-    connectWhep2,
-    disconnectWhep2,
   });
   useStartupLog(addLog);
   useWebSocketStatusLogger(isConnected, addLog);
@@ -153,13 +137,6 @@ export default function IndustrialConsoleComplete() {
             isUiFullscreen={isUiFullscreen}
             videoStageProps={{
               videoRef,
-              videoRef2,
-              isCamSwapped,
-              onSwapCamera: () => setIsCamSwapped(v => !v),
-              isPipLarge,
-              onTogglePipSize: () => setIsPipLarge(v => !v),
-              isPipHidden,
-              onTogglePipHidden: () => setIsPipHidden(v => !v),
               isUiFullscreen,
               toggleFullscreen,
               trackOverlay,
@@ -168,7 +145,6 @@ export default function IndustrialConsoleComplete() {
               isZoneDrawing,
               onToggleZoneDrawing: () => setIsZoneDrawing(v => !v),
               whepStatus,
-              whepStatus2,
               currentWhep,
               videoLatencyMs,
               videoResolution,
@@ -180,10 +156,11 @@ export default function IndustrialConsoleComplete() {
               autoTrack,
               connectWs,
               connectWhep,
-              connectWhep2,
               isMissionRunning,
               triggerSnapshot,
               toggleMission,
+              frontWhepUrl,
+              omniUrls,
             }}
             rightPanelProps={{
               logs,
