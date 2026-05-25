@@ -7,6 +7,8 @@ import threading
 import time
 from typing import Any
 
+import numpy as np
+
 from .config import settings
 from .logging_config import get_logger
 from .services_nav_state import (
@@ -71,10 +73,15 @@ class RosNavBridge:
         self._nav_status_subscription: Any | None = None
         self._estop_publisher: Any | None = None
         self._set_pose_publisher: Any | None = None
+        self._initial_pose_publisher: Any | None = None
         self._mapping_publisher: Any | None = None
+        self._cloud_subscription: Any | None = None
         self._publisher_lock = threading.RLock()
         self._last_broadcast_at = 0.0
         self._last_localization_broadcast_at = 0.0
+        self._last_cloud_broadcast_at = 0.0
+        self._accumulated_cloud: np.ndarray = np.empty((0, 3), dtype=np.float32)
+        self._last_full_map_broadcast_at = 0.0
         self._tf_available = False
         self._tf_wait_started_at = 0.0
         self._last_tf_warning_at = 0.0
@@ -134,6 +141,7 @@ class RosNavBridge:
             self._setup_publishers()
             self._setup_global_path_subscription(Path)
             self._setup_nav_status_subscription()
+            self._setup_cloud_subscription()
 
             if self._use_tf_pose():
                 self._setup_tf_listener()
@@ -245,19 +253,29 @@ class RosNavBridge:
             settings.ROS_NAV_SET_POSE_TOPIC,
             10,
         )
+        try:
+            from geometry_msgs.msg import PoseWithCovarianceStamped as _PwCS
+        except Exception as exc:
+            raise RuntimeError(f"PoseWithCovarianceStamped 不可用: {exc}") from exc
+        self._initial_pose_publisher = self._node.create_publisher(
+            _PwCS,
+            settings.ROS_NAV_INITIAL_POSE_TOPIC,
+            1,
+        )
         self._mapping_publisher = self._node.create_publisher(
             Bool,
             settings.ROS_NAV_MAPPING_TOPIC,
             10,
         )
         nav_logger.info(
-            "ROS2 导航发布器已启动：page_open_topic={}，nav_start_topic={}，clicked_point_topic={}，goal_yaw_topic={}，stop_topic={}，set_pose_topic={}，mapping_topic={}，status_topic={}，global_path_topic={}",
+            "ROS2 导航发布器已启动：page_open_topic={}，nav_start_topic={}，clicked_point_topic={}，goal_yaw_topic={}，stop_topic={}，set_pose_topic={}，initial_pose_topic={}，mapping_topic={}，status_topic={}，global_path_topic={}",
             settings.ROS_NAV_PAGE_OPEN_TOPIC,
             settings.ROS_NAV_START_TOPIC,
             settings.ROS_NAV_GOAL_XYZ_TOPIC,
             settings.ROS_NAV_GOAL_YAW_TOPIC,
             settings.ROS_NAV_STOP_TOPIC,
             settings.ROS_NAV_SET_POSE_TOPIC,
+            settings.ROS_NAV_INITIAL_POSE_TOPIC,
             settings.ROS_NAV_MAPPING_TOPIC,
             settings.ROS_NAV_STATUS_TOPIC,
             settings.ROS_NAV_GLOBAL_PATH_TOPIC,
@@ -369,6 +387,50 @@ class RosNavBridge:
             "data": True,
         }
 
+    def publish_initial_pose(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        yaw: float,
+        frame_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._node is None or self._initial_pose_publisher is None:
+            raise RuntimeError("ROS2 initialpose 发布器未就绪")
+
+        from geometry_msgs.msg import PoseWithCovarianceStamped
+
+        msg = PoseWithCovarianceStamped()
+        msg.header.stamp = self._node.get_clock().now().to_msg()
+        msg.header.frame_id = frame_id or settings.ROS_NAV_FRAME_ID
+
+        msg.pose.pose.position.x = float(x)
+        msg.pose.pose.position.y = float(y)
+        msg.pose.pose.position.z = float(z)
+
+        half_yaw = float(yaw) / 2.0
+        msg.pose.pose.orientation.x = 0.0
+        msg.pose.pose.orientation.y = 0.0
+        msg.pose.pose.orientation.z = math.sin(half_yaw)
+        msg.pose.pose.orientation.w = math.cos(half_yaw)
+
+        with self._publisher_lock:
+            self._initial_pose_publisher.publish(msg)
+
+        nav_logger.info(
+            "已发布 initialpose：x={:.3f} y={:.3f} z={:.3f} yaw={:.3f} frame={}",
+            x, y, z, yaw, msg.header.frame_id,
+        )
+        return {
+            "success": True,
+            "topic": settings.ROS_NAV_INITIAL_POSE_TOPIC,
+            "x": float(x),
+            "y": float(y),
+            "z": float(z),
+            "yaw": float(yaw),
+            "frame_id": msg.header.frame_id,
+        }
+
     def publish_mapping_enabled(self, enabled: bool) -> dict[str, Any]:
         if self._node is None or self._mapping_publisher is None:
             raise RuntimeError("ROS2 建图发布器未就绪")
@@ -385,6 +447,129 @@ class RosNavBridge:
             "topic": settings.ROS_NAV_MAPPING_TOPIC,
             "enabled": bool(enabled),
         }
+
+    def _setup_cloud_subscription(self) -> None:
+        if self._node is None:
+            return
+        try:
+            from sensor_msgs.msg import PointCloud2
+        except Exception as exc:
+            nav_logger.warning("PointCloud2 不可用，跳过建图点云订阅：{}", exc)
+            return
+
+        self.clear_accumulated_cloud()
+        self._cloud_subscription = self._node.create_subscription(
+            PointCloud2,
+            "/lio/cloud_world",
+            self._handle_cloud_message,
+            2,
+        )
+        nav_logger.info("ROS2 建图实时点云订阅已启动：topic=/lio/cloud_world")
+
+    def clear_accumulated_cloud(self) -> None:
+        self._accumulated_cloud = np.empty((0, 3), dtype=np.float32)
+        self._last_full_map_broadcast_at = 0.0
+        nav_logger.info("建图累积点云已清空")
+
+    def _handle_cloud_message(self, msg: Any) -> None:
+        now = time.monotonic()
+        if now - self._last_cloud_broadcast_at < 0.5:
+            return
+        self._last_cloud_broadcast_at = now
+
+        new_pts = self._extract_cloud_xyz_np(msg, max_points=5000)
+        if new_pts is None or len(new_pts) == 0:
+            return
+
+        self._accumulated_cloud = (
+            np.vstack([self._accumulated_cloud, new_pts])
+            if len(self._accumulated_cloud) > 0
+            else new_pts
+        )
+
+        if now - self._last_full_map_broadcast_at < 3.0:
+            return
+        self._last_full_map_broadcast_at = now
+
+        downsampled = self._voxel_downsample(self._accumulated_cloud, voxel_size=0.1)
+        self._accumulated_cloud = downsampled
+
+        self._submit_broadcast("nav.mapping_cloud", {
+            "points": downsampled.tolist(),
+            "timestamp": time.time(),
+        })
+
+    @staticmethod
+    def _voxel_downsample(points: np.ndarray, voxel_size: float) -> np.ndarray:
+        if len(points) == 0:
+            return points
+        keys = np.floor(points / voxel_size).astype(np.int32)
+        _, unique_indices = np.unique(keys, axis=0, return_index=True)
+        return points[np.sort(unique_indices)]
+
+    @staticmethod
+    def _extract_cloud_xyz_np(msg: Any, max_points: int = 5000) -> np.ndarray | None:
+        import struct as _struct
+        try:
+            point_step: int = msg.point_step
+            n_points: int = msg.width * msg.height
+            if n_points == 0 or point_step < 12:
+                return None
+
+            fields = {f.name: f.offset for f in msg.fields}
+            if not all(k in fields for k in ("x", "y", "z")):
+                return None
+
+            x_off, y_off, z_off = fields["x"], fields["y"], fields["z"]
+            raw = bytes(msg.data)
+            step = max(1, n_points // max_points)
+            result: list[list[float]] = []
+            for i in range(0, n_points, step):
+                base = i * point_step
+                x = _struct.unpack_from("<f", raw, base + x_off)[0]
+                y = _struct.unpack_from("<f", raw, base + y_off)[0]
+                z = _struct.unpack_from("<f", raw, base + z_off)[0]
+                if math.isnan(x) or math.isnan(y) or math.isnan(z):
+                    continue
+                if math.isinf(x) or math.isinf(y) or math.isinf(z):
+                    continue
+                result.append([x, y, z])
+            return np.array(result, dtype=np.float32) if result else None
+        except Exception as exc:
+            nav_logger.warning("点云消息解析失败：{}", exc)
+            return None
+
+    @staticmethod
+    def _extract_cloud_xyz(msg: Any, max_points: int = 1500) -> list[list[float]]:
+        import struct as _struct
+        try:
+            point_step: int = msg.point_step
+            n_points: int = msg.width * msg.height
+            if n_points == 0 or point_step < 12:
+                return []
+
+            fields = {f.name: f.offset for f in msg.fields}
+            if not all(k in fields for k in ("x", "y", "z")):
+                return []
+
+            x_off, y_off, z_off = fields["x"], fields["y"], fields["z"]
+            raw = bytes(msg.data)
+            step = max(1, n_points // max_points)
+            result: list[list[float]] = []
+            for i in range(0, n_points, step):
+                base = i * point_step
+                x = _struct.unpack_from("<f", raw, base + x_off)[0]
+                y = _struct.unpack_from("<f", raw, base + y_off)[0]
+                z = _struct.unpack_from("<f", raw, base + z_off)[0]
+                if math.isnan(x) or math.isnan(y) or math.isnan(z):
+                    continue
+                if math.isinf(x) or math.isinf(y) or math.isinf(z):
+                    continue
+                result.append([round(x, 3), round(y, 3), round(z, 3)])
+            return result
+        except Exception as exc:
+            nav_logger.warning("点云消息解析失败：{}", exc)
+            return []
 
     def _setup_global_path_subscription(self, path_cls: Any) -> None:
         if self._node is None:
