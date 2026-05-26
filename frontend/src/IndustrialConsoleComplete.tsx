@@ -94,6 +94,29 @@ export default function IndustrialConsoleComplete() {
     }
   }, [missionTaskId, addLog]);
 
+  const [isRecording, setIsRecording] = useState(false);
+
+  const toggleRecording = useCallback(async () => {
+    const endpoint = isRecording ? '/api/v1/recording/stop' : '/api/v1/recording/start';
+    try {
+      const res = await fetch(getApiUrl(endpoint), { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        addLog(`录像操作失败: ${err.detail ?? res.statusText}`, 'error', 'RECORDING');
+        return;
+      }
+      if (isRecording) {
+        addLog('录像已停止，已保存至录像库', 'info', 'RECORDING');
+        setIsRecording(false);
+      } else {
+        addLog('录像已开始', 'info', 'RECORDING');
+        setIsRecording(true);
+      }
+    } catch (err) {
+      addLog(`录像请求失败: ${err}`, 'error', 'RECORDING');
+    }
+  }, [isRecording, addLog]);
+
   // WebSocket 连接
   useEffect(() => { connectWs(); return () => { disconnectWs(); }; }, []);
   useEffect(() => { connectWhep(); return () => { disconnectWhep(); }; }, []);
@@ -172,6 +195,8 @@ export default function IndustrialConsoleComplete() {
               toggleMission,
               frontWhepUrl,
               omniUrls,
+              isRecording,
+              onToggleRecording: toggleRecording,
             }}
             rightPanelProps={{
               logs,

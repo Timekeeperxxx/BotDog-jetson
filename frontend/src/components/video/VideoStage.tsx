@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Camera, Maximize2, Minimize2, Play, Square } from 'lucide-react';
+import { Camera, Maximize2, Minimize2, Play, Square, Video, VideoOff } from 'lucide-react';
 import { TrackOverlay } from '../TrackOverlay1';
 import { CameraVideo } from './CameraVideo';
 import { OmniMonitorEntry } from './OmniMonitorEntry';
@@ -31,6 +31,8 @@ export function VideoStage({
   toggleMission,
   frontWhepUrl,
   omniUrls,
+  isRecording,
+  onToggleRecording,
 }: VideoStageProps) {
   const [isOmniOpen, setIsOmniOpen] = useState(false);
 
@@ -109,6 +111,19 @@ export function VideoStage({
               <button onClick={triggerSnapshot} className="p-2 hover:bg-white hover:text-black rounded-lg transition-all" title="拍照">
                 <Camera size={22} />
               </button>
+              {onToggleRecording && (
+                <button
+                  onClick={onToggleRecording}
+                  className={`p-2 rounded-lg transition-all ${isRecording ? 'text-red-400 hover:bg-red-500/20' : 'hover:bg-white hover:text-black'}`}
+                  title={isRecording ? '停止录像' : '开始录像'}
+                >
+                  {isRecording ? (
+                    <VideoOff size={22} className="animate-pulse" />
+                  ) : (
+                    <Video size={22} />
+                  )}
+                </button>
+              )}
             </div>
             <div className="flex items-center space-x-3">
               <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded border ${

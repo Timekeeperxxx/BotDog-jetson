@@ -55,4 +55,6 @@ export interface VideoStageProps {
   toggleMission: () => void | Promise<void>;
   frontWhepUrl: string | undefined;
   omniUrls: OmniCameraUrls;
+  isRecording?: boolean;
+  onToggleRecording?: () => void;
 }
