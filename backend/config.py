@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     # 抓拍存储目录（用于 /api/v1/static）
     SNAPSHOT_DIR: str = "data/snapshots"
 
+    # 录像存储目录（用于 /api/v1/static/recordings）
+    RECORDING_DIR: str = "data/recordings"
+
     # ==================== 导航巡逻 / PCD 点云地图 Demo ====================
     PCD_MAP_ROOT: str = "/home/jetson/superlio/Super-LIO/src/super_lio/map"
     SCENE_MAP_ROOT: str = "/home/jetson/Project/BOTDOG/MAPS"
@@ -104,7 +107,7 @@ class Settings(BaseSettings):
     ROS_NAV_GLOBAL_PATH_TOPIC: str = "/global_path"
     ROS_NAV_STOP_TOPIC: str = "/nav_stop"
     ROS_NAV_SET_POSE_TOPIC: str = "/initialpose_start"
-    ROS_NAV_INITIAL_POSE_TOPIC: str = "/initialpose"
+    ROS_NAV_INITIAL_POSE_TOPIC: str = "/initial_pose"
     ROS_NAV_MAPPING_CLOUD_TOPIC: str = "/lio/cloud_registered"
     ROS_NAV_MAPPING_TOPIC: str = "/mapping_start"
     ROS_NAV_STATUS_TOPIC: str = "/nav_status"

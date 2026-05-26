@@ -335,6 +335,8 @@ async def nav_set_localization_pose(
             x=pose["x"],
             y=pose["y"],
             z=pose["z"],
+            roll=pose["roll"],
+            pitch=pose["pitch"],
             yaw=pose["yaw"],
             frame_id=pose["frame_id"],
         )
@@ -352,8 +354,9 @@ async def nav_set_localization_pose(
             "frame_id": pose["frame_id"],
             "source": initial_pose_result["topic"],
             "message": (
-                f"已发布 initialpose 并触发重定位: "
-                f"x={pose['x']:.3f}, y={pose['y']:.3f}, yaw={pose['yaw']:.3f}"
+                f"已发布 initial_pose 并触发重定位: "
+                f"x={pose['x']:.3f}, y={pose['y']:.3f}, z={pose['z']:.3f}, "
+                f"roll={pose['roll']:.3f}, pitch={pose['pitch']:.3f}, yaw={pose['yaw']:.3f}"
             ),
         }
     )

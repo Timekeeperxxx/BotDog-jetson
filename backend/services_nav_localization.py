@@ -90,6 +90,8 @@ def save_localization_pose(payload: dict[str, Any]) -> dict[str, Any]:
         "x": float(payload["x"]),
         "y": float(payload["y"]),
         "z": float(payload.get("z", 0.0)),
+        "roll": float(payload.get("roll", 0.0)),
+        "pitch": float(payload.get("pitch", 0.0)),
         "yaw": float(payload.get("yaw", 0.0)),
         "frame_id": str(payload.get("frame_id") or settings.PCD_FRAME_ID),
         "updated_at": _utc_now_iso(),

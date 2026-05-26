@@ -392,11 +392,13 @@ class RosNavBridge:
         x: float,
         y: float,
         z: float,
-        yaw: float,
+        roll: float = 0.0,
+        pitch: float = 0.0,
+        yaw: float = 0.0,
         frame_id: str | None = None,
     ) -> dict[str, Any]:
         if self._node is None or self._initial_pose_publisher is None:
-            raise RuntimeError("ROS2 initialpose 发布器未就绪")
+            raise RuntimeError("ROS2 initial_pose 发布器未就绪")
 
         from geometry_msgs.msg import PoseWithCovarianceStamped
 
@@ -408,18 +410,24 @@ class RosNavBridge:
         msg.pose.pose.position.y = float(y)
         msg.pose.pose.position.z = float(z)
 
-        half_yaw = float(yaw) / 2.0
-        msg.pose.pose.orientation.x = 0.0
-        msg.pose.pose.orientation.y = 0.0
-        msg.pose.pose.orientation.z = math.sin(half_yaw)
-        msg.pose.pose.orientation.w = math.cos(half_yaw)
+        # Euler ZYX -> quaternion
+        cr = math.cos(float(roll) / 2.0)
+        sr = math.sin(float(roll) / 2.0)
+        cp = math.cos(float(pitch) / 2.0)
+        sp = math.sin(float(pitch) / 2.0)
+        cy = math.cos(float(yaw) / 2.0)
+        sy = math.sin(float(yaw) / 2.0)
+        msg.pose.pose.orientation.w = cr * cp * cy + sr * sp * sy
+        msg.pose.pose.orientation.x = sr * cp * cy - cr * sp * sy
+        msg.pose.pose.orientation.y = cr * sp * cy + sr * cp * sy
+        msg.pose.pose.orientation.z = cr * cp * sy - sr * sp * cy
 
         with self._publisher_lock:
             self._initial_pose_publisher.publish(msg)
 
         nav_logger.info(
-            "已发布 initialpose：x={:.3f} y={:.3f} z={:.3f} yaw={:.3f} frame={}",
-            x, y, z, yaw, msg.header.frame_id,
+            "已发布 initial_pose：x={:.3f} y={:.3f} z={:.3f} roll={:.3f} pitch={:.3f} yaw={:.3f} frame={}",
+            x, y, z, roll, pitch, yaw, msg.header.frame_id,
         )
         return {
             "success": True,
@@ -427,6 +435,8 @@ class RosNavBridge:
             "x": float(x),
             "y": float(y),
             "z": float(z),
+            "roll": float(roll),
+            "pitch": float(pitch),
             "yaw": float(yaw),
             "frame_id": msg.header.frame_id,
         }

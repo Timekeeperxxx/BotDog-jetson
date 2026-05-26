@@ -338,6 +338,8 @@ class LocalizationPoseSetRequest(BaseModel):
     x: float
     y: float
     z: float = 0.0
+    roll: float = 0.0
+    pitch: float = 0.0
     yaw: float = 0.0
     frame_id: str = "map"
 
@@ -346,6 +348,9 @@ class LocalizationPoseDTO(BaseModel):
     map_id: str
     x: float
     y: float
+    z: float
+    roll: float
+    pitch: float
     yaw: float
     frame_id: str
     updated_at: str
