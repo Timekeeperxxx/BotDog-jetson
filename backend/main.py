@@ -394,6 +394,12 @@ def create_app() -> FastAPI:
         name="static",
     )
 
+    app.mount(
+        "/api/v1/static/recordings",
+        StaticFiles(directory=str(Path(settings.RECORDING_DIR)), check_dir=False),
+        name="static_recordings",
+    )
+
     register_routes(app)
 
     # ── SPA 前端托管（生产模式）──────────────────────────────────────────────
@@ -466,6 +472,7 @@ def register_routes(app: FastAPI) -> None:
     from .api.routes import websocket as _websocket_routes
     from .api.routes import users as _users_routes
     from .api.routes import snapshot as _snapshot_routes
+    from .api.routes import recording as _recording_routes
     app.include_router(_auth_routes.router)
     app.include_router(_users_routes.router)
     app.include_router(_nav_routes.router)
@@ -486,6 +493,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(_log_files_routes.router)
     app.include_router(_logs_routes.router)
     app.include_router(_snapshot_routes.router)
+    app.include_router(_recording_routes.router)
     app.include_router(_websocket_routes.router)
 
 

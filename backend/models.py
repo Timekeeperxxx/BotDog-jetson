@@ -382,6 +382,36 @@ class VideoSource(Base):
     )
 
 
+class Recording(Base):
+    """
+    录像记录。
+
+    存储后端 FFmpeg 从 RTSP 源录制的视频文件元数据。
+    - file_path: 磁盘绝对路径
+    - video_url: HTTP 访问 URL（/api/v1/static/recordings/<filename>）
+    - started_at / ended_at: 录制时间段
+    - duration_seconds: 录制时长（秒），stop 时填入
+    - file_size_bytes: 文件大小，stop 时填入
+    """
+
+    __tablename__ = "recordings"
+
+    recording_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    camera_name: Mapped[str] = mapped_column(String(32), nullable=False, default="cam1")
+    file_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    video_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    task_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey("inspection_tasks.task_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    started_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+    ended_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+
+
 class NetworkInterface(Base):
     """
     网口配置。

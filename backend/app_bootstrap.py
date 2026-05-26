@@ -92,4 +92,6 @@ async def prepare_bootstrap_state() -> tuple[StartupSummary, Path]:
     snapshot_dir = Path(settings.SNAPSHOT_DIR)
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
+    Path(settings.RECORDING_DIR).mkdir(parents=True, exist_ok=True)
+
     return startup_summary, snapshot_dir
