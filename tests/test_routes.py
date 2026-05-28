@@ -42,8 +42,6 @@ NAV_ROUTES = [
     ("GET",    "/api/v1/nav/pcd-scenes"),
     # 导航状态
     ("GET",    "/api/v1/nav/state"),
-    # 页面打开通知
-    ("POST",   "/api/v1/nav/page-open"),
     # 设置重定位位姿
     ("POST",   "/api/v1/nav/localization/set-pose"),
     # 建图开关

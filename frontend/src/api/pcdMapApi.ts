@@ -111,13 +111,6 @@ export function selectPcdScene(sceneId: string): Promise<NavCurrentScene> {
   )
 }
 
-export function notifyNavPageOpen(): Promise<{ success: boolean; topic: string; data: boolean }> {
-  return requestJson(
-    getApiUrl('/api/v1/nav/page-open'),
-    { method: 'POST' },
-  )
-}
-
 export function getPcdMetadata(mapId: string): Promise<PcdMetadata> {
   return requestJson(
     getApiUrl(`/api/v1/nav/pcd-maps/${encodeURIComponent(mapId)}/metadata`),

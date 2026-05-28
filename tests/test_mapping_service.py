@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+from pathlib import Path
 
 import pytest
 
@@ -112,6 +113,8 @@ def test_stop_mapping_kills_process_group(monkeypatch, tmp_path):
     monkeypatch.setattr(mapping_service_module.subprocess, "Popen", lambda *args, **kwargs: DummyProcess())
     monkeypatch.setattr(mapping_service_module.os, "getpgid", lambda pid: pid)
     monkeypatch.setattr(mapping_service_module.os, "killpg", lambda pgid, sig: kills.append((pgid, sig)))
+    monkeypatch.setattr(mapping_service_module, "stop_navigation_processes", lambda: {"pids": []})
+    monkeypatch.setattr(mapping_service_module, "stop_cmd_vel_script", lambda: {"pid": None})
 
     service = mapping_service_module.MappingService()
     service.start("实验室一楼")
@@ -120,7 +123,7 @@ def test_stop_mapping_kills_process_group(monkeypatch, tmp_path):
     assert result["running"] is False
     assert result["enabled"] is False
     assert result["scene_name"] == "Scene1_实验室一楼"
-    assert kills == [(4321, signal.SIGTERM)]
+    assert kills == [(4321, signal.SIGINT)]
 
 
 def test_mapping_route_uses_scene_name_and_stop(monkeypatch):
@@ -177,3 +180,18 @@ def test_mapping_route_uses_scene_name_and_stop(monkeypatch):
     assert start_result["enabled"] is True
     assert stop_result["enabled"] is False
     assert calls == [("start", "实验室一楼"), ("stop", None)]
+
+
+def test_start_mapping_script_waits_for_superlio_before_terrain_analysis():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "start_mapping.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    superlio_line = 'ros2 launch super_lio Livox_mid360.py save_map_dir:="$MAP_DIR" map_name:="map.pcd" &'
+    terrain_line = 'ros2 launch terrain_analysis terrain_analysis_with_save.launch map_dir:="$MAP_DIR" &'
+
+    assert superlio_line in content
+    assert terrain_line in content
+    assert "SUPERLIO_PID=$!\n\n# terrain_analysis" in content
+    assert "sleep 5\n\necho \"启动 terrain_analysis 地形分析与地图保存...\"" in content
+    assert content.index(superlio_line) < content.index("sleep 5\n\necho \"启动 terrain_analysis 地形分析与地图保存...\"")
+    assert content.index("sleep 5\n\necho \"启动 terrain_analysis 地形分析与地图保存...\"") < content.index(terrain_line)

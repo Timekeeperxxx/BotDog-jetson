@@ -57,6 +57,22 @@ MAP_DIR="${MAP_DIR/#\~/$HOME}"
 
 echo "本次建图目录：$MAP_DIR"
 
+reset_ros_mapping_env() {
+  echo "重置继承的 ROS/DDS 环境，避免后端运行时 overlay 干扰建图..."
+
+  unset RMW_IMPLEMENTATION
+  unset CYCLONEDDS_URI
+  unset FASTRTPS_DEFAULT_PROFILES_FILE
+  unset ROS_LOCALHOST_ONLY
+  unset ROS_DISTRO
+  unset ROS_VERSION
+  unset ROS_PYTHON_VERSION
+  unset AMENT_PREFIX_PATH
+  unset COLCON_PREFIX_PATH
+  unset CMAKE_PREFIX_PATH
+  unset PYTHONPATH
+}
+
 echo "开始建图前，清理导航相关后台进程..."
 
 find_matching_pids() {
@@ -133,11 +149,28 @@ sleep 1
 
 mkdir -p "$MAP_DIR"
 
+reset_ros_mapping_env
+
+# 建图链路固定回到纯 ROS2 + SuperLIO 环境，不继承 BotDog 后端自己的 overlay。
+if [ -f "/opt/ros/humble/setup.bash" ]; then
+  set +u
+  source /opt/ros/humble/setup.bash
+  set -u
+fi
+
+if [ -f "$HOME/yahboom_ws/install/setup.bash" ]; then
+  set +u
+  source "$HOME/yahboom_ws/install/setup.bash"
+  set -u
+fi
+
 cd "$HOME/superlio"
 # colcon 生成的 setup 脚本可能引用未定义环境变量；临时关闭 nounset 避免告警。
 set +u
 source install/setup.bash
 set -u
+
+echo "建图环境摘要：RMW=${RMW_IMPLEMENTATION:-<unset>} ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-<unset>}"
 
 echo "启动 Livox MID360 驱动..."
 ros2 launch livox_ros_driver2 msg_MID360_launch.py &
@@ -146,9 +179,10 @@ LIVOX_PID=$!
 sleep 5
 
 echo "启动 Super LIO 建图..."
-ros2 launch super_lio Livox_mid360.py lio.map.save_map_dir:="$MAP_DIR" &
+ros2 launch super_lio Livox_mid360.py save_map_dir:="$MAP_DIR" map_name:="map.pcd" &
 SUPERLIO_PID=$!
 
+# terrain_analysis 依赖 Super LIO 已经完成初始建图和 TF 稳定，过早启动会把初始化阶段的漂移写进地图。
 sleep 5
 
 echo "启动 terrain_analysis 地形分析与地图保存..."

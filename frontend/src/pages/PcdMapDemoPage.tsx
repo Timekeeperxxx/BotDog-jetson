@@ -16,7 +16,6 @@ import {
   goToWaypoint,
   listNavTasks,
   listWaypoints,
-  notifyNavPageOpen,
   deletePcdScene,
   deleteNavTask,
   executeNavTask,
@@ -403,28 +402,6 @@ export function PcdMapDemoPage() {
   }, [selectedTaskId, tasks])
 
   useEffect(() => {
-    let cancelled = false
-
-    async function sendPageOpenSignal() {
-      try {
-        const result = await notifyNavPageOpen()
-        if (!cancelled) {
-          addLog(`已发送页面启动信号到 ${result.topic}`)
-        }
-      } catch (error) {
-        if (!cancelled) {
-          addLog(error instanceof Error ? error.message : '发送页面启动信号失败', 'error')
-        }
-      }
-    }
-
-    void sendPageOpenSignal()
-    return () => {
-      cancelled = true
-    }
-  }, [addLog])
-
-  useEffect(() => {
     if (!keyboardControlEnabled && isControlling) stopCommand()
   }, [keyboardControlEnabled, isControlling, stopCommand])
 
@@ -753,7 +730,18 @@ export function PcdMapDemoPage() {
       <div className="pcd-workspace">
         <section className="pcd-main-stage">
           <div className="pcd-main-viewer">
-            {webglSupported ? (
+            {mappingActive ? (
+              <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-amber-500/20 bg-[radial-gradient(circle_at_top,rgba(34,24,16,0.92),rgba(10,7,4,0.98))] px-6 text-center">
+                <div className="max-w-2xl space-y-4">
+                  <div className="text-2xl font-black text-white">建图进行中，已暂停 3D 点云渲染。</div>
+                  <div className="text-sm leading-7 text-zinc-300">
+                    <div>这样做是为了降低 Jetson 本机浏览器和 WebGL 的负载，优先保证建图稳定。</div>
+                    <div>右侧 2D 俯视图、日志和建图控制仍可继续使用。</div>
+                    <div>建图结束后会自动恢复 3D 点云查看。</div>
+                  </div>
+                </div>
+              </div>
+            ) : webglSupported ? (
               <PointCloud3DViewer
                 layers={allLayers}
                 waypoints={waypoints}

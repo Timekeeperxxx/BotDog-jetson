@@ -303,18 +303,6 @@ async def nav_get_state():
     return get_nav_state()
 
 
-@router.post("/page-open")
-async def nav_page_open():
-    bridge = get_ros_nav_bridge()
-    if bridge is None:
-        raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
-
-    try:
-        return bridge.publish_navigation_page_open()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-
-
 @router.post("/localization/set-pose", response_model=LocalizationPoseDTO)
 async def nav_set_localization_pose(
     body: LocalizationPoseSetRequest,
