@@ -334,7 +334,7 @@ def test_restart_navigation_localization_marks_missing_pid_false(monkeypatch, tm
     assert any("global_planner 未就绪" in error for error in result["errors"])
 
 
-def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
+def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
     real_repo_root = Path(__file__).resolve().parents[1]
     project_root = tmp_path / "Project" / "BOTDOG"
     botdog_root = project_root / "BotDog"
@@ -349,6 +349,8 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
     runtime_dir.mkdir(parents=True, exist_ok=True)
     scene_dir.mkdir(parents=True)
     fake_bin.mkdir(parents=True)
+    (scene_dir / "map.pcd").write_text("", encoding="utf-8")
+    (scene_dir / "ground.pcd").write_text("", encoding="utf-8")
     (scene_dir / "Scene1_half_map.pcd").write_text("", encoding="utf-8")
     (scene_dir / "Scene1_half_ground.pcd").write_text("", encoding="utf-8")
     script_path.write_text(
@@ -434,9 +436,9 @@ def test_restart_script_accepts_prefixed_scene_pcd_files(tmp_path):
             output, _ = proc.communicate(timeout=5)
 
         assert "当前 map.pcd: " in output
-        assert "Scene1_half_map.pcd" in output
+        assert str(scene_dir / "map.pcd") in output
         assert "当前 ground.pcd: " in output
-        assert "Scene1_half_ground.pcd" in output
+        assert str(scene_dir / "ground.pcd") in output
         for path in expected_pid_files:
             assert path.exists()
         assert int((runtime_dir / "cmd_vel.pid").read_text(encoding="utf-8").strip()) > 0

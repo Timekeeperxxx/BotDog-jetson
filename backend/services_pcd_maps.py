@@ -147,6 +147,18 @@ def _latest_path(paths: list[Path], label: str, scene_name: str) -> Path | None:
     return max(paths, key=lambda item: item.stat().st_mtime)
 
 
+def _preferred_scene_pcd(
+    paths: list[Path],
+    exact_name: str,
+    label: str,
+    scene_name: str,
+) -> Path | None:
+    exact_candidates = [path for path in paths if path.name.lower() == exact_name.lower()]
+    if exact_candidates:
+        return _latest_path(exact_candidates, label, scene_name)
+    return _latest_path(paths, label, scene_name)
+
+
 def find_scene_pcd_files(scene_path: Path) -> dict[str, Path | None]:
     if not scene_path.exists():
         raise FileNotFoundError(f"场景目录不存在: {scene_path.name}")
@@ -168,8 +180,8 @@ def find_scene_pcd_files(scene_path: Path) -> dict[str, Path | None]:
             wall_candidates.append(path)
 
     return {
-        "wall": _latest_path(wall_candidates, "wall/map.pcd", scene_path.name),
-        "ground": _latest_path(ground_candidates, "ground.pcd", scene_path.name),
+        "wall": _preferred_scene_pcd(wall_candidates, "map.pcd", "wall/map.pcd", scene_path.name),
+        "ground": _preferred_scene_pcd(ground_candidates, "ground.pcd", "ground.pcd", scene_path.name),
     }
 
 
@@ -505,29 +517,63 @@ def _read_binary_preview_numpy(
     if "x" not in fields or "y" not in fields or "z" not in fields:
         raise PcdMapError("PCD 文件缺少 x/y/z 字段")
 
+    normalized = normalize_pcd_header(header)
+    point_count = max(1, normalized["point_count"])
+    step = max(1, math.ceil(point_count / max_points))
+
+    batch_points = 500_000
+    x_parts: list[np.ndarray] = []
+    y_parts: list[np.ndarray] = []
+    z_parts: list[np.ndarray] = []
+    global_idx = 0  # 跨 batch 的绝对点索引
+
     with path.open("rb") as f:
         f.seek(data_start_offset)
-        raw = f.read()
+        remaining = point_count
 
-    arr = np.frombuffer(raw, dtype=np_dtype)
-    step = max(1, math.ceil(len(arr) / max_points))
-    sampled = arr[::step]
+        while remaining > 0:
+            n = min(batch_points, remaining)
+            raw = f.read(n * np_dtype.itemsize)
+            if len(raw) < np_dtype.itemsize:
+                break
 
-    x = sampled["x"].astype(np.float64)
-    y = sampled["y"].astype(np.float64)
-    z = sampled["z"].astype(np.float64)
+            arr = np.frombuffer(raw, dtype=np_dtype)
+            m = len(arr)
 
-    valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
-    x, y, z = x[valid], y[valid], z[valid]
+            first = (step - (global_idx % step)) % step
+            idx = np.arange(first, m, step)
+            global_idx += m
 
-    if len(x) == 0:
+            if len(idx) > 0:
+                x = arr["x"][idx].astype(np.float64)
+                y = arr["y"][idx].astype(np.float64)
+                z = arr["z"][idx].astype(np.float64)
+                valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+                x_parts.append(x[valid])
+                y_parts.append(y[valid])
+                z_parts.append(z[valid])
+
+            remaining -= m
+
+    if not x_parts:
         return [], _finalize_bounds(_empty_bounds())
 
-    points: list[list[float]] = np.column_stack([x, y, z]).tolist()
+    all_x = np.concatenate(x_parts)
+    all_y = np.concatenate(y_parts)
+    all_z = np.concatenate(z_parts)
+
+    # 过滤建图工具产生的脏数据（天文坐标）
+    sane = (np.abs(all_x) < 1e6) & (np.abs(all_y) < 1e6) & (np.abs(all_z) < 1e6)
+    all_x, all_y, all_z = all_x[sane], all_y[sane], all_z[sane]
+
+    if len(all_x) == 0:
+        return [], _finalize_bounds(_empty_bounds())
+
+    points: list[list[float]] = np.column_stack([all_x, all_y, all_z]).tolist()
     bounds = {
-        "min_x": float(x.min()), "max_x": float(x.max()),
-        "min_y": float(y.min()), "max_y": float(y.max()),
-        "min_z": float(z.min()), "max_z": float(z.max()),
+        "min_x": float(all_x.min()), "max_x": float(all_x.max()),
+        "min_y": float(all_y.min()), "max_y": float(all_y.max()),
+        "min_z": float(all_z.min()), "max_z": float(all_z.max()),
     }
     return points, bounds
 

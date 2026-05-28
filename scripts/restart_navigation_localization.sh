@@ -36,15 +36,28 @@ SCENE_DIR="$(realpath "$RAW_SCENE_DIR")"
 
 find_scene_pcd_file() {
   local scene_dir="$1"
-  local pattern="$2"
-  local label="$3"
+  local exact_name="$2"
+  local fallback_pattern="$3"
+  local label="$4"
+  local -a exact_candidates=()
+  local -a fallback_candidates=()
   local -a candidates=()
   local selected=""
   local selected_mtime=""
 
   while IFS= read -r -d '' file; do
-    candidates+=("$file")
-  done < <(find "$scene_dir" -maxdepth 1 -type f -name "$pattern" -print0)
+    exact_candidates+=("$file")
+  done < <(find "$scene_dir" -maxdepth 1 -type f -iname "$exact_name" -print0)
+
+  while IFS= read -r -d '' file; do
+    fallback_candidates+=("$file")
+  done < <(find "$scene_dir" -maxdepth 1 -type f -iname "$fallback_pattern" ! -iname "$exact_name" -print0)
+
+  if [ "${#exact_candidates[@]}" -gt 0 ]; then
+    candidates=("${exact_candidates[@]}")
+  else
+    candidates=("${fallback_candidates[@]}")
+  fi
 
   if [ "${#candidates[@]}" -eq 0 ]; then
     return 1
@@ -74,12 +87,12 @@ if [ ! -d "$SCENE_DIR" ]; then
   exit 1
 fi
 
-if ! MAP_PCD="$(find_scene_pcd_file "$SCENE_DIR" "*map.pcd" "map.pcd")"; then
+if ! MAP_PCD="$(find_scene_pcd_file "$SCENE_DIR" "map.pcd" "*map.pcd" "map.pcd")"; then
   echo "错误：场景缺少 *map.pcd：$SCENE_DIR" >&2
   exit 1
 fi
 
-if ! GROUND_PCD="$(find_scene_pcd_file "$SCENE_DIR" "*ground.pcd" "ground.pcd")"; then
+if ! GROUND_PCD="$(find_scene_pcd_file "$SCENE_DIR" "ground.pcd" "*ground.pcd" "ground.pcd")"; then
   echo "错误：场景缺少 *ground.pcd：$SCENE_DIR" >&2
   exit 1
 fi

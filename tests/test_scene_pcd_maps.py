@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from backend import services_pcd_maps as pcd_services
@@ -52,6 +53,32 @@ def test_list_pcd_scenes_and_find_layer_files(monkeypatch, tmp_path):
     assert item["navigable"] is True
     assert item["wall"]["name"] == "abcmap.pcd"
     assert item["ground"]["name"] == "abcground.pcd"
+
+
+def test_find_scene_pcd_files_prefers_exact_names(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    scene_root.mkdir()
+    scene = scene_root / "Scene3_大厅"
+    scene.mkdir()
+
+    prefixed_wall = scene / "Scene3_half_map.pcd"
+    exact_wall = scene / "map.pcd"
+    prefixed_ground = scene / "Scene3_half_ground.pcd"
+    exact_ground = scene / "ground.pcd"
+
+    write_ascii_pcd(prefixed_wall, [(0.0, 0.0, 0.0)])
+    write_ascii_pcd(exact_wall, [(1.0, 0.0, 0.0)])
+    write_ascii_pcd(prefixed_ground, [(0.0, 1.0, 0.0)])
+    write_ascii_pcd(exact_ground, [(1.0, 1.0, 0.0)])
+    os.utime(prefixed_wall, (exact_wall.stat().st_atime + 10, exact_wall.stat().st_mtime + 10))
+    os.utime(prefixed_ground, (exact_ground.stat().st_atime + 10, exact_ground.stat().st_mtime + 10))
+
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+
+    files = pcd_services.find_scene_pcd_files(scene)
+
+    assert files["wall"] == exact_wall
+    assert files["ground"] == exact_ground
 
 
 def test_scene_metadata_and_preview_merge_bounds(monkeypatch, tmp_path):
