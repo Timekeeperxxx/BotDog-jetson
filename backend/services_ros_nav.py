@@ -60,6 +60,8 @@ class RosNavBridge:
         self._broadcaster = broadcaster
         self._loop = loop
         self._stop_event = threading.Event()
+        self._pause_event = threading.Event()
+        self._paused = False
         self._thread: threading.Thread | None = None
         self._node: Any | None = None
         self._rclpy: Any | None = None
@@ -112,6 +114,93 @@ class RosNavBridge:
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=timeout)
+
+    def pause(self) -> None:
+        """建图前调用：销毁 ROS2 node 以退出 DDS 网络，保留 rclpy context 以便恢复。
+
+        CLI 手动建图时后端 ROS2 节点不存在；前端建图时后端节点仍在 DDS
+        网络里可能干扰 SuperLIO 的 IMU 消息发现与时序，导致重力方向估计偏差。
+        销毁 node 后该进程不再参与 DDS 发现，建图环境与 CLI 完全一致。
+        """
+        if self._paused or self._node is None:
+            return
+
+        self._pause_event.set()
+        # 等待 spin 循环感知到暂停信号并退出 spin_once
+        time.sleep(0.3)
+
+        with self._publisher_lock:
+            try:
+                self._node.destroy_node()
+            except Exception as exc:
+                nav_logger.warning("暂停 ROS2 节点时销毁失败：{}", exc)
+            self._node = None
+            self._tf_buffer = None
+            self._tf_listener = None
+            self._nav_start_publisher = None
+            self._goal_xyz_publisher = None
+            self._goal_yaw_publisher = None
+            self._global_path_subscription = None
+            self._nav_status_subscription = None
+            self._estop_publisher = None
+            self._set_pose_publisher = None
+            self._initial_pose_publisher = None
+            self._cloud_subscription = None
+
+        self._paused = True
+        update_localization_status(
+            {
+                "status": "paused",
+                "frame_id": settings.ROS_NAV_FRAME_ID,
+                "source": self._tf_source() if self._use_tf_pose() else settings.ROS_NAV_POSE_TOPIC,
+                "message": "建图进行中，导航定位已暂停",
+            }
+        )
+        nav_logger.info("ROS2 导航节点已暂停（node 销毁，rclpy 保持初始化）")
+
+    def resume(self) -> None:
+        """建图结束后调用：重新创建 ROS2 node 并恢复所有订阅/发布。"""
+        if not self._paused:
+            return
+        if self._rclpy is None:
+            self._paused = False
+            nav_logger.warning("rclpy 未初始化，无法恢复节点")
+            return
+
+        with self._publisher_lock:
+            self._node = self._rclpy.create_node("botdog_nav_state_bridge")
+            self._setup_publishers()
+
+            try:
+                from nav_msgs.msg import Path as _Path
+            except Exception as exc:
+                nav_logger.warning("无法导入 Path 消息类型：{}", exc)
+            else:
+                self._setup_global_path_subscription(_Path)
+
+            self._setup_nav_status_subscription()
+            self._setup_cloud_subscription()
+
+            if self._use_tf_pose():
+                self._setup_tf_listener()
+                source = self._tf_source()
+            else:
+                source = settings.ROS_NAV_POSE_TOPIC
+
+        self._pause_event.clear()
+        self._paused = False
+        self._tf_available = False
+        self._tf_wait_started_at = 0.0
+
+        update_localization_status(
+            {
+                "status": "initializing",
+                "frame_id": settings.ROS_NAV_FRAME_ID,
+                "source": source,
+                "message": "建图已结束，导航定位恢复中",
+            }
+        )
+        nav_logger.info("ROS2 导航节点已恢复")
 
     def _run(self) -> None:
         try:
@@ -186,6 +275,9 @@ class RosNavBridge:
                 )
 
             while not self._stop_event.is_set():
+                if self._pause_event.is_set():
+                    time.sleep(0.1)
+                    continue
                 rclpy.spin_once(self._node, timeout_sec=0.1)
                 if self._use_tf_pose():
                     self._update_pose_from_tf_if_needed()

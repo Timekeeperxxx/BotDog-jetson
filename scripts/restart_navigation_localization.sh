@@ -179,6 +179,43 @@ done
 
 sleep 1
 
+reset_ros_env() {
+  echo "重置继承的 ROS/DDS 环境，避免后端运行时 overlay 干扰导航..."
+
+  unset RMW_IMPLEMENTATION
+  unset CYCLONEDDS_URI
+  unset CYCLONEDDS_HOME
+  unset FASTRTPS_DEFAULT_PROFILES_FILE
+  unset ROS_DOMAIN_ID
+  unset ROS_LOCALHOST_ONLY
+  unset ROS_DISTRO
+  unset ROS_VERSION
+  unset ROS_PYTHON_VERSION
+  unset AMENT_PREFIX_PATH
+  unset COLCON_PREFIX_PATH
+  unset CMAKE_PREFIX_PATH
+  unset LD_LIBRARY_PATH
+  unset PYTHONPATH
+  unset VIRTUAL_ENV
+  unset PYTHONHOME
+
+  _clean_path=""
+  _ifs_saved="$IFS"
+  IFS=":"
+  for _p in $PATH; do
+    case "$_p" in
+      *"/.venv/"*) ;;
+      *"/virtualenv/"*) ;;
+      *) _clean_path="${_clean_path}:${_p}" ;;
+    esac
+  done
+  IFS="$_ifs_saved"
+  export PATH="${_clean_path#:}"
+  unset _clean_path _p _ifs_saved
+}
+
+reset_ros_env
+
 source_ros_setup() {
   local setup_file="$1"
   if [ ! -f "$setup_file" ]; then

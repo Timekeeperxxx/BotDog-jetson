@@ -20,6 +20,10 @@ mapping_logger = get_logger("建图服务")
 MAPS_ROOT = Path("/home/jetson/Project/BOTDOG/MAPS")
 START_MAPPING_SCRIPT = Path("/home/jetson/Project/BOTDOG/BotDog/scripts/start_mapping.sh")
 SCENE_DIR_PATTERN = re.compile(r"^Scene(\d+)_")
+# 必须长于 scripts/start_mapping.sh 里 trap cleanup 的最长等待时间，
+# 否则后端会先把整个进程组 SIGKILL，super_lio 来不及写出最终 map.pcd。
+MAPPING_STOP_WAIT_TIMEOUT_SECONDS = 95
+MAPPING_STOP_FORCE_KILL_WAIT_SECONDS = 5
 
 
 class MappingError(RuntimeError):
@@ -177,9 +181,21 @@ class MappingService:
                 nav_stop_result.get("pids"),
                 cmd_vel_stop_result.get("pid"),
             )
+
+            # 给 LiDAR 硬件充分的复位时间。
+            # stop_navigation_processes 会 SIGKILL Livox 驱动，
+            # 硬件在下一次启动前需要几秒完成内部清理/校准。
+            mapping_logger.info("等待 5s 让 LiDAR 硬件完成复位...")
+            time.sleep(5)
+
             bridge = get_ros_nav_bridge()
             if bridge is not None:
                 bridge.clear_accumulated_cloud()
+                # 暂停后端 ROS2 节点，使其退出 DDS 网络。
+                # CLI 建图时后端节点不存在；前端建图时若保持运行，
+                # 其 DDS participant 可能干扰 SuperLIO 的 IMU 消息发现。
+                mapping_logger.info("暂停后端 ROS2 导航节点以隔离建图 DDS 环境...")
+                bridge.pause()
             command = ["bash", str(START_MAPPING_SCRIPT), str(map_dir)]
             mapping_logger.info(
                 "开始建图：scene_name={}，map_dir={}，command={}",
@@ -241,20 +257,25 @@ class MappingService:
             map_dir = str(self._session.map_dir)
 
             mapping_logger.info(
-                "停止建图进程组：scene_name={}，pid={}，map_dir={}",
-                scene_name,
+                "停止建图：向脚本发送 SIGINT，触发 cleanup 按序停止进程...",
+            )
+            mapping_logger.info(
+                "  脚本 PID={}，cleanup 顺序：terrain_analysis → super_lio → livox",
                 pid,
-                map_dir,
             )
 
             try:
-                # SIGINT 触发 ROS2 rclcpp::shutdown()，节点析构函数能正常保存文件；
-                # SIGTERM 对许多 ROS2 节点无效，会导致 ground.pcd 来不及落盘。
-                os.killpg(os.getpgid(pid), signal.SIGINT)
+                # 只向 bash 脚本发送 SIGINT，让脚本自己的 trap cleanup 按序执行：
+                #   1) terrain_analysis（等 15s 保存 ground.pcd）
+                #   2) super_lio（等 60s 保存 map.pcd）
+                #   3) livox
+                # 之前用 os.killpg 会同时 SIGINT 整个进程组，绕过了脚本的清理顺序，
+                # 导致 terrain_analysis 和 super_lio 同时被中断，ground.pcd 可能未完整落盘。
+                os.kill(pid, signal.SIGINT)
             except ProcessLookupError:
-                mapping_logger.warning("建图进程已不存在：pid={}", pid)
+                mapping_logger.warning("建图脚本已不存在：pid={}", pid)
             except Exception as exc:
-                mapping_logger.warning("发送建图进程终止信号失败：pid={}，原因={}", pid, exc)
+                mapping_logger.warning("发送 SIGINT 到建图脚本失败：pid={}，原因={}", pid, exc)
 
             # 立即清除 session，避免阻塞 HTTP 响应；等待和文件校验在后台线程完成
             self._session = None
@@ -262,23 +283,44 @@ class MappingService:
 
             def _wait_and_verify() -> None:
                 try:
-                    process.wait(timeout=25)
+                    process.wait(timeout=MAPPING_STOP_WAIT_TIMEOUT_SECONDS)
                 except subprocess.TimeoutExpired:
-                    mapping_logger.warning("建图进程组未能及时退出，准备强制终止：pid={}", pid)
+                    mapping_logger.warning(
+                        "建图脚本在 {} 秒内未退出，尝试 SIGTERM → bash（触发 trap）",
+                        MAPPING_STOP_WAIT_TIMEOUT_SECONDS,
+                    )
+                    # 先尝试 SIGTERM 给 bash 脚本（也会触发 trap cleanup）
                     try:
-                        os.killpg(os.getpgid(pid), signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        pass
+                        os.kill(pid, signal.SIGTERM)
+                        process.wait(timeout=10)
+                    except (ProcessLookupError, subprocess.TimeoutExpired):
+                        mapping_logger.warning(
+                            "脚本仍未退出，使用 SIGKILL 强制终止整个进程组：pgid={}",
+                            os.getpgid(pid),
+                        )
+                        try:
+                            os.killpg(os.getpgid(pid), signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        try:
+                            process.wait(timeout=MAPPING_STOP_FORCE_KILL_WAIT_SECONDS)
+                        except subprocess.TimeoutExpired:
+                            mapping_logger.error("建图进程组 SIGKILL 后仍未退出")
                 for fname in ("map.pcd", "ground.pcd"):
                     fpath = map_dir_path / fname
                     if fpath.exists():
                         mapping_logger.info("文件已保存：{} ({} 字节)", fpath, fpath.stat().st_size)
                     else:
                         mapping_logger.warning("文件未生成：{}，请检查 terrain_analysis 日志", fpath)
+
+                # 恢复后端 ROS2 节点，重新加入 DDS 网络
+                try:
+                    bridge = get_ros_nav_bridge()
+                    if bridge is not None:
+                        bridge.resume()
+                        mapping_logger.info("后端 ROS2 导航节点已恢复")
+                except Exception as exc:
+                    mapping_logger.warning("恢复 ROS2 导航节点失败：{}", exc)
 
             threading.Thread(target=_wait_and_verify, daemon=True).start()
 
