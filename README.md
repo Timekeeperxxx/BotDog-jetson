@@ -102,7 +102,7 @@ python scripts/init_db.py
 # 启动视频流水线
 bash scripts/run-pipeline.sh
 
-# 启动后端
+# 启动后端（真机/生产推荐用 systemd，见下文）
 bash scripts/start_backend.sh
 
 # 浏览器访问
@@ -197,6 +197,9 @@ BotDog/
 ```bash
 sudo bash scripts/install-services.sh
 
+# 后台重启后端
+sudo systemctl restart botdog-backend
+
 # 查看服务状态
 sudo systemctl status botdog-backend
 sudo systemctl status botdog-pipeline
@@ -204,6 +207,10 @@ sudo systemctl status botdog-pipeline
 # 查看日志
 journalctl -u botdog-backend -f
 ```
+
+说明：
+`scripts/start_backend.sh` 是环境准备脚本，`run_backend.py` 是 Python 应用入口。
+真机正式运行建议统一走 `systemd -> start_backend.sh -> run_backend.py`，避免手工重复启动后端实例。
 
 ---
 

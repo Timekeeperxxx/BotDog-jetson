@@ -14,10 +14,8 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 
 ### 2.1 页面打开
 
-- 前端打开导航页后，后端发布 `/lidar_start`，或配置项 `ROS_NAV_PAGE_OPEN_TOPIC` 指定的 topic。
-- 消息类型：`std_msgs/msg/Bool`
-- 数据：`true`
-- 作用：通知雷达或导航侧开始准备。
+- 前端打开导航页不再额外发布 ROS2 topic。
+- 页面初始化只建立前端自己的接口请求和 WebSocket 连接。
 
 ### 2.2 单点导航 go-to waypoint
 
@@ -98,9 +96,9 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 
 当前真实链路是：
 
-- 后端发布 `/mapping_start`，或配置项 `ROS_NAV_MAPPING_TOPIC` 指定的 topic
-- 消息类型：`std_msgs/msg/Bool`
-- 数据：`true` 或 `false`
+- 前端调用 `/api/v1/nav/mapping/set-enabled`
+- 后端启动或停止 `scripts/start_mapping.sh`
+- 建图实时点云通过 `/lio/cloud_world` 订阅并转发给前端预览
 
 ### 2.7 导航状态闭环
 
@@ -248,7 +246,7 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 
 ```text
 前端打开导航页
-  -> 后端发布 /lidar_start Bool(true)
+  -> 建立导航相关接口请求和 WebSocket 连接
 
 前端点击单个巡检点 go-to
   -> 后端发布 clicked_point/goal_xyz 对应 topic
@@ -269,7 +267,7 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
   -> 后端发布 /initialpose_start Bool(true)
 
 前端开启/关闭建图
-  -> 后端发布 /mapping_start Bool(true/false)
+  -> 后端启动/停止建图脚本
 ```
 
 ### 7.2 后续建议链路
@@ -309,10 +307,8 @@ ROS2 发布 /nav_status String(JSON)
 
 ```bash
 ros2 topic list
-ros2 topic echo /lidar_start
 ros2 topic echo /nav_start
 ros2 topic echo /nav_stop
-ros2 topic echo /mapping_start
 ros2 topic echo /initialpose_start
 ros2 topic echo /nav_status
 ros2 topic echo /nav_goal_json

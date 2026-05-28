@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
-启动脚本 - BotDog 后端系统
+BotDog Python 应用入口。
+
+职责：
+- 导入并启动 FastAPI/Uvicorn；
+- 输出启动日志；
+- 不负责网卡、DDS 路由、ROS 环境等系统级准备。
+
+真机正式启动请走：
+systemd -> scripts/start_backend.sh -> run_backend.py
+
+直接执行 `python run_backend.py` 仅适合已完成环境准备的调试场景。
 """
 
 import sys
