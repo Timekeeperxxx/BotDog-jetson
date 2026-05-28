@@ -97,7 +97,7 @@ async def start_recording() -> RecordingStartResponse:
     started_at = _utc_now_iso()
     filename = f"recording_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.mp4"
     file_path = str(recording_dir / filename)
-    video_url = f"/api/v1/static/recordings/{filename}"
+    video_url = f"/api/v1/media/recordings/{filename}"
 
     # 写入 DB 记录（ended_at=NULL 表示录制中）
     async with get_session_factory()() as session:
@@ -153,6 +153,29 @@ async def stop_recording() -> RecordingStopResponse:
         await proc.wait()
 
     ended_at = _utc_now_iso()
+
+    # 无损 remux：将 moov 移到文件开头（+faststart），确保浏览器可直接流式播放
+    temp_path = file_path + ".tmp.mp4"
+    try:
+        remux = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y",
+            "-i", file_path,
+            "-c", "copy",
+            "-movflags", "+faststart",
+            temp_path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(remux.wait(), timeout=30.0)
+        if remux.returncode == 0:
+            os.replace(temp_path, file_path)
+        else:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+    except Exception:
+        pass
 
     # 计算文件大小
     file_size_bytes = 0

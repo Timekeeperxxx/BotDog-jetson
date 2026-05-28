@@ -395,9 +395,9 @@ def create_app() -> FastAPI:
     )
 
     app.mount(
-        "/api/v1/static/recordings",
+        "/api/v1/media/recordings",
         StaticFiles(directory=str(Path(settings.RECORDING_DIR)), check_dir=False),
-        name="static_recordings",
+        name="media_recordings",
     )
 
     register_routes(app)
