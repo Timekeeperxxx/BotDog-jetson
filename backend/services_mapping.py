@@ -20,10 +20,15 @@ mapping_logger = get_logger("建图服务")
 MAPS_ROOT = Path("/home/jetson/Project/BOTDOG/MAPS")
 START_MAPPING_SCRIPT = Path("/home/jetson/Project/BOTDOG/BotDog/scripts/start_mapping.sh")
 SCENE_DIR_PATTERN = re.compile(r"^Scene(\d+)_")
+MAPPING_READY_FLAG_NAME = ".ground_generation_started"
+MAPPING_START_READY_TIMEOUT_SECONDS = 60
+MAPPING_START_READY_POLL_INTERVAL_SECONDS = 0.5
 # 必须长于 scripts/start_mapping.sh 里 trap cleanup 的最长等待时间，
 # 否则后端会先把整个进程组 SIGKILL，super_lio 来不及写出最终 map.pcd。
-MAPPING_STOP_WAIT_TIMEOUT_SECONDS = 95
+MAPPING_STOP_WAIT_TIMEOUT_SECONDS = 180
 MAPPING_STOP_FORCE_KILL_WAIT_SECONDS = 5
+# 建图最短运行时间（秒），少于此时间停止时会额外提示
+MAPPING_MIN_RUNTIME_SECONDS = 90
 
 
 class MappingError(RuntimeError):
@@ -80,12 +85,17 @@ def build_scene_dir_name(scene_name: str) -> str:
     return f"Scene{next_scene_index}_{scene_name}"
 
 
+def mapping_ready_flag_path(map_dir: Path) -> Path:
+    return map_dir / MAPPING_READY_FLAG_NAME
+
+
 @dataclass(slots=True)
 class MappingSession:
     scene_name: str
     map_dir: Path
     process: subprocess.Popen[Any]
     started_at: float
+    runtime_pause_state: dict[str, bool]
 
     def is_running(self) -> bool:
         return self.process.poll() is None
@@ -140,6 +150,102 @@ class MappingService:
             )
             self._session = None
 
+    @staticmethod
+    def _stop_process_group(process: subprocess.Popen[Any], reason: str) -> None:
+        pid = process.pid
+        try:
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            return
+
+        mapping_logger.warning("建图启动未就绪，终止进程组：pid={}，pgid={}，原因={}", pid, pgid, reason)
+        for sig, wait_seconds in ((signal.SIGINT, 10), (signal.SIGTERM, 5), (signal.SIGKILL, None)):
+            try:
+                os.killpg(pgid, sig)
+            except ProcessLookupError:
+                return
+
+            if wait_seconds is None:
+                return
+
+            try:
+                process.wait(timeout=wait_seconds)
+                return
+            except subprocess.TimeoutExpired:
+                continue
+            except Exception:
+                return
+
+    @staticmethod
+    def _resume_nav_bridge() -> None:
+        try:
+            bridge = get_ros_nav_bridge()
+            if bridge is not None:
+                bridge.resume()
+                mapping_logger.info("后端 ROS2 导航节点已恢复")
+        except Exception as exc:
+            mapping_logger.warning("恢复 ROS2 导航节点失败：{}", exc)
+
+    @staticmethod
+    def _pause_runtime_interferers() -> dict[str, bool]:
+        state = {
+            "auto_track_resume_needed": False,
+            "guard_mission_restore_needed": False,
+        }
+
+        try:
+            from .auto_track_service import get_auto_track_service
+
+            auto_track_service = get_auto_track_service()
+            if auto_track_service is not None:
+                auto_track_status = auto_track_service.get_status()
+                if auto_track_status.get("enabled") and not auto_track_status.get("paused"):
+                    auto_track_service.pause()
+                    state["auto_track_resume_needed"] = True
+                    mapping_logger.info("建图开始前已暂停自动跟踪服务")
+        except Exception as exc:
+            mapping_logger.warning("暂停自动跟踪服务失败：{}", exc)
+
+        try:
+            from .guard_mission_service import get_guard_mission_service
+
+            guard_mission_service = get_guard_mission_service()
+            if guard_mission_service is not None and bool(guard_mission_service.enabled):
+                guard_mission_service.enabled = False
+                state["guard_mission_restore_needed"] = True
+                mapping_logger.info("建图开始前已禁用驱离任务服务")
+        except Exception as exc:
+            mapping_logger.warning("禁用驱离任务服务失败：{}", exc)
+
+        return state
+
+    @staticmethod
+    def _resume_runtime_interferers(state: dict[str, bool] | None) -> None:
+        if not state:
+            return
+
+        if state.get("guard_mission_restore_needed"):
+            try:
+                from .guard_mission_service import get_guard_mission_service
+
+                guard_mission_service = get_guard_mission_service()
+                if guard_mission_service is not None:
+                    guard_mission_service.enabled = True
+                    mapping_logger.info("驱离任务服务已恢复到建图前状态")
+            except Exception as exc:
+                mapping_logger.warning("恢复驱离任务服务失败：{}", exc)
+
+        if state.get("auto_track_resume_needed"):
+            try:
+                from .auto_track_service import get_auto_track_service
+
+                auto_track_service = get_auto_track_service()
+                if auto_track_service is not None:
+                    auto_track_service.resume()
+                    mapping_logger.info("自动跟踪服务已恢复到建图前状态")
+            except Exception as exc:
+                mapping_logger.warning("恢复自动跟踪服务失败：{}", exc)
+
     def get_status(self) -> dict[str, Any]:
         with self._lock:
             self._cleanup_finished_session_unlocked()
@@ -173,6 +279,12 @@ class MappingService:
 
             map_dir = resolve_map_dir(normalized_scene_name)
             map_dir.mkdir(parents=True, exist_ok=True)
+            ready_flag = mapping_ready_flag_path(map_dir)
+            ready_flag.unlink(missing_ok=True)
+            runtime_pause_state = {
+                "auto_track_resume_needed": False,
+                "guard_mission_restore_needed": False,
+            }
             mapping_logger.info("开始建图前，准备停止导航相关后台进程")
             nav_stop_result = stop_navigation_processes()
             cmd_vel_stop_result = stop_cmd_vel_script()
@@ -182,20 +294,12 @@ class MappingService:
                 cmd_vel_stop_result.get("pid"),
             )
 
-            # 给 LiDAR 硬件充分的复位时间。
-            # stop_navigation_processes 会 SIGKILL Livox 驱动，
-            # 硬件在下一次启动前需要几秒完成内部清理/校准。
-            mapping_logger.info("等待 5s 让 LiDAR 硬件完成复位...")
-            time.sleep(5)
-
             bridge = get_ros_nav_bridge()
             if bridge is not None:
                 bridge.clear_accumulated_cloud()
-                # 暂停后端 ROS2 节点，使其退出 DDS 网络。
-                # CLI 建图时后端节点不存在；前端建图时若保持运行，
-                # 其 DDS participant 可能干扰 SuperLIO 的 IMU 消息发现。
                 mapping_logger.info("暂停后端 ROS2 导航节点以隔离建图 DDS 环境...")
                 bridge.pause()
+            runtime_pause_state = self._pause_runtime_interferers()
             command = ["bash", str(START_MAPPING_SCRIPT), str(map_dir)]
             mapping_logger.info(
                 "开始建图：scene_name={}，map_dir={}，command={}",
@@ -204,50 +308,73 @@ class MappingService:
                 " ".join(command),
             )
 
+            # stdout/stderr 直接丢弃，脚本内部用 tee 和 >> 写入 DEBUG_LOG。
+            # 不能用 subprocess.PIPE —— 脚本大量使用 tee 写 stdout，
+            # 如果 Python 端 readline 跟不上，tee 阻塞会导致整个建图脚本卡死。
             process = subprocess.Popen(
                 command,
                 start_new_session=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
-            self._attach_output_forwarders(process)
-            self._session = MappingSession(
-                scene_name=map_dir.name,
-                map_dir=map_dir,
-                process=process,
-                started_at=time.time(),
-            )
+            start_wait_deadline = time.monotonic() + MAPPING_START_READY_TIMEOUT_SECONDS
+            while time.monotonic() < start_wait_deadline:
+                if ready_flag.exists():
+                    self._session = MappingSession(
+                        scene_name=map_dir.name,
+                        map_dir=map_dir,
+                        process=process,
+                        started_at=time.time(),
+                        runtime_pause_state=runtime_pause_state,
+                    )
+                    mapping_logger.info(
+                        "建图已进入 ground 生成阶段：scene_name={}，pid={}，map_dir={}",
+                        map_dir.name,
+                        process.pid,
+                        map_dir,
+                    )
+                    return {
+                        "success": True,
+                        "enabled": True,
+                        "running": True,
+                        "scene_name": map_dir.name,
+                        "map_dir": str(map_dir),
+                        "pid": process.pid,
+                        "message": "建图已进入 ground 生成阶段",
+                    }
 
-            mapping_logger.info(
-                "建图脚本已启动：scene_name={}，pid={}，map_dir={}",
-                map_dir.name,
-                process.pid,
-                map_dir,
-            )
+                return_code = process.poll()
+                if return_code is not None:
+                    self._resume_runtime_interferers(runtime_pause_state)
+                    self._resume_nav_bridge()
+                    raise MappingError(
+                        f"建图启动失败：ground 生成尚未开始，脚本已退出（退出码={return_code}）"
+                    )
 
-            return {
-                "success": True,
-                "enabled": True,
-                "running": True,
-                "scene_name": map_dir.name,
-                "map_dir": str(map_dir),
-                "pid": process.pid,
-                "message": "建图脚本已启动",
-            }
+                time.sleep(MAPPING_START_READY_POLL_INTERVAL_SECONDS)
+
+            self._stop_process_group(process, "等待 ground 生成启动标记超时")
+            self._resume_runtime_interferers(runtime_pause_state)
+            self._resume_nav_bridge()
+            raise MappingError("建图启动超时：ground 生成尚未开始，请查看 start_mapping_debug.log")
 
     def stop(self) -> dict[str, Any]:
         with self._lock:
             self._cleanup_finished_session_unlocked()
             if self._session is None:
+                # 检查是否有孤立的 session（脚本已退出但未清理）
                 return {
                     "success": True,
                     "enabled": False,
                     "running": False,
+                    "saving": False,
+                    "saved": False,
                     "scene_name": None,
                     "map_dir": None,
                     "pid": None,
+                    "map_pcd_candidates": [],
+                    "ground_pcd_candidates": [],
+                    "pcd_files": [],
                     "message": "当前没有正在运行的建图进程",
                 }
 
@@ -255,84 +382,122 @@ class MappingService:
             pid = process.pid
             scene_name = self._session.scene_name
             map_dir = str(self._session.map_dir)
+            started_at = self._session.started_at
+            runtime_pause_state = self._session.runtime_pause_state
+            elapsed = time.time() - started_at
 
             mapping_logger.info(
                 "停止建图：向脚本发送 SIGINT，触发 cleanup 按序停止进程...",
             )
             mapping_logger.info(
-                "  脚本 PID={}，cleanup 顺序：terrain_analysis → super_lio → livox",
+                "  脚本 PID={}，已运行={:.0f}s，cleanup 顺序：terrain_analysis -> super_lio -> livox",
                 pid,
+                elapsed,
             )
 
             try:
-                # 只向 bash 脚本发送 SIGINT，让脚本自己的 trap cleanup 按序执行：
-                #   1) terrain_analysis（等 15s 保存 ground.pcd）
-                #   2) super_lio（等 60s 保存 map.pcd）
-                #   3) livox
-                # 之前用 os.killpg 会同时 SIGINT 整个进程组，绕过了脚本的清理顺序，
-                # 导致 terrain_analysis 和 super_lio 同时被中断，ground.pcd 可能未完整落盘。
                 os.kill(pid, signal.SIGINT)
             except ProcessLookupError:
                 mapping_logger.warning("建图脚本已不存在：pid={}", pid)
             except Exception as exc:
                 mapping_logger.warning("发送 SIGINT 到建图脚本失败：pid={}，原因={}", pid, exc)
 
-            # 立即清除 session，避免阻塞 HTTP 响应；等待和文件校验在后台线程完成
+            # 清除 session 但不立即返回 —— 等待脚本 cleanup 完成
             self._session = None
-            map_dir_path = Path(map_dir)
 
-            def _wait_and_verify() -> None:
+        # ── 等待脚本退出（在 lock 外部，不阻塞 get_status 等查询） ──────────
+        map_dir_path = Path(map_dir)
+        forced = False
+        try:
+            process.wait(timeout=MAPPING_STOP_WAIT_TIMEOUT_SECONDS)
+            mapping_logger.info("建图脚本已正常退出：pid={}，耗时={:.0f}s", pid, time.time() - started_at)
+        except subprocess.TimeoutExpired:
+            mapping_logger.warning(
+                "建图脚本在 {} 秒内未退出，尝试 SIGTERM -> bash（触发 trap）",
+                MAPPING_STOP_WAIT_TIMEOUT_SECONDS,
+            )
+            try:
+                os.kill(pid, signal.SIGTERM)
+                process.wait(timeout=10)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                mapping_logger.warning(
+                    "脚本仍未退出，使用 SIGKILL 强制终止整个进程组：pgid={}",
+                    os.getpgid(pid),
+                )
                 try:
-                    process.wait(timeout=MAPPING_STOP_WAIT_TIMEOUT_SECONDS)
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=MAPPING_STOP_FORCE_KILL_WAIT_SECONDS)
                 except subprocess.TimeoutExpired:
-                    mapping_logger.warning(
-                        "建图脚本在 {} 秒内未退出，尝试 SIGTERM → bash（触发 trap）",
-                        MAPPING_STOP_WAIT_TIMEOUT_SECONDS,
-                    )
-                    # 先尝试 SIGTERM 给 bash 脚本（也会触发 trap cleanup）
-                    try:
-                        os.kill(pid, signal.SIGTERM)
-                        process.wait(timeout=10)
-                    except (ProcessLookupError, subprocess.TimeoutExpired):
-                        mapping_logger.warning(
-                            "脚本仍未退出，使用 SIGKILL 强制终止整个进程组：pgid={}",
-                            os.getpgid(pid),
-                        )
-                        try:
-                            os.killpg(os.getpgid(pid), signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        try:
-                            process.wait(timeout=MAPPING_STOP_FORCE_KILL_WAIT_SECONDS)
-                        except subprocess.TimeoutExpired:
-                            mapping_logger.error("建图进程组 SIGKILL 后仍未退出")
-                for fname in ("map.pcd", "ground.pcd"):
-                    fpath = map_dir_path / fname
-                    if fpath.exists():
-                        mapping_logger.info("文件已保存：{} ({} 字节)", fpath, fpath.stat().st_size)
-                    else:
-                        mapping_logger.warning("文件未生成：{}，请检查 terrain_analysis 日志", fpath)
+                    mapping_logger.error("建图进程组 SIGKILL 后仍未退出")
+                forced = True
 
-                # 恢复后端 ROS2 节点，重新加入 DDS 网络
-                try:
-                    bridge = get_ros_nav_bridge()
-                    if bridge is not None:
-                        bridge.resume()
-                        mapping_logger.info("后端 ROS2 导航节点已恢复")
-                except Exception as exc:
-                    mapping_logger.warning("恢复 ROS2 导航节点失败：{}", exc)
+        # ── 检查 PCD 文件 ──────────────────────────────────────────────────
+        map_pcd_candidates: list[str] = []
+        ground_pcd_candidates: list[str] = []
+        pcd_files: list[dict[str, Any]] = []
 
-            threading.Thread(target=_wait_and_verify, daemon=True).start()
+        if map_dir_path.is_dir():
+            for fpath in sorted(map_dir_path.rglob("*.pcd")):
+                fname = fpath.name
+                info = {
+                    "name": fname,
+                    "path": str(fpath),
+                    "size_bytes": fpath.stat().st_size if fpath.exists() else 0,
+                }
+                pcd_files.append(info)
+                if "map.pcd" in fname.lower():
+                    map_pcd_candidates.append(fname)
+                if "ground.pcd" in fname.lower():
+                    ground_pcd_candidates.append(fname)
 
-            return {
-                "success": True,
-                "enabled": False,
-                "running": False,
-                "scene_name": scene_name,
-                "map_dir": map_dir,
-                "pid": pid,
-                "message": "建图进程已停止",
-            }
+        saved = len(map_pcd_candidates) > 0 and len(ground_pcd_candidates) > 0
+        if saved:
+            message = f"地图已保存：map.pcd x{len(map_pcd_candidates)}，ground.pcd x{len(ground_pcd_candidates)}"
+        elif len(map_pcd_candidates) == 0 and len(ground_pcd_candidates) == 0:
+            message = "地图保存失败：未找到 map.pcd 和 ground.pcd，请查看 start_mapping_debug.log"
+        elif len(map_pcd_candidates) == 0:
+            message = "地图保存不完整：缺少 map.pcd，请查看 start_mapping_debug.log"
+        else:
+            message = "地图保存不完整：缺少 ground.pcd，请查看 start_mapping_debug.log"
+
+        if forced:
+            message += "（脚本被强制终止，文件可能不完整）"
+
+        for fname in ("map.pcd", "ground.pcd"):
+            fpath = map_dir_path / fname
+            if fpath.exists():
+                mapping_logger.info("文件已保存：{} ({} 字节)", fpath, fpath.stat().st_size)
+            else:
+                mapping_logger.warning("文件未生成：{}", fpath)
+
+        # 恢复后端 ROS2 节点
+        self._resume_runtime_interferers(runtime_pause_state)
+        self._resume_nav_bridge()
+
+        mapping_logger.info(
+            "建图停止完成：scene_name={}，saved={}，pcd_files={}",
+            scene_name,
+            saved,
+            len(pcd_files),
+        )
+
+        return {
+            "success": True,
+            "enabled": False,
+            "running": False,
+            "saving": False,
+            "saved": saved,
+            "scene_name": scene_name,
+            "map_dir": map_dir,
+            "pid": pid,
+            "map_pcd_candidates": map_pcd_candidates,
+            "ground_pcd_candidates": ground_pcd_candidates,
+            "pcd_files": pcd_files,
+            "message": message,
+        }
 
 
 _mapping_service = MappingService()
