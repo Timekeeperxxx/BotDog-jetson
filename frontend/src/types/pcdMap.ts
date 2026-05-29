@@ -166,8 +166,13 @@ export type MappingControlResponse = {
   success: boolean
   enabled: boolean
   running: boolean
+  saving: boolean
+  saved: boolean
   scene_name: string | null
   map_dir: string | null
   pid: number | null
+  map_pcd_candidates: string[]
+  ground_pcd_candidates: string[]
+  pcd_files: Array<{ name: string; path: string; size_bytes: number }>
   message: string | null
 }

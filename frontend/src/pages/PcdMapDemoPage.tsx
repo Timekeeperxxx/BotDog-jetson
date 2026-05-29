@@ -96,6 +96,8 @@ export function PcdMapDemoPage() {
   const [mappingSceneName, setMappingSceneName] = useState('')
   const [mappingSceneError, setMappingSceneError] = useState<string | null>(null)
   const [mappingSessionInfo, setMappingSessionInfo] = useState<MappingSessionInfo | null>(null)
+  const [mappingStartTime, setMappingStartTime] = useState<number | null>(null)
+  const [mappingStopConfirmOpen, setMappingStopConfirmOpen] = useState(false)
   const [keyboardControlEnabled, setKeyboardControlEnabled] = useState(false)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
@@ -318,22 +320,50 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, refreshScenes, sceneDeleteConfirm])
 
+  const MIN_MAPPING_RUNTIME_SECONDS = 90
+
   const handleStopMapping = useCallback(async () => {
     if (!canOperate) return
     if (mappingSending) return
 
+    // 建图时间过短时弹出确认
+    if (mappingStartTime != null) {
+      const elapsed = (Date.now() - mappingStartTime) / 1000
+      if (elapsed < MIN_MAPPING_RUNTIME_SECONDS) {
+        setMappingStopConfirmOpen(true)
+        return
+      }
+    }
+
+    setMappingStopConfirmOpen(false)
     setMappingSending(true)
     try {
       const result = await setMappingEnabled(false)
       setMappingActive(false)
       setMappingSessionInfo(null)
-      addLog(result.message || '已停止建图')
+      setMappingStartTime(null)
+
+      if (result.saved) {
+        addLog(result.message || '地图已保存')
+        // 等一小会儿让文件系统同步，再刷新场景列表
+        setTimeout(() => {
+          void refreshScenes()
+        }, 500)
+      } else {
+        const missing: string[] = []
+        if (result.map_pcd_candidates.length === 0) missing.push('map.pcd')
+        if (result.ground_pcd_candidates.length === 0) missing.push('ground.pcd')
+        addLog(
+          `地图保存不完整：缺少 ${missing.join('、')}，请查看 start_mapping_debug.log`,
+          'error',
+        )
+      }
     } catch (error) {
       addLog(error instanceof Error ? error.message : '停止建图失败', 'error')
     } finally {
       setMappingSending(false)
     }
-  }, [addLog, canOperate, mappingSending])
+  }, [addLog, canOperate, mappingSending, mappingStartTime, refreshScenes])
 
   const handleOpenMappingDialog = useCallback(() => {
     if (!canOperate) return
@@ -358,6 +388,7 @@ export function PcdMapDemoPage() {
     try {
       const result = await setMappingEnabled(true, validated.value)
       setMappingActive(true)
+      setMappingStartTime(Date.now())
       setMappingSessionInfo({
         sceneName: result.scene_name || validated.value,
         mapDir: result.map_dir || '',
@@ -966,7 +997,11 @@ export function PcdMapDemoPage() {
               disabled={mappingSending || !canOperate}
             >
               <Square size={15} />
-              <span>{mappingSending ? (mappingActive ? '结束建图中' : '开始建图中') : (mappingActive ? '结束建图' : '开始建图')}</span>
+              <span>
+                {mappingSending
+                  ? (mappingActive ? '正在保存地图...' : '开始建图中')
+                  : (mappingActive ? '结束建图' : '开始建图')}
+              </span>
             </button>
             <button
               className="pcd-tool-button"
@@ -1163,6 +1198,73 @@ export function PcdMapDemoPage() {
                     disabled={mappingSending}
                   >
                     {mappingSending ? '启动中...' : '确认开始'}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+      {/* 建图时间过短时弹出确认 */}
+      {mappingStopConfirmOpen && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="pcd-scene-modal"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  setMappingStopConfirmOpen(false)
+                }
+              }}
+            >
+              <div className="pcd-scene-modal-card" role="dialog" aria-modal="true" aria-label="确认停止建图">
+                <div className="pcd-scene-modal-header">
+                  <strong>确认停止建图</strong>
+                  <span>
+                    建图运行时间不足 {MIN_MAPPING_RUNTIME_SECONDS} 秒，
+                    terrain_analysis 可能尚未启动或地面点云尚未保存。
+                    建议继续等待至少 2 分钟后再停止。
+                  </span>
+                </div>
+                <div className="pcd-scene-modal-actions">
+                  <button
+                    type="button"
+                    className="pcd-tool-button"
+                    onClick={() => setMappingStopConfirmOpen(false)}
+                  >
+                    继续等待
+                  </button>
+                  <button
+                    type="button"
+                    className="pcd-tool-button is-active"
+                    onClick={() => {
+                      setMappingStopConfirmOpen(false)
+                      // 直接执行 stop，不再检查最小运行时间
+                      setMappingSending(true)
+                      setMappingEnabled(false).then((result) => {
+                        setMappingActive(false)
+                        setMappingSessionInfo(null)
+                        setMappingStartTime(null)
+                        setMappingSending(false)
+                        if (result.saved) {
+                          addLog(result.message || '地图已保存')
+                          setTimeout(() => { void refreshScenes() }, 500)
+                        } else {
+                          const missing: string[] = []
+                          if (result.map_pcd_candidates.length === 0) missing.push('map.pcd')
+                          if (result.ground_pcd_candidates.length === 0) missing.push('ground.pcd')
+                          addLog(
+                            `地图保存不完整：缺少 ${missing.join('、')}，请查看 start_mapping_debug.log`,
+                            'error',
+                          )
+                        }
+                      }).catch((error) => {
+                        addLog(error instanceof Error ? error.message : '停止建图失败', 'error')
+                        setMappingSending(false)
+                      })
+                    }}
+                    style={{ background: '#dc2626', borderColor: '#dc2626' }}
+                  >
+                    确认停止
                   </button>
                 </div>
               </div>
