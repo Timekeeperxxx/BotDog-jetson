@@ -83,6 +83,15 @@ _signal_process_group() {
   kill "-$sig" "$pid" 2>/dev/null || true
 }
 
+start_isolated_process() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" >> "$DEBUG_LOG" 2>&1 &
+  else
+    "$@" >> "$DEBUG_LOG" 2>&1 &
+  fi
+  STARTED_PID=$!
+}
+
 wait_for_log_pattern() {
   local pattern="$1"
   local timeout_seconds="$2"
@@ -108,6 +117,30 @@ wait_for_log_pattern() {
 
   echo "  [ERROR] ${stage_name}超时 (${timeout_seconds}s)" | tee -a "$DEBUG_LOG"
   return 1
+}
+
+wait_with_abort() {
+  local seconds="$1"
+  local process_pid="${2:-}"
+  local stage_name="$3"
+  local waited=0
+
+  echo "等待 ${stage_name}..." | tee -a "$DEBUG_LOG"
+  while [ "$waited" -lt "$seconds" ]; do
+    if [ -n "$process_pid" ] && ! kill -0 "$process_pid" 2>/dev/null; then
+      echo "  [ERROR] ${stage_name}期间进程已退出 (PID=$process_pid)" | tee -a "$DEBUG_LOG"
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  echo "  ${stage_name}完成 (${seconds}s)" | tee -a "$DEBUG_LOG"
+  return 0
+}
+
+find_first_matching_pid() {
+  local needle="$1"
+  find_matching_pids "$needle" | sort -u | head -n 1
 }
 
 # ── cleanup ──────────────────────────────────────────────────────────────────
@@ -146,28 +179,49 @@ cleanup() {
     echo "  [1/3] terrain_analysis 未在运行，跳过" | tee -a "$DEBUG_LOG"
   fi
 
-  # 2) super_lio - 等待 map.pcd 写入
-  if [ -n "$SUPERLIO_PID" ] && kill -0 "$SUPERLIO_PID" 2>/dev/null; then
-    echo "  [2/3] SIGINT super_lio 进程组 (PID=$SUPERLIO_PID)，等待 map.pcd 保存..." | tee -a "$DEBUG_LOG"
-    _signal_process_group "$SUPERLIO_PID" INT
+  # 2) super_lio_node - 单独退出并落出原始 map.pcd
+  local superlio_node_pid=""
+  superlio_node_pid="$(find_first_matching_pid "/home/jetson/superlio/install/super_lio/lib/super_lio/super_lio_node" || true)"
+  if [ -n "$superlio_node_pid" ] && kill -0 "$superlio_node_pid" 2>/dev/null; then
+    echo "  [2/4] SIGINT super_lio_node (PID=$superlio_node_pid)，等待原始 map.pcd 保存..." | tee -a "$DEBUG_LOG"
+    kill -INT "$superlio_node_pid" 2>/dev/null || true
     local waited=0
+    while [ $waited -lt 90 ] && kill -0 "$superlio_node_pid" 2>/dev/null; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if kill -0 "$superlio_node_pid" 2>/dev/null; then
+      echo "  super_lio_node 90s 未退出，SIGKILL" | tee -a "$DEBUG_LOG"
+      kill -KILL "$superlio_node_pid" 2>/dev/null || true
+    else
+      echo "  super_lio_node 已退出 (${waited}s)" | tee -a "$DEBUG_LOG"
+    fi
+  else
+    echo "  [2/4] super_lio_node 未在运行，跳过" | tee -a "$DEBUG_LOG"
+  fi
+
+  # 3) super_lio launch - 最后停止剩余进程组
+  if [ -n "$SUPERLIO_PID" ] && kill -0 "$SUPERLIO_PID" 2>/dev/null; then
+    echo "  [3/4] SIGINT super_lio 进程组 (PID=$SUPERLIO_PID)，等待剩余进程退出..." | tee -a "$DEBUG_LOG"
+    _signal_process_group "$SUPERLIO_PID" INT
+    waited=0
     while [ $waited -lt 90 ] && kill -0 "$SUPERLIO_PID" 2>/dev/null; do
       sleep 1
       waited=$((waited + 1))
     done
     if kill -0 "$SUPERLIO_PID" 2>/dev/null; then
-      echo "  super_lio 90s 未退出，SIGKILL 进程组" | tee -a "$DEBUG_LOG"
+      echo "  super_lio 进程组 90s 未退出，SIGKILL" | tee -a "$DEBUG_LOG"
       _signal_process_group "$SUPERLIO_PID" KILL
     else
-      echo "  super_lio 已退出 (${waited}s)" | tee -a "$DEBUG_LOG"
+      echo "  super_lio 进程组已退出 (${waited}s)" | tee -a "$DEBUG_LOG"
     fi
   else
-    echo "  [2/3] super_lio 未在运行，跳过" | tee -a "$DEBUG_LOG"
+    echo "  [3/4] super_lio 进程组未在运行，跳过" | tee -a "$DEBUG_LOG"
   fi
 
-  # 3) livox - 最后停止，确保 super_lio 保存过程中 LiDAR 数据仍在
+  # livox - 最后停止，确保 super_lio 保存过程中 LiDAR 数据仍在
   if [ -n "$LIVOX_PID" ] && kill -0 "$LIVOX_PID" 2>/dev/null; then
-    echo "  [3/3] SIGINT livox 进程组 (PID=$LIVOX_PID)" | tee -a "$DEBUG_LOG"
+    echo "  [5/5] SIGINT livox 进程组 (PID=$LIVOX_PID)" | tee -a "$DEBUG_LOG"
     _signal_process_group "$LIVOX_PID" INT
     local waited=0
     while [ $waited -lt 5 ] && kill -0 "$LIVOX_PID" 2>/dev/null; do
@@ -180,7 +234,7 @@ cleanup() {
       echo "  livox 已退出 (${waited}s)" | tee -a "$DEBUG_LOG"
     fi
   else
-    echo "  [3/3] livox 未在运行，跳过" | tee -a "$DEBUG_LOG"
+    echo "  [5/5] livox 未在运行，跳过" | tee -a "$DEBUG_LOG"
   fi
 
   # 最终兜底：确保所有子进程终止
@@ -282,9 +336,12 @@ NAV_NEEDLES=(
   "/home/jetson/superlio/install/terrain_analysis/lib/terrain_analysis/save_terrain_map"
   "/home/jetson/dddmr_navigation_new_local/install/global_planner/lib/global_planner/global_planner_node"
   "/home/jetson/dddmr_navigation_new_local/install/mcl_3dl/lib/mcl_3dl/pcl_publisher"
+  "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/p2p_move_base_node"
   "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/clicked2goal.py"
+  "/home/jetson/dddmr_navigation_new_local/install/dddmr_local_map/lib/dddmr_local_map/local_map_builder"
   "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py"
   "/home/jetson/Project/BOTDOG/test_cmd_vel_fixed.sh"
+  "local_map_builder"
 )
 
 for needle in "${NAV_NEEDLES[@]}"; do
@@ -384,23 +441,24 @@ _diag_dump_env
 
 # ── 启动 Livox 驱动 ─────────────────────────────────────────────────────────
 echo "启动 Livox MID360 驱动..." | tee -a "$DEBUG_LOG"
-ros2 launch livox_ros_driver2 msg_MID360_launch.py >> "$DEBUG_LOG" 2>&1 &
-LIVOX_PID=$!
-echo "  Livox PID: $LIVOX_PID" | tee -a "$DEBUG_LOG"
+start_isolated_process ros2 launch livox_ros_driver2 msg_MID360_launch.py
+LIVOX_PID=$STARTED_PID
+echo "  Livox PID: $LIVOX_PID PGID: $(_get_pgid "$LIVOX_PID")" | tee -a "$DEBUG_LOG"
 wait_for_log_pattern "livox/lidar publish use livox custom format" 30 "$LIVOX_PID" "Livox 开始发布点云/IMU"
+wait_with_abort 5 "$LIVOX_PID" "IMU 静止预热"
 
 # ── 启动 SuperLIO 建图 ──────────────────────────────────────────────────────
 echo "启动 Super LIO 建图..." | tee -a "$DEBUG_LOG"
-ros2 launch super_lio Livox_mid360.py save_map_dir:="$SUPERLIO_SAVE_MAP_DIR" map_name:="map.pcd" >> "$DEBUG_LOG" 2>&1 &
-SUPERLIO_PID=$!
-echo "  SuperLIO PID: $SUPERLIO_PID" | tee -a "$DEBUG_LOG"
+start_isolated_process ros2 launch super_lio Livox_mid360.py rviz:=false enable_pgo:=false save_map_dir:="$SUPERLIO_SAVE_MAP_DIR" map_name:="map.pcd"
+SUPERLIO_PID=$STARTED_PID
+echo "  SuperLIO PID: $SUPERLIO_PID PGID: $(_get_pgid "$SUPERLIO_PID")" | tee -a "$DEBUG_LOG"
 wait_for_log_pattern "Map init done" 60 "$SUPERLIO_PID" "SuperLIO 完成地图初始化"
 
 # ── 启动 terrain_analysis ───────────────────────────────────────────────────
 echo "启动 terrain_analysis 地形分析与地图保存..." | tee -a "$DEBUG_LOG"
-ros2 launch terrain_analysis terrain_analysis_with_save.launch map_dir:="$MAP_DIR" >> "$DEBUG_LOG" 2>&1 &
-TERRAIN_PID=$!
-echo "  terrain_analysis PID: $TERRAIN_PID" | tee -a "$DEBUG_LOG"
+start_isolated_process ros2 launch terrain_analysis terrain_analysis_with_save.launch map_dir:="$MAP_DIR"
+TERRAIN_PID=$STARTED_PID
+echo "  terrain_analysis PID: $TERRAIN_PID PGID: $(_get_pgid "$TERRAIN_PID")" | tee -a "$DEBUG_LOG"
 
 sleep 1
 if kill -0 "$TERRAIN_PID" 2>/dev/null; then

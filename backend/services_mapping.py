@@ -297,8 +297,7 @@ class MappingService:
             bridge = get_ros_nav_bridge()
             if bridge is not None:
                 bridge.clear_accumulated_cloud()
-                mapping_logger.info("暂停后端 ROS2 导航节点以隔离建图 DDS 环境...")
-                bridge.pause()
+                mapping_logger.info("建图开始前已清空前端实时建图点云缓存")
             runtime_pause_state = self._pause_runtime_interferers()
             command = ["bash", str(START_MAPPING_SCRIPT), str(map_dir)]
             mapping_logger.info(

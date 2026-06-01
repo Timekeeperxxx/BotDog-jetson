@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react';
-import { Camera, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Camera, RefreshCw, X } from 'lucide-react';
+import { apiFetch } from '../../api/apiFetch';
 import { useWhepVideo } from '../../hooks/useWhepVideo';
 import type { OmniCameraUrls } from '../../hooks/useCameraSources';
 
@@ -108,6 +109,9 @@ interface OmniMonitorOverlayProps {
 }
 
 export function OmniMonitorOverlay({ open, onClose, frontWhepUrl, frontVideoRef, omniUrls }: OmniMonitorOverlayProps) {
+  const [restarting, setRestarting] = useState(false);
+  const [restartMessage, setRestartMessage] = useState<string | null>(null);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -116,6 +120,29 @@ export function OmniMonitorOverlay({ open, onClose, frontWhepUrl, frontVideoRef,
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
+
+  useEffect(() => {
+    if (!open) {
+      setRestartMessage(null);
+      setRestarting(false);
+    }
+  }, [open]);
+
+  const handleRestartPipeline = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    setRestartMessage(null);
+    try {
+      const result = await apiFetch<{ message?: string; pid?: number | null }>('/api/v1/system/pipeline/restart', {
+        method: 'POST',
+      });
+      setRestartMessage(result.message || `已启动 Pipeline 重启${result.pid ? `，PID ${result.pid}` : ''}`);
+    } catch (err) {
+      setRestartMessage(err instanceof Error ? err.message : '重启 Pipeline 失败');
+    } finally {
+      setRestarting(false);
+    }
+  };
 
   if (!open) return null;
 
@@ -126,14 +153,31 @@ export function OmniMonitorOverlay({ open, onClose, frontWhepUrl, frontVideoRef,
           <div className="text-sm font-black uppercase tracking-[0.3em] text-white">全方位监控</div>
           <div className="text-[10px] font-mono text-white/40">FRONT · BACK · LEFT · RIGHT</div>
         </div>
-        <button
-          onClick={onClose}
-          className="flex items-center gap-2 px-3 py-1.5 border border-white/25 hover:border-white text-xs font-black uppercase tracking-widest text-white/75 hover:text-white rounded transition-colors"
-          title="关闭 (Esc)"
-        >
-          <X size={14} />
-          <span>关闭</span>
-        </button>
+        <div className="flex items-center gap-3">
+          {restartMessage && (
+            <div className="max-w-[320px] truncate text-[10px] font-bold text-white/55" title={restartMessage}>
+              {restartMessage}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={handleRestartPipeline}
+            disabled={restarting}
+            className="flex items-center gap-2 px-3 py-1.5 border border-amber-400/40 hover:border-amber-300 disabled:border-white/15 text-xs font-black uppercase tracking-widest text-amber-100/85 hover:text-amber-50 disabled:text-white/30 rounded transition-colors disabled:cursor-not-allowed"
+            title="重启视频 Pipeline"
+          >
+            <RefreshCw size={14} className={restarting ? 'animate-spin' : ''} />
+            <span>{restarting ? '重启中' : '重启 Pipeline'}</span>
+          </button>
+          <button
+            onClick={onClose}
+            className="flex items-center gap-2 px-3 py-1.5 border border-white/25 hover:border-white text-xs font-black uppercase tracking-widest text-white/75 hover:text-white rounded transition-colors"
+            title="关闭 (Esc)"
+          >
+            <X size={14} />
+            <span>关闭</span>
+          </button>
+        </div>
       </div>
 
       {/* 3×3 十字布局：四格等大，四角和中心留空 */}

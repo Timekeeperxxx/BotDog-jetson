@@ -380,17 +380,10 @@ def test_start_mapping_fails_if_ground_never_starts(monkeypatch, tmp_path):
 
     class DummyBridge:
         def __init__(self) -> None:
-            self.paused = 0
-            self.resumed = 0
+            self.cleared = 0
 
         def clear_accumulated_cloud(self):
-            return None
-
-        def pause(self):
-            self.paused += 1
-
-        def resume(self):
-            self.resumed += 1
+            self.cleared += 1
 
     bridge = DummyBridge()
 
@@ -422,8 +415,7 @@ def test_start_mapping_fails_if_ground_never_starts(monkeypatch, tmp_path):
     with pytest.raises(mapping_service_module.MappingError, match="ground 生成尚未开始"):
         service.start("实验室一楼")
 
-    assert bridge.paused == 1
-    assert bridge.resumed == 1
+    assert bridge.cleared == 1
     assert killpg_calls == [(4321, signal.SIGINT)]
     assert len(sleep_calls) >= 2
     assert set(sleep_calls) == {0.5}
@@ -433,22 +425,27 @@ def test_start_mapping_script_waits_for_superlio_before_terrain_analysis():
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "start_mapping.sh"
     content = script_path.read_text(encoding="utf-8")
 
-    superlio_line = 'ros2 launch super_lio Livox_mid360.py save_map_dir:="$SUPERLIO_SAVE_MAP_DIR" map_name:="map.pcd" >> "$DEBUG_LOG" 2>&1 &'
-    livox_line = 'ros2 launch livox_ros_driver2 msg_MID360_launch.py >> "$DEBUG_LOG" 2>&1 &'
-    terrain_line = 'ros2 launch terrain_analysis terrain_analysis_with_save.launch map_dir:="$MAP_DIR" >> "$DEBUG_LOG" 2>&1 &'
+    superlio_line = 'start_isolated_process ros2 launch super_lio Livox_mid360.py rviz:=false enable_pgo:=false save_map_dir:="$SUPERLIO_SAVE_MAP_DIR" map_name:="map.pcd"'
+    livox_line = 'start_isolated_process ros2 launch livox_ros_driver2 msg_MID360_launch.py'
+    terrain_line = 'start_isolated_process ros2 launch terrain_analysis terrain_analysis_with_save.launch map_dir:="$MAP_DIR"'
 
+    assert "start_isolated_process() {" in content
     assert superlio_line in content
     assert livox_line in content
     assert terrain_line in content
+    assert 'setsid "$@" >> "$DEBUG_LOG" 2>&1 &' in content
     assert 'MAPPING_READY_FLAG="$MAP_DIR/.ground_generation_started"' in content
     assert 'wait_for_log_pattern "livox/lidar publish use livox custom format" 30 "$LIVOX_PID" "Livox 开始发布点云/IMU"' in content
+    assert 'wait_with_abort 5 "$LIVOX_PID" "IMU 静止预热"' in content
     assert 'wait_for_log_pattern "Map init done" 60 "$SUPERLIO_PID" "SuperLIO 完成地图初始化"' in content
     assert content.index(livox_line) < content.index('wait_for_log_pattern "livox/lidar publish use livox custom format" 30 "$LIVOX_PID" "Livox 开始发布点云/IMU"')
-    assert content.index('wait_for_log_pattern "livox/lidar publish use livox custom format" 30 "$LIVOX_PID" "Livox 开始发布点云/IMU"') < content.index(superlio_line)
+    assert content.index('wait_for_log_pattern "livox/lidar publish use livox custom format" 30 "$LIVOX_PID" "Livox 开始发布点云/IMU"') < content.index('wait_with_abort 5 "$LIVOX_PID" "IMU 静止预热"')
+    assert content.index('wait_with_abort 5 "$LIVOX_PID" "IMU 静止预热"') < content.index(superlio_line)
     assert content.index(superlio_line) < content.index('wait_for_log_pattern "Map init done" 60 "$SUPERLIO_PID" "SuperLIO 完成地图初始化"')
     assert content.index('wait_for_log_pattern "Map init done" 60 "$SUPERLIO_PID" "SuperLIO 完成地图初始化"') < content.index(terrain_line)
     assert 'printf \'%s\\n\' "$(date \'+%Y-%m-%d %H:%M:%S\')" > "$MAPPING_READY_FLAG"' in content
     assert 'wait_for_log_pattern() {' in content
+    assert 'wait_with_abort() {' in content
 
 
 def test_start_mapping_script_uses_superlio_relative_save_dir():
@@ -474,6 +471,7 @@ def test_start_mapping_script_waits_for_superlio_save_on_shutdown():
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "start_mapping.sh"
     content = script_path.read_text(encoding="utf-8")
 
+    assert "SIGINT super_lio_node" in content
     assert "SIGINT super_lio 进程组" in content
-    assert "while [ $waited -lt 90 ] && kill -0 \"$SUPERLIO_PID\" 2>/dev/null; do" in content
-    assert "super_lio 90s 未退出，SIGKILL 进程组" in content
+    assert 'while [ $waited -lt 90 ] && kill -0 "$superlio_node_pid" 2>/dev/null; do' in content
+    assert "super_lio_node 90s 未退出，SIGKILL" in content

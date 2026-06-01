@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import struct
 from pathlib import Path
 
 from backend import services_pcd_maps as pcd_services
@@ -27,6 +28,28 @@ def write_ascii_pcd(path: Path, points: list[tuple[float, float, float]]) -> Non
         points="\n".join(f"{x} {y} {z}" for x, y, z in points),
     )
     path.write_text(content, encoding="utf-8")
+
+
+def write_binary_pcd_with_histogram(
+    path: Path,
+    points: list[tuple[float, float, float, tuple[float, float, float]]],
+) -> None:
+    header = f"""# .PCD v0.7 - Point Cloud Data file format
+VERSION 0.7
+FIELDS x y z histogram
+SIZE 4 4 4 4
+TYPE F F F F
+COUNT 1 1 1 3
+WIDTH {len(points)}
+HEIGHT 1
+VIEWPOINT 0 0 0 1 0 0 0
+POINTS {len(points)}
+DATA binary
+"""
+    with path.open("wb") as f:
+        f.write(header.encode("utf-8"))
+        for x, y, z, histogram in points:
+            f.write(struct.pack("<ffffff", x, y, z, *histogram))
 
 
 def test_list_pcd_scenes_and_find_layer_files(monkeypatch, tmp_path):
@@ -111,3 +134,38 @@ def test_scene_metadata_and_preview_merge_bounds(monkeypatch, tmp_path):
     assert len(preview["layers"]["wall"]["points"]) == 2
     assert preview["bounds"]["min_x"] == -1.0
     assert preview["bounds"]["max_x"] == 4.0
+
+
+def test_scene_preview_binary_pcd_with_count_fields_reads_xyz_correctly(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    scene_root.mkdir()
+    scene = scene_root / "Scene4_二进制场景"
+    scene.mkdir()
+
+    wall = scene / "map.pcd"
+    ground = scene / "ground.pcd"
+    wall_points = [
+        (1.0, 2.0, 3.0, (10.0, 11.0, 12.0)),
+        (4.0, 5.0, 6.0, (13.0, 14.0, 15.0)),
+    ]
+    ground_points = [
+        (-1.0, -2.0, -3.0, (20.0, 21.0, 22.0)),
+        (7.0, 8.0, 9.0, (23.0, 24.0, 25.0)),
+    ]
+    write_binary_pcd_with_histogram(wall, wall_points)
+    write_binary_pcd_with_histogram(ground, ground_points)
+
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+
+    preview = pcd_services.get_scene_preview("Scene4_二进制场景", max_points=1000)
+
+    assert preview["layers"]["wall"] is not None
+    assert preview["layers"]["ground"] is not None
+    assert preview["layers"]["wall"]["points"] == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+    assert preview["layers"]["ground"]["points"] == [[-1.0, -2.0, -3.0], [7.0, 8.0, 9.0]]
+    assert preview["bounds"]["min_x"] == -1.0
+    assert preview["bounds"]["max_x"] == 7.0
+    assert preview["bounds"]["min_y"] == -2.0
+    assert preview["bounds"]["max_y"] == 8.0
+    assert preview["bounds"]["min_z"] == -3.0
+    assert preview["bounds"]["max_z"] == 9.0

@@ -500,6 +500,15 @@ def _read_binary_preview_numpy(
     fields = header["FIELDS"]
     sizes = [int(s) for s in header.get("SIZE", [])]
     types = [t.upper() for t in header.get("TYPE", [])]
+    counts = [int(value) for value in header.get("COUNT", ["1"] * len(fields))]
+
+    if not (len(fields) == len(sizes) == len(types) == len(counts)):
+        raise PcdMapError("PCD header 中 FIELDS/SIZE/TYPE/COUNT 数量不一致")
+
+    # NumPy 快速路径当前只支持 COUNT=1 的标量字段。若存在直方图/法向量等
+    # 多值字段，退回到 Python 解析以避免 itemsize 错位导致 x/y/z 读错。
+    if any(count != 1 for count in counts):
+        return _read_binary_preview_python(path, header, data_start_offset, max_points)
 
     _type_map: dict[str, dict[int, Any]] = {
         "F": {4: np.float32, 8: np.float64},

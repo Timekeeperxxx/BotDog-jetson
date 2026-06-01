@@ -1,11 +1,18 @@
 """系统诊断路由。"""
 
+import subprocess
+import threading
 import time
+from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...app_runtime_state import APP_START_MONO
+from ...auth.dependencies import require_operator
+from ...auth.schemas import AuthUserInternal
+from ...auth.service import safe_write_audit_log
 from ...control_service import get_control_service
+from ...database import get_db
 from ...safety_supervisor import get_safety_supervisor
 from ...schemas import SystemHealthResponse, SystemSafetyResponse, SystemStartupResponse, StartupSummaryItem
 from ...startup_summary import coerce_startup_summary
@@ -13,6 +20,18 @@ from ...state_machine import SystemState
 from ...state_machine_state import get_state_machine
 
 router = APIRouter(tags=["system"])
+
+_PIPELINE_SCRIPT = Path("/home/jetson/Project/BOTDOG/BotDog/scripts/run-pipeline.sh")
+_pipeline_restart_proc: subprocess.Popen[str] | None = None
+_pipeline_restart_lock = threading.Lock()
+
+
+def _pipeline_restart_log_path() -> Path:
+    return _PIPELINE_SCRIPT.parents[1] / "logs" / "pipeline_restart.log"
+
+
+def _pipeline_restart_running() -> bool:
+    return _pipeline_restart_proc is not None and _pipeline_restart_proc.poll() is None
 
 
 @router.get("/api/v1/system/health", response_model=SystemHealthResponse)
@@ -84,3 +103,58 @@ async def system_safety() -> SystemSafetyResponse:
         system_state=state_machine.state.value if state_machine is not None else "UNINITIALIZED",
         control_adapter_ready=bool(adapter_status.get("ready")),
     )
+
+
+@router.post("/api/v1/system/pipeline/restart")
+async def restart_pipeline(
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+) -> dict:
+    """异步重启视频 pipeline。"""
+    global _pipeline_restart_proc
+
+    if not _PIPELINE_SCRIPT.exists():
+        raise HTTPException(status_code=404, detail=f"Pipeline 脚本不存在: {_PIPELINE_SCRIPT}")
+    if not _PIPELINE_SCRIPT.is_file():
+        raise HTTPException(status_code=404, detail=f"Pipeline 脚本不是文件: {_PIPELINE_SCRIPT}")
+
+    with _pipeline_restart_lock:
+        if _pipeline_restart_running():
+            return {
+                "success": True,
+                "running": True,
+                "pid": _pipeline_restart_proc.pid if _pipeline_restart_proc else None,
+                "message": "Pipeline 重启脚本正在运行",
+            }
+
+        log_path = _pipeline_restart_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with log_path.open("a", encoding="utf-8") as log_file:
+                _pipeline_restart_proc = subprocess.Popen(
+                    ["/bin/bash", str(_PIPELINE_SCRIPT)],
+                    cwd=str(_PIPELINE_SCRIPT.parents[1]),
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    start_new_session=True,
+                )
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail=f"启动 Pipeline 重启脚本失败: {exc}") from exc
+
+    await safe_write_audit_log(
+        db,
+        level="INFO",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=system.pipeline.restart "
+            f"结果=success pid={_pipeline_restart_proc.pid}"
+        ),
+    )
+
+    return {
+        "success": True,
+        "running": True,
+        "pid": _pipeline_restart_proc.pid,
+        "message": "已启动 Pipeline 重启脚本",
+    }
