@@ -24,6 +24,7 @@ import {
   restartNavigationLocalization,
   setMappingEnabled,
   setLocalizationPose,
+  waitInitialposeReady,
   triggerNavEmergencyStop,
 } from '../api/pcdMapApi'
 import { NavWaypointPanel } from '../components/pcd/NavWaypointPanel'
@@ -36,7 +37,7 @@ import { TaskDrawerPanel } from '../components/pcd/TaskDrawerPanel'
 import { useRobotControl } from '../hooks/useRobotControl'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
-import type { NavWaypoint, PcdSceneItem } from '../types/pcdMap'
+import type { LocalizationPosePayload, NavWaypoint, PcdSceneItem } from '../types/pcdMap'
 import type { TaskDefinition, TaskDraft, TaskDraftStep } from '../types/taskWorkflow'
 import { validateWaypointName } from '../utils/navWaypointValidation'
 import { useNavScenes } from './nav/useNavScenes'
@@ -90,6 +91,7 @@ export function PcdMapDemoPage() {
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
   const [estopSending, setEstopSending] = useState(false)
   const [restartLocalizationSending, setRestartLocalizationSending] = useState(false)
+  const [poseSubmitMode, setPoseSubmitMode] = useState<'restart-localization' | null>(null)
   const [mappingActive, setMappingActive] = useState(false)
   const [mappingSending, setMappingSending] = useState(false)
   const [mappingDialogOpen, setMappingDialogOpen] = useState(false)
@@ -206,23 +208,52 @@ export function PcdMapDemoPage() {
       return
     }
 
+    const payload: LocalizationPosePayload = {
+      map_id: selectedSceneId,
+      x: pos.x,
+      y: pos.y,
+      z: waypointZ,
+      yaw: pos.yaw,
+      frame_id: 'map',
+    }
+
     try {
-      await setLocalizationPose({
-        map_id: selectedSceneId,
-        x: pos.x,
-        y: pos.y,
-        z: waypointZ,
-        yaw: pos.yaw,
-        frame_id: 'map',
-      })
+      if (poseSubmitMode === 'restart-localization') {
+        setRestartLocalizationSending(true)
+        const result = await restartNavigationLocalization()
+        addLog(formatRestartHealth(result), result.navigation_ready ? 'info' : 'error')
+        addLog('等待 Super-LIO 开始监听 /initialpose...')
+        await waitInitialposeReady(result.initialpose_wait_log_offset ?? 0, 45)
+        addLog('Super-LIO 已开始等待 /initialpose，准备发送初始位姿')
+      }
+
+      await setLocalizationPose(payload)
       setToolMode('none')
+      setPoseSubmitMode(null)
       addLog(
-        `已发送重定位: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${waypointZ.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
+        `${poseSubmitMode === 'restart-localization' ? '已重启导航定位并发送初始位姿' : '已发送重定位'}: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${waypointZ.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
       )
     } catch (error) {
-      addLog(error instanceof Error ? error.message : '设置重定位位姿失败', 'error')
+      addLog(
+        error instanceof Error
+          ? error.message
+          : poseSubmitMode === 'restart-localization'
+            ? '重启导航定位并发送初始位姿失败'
+            : '设置重定位位姿失败',
+        'error',
+      )
+    } finally {
+      setRestartLocalizationSending(false)
     }
-  }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable])
+  }, [
+    addLog,
+    canOperate,
+    formatRestartHealth,
+    poseSubmitMode,
+    selectedSceneId,
+    selectedSceneNavigable,
+    waypointZ,
+  ])
 
   const handleDeleteWaypoint = useCallback(async (waypointId: string) => {
     if (!selectedSceneId) return
@@ -293,16 +324,16 @@ export function PcdMapDemoPage() {
     if (!canOperate) return
     if (restartLocalizationSending) return
 
-    setRestartLocalizationSending(true)
-    try {
-      const result = await restartNavigationLocalization()
-      addLog(formatRestartHealth(result), result.navigation_ready ? 'info' : 'error')
-    } catch (error) {
-      addLog(error instanceof Error ? error.message : '重启导航定位失败', 'error')
-    } finally {
-      setRestartLocalizationSending(false)
+    if (!selectedSceneId || !selectedSceneNavigable) {
+      addLog('当前场景缺少 ground.pcd，不能用于导航定位', 'error')
+      return
     }
-  }, [addLog, canOperate, formatRestartHealth, restartLocalizationSending])
+
+    setAddMode(false)
+    setToolMode('pose')
+    setPoseSubmitMode('restart-localization')
+    addLog('请在 2D 地图上按下机器人当前位置，拖动确定方向，松开后将重启导航定位并发送 initialpose')
+  }, [addLog, canOperate, restartLocalizationSending, selectedSceneId, selectedSceneNavigable])
 
   const requestDeleteScene = useCallback((scene: PcdSceneItem) => {
     setSceneDeleteConfirm(scene)
@@ -476,6 +507,9 @@ export function PcdMapDemoPage() {
       if (resolved !== 'none') {
         setAddMode(false)
       }
+      if (resolved !== 'pose') {
+        setPoseSubmitMode(null)
+      }
       addLog(
         resolved === 'none'
           ? '已退出工具模式'
@@ -492,6 +526,7 @@ export function PcdMapDemoPage() {
       const nextValue = !value
       if (nextValue) {
         setToolMode('none')
+        setPoseSubmitMode(null)
       }
       addLog(nextValue ? '已切换到添加导航点模式' : '已退出标点')
       return nextValue
@@ -731,11 +766,16 @@ export function PcdMapDemoPage() {
             </span>
           ) : null}
           <button
-            className="pcd-secondary-button"
-            disabled={!canOperate || restartLocalizationSending}
+            className={`pcd-secondary-button ${poseSubmitMode === 'restart-localization' ? 'is-active' : ''}`}
+            disabled={!canOperate || restartLocalizationSending || !selectedSceneNavigable}
             onClick={() => void handleRestartNavigationLocalization()}
+            title={!selectedSceneNavigable ? '当前场景缺少 ground.pcd' : undefined}
           >
-            {restartLocalizationSending ? '重启中...' : '重启导航定位'}
+            {restartLocalizationSending
+              ? '重启中...'
+              : poseSubmitMode === 'restart-localization'
+                ? '请标记位姿'
+                : '重启导航定位'}
           </button>
           <label className="pcd-z-control">
             <span>Z</span>
@@ -761,18 +801,7 @@ export function PcdMapDemoPage() {
       <div className="pcd-workspace">
         <section className="pcd-main-stage">
           <div className="pcd-main-viewer">
-            {mappingActive ? (
-              <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-amber-500/20 bg-[radial-gradient(circle_at_top,rgba(34,24,16,0.92),rgba(10,7,4,0.98))] px-6 text-center">
-                <div className="max-w-2xl space-y-4">
-                  <div className="text-2xl font-black text-white">建图进行中，已暂停 3D 点云渲染。</div>
-                  <div className="text-sm leading-7 text-zinc-300">
-                    <div>这样做是为了降低 Jetson 本机浏览器和 WebGL 的负载，优先保证建图稳定。</div>
-                    <div>右侧 2D 俯视图、日志和建图控制仍可继续使用。</div>
-                    <div>建图结束后会自动恢复 3D 点云查看。</div>
-                  </div>
-                </div>
-              </div>
-            ) : webglSupported ? (
+            {webglSupported ? (
               <PointCloud3DViewer
                 layers={allLayers}
                 waypoints={waypoints}
@@ -1032,6 +1061,12 @@ export function PcdMapDemoPage() {
         </section>
 
         <aside className="pcd-right-rail">
+          {poseSubmitMode === 'restart-localization' ? (
+            <section className="pcd-pose-pending-banner">
+              <strong>等待标记初始位姿</strong>
+              <span>在下方 2D 地图按住机器人当前位置，拖动确定方向，松开后自动重启导航定位并发布 initialpose。</span>
+            </section>
+          ) : null}
           <PointCloudTopDownCanvas
             layers={previewLayers}
             bounds={preview?.bounds || metadata?.bounds || null}

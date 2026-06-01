@@ -157,6 +157,7 @@ ROS_NEEDLES=(
   "ros2 launch super_lio relocation.py"
   "ros2 launch global_planner path_planning_with_polygon.launch"
   "ros2 launch p2p_move_base go2_localization_launch.py"
+  "local_map_builder"
   "/home/jetson/Project/BOTDOG/test_cmd_vel_fixed.sh"
   "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel_udp_bridge.py"
   "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel_ros2_udp_sender.py"
@@ -164,7 +165,9 @@ ROS_NEEDLES=(
   "/home/jetson/superlio/install/super_lio/lib/super_lio/relocation_node"
   "/home/jetson/dddmr_navigation_new_local/install/global_planner/lib/global_planner/global_planner_node"
   "/home/jetson/dddmr_navigation_new_local/install/mcl_3dl/lib/mcl_3dl/pcl_publisher"
+  "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/p2p_move_base_node"
   "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/clicked2goal.py"
+  "/home/jetson/dddmr_navigation_new_local/install/dddmr_local_map/lib/dddmr_local_map/local_map_builder"
 )
 
 for needle in "${ROS_NEEDLES[@]}"; do
@@ -198,6 +201,10 @@ reset_ros_env() {
   unset PYTHONPATH
   unset VIRTUAL_ENV
   unset PYTHONHOME
+  unset QT_PLUGIN_PATH
+  unset QT_QPA_PLATFORM_PLUGIN_PATH
+  unset QT_QPA_PLATFORM
+  unset OPENCV_LOG_LEVEL
 
   _clean_path=""
   _ifs_saved="$IFS"
@@ -215,6 +222,40 @@ reset_ros_env() {
 }
 
 reset_ros_env
+
+_remove_path_segment() {
+  local var_name="$1"
+  local needle="$2"
+  local current_value="${!var_name:-}"
+  local rebuilt=""
+  local entry=""
+  local saved_ifs="$IFS"
+
+  IFS=":"
+  for entry in $current_value; do
+    if [ -z "$entry" ] || [ "$entry" = "$needle" ]; then
+      continue
+    fi
+    rebuilt="${rebuilt:+$rebuilt:}$entry"
+  done
+  IFS="$saved_ifs"
+
+  printf -v "$var_name" '%s' "$rebuilt"
+  export "$var_name"
+}
+
+_prepend_path_segment() {
+  local var_name="$1"
+  local entry="$2"
+
+  _remove_path_segment "$var_name" "$entry"
+  if [ -n "${!var_name:-}" ]; then
+    printf -v "$var_name" '%s' "$entry:${!var_name}"
+  else
+    printf -v "$var_name" '%s' "$entry"
+  fi
+  export "$var_name"
+}
 
 source_ros_setup() {
   local setup_file="$1"
@@ -240,6 +281,21 @@ source_ros_setup() {
     unset AMENT_TRACE_SETUP_FILES 2>/dev/null || true
   fi
 }
+
+ROS2_SETUP_FILE="${ROS2_SETUP_FILE:-/opt/ros/humble/setup.bash}"
+source_ros_setup "$ROS2_SETUP_FILE"
+
+# 与手工 ROS CLI 环境对齐，避免后端 systemd/.venv 注入的库路径污染 ros2/rviz。
+unset CYCLONEDDS_HOME
+unset CYCLONEDDS_URI
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+_remove_path_segment LD_LIBRARY_PATH "/home/jetson/cyclonedds-0.10x/install/lib"
+_remove_path_segment LD_LIBRARY_PATH "/home/jetson/Project/BOTDOG/BotDog/.venv/lib/python3.10/site-packages/cv2/../../lib64"
+_remove_path_segment PYTHONPATH "/home/jetson/Project/BOTDOG/BotDog"
+_prepend_path_segment PATH "/usr/local/cuda-12.6/bin"
+_prepend_path_segment LD_LIBRARY_PATH "/usr/local/lib"
+_prepend_path_segment LD_LIBRARY_PATH "/usr/local/cuda-12.6/lib64"
+_prepend_path_segment PYTHONPATH "/usr/local/lib/python3.10/site-packages/"
 
 start_launch() {
   local workspace_dir="$1"
@@ -323,7 +379,7 @@ start_launch "$HOME/superlio" livox_ros_driver2 msg_MID360_launch.py "启动 Liv
 echo "Livox PID: $LIVOX_PID"
 sleep 5
 
-start_launch "$HOME/superlio" super_lio relocation.py "启动 Super-LIO 重定位..." RELOCATION_PID relocation.pid "map_file:=$MAP_PCD"
+start_launch "$HOME/superlio" super_lio relocation.py "启动 Super-LIO 重定位..." RELOCATION_PID relocation.pid "map_file:=$MAP_PCD" "rviz:=false"
 echo "Relocation PID: $RELOCATION_PID"
 sleep 5
 
@@ -331,7 +387,7 @@ start_launch "$HOME/dddmr_navigation_new_local" global_planner path_planning_wit
 echo "Global Planner PID: $GLOBAL_PLANNER_PID"
 sleep 5
 
-start_launch "$HOME/dddmr_navigation_new_local" p2p_move_base go2_localization_launch.py "启动 P2P move base 定位导航..." P2P_MOVE_BASE_PID p2p_move_base.pid
+start_launch "$HOME/dddmr_navigation_new_local" p2p_move_base go2_localization_launch.py "启动 P2P move base 定位导航..." P2P_MOVE_BASE_PID p2p_move_base.pid "use_sim:=false"
 echo "P2P Move Base PID: $P2P_MOVE_BASE_PID"
 sleep 5
 

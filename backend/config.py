@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     ROS_NAV_POSE_TYPE: str = "TF"
     ROS_NAV_FRAME_ID: str = "map"
     ROS_NAV_BASE_FRAME_ID: str = "base_link"
-    ROS_NAV_BROADCAST_HZ: float = 10.0
+    ROS_NAV_BROADCAST_HZ: float = 5.0
     ROS_NAV_PAGE_OPEN_TOPIC: str = "/lidar_start"
     ROS_NAV_START_TOPIC: str = "/nav_start"
     ROS_NAV_GOAL_TOPIC: str = "/goal_pose"
@@ -106,8 +106,7 @@ class Settings(BaseSettings):
     ROS_NAV_GOAL_YAW_TOPIC: str = "goal_yaw"
     ROS_NAV_GLOBAL_PATH_TOPIC: str = "/global_path"
     ROS_NAV_STOP_TOPIC: str = "/nav_stop"
-    ROS_NAV_SET_POSE_TOPIC: str = "/initialpose_start"
-    ROS_NAV_INITIAL_POSE_TOPIC: str = "/initial_pose"
+    ROS_NAV_INITIAL_POSE_TOPIC: str = "/initialpose"
     ROS_NAV_MAPPING_CLOUD_FORWARD_ENABLED: bool = False
     ROS_NAV_MAPPING_CLOUD_TOPIC: str = "/lio/cloud_world"
     ROS_NAV_MAPPING_TOPIC: str = "/mapping_start"

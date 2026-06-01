@@ -376,6 +376,10 @@ class LocalizationRestartResponse(BaseModel):
     warnings: list[str] | None = Field(default=None, description="健康检查警告")
     errors: list[str] | None = Field(default=None, description="健康检查错误")
     message: str = Field(..., description="响应消息")
+    initialpose_wait_log_offset: int | None = Field(
+        default=None,
+        description="本次重启前的日志偏移量，用于只等待本轮 Super-LIO initialpose 日志",
+    )
 
 
 class MappingControlRequest(BaseModel):

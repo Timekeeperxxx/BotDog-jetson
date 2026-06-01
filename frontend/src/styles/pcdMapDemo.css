@@ -139,6 +139,12 @@
   background: rgba(10, 26, 30, 0.95);
 }
 
+.pcd-secondary-button.is-active {
+  border-color: rgba(45, 212, 191, 0.72);
+  background: rgba(13, 148, 136, 0.24);
+  color: #ccfbf1;
+}
+
 .pcd-z-control {
   display: inline-flex;
   align-items: center;
@@ -1238,6 +1244,26 @@
   border-color: rgba(45, 212, 191, 0.7);
   background: rgba(13, 148, 136, 0.22);
   color: #ccfbf1;
+}
+
+.pcd-pose-pending-banner {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(45, 212, 191, 0.42);
+  border-radius: 7px;
+  background: rgba(13, 148, 136, 0.16);
+  color: #ccfbf1;
+}
+
+.pcd-pose-pending-banner strong {
+  font-size: 13px;
+}
+
+.pcd-pose-pending-banner span {
+  color: #a7f3d0;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .pcd-keyboard-hint {

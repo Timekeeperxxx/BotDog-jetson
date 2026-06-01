@@ -9,6 +9,7 @@ import type {
   RobotPose,
 } from '../types/navState'
 
+const ROBOT_POSE_UI_INTERVAL_MS = 200
 
 type NavWebSocketState = {
   connected: boolean
@@ -33,9 +34,43 @@ export function useNavWebSocket() {
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
+  const robotPoseFlushTimeoutRef = useRef<number | null>(null)
+  const pendingRobotPoseRef = useRef<RobotPose | null>(null)
+  const lastRobotPoseUpdateAtRef = useRef(0)
   const reconnectAttemptsRef = useRef(0)
   const connectionIdRef = useRef(0)
   const connectRef = useRef<() => void>(() => {})
+
+  const flushPendingRobotPose = useCallback(() => {
+    if (robotPoseFlushTimeoutRef.current) {
+      clearTimeout(robotPoseFlushTimeoutRef.current)
+      robotPoseFlushTimeoutRef.current = null
+    }
+
+    const pose = pendingRobotPoseRef.current
+    if (!pose) return
+
+    pendingRobotPoseRef.current = null
+    lastRobotPoseUpdateAtRef.current = Date.now()
+    setState((prev) => ({ ...prev, robotPose: pose, lastMessageAt: Date.now() }))
+  }, [])
+
+  const queueRobotPose = useCallback((pose: RobotPose) => {
+    pendingRobotPoseRef.current = pose
+
+    const elapsed = Date.now() - lastRobotPoseUpdateAtRef.current
+    if (elapsed >= ROBOT_POSE_UI_INTERVAL_MS) {
+      flushPendingRobotPose()
+      return
+    }
+
+    if (robotPoseFlushTimeoutRef.current) return
+
+    robotPoseFlushTimeoutRef.current = window.setTimeout(
+      flushPendingRobotPose,
+      ROBOT_POSE_UI_INTERVAL_MS - elapsed,
+    )
+  }, [flushPendingRobotPose])
 
   const connect = useCallback(() => {
     const rs = wsRef.current?.readyState
@@ -73,10 +108,13 @@ export function useNavWebSocket() {
         }
 
         const navEvent = message as NavWebSocketEvent
+        if (navEvent.type === 'nav.robot_pose') {
+          queueRobotPose(navEvent.data as RobotPose)
+          return
+        }
+
         setState((prev) => {
           switch (navEvent.type) {
-            case 'nav.robot_pose':
-              return { ...prev, robotPose: navEvent.data, lastMessageAt: Date.now() }
             case 'nav.global_path':
               return { ...prev, globalPath: navEvent.data, lastMessageAt: Date.now() }
             case 'nav.localization_status':
@@ -116,7 +154,7 @@ export function useNavWebSocket() {
       if (currentConnectionId !== connectionIdRef.current) return
       setState((prev) => ({ ...prev, connected: false }))
     }
-  }, [])
+  }, [queueRobotPose])
 
   const disconnect = useCallback(() => {
     connectionIdRef.current += 1
@@ -124,6 +162,11 @@ export function useNavWebSocket() {
       clearTimeout(reconnectTimeoutRef.current)
       reconnectTimeoutRef.current = null
     }
+    if (robotPoseFlushTimeoutRef.current) {
+      clearTimeout(robotPoseFlushTimeoutRef.current)
+      robotPoseFlushTimeoutRef.current = null
+    }
+    pendingRobotPoseRef.current = null
     if (wsRef.current) {
       wsRef.current.close(1000)
       wsRef.current = null

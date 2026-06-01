@@ -8,6 +8,7 @@ from pathlib import Path
 
 from backend import services_nav_localization
 from backend.repositories.json_store import atomic_write_json
+from backend.schemas import LocalizationRestartResponse
 
 
 def _make_pid_paths(root: Path) -> dict[str, Path]:
@@ -49,6 +50,23 @@ def test_wait_for_pid_files_returns_none_for_missing_files(tmp_path):
     assert result["global_planner_pid"] is None
     assert result["p2p_move_base_pid"] is None
     assert result["cmd_vel_pid"] is None
+
+
+def test_localization_restart_response_preserves_initialpose_log_offset():
+    response = LocalizationRestartResponse(
+        success=True,
+        running=True,
+        pid=999,
+        livox_pid=101,
+        relocation_pid=102,
+        global_planner_pid=103,
+        p2p_move_base_pid=104,
+        cmd_vel_pid=105,
+        message="已启动重启脚本，导航可用",
+        initialpose_wait_log_offset=12345,
+    )
+
+    assert response.model_dump()["initialpose_wait_log_offset"] == 12345
 
 
 def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeypatch, tmp_path):
@@ -361,10 +379,13 @@ def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
 
     superlio_setup = fake_home / "superlio" / "install" / "setup.bash"
     navigation_setup = fake_home / "dddmr_navigation_new_local" / "install" / "setup.bash"
+    ros2_setup = tmp_path / "opt" / "ros" / "humble" / "setup.bash"
     superlio_setup.parent.mkdir(parents=True, exist_ok=True)
     navigation_setup.parent.mkdir(parents=True, exist_ok=True)
+    ros2_setup.parent.mkdir(parents=True, exist_ok=True)
     superlio_setup.write_text("", encoding="utf-8")
     navigation_setup.write_text("", encoding="utf-8")
+    ros2_setup.write_text("", encoding="utf-8")
 
     fake_ros2 = fake_bin / "ros2"
     fake_ros2.write_text(
@@ -389,6 +410,7 @@ def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
     env = os.environ.copy()
     env["HOME"] = str(fake_home)
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["ROS2_SETUP_FILE"] = str(ros2_setup)
 
     proc = subprocess.Popen(
         ["bash", str(script_path), str(scene_dir)],
@@ -456,3 +478,31 @@ def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
                 path.unlink()
             except FileNotFoundError:
                 pass
+
+
+def test_restart_navigation_script_resets_backend_python_and_qt_env():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "restart_navigation_localization.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    assert 'ROS2_SETUP_FILE="${ROS2_SETUP_FILE:-/opt/ros/humble/setup.bash}"' in content
+    assert 'source_ros_setup "$ROS2_SETUP_FILE"' in content
+    assert "unset QT_PLUGIN_PATH" in content
+    assert "unset QT_QPA_PLATFORM_PLUGIN_PATH" in content
+    assert "unset QT_QPA_PLATFORM" in content
+    assert "unset CYCLONEDDS_HOME" in content
+    assert "unset CYCLONEDDS_URI" in content
+    assert '_remove_path_segment LD_LIBRARY_PATH "/home/jetson/cyclonedds-0.10x/install/lib"' in content
+    assert '_remove_path_segment LD_LIBRARY_PATH "/home/jetson/Project/BOTDOG/BotDog/.venv/lib/python3.10/site-packages/cv2/../../lib64"' in content
+    assert '_remove_path_segment PYTHONPATH "/home/jetson/Project/BOTDOG/BotDog"' in content
+    assert '_prepend_path_segment PYTHONPATH "/usr/local/lib/python3.10/site-packages/"' in content
+
+
+def test_restart_navigation_script_uses_real_time_and_cleans_local_navigation_nodes():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "restart_navigation_localization.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    assert '"local_map_builder"' in content
+    assert '"/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/p2p_move_base_node"' in content
+    assert '"/home/jetson/dddmr_navigation_new_local/install/dddmr_local_map/lib/dddmr_local_map/local_map_builder"' in content
+    assert 'super_lio relocation.py "启动 Super-LIO 重定位..." RELOCATION_PID relocation.pid "map_file:=$MAP_PCD" "rviz:=false"' in content
+    assert 'p2p_move_base go2_localization_launch.py "启动 P2P move base 定位导航..." P2P_MOVE_BASE_PID p2p_move_base.pid "use_sim:=false"' in content

@@ -23,6 +23,9 @@ from .ws_event_broadcaster import EventBroadcaster
 
 nav_logger = get_logger("ROS导航")
 tf_logger = get_logger("ROS TF")
+GLOBAL_PATH_BROADCAST_MIN_INTERVAL_S = 1.0
+INITIAL_POSE_PUBLISH_COUNT = 5
+INITIAL_POSE_PUBLISH_INTERVAL_S = 0.2
 
 
 def quaternion_to_yaw(x: float, y: float, z: float, w: float) -> float:
@@ -73,12 +76,13 @@ class RosNavBridge:
         self._global_path_subscription: Any | None = None
         self._nav_status_subscription: Any | None = None
         self._estop_publisher: Any | None = None
-        self._set_pose_publisher: Any | None = None
         self._initial_pose_publisher: Any | None = None
         self._cloud_subscription: Any | None = None
         self._publisher_lock = threading.RLock()
         self._last_broadcast_at = 0.0
         self._last_localization_broadcast_at = 0.0
+        self._last_global_path_broadcast_at = 0.0
+        self._last_global_path_signature: tuple[Any, ...] | None = None
         self._last_cloud_broadcast_at = 0.0
         self._accumulated_cloud: np.ndarray = np.empty((0, 3), dtype=np.float32)
         self._last_full_map_broadcast_at = 0.0
@@ -143,7 +147,6 @@ class RosNavBridge:
             self._global_path_subscription = None
             self._nav_status_subscription = None
             self._estop_publisher = None
-            self._set_pose_publisher = None
             self._initial_pose_publisher = None
             self._cloud_subscription = None
 
@@ -333,11 +336,6 @@ class RosNavBridge:
             settings.ROS_NAV_STOP_TOPIC,
             10,
         )
-        self._set_pose_publisher = self._node.create_publisher(
-            Bool,
-            settings.ROS_NAV_SET_POSE_TOPIC,
-            10,
-        )
         try:
             from geometry_msgs.msg import PoseWithCovarianceStamped as _PwCS
         except Exception as exc:
@@ -348,12 +346,11 @@ class RosNavBridge:
             1,
         )
         nav_logger.info(
-            "ROS2 导航发布器已启动：nav_start_topic={}，clicked_point_topic={}，goal_yaw_topic={}，stop_topic={}，set_pose_topic={}，initial_pose_topic={}，status_topic={}，global_path_topic={}",
+            "ROS2 导航发布器已启动：nav_start_topic={}，clicked_point_topic={}，goal_yaw_topic={}，stop_topic={}，initial_pose_topic={}，status_topic={}，global_path_topic={}",
             settings.ROS_NAV_START_TOPIC,
             settings.ROS_NAV_GOAL_XYZ_TOPIC,
             settings.ROS_NAV_GOAL_YAW_TOPIC,
             settings.ROS_NAV_STOP_TOPIC,
-            settings.ROS_NAV_SET_POSE_TOPIC,
             settings.ROS_NAV_INITIAL_POSE_TOPIC,
             settings.ROS_NAV_STATUS_TOPIC,
             settings.ROS_NAV_GLOBAL_PATH_TOPIC,
@@ -431,23 +428,6 @@ class RosNavBridge:
             "topic": settings.ROS_NAV_STOP_TOPIC,
         }
 
-    def publish_set_pose(self) -> dict[str, Any]:
-        if self._node is None or self._set_pose_publisher is None:
-            raise RuntimeError("ROS2 重定位发布器未就绪")
-
-        from std_msgs.msg import Bool
-
-        msg = Bool()
-        msg.data = True
-        with self._publisher_lock:
-            self._set_pose_publisher.publish(msg)
-
-        return {
-            "success": True,
-            "topic": settings.ROS_NAV_SET_POSE_TOPIC,
-            "data": True,
-        }
-
     def publish_initial_pose(
         self,
         x: float,
@@ -463,14 +443,6 @@ class RosNavBridge:
 
         from geometry_msgs.msg import PoseWithCovarianceStamped
 
-        msg = PoseWithCovarianceStamped()
-        msg.header.stamp = self._node.get_clock().now().to_msg()
-        msg.header.frame_id = frame_id or settings.ROS_NAV_FRAME_ID
-
-        msg.pose.pose.position.x = float(x)
-        msg.pose.pose.position.y = float(y)
-        msg.pose.pose.position.z = float(z)
-
         # Euler ZYX -> quaternion
         cr = math.cos(float(roll) / 2.0)
         sr = math.sin(float(roll) / 2.0)
@@ -478,28 +450,44 @@ class RosNavBridge:
         sp = math.sin(float(pitch) / 2.0)
         cy = math.cos(float(yaw) / 2.0)
         sy = math.sin(float(yaw) / 2.0)
-        msg.pose.pose.orientation.w = cr * cp * cy + sr * sp * sy
-        msg.pose.pose.orientation.x = sr * cp * cy - cr * sp * sy
-        msg.pose.pose.orientation.y = cr * sp * cy + sr * cp * sy
-        msg.pose.pose.orientation.z = cr * cp * sy - sr * sp * cy
+        frame = frame_id or settings.ROS_NAV_FRAME_ID
+        publish_count = 0
 
-        with self._publisher_lock:
-            self._initial_pose_publisher.publish(msg)
+        for index in range(INITIAL_POSE_PUBLISH_COUNT):
+            msg = PoseWithCovarianceStamped()
+            msg.header.stamp = self._node.get_clock().now().to_msg()
+            msg.header.frame_id = frame
+
+            msg.pose.pose.position.x = float(x)
+            msg.pose.pose.position.y = float(y)
+            msg.pose.pose.position.z = float(z)
+            msg.pose.pose.orientation.w = cr * cp * cy + sr * sp * sy
+            msg.pose.pose.orientation.x = sr * cp * cy - cr * sp * sy
+            msg.pose.pose.orientation.y = cr * sp * cy + sr * cp * sy
+            msg.pose.pose.orientation.z = cr * cp * sy - sr * sp * cy
+
+            with self._publisher_lock:
+                self._initial_pose_publisher.publish(msg)
+            publish_count += 1
+
+            if index < INITIAL_POSE_PUBLISH_COUNT - 1:
+                time.sleep(INITIAL_POSE_PUBLISH_INTERVAL_S)
 
         nav_logger.info(
-            "已发布 initial_pose：x={:.3f} y={:.3f} z={:.3f} roll={:.3f} pitch={:.3f} yaw={:.3f} frame={}",
-            x, y, z, roll, pitch, yaw, msg.header.frame_id,
+            "已发布 initial_pose：topic={} count={} interval={:.3f}s x={:.3f} y={:.3f} z={:.3f} roll={:.3f} pitch={:.3f} yaw={:.3f} frame={}",
+            settings.ROS_NAV_INITIAL_POSE_TOPIC, publish_count, INITIAL_POSE_PUBLISH_INTERVAL_S, x, y, z, roll, pitch, yaw, frame,
         )
         return {
             "success": True,
             "topic": settings.ROS_NAV_INITIAL_POSE_TOPIC,
+            "publish_count": publish_count,
             "x": float(x),
             "y": float(y),
             "z": float(z),
             "roll": float(roll),
             "pitch": float(pitch),
             "yaw": float(yaw),
-            "frame_id": msg.header.frame_id,
+            "frame_id": frame,
         }
 
     def _setup_cloud_subscription(self) -> None:
@@ -677,7 +665,40 @@ class RosNavBridge:
             return
 
         update_global_path(path)
-        self._submit_broadcast("nav.global_path", path)
+        if self._should_broadcast_global_path(path):
+            self._submit_broadcast("nav.global_path", path)
+
+    def _global_path_signature(self, path: dict[str, Any]) -> tuple[Any, ...]:
+        points = path.get("points") or []
+        return (
+            path.get("frame_id"),
+            len(points),
+            tuple(
+                (
+                    round(float(point.get("x", 0.0)), 3),
+                    round(float(point.get("y", 0.0)), 3),
+                    round(float(point.get("z", 0.0)), 3),
+                )
+                for point in points
+                if isinstance(point, dict)
+            ),
+        )
+
+    def _should_broadcast_global_path(self, path: dict[str, Any]) -> bool:
+        now = time.monotonic()
+        signature = self._global_path_signature(path)
+        last_signature = getattr(self, "_last_global_path_signature", None)
+        last_broadcast_at = float(getattr(self, "_last_global_path_broadcast_at", 0.0))
+
+        if signature == last_signature:
+            return False
+
+        if now - last_broadcast_at < GLOBAL_PATH_BROADCAST_MIN_INTERVAL_S:
+            return False
+
+        self._last_global_path_signature = signature
+        self._last_global_path_broadcast_at = now
+        return True
 
     def _handle_nav_status_message(self, msg: Any) -> None:
         raw_data = str(getattr(msg, "data", "") or "").strip()

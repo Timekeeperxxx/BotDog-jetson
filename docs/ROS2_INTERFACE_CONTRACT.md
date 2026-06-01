@@ -88,9 +88,9 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 当前真实链路是：
 
 - 后端保存 localization pose
-- 后端发布 `/initialpose_start`，或配置项 `ROS_NAV_SET_POSE_TOPIC` 指定的 topic
-- 消息类型：`std_msgs/msg/Bool`
-- 数据：`true`
+- 后端发布 `ROS_NAV_INITIAL_POSE_TOPIC` 指定的初始位姿 topic
+- 消息类型：`geometry_msgs/msg/PoseWithCovarianceStamped`
+- 当前不再发布 `/initialpose_start`
 
 ### 2.6 建图
 
@@ -264,7 +264,7 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 
 前端设置重定位
   -> 后端保存 localization pose
-  -> 后端发布 /initialpose_start Bool(true)
+  -> 后端发布 initial pose PoseWithCovarianceStamped
 
 前端开启/关闭建图
   -> 后端启动/停止建图脚本
@@ -309,7 +309,7 @@ ROS2 发布 /nav_status String(JSON)
 ros2 topic list
 ros2 topic echo /nav_start
 ros2 topic echo /nav_stop
-ros2 topic echo /initialpose_start
+ros2 topic echo /initialpose
 ros2 topic echo /nav_status
 ros2 topic echo /nav_goal_json
 ros2 topic echo /initialpose_json

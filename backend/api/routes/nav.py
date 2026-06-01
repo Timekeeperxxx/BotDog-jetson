@@ -328,7 +328,6 @@ async def nav_set_localization_pose(
             yaw=pose["yaw"],
             frame_id=pose["frame_id"],
         )
-        result = bridge.publish_set_pose()
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {body.map_id}")
     except (PcdMapError, ValueError) as exc:
@@ -342,7 +341,7 @@ async def nav_set_localization_pose(
             "frame_id": pose["frame_id"],
             "source": initial_pose_result["topic"],
             "message": (
-                f"已发布 initial_pose 并触发重定位: "
+                f"已发布 initial_pose: "
                 f"x={pose['x']:.3f}, y={pose['y']:.3f}, z={pose['z']:.3f}, "
                 f"roll={pose['roll']:.3f}, pitch={pose['pitch']:.3f}, yaw={pose['yaw']:.3f}"
             ),
@@ -385,6 +384,21 @@ async def nav_restart_localization(
             f"结果=success pid={result['pid']}"
         ),
     )
+    return result
+
+
+@router.get("/localization/initialpose-ready")
+async def nav_wait_initialpose_ready(
+    offset: int = 0,
+    timeout_s: float = 45.0,
+    user: AuthUserInternal = Depends(require_operator),
+):
+    from ...services_nav_localization import wait_for_initialpose_log
+
+    timeout = min(max(timeout_s, 1.0), 90.0)
+    result = await asyncio.to_thread(wait_for_initialpose_log, offset, timeout)
+    if not result["ready"]:
+        raise HTTPException(status_code=504, detail=result["message"])
     return result
 
 

@@ -265,12 +265,29 @@ export type LocalizationRestartResponse = {
   warnings?: string[] | null
   errors?: string[] | null
   message: string
+  initialpose_wait_log_offset?: number | null
 }
 
 export function restartNavigationLocalization(): Promise<LocalizationRestartResponse> {
   return requestJson(
     getApiUrl('/api/v1/nav/localization/restart'),
     { method: 'POST' },
+  )
+}
+
+export function waitInitialposeReady(
+  offset = 0,
+  timeoutSeconds = 45,
+): Promise<{
+  ready: boolean
+  marker: string
+  offset: number
+  message: string
+}> {
+  return requestJson(
+    getApiUrl(
+      `/api/v1/nav/localization/initialpose-ready?offset=${encodeURIComponent(String(offset))}&timeout_s=${encodeURIComponent(String(timeoutSeconds))}`,
+    ),
   )
 }
 

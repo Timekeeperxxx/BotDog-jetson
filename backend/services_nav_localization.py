@@ -18,6 +18,7 @@ from .services_pcd_maps import find_scene_pcd_files, resolve_scene_ground_path, 
 nav_logger = get_logger("导航定位服务")
 _restart_proc: subprocess.Popen[str] | None = None
 _restart_lock = threading.Lock()
+INITIALPOSE_WAIT_LOG_MARKER = "Waiting for initial pose from topic"
 
 
 def _utc_now_iso() -> str:
@@ -48,6 +49,49 @@ def _restart_log_path() -> Path:
     logs_dir = _project_root() / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     return logs_dir / "restart_navigation_localization.log"
+
+
+def get_restart_log_offset() -> int:
+    path = _restart_log_path()
+    try:
+        return path.stat().st_size
+    except FileNotFoundError:
+        return 0
+
+
+def wait_for_initialpose_log(offset: int = 0, timeout_s: float = 45.0) -> dict[str, Any]:
+    path = _restart_log_path()
+    deadline = time.time() + max(0.1, timeout_s)
+    safe_offset = max(0, int(offset))
+
+    while time.time() < deadline:
+        try:
+            current_size = path.stat().st_size
+            read_offset = safe_offset if current_size >= safe_offset else 0
+            with path.open("r", encoding="utf-8", errors="ignore") as log_file:
+                log_file.seek(read_offset)
+                content = log_file.read()
+                next_offset = log_file.tell()
+        except FileNotFoundError:
+            content = ""
+            next_offset = 0
+
+        if INITIALPOSE_WAIT_LOG_MARKER in content:
+            return {
+                "ready": True,
+                "marker": INITIALPOSE_WAIT_LOG_MARKER,
+                "offset": next_offset,
+                "message": "Super-LIO 已开始等待 initialpose",
+            }
+
+        time.sleep(0.25)
+
+    return {
+        "ready": False,
+        "marker": INITIALPOSE_WAIT_LOG_MARKER,
+        "offset": get_restart_log_offset(),
+        "message": "等待 Super-LIO initialpose 日志超时",
+    }
 
 
 def _current_scene_path() -> Path:
@@ -603,6 +647,7 @@ def restart_navigation_localization() -> dict[str, Any]:
 
     with _restart_lock:
         scene = load_current_scene(strict=False)
+        log_offset = get_restart_log_offset()
         nav_logger.info("收到导航定位重启请求，准备清理旧进程并启动脚本")
         nav_logger.info("准备重启导航定位")
         _stop_restart_proc(_restart_proc)
@@ -678,4 +723,5 @@ def restart_navigation_localization() -> dict[str, Any]:
             "warnings": warnings,
             "errors": errors,
             "message": message,
+            "initialpose_wait_log_offset": log_offset,
         }

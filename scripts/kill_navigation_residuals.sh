@@ -49,7 +49,9 @@ ROS_NEEDLES=(
   "/home/jetson/superlio/install/super_lio/lib/super_lio/relocation_node"
   "/home/jetson/dddmr_navigation_new_local/install/global_planner/lib/global_planner/global_planner_node"
   "/home/jetson/dddmr_navigation_new_local/install/mcl_3dl/lib/mcl_3dl/pcl_publisher"
+  "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/p2p_move_base_node"
   "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/clicked2goal.py"
+  "/home/jetson/dddmr_navigation_new_local/install/dddmr_local_map/lib/dddmr_local_map/local_map_builder"
   "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py"
   "/home/jetson/Project/BOTDOG/BotDog/run_backend.py"
   "/home/jetson/Project/BOTDOG/BotDog/scripts/start_backend.sh"
@@ -57,6 +59,7 @@ ROS_NEEDLES=(
   "ros2 launch super_lio relocation.py"
   "ros2 launch global_planner path_planning_with_polygon.launch"
   "ros2 launch p2p_move_base go2_localization_launch.py"
+  "local_map_builder"
 )
 
 for needle in "${ROS_NEEDLES[@]}"; do
@@ -71,7 +74,7 @@ done
 
 sleep 1
 
-REMAINING="$(pgrep -af 'livox_ros_driver2_node|relocation_node|global_planner_node|pcl_publisher|clicked2goal.py|cmd_vel.py|msg_MID360_launch.py|go2_localization_launch.py|path_planning_with_polygon.launch|run_backend.py|start_backend.sh' || true)"
+REMAINING="$(pgrep -af 'livox_ros_driver2_node|relocation_node|global_planner_node|pcl_publisher|p2p_move_base_node|clicked2goal.py|local_map_builder|cmd_vel.py|msg_MID360_launch.py|go2_localization_launch.py|path_planning_with_polygon.launch|run_backend.py|start_backend.sh' || true)"
 
 if [ -n "$REMAINING" ]; then
   echo "仍有残留进程："
