@@ -269,10 +269,16 @@ export type LocalizationRestartResponse = {
 }
 
 export function restartNavigationLocalization(): Promise<LocalizationRestartResponse> {
-  return requestJson(
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), 30000)
+
+  return requestJson<LocalizationRestartResponse>(
     getApiUrl('/api/v1/nav/localization/restart'),
-    { method: 'POST' },
-  )
+    {
+      method: 'POST',
+      signal: controller.signal,
+    },
+  ).finally(() => window.clearTimeout(timeoutId))
 }
 
 export function waitInitialposeReady(

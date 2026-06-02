@@ -24,7 +24,6 @@ import {
   restartNavigationLocalization,
   setMappingEnabled,
   setLocalizationPose,
-  waitInitialposeReady,
   triggerNavEmergencyStop,
 } from '../api/pcdMapApi'
 import { NavWaypointPanel } from '../components/pcd/NavWaypointPanel'
@@ -37,7 +36,7 @@ import { TaskDrawerPanel } from '../components/pcd/TaskDrawerPanel'
 import { useRobotControl } from '../hooks/useRobotControl'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
-import type { LocalizationPosePayload, NavWaypoint, PcdSceneItem } from '../types/pcdMap'
+import type { LocalizationPosePayload, NavWaypoint, PcdBounds, PcdSceneItem } from '../types/pcdMap'
 import type { TaskDefinition, TaskDraft, TaskDraftStep } from '../types/taskWorkflow'
 import { validateWaypointName } from '../utils/navWaypointValidation'
 import { useNavScenes } from './nav/useNavScenes'
@@ -91,7 +90,6 @@ export function PcdMapDemoPage() {
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
   const [estopSending, setEstopSending] = useState(false)
   const [restartLocalizationSending, setRestartLocalizationSending] = useState(false)
-  const [poseSubmitMode, setPoseSubmitMode] = useState<'restart-localization' | null>(null)
   const [mappingActive, setMappingActive] = useState(false)
   const [mappingSending, setMappingSending] = useState(false)
   const [mappingDialogOpen, setMappingDialogOpen] = useState(false)
@@ -218,38 +216,22 @@ export function PcdMapDemoPage() {
     }
 
     try {
-      if (poseSubmitMode === 'restart-localization') {
-        setRestartLocalizationSending(true)
-        const result = await restartNavigationLocalization()
-        addLog(formatRestartHealth(result), result.navigation_ready ? 'info' : 'error')
-        addLog('等待 Super-LIO 开始监听 /initialpose...')
-        await waitInitialposeReady(result.initialpose_wait_log_offset ?? 0, 45)
-        addLog('Super-LIO 已开始等待 /initialpose，准备发送初始位姿')
-      }
-
       await setLocalizationPose(payload)
       setToolMode('none')
-      setPoseSubmitMode(null)
       addLog(
-        `${poseSubmitMode === 'restart-localization' ? '已重启导航定位并发送初始位姿' : '已发送重定位'}: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${waypointZ.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
+        `已发送重定位: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${waypointZ.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
       )
     } catch (error) {
       addLog(
         error instanceof Error
           ? error.message
-          : poseSubmitMode === 'restart-localization'
-            ? '重启导航定位并发送初始位姿失败'
-            : '设置重定位位姿失败',
+          : '设置重定位位姿失败',
         'error',
       )
-    } finally {
-      setRestartLocalizationSending(false)
     }
   }, [
     addLog,
     canOperate,
-    formatRestartHealth,
-    poseSubmitMode,
     selectedSceneId,
     selectedSceneNavigable,
     waypointZ,
@@ -330,10 +312,23 @@ export function PcdMapDemoPage() {
     }
 
     setAddMode(false)
-    setToolMode('pose')
-    setPoseSubmitMode('restart-localization')
-    addLog('请在 2D 地图上按下机器人当前位置，拖动确定方向，松开后将重启导航定位并发送 initialpose')
-  }, [addLog, canOperate, restartLocalizationSending, selectedSceneId, selectedSceneNavigable])
+    setToolMode('none')
+    setRestartLocalizationSending(true)
+    try {
+      const result = await restartNavigationLocalization()
+      addLog(formatRestartHealth(result), result.navigation_ready ? 'info' : 'error')
+      addLog('导航定位进程已拉起，请点击“重定位”并在 2D 地图标记机器人当前位置和朝向')
+    } catch (error) {
+      const message = error instanceof Error && error.name === 'AbortError'
+        ? '重启导航定位请求超时，后端可能仍在执行，请查看 restart_navigation_localization.log'
+        : error instanceof Error
+          ? error.message
+          : '重启导航定位失败'
+      addLog(message, 'error')
+    } finally {
+      setRestartLocalizationSending(false)
+    }
+  }, [addLog, canOperate, formatRestartHealth, restartLocalizationSending, selectedSceneId, selectedSceneNavigable])
 
   const requestDeleteScene = useCallback((scene: PcdSceneItem) => {
     setSceneDeleteConfirm(scene)
@@ -507,9 +502,6 @@ export function PcdMapDemoPage() {
       if (resolved !== 'none') {
         setAddMode(false)
       }
-      if (resolved !== 'pose') {
-        setPoseSubmitMode(null)
-      }
       addLog(
         resolved === 'none'
           ? '已退出工具模式'
@@ -526,7 +518,6 @@ export function PcdMapDemoPage() {
       const nextValue = !value
       if (nextValue) {
         setToolMode('none')
-        setPoseSubmitMode(null)
       }
       addLog(nextValue ? '已切换到添加导航点模式' : '已退出标点')
       return nextValue
@@ -548,10 +539,39 @@ export function PcdMapDemoPage() {
   const selectedTaskSceneNavigable = selectedTaskScene?.navigable ?? false
 
   const allLayers = useMemo(() => {
-    const base = previewLayers ?? []
-    if (!mappingActive || mappingCloudPoints.length === 0) return base
-    return [...base, { role: 'live' as const, points: mappingCloudPoints }]
+    if (!mappingActive) return previewLayers ?? []
+    if (mappingCloudPoints.length === 0) return []
+    return [{ role: 'live' as const, points: mappingCloudPoints }]
   }, [previewLayers, mappingActive, mappingCloudPoints])
+
+  const liveMappingBounds = useMemo<PcdBounds | null>(() => {
+    if (!mappingActive || mappingCloudPoints.length === 0) return null
+
+    let minX = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+    let minZ = Number.POSITIVE_INFINITY
+    let maxZ = Number.NEGATIVE_INFINITY
+
+    mappingCloudPoints.forEach(([x, y, z]) => {
+      minX = Math.min(minX, x)
+      maxX = Math.max(maxX, x)
+      minY = Math.min(minY, y)
+      maxY = Math.max(maxY, y)
+      minZ = Math.min(minZ, z)
+      maxZ = Math.max(maxZ, z)
+    })
+
+    return {
+      min_x: minX,
+      max_x: maxX,
+      min_y: minY,
+      max_y: maxY,
+      min_z: minZ,
+      max_z: maxZ,
+    }
+  }, [mappingActive, mappingCloudPoints])
 
   const mapOptions = useMemo(
     () => scenes.map((scene) => ({ id: scene.id, name: scene.name })),
@@ -766,16 +786,12 @@ export function PcdMapDemoPage() {
             </span>
           ) : null}
           <button
-            className={`pcd-secondary-button ${poseSubmitMode === 'restart-localization' ? 'is-active' : ''}`}
+            className="pcd-secondary-button"
             disabled={!canOperate || restartLocalizationSending || !selectedSceneNavigable}
             onClick={() => void handleRestartNavigationLocalization()}
             title={!selectedSceneNavigable ? '当前场景缺少 ground.pcd' : undefined}
           >
-            {restartLocalizationSending
-              ? '重启中...'
-              : poseSubmitMode === 'restart-localization'
-                ? '请标记位姿'
-                : '重启导航定位'}
+            {restartLocalizationSending ? '重启中...' : '重启导航定位'}
           </button>
           <label className="pcd-z-control">
             <span>Z</span>
@@ -1061,15 +1077,15 @@ export function PcdMapDemoPage() {
         </section>
 
         <aside className="pcd-right-rail">
-          {poseSubmitMode === 'restart-localization' ? (
+          {toolMode === 'pose' ? (
             <section className="pcd-pose-pending-banner">
-              <strong>等待标记初始位姿</strong>
-              <span>在下方 2D 地图按住机器人当前位置，拖动确定方向，松开后自动重启导航定位并发布 initialpose。</span>
+              <strong>重定位模式</strong>
+              <span>在下方 2D 地图按住机器人当前位置，拖动确定方向，松开后发布 initialpose。</span>
             </section>
           ) : null}
           <PointCloudTopDownCanvas
-            layers={previewLayers}
-            bounds={preview?.bounds || metadata?.bounds || null}
+            layers={allLayers}
+            bounds={mappingActive ? liveMappingBounds : (preview?.bounds || metadata?.bounds || null)}
             waypoints={waypoints}
             robotPose={robotPose}
             globalPath={globalPath}
