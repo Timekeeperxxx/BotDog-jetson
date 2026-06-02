@@ -494,7 +494,7 @@ class RosNavBridge:
         if self._node is None:
             return
         if not settings.ROS_NAV_MAPPING_CLOUD_FORWARD_ENABLED:
-            nav_logger.info("建图实时点云转发已禁用，跳过 /lio/cloud_world 订阅")
+            nav_logger.info("建图实时点云转发已禁用，跳过 {} 订阅", settings.ROS_NAV_MAPPING_CLOUD_TOPIC)
             return
         try:
             from sensor_msgs.msg import PointCloud2
@@ -504,9 +504,6 @@ class RosNavBridge:
 
         from rclpy.qos import qos_profile_sensor_data
 
-        # /lio/cloud_world 是全局累积云，体积可达数十 MB，DDS UDP 分片在
-        # BEST_EFFORT 下丢包后 CDR 重组失败 → "sequence size exceeds remaining buffer"
-        # 改订阅当前帧（每帧 5k-20k 点），由 Python 端自行累积
         cloud_topic = settings.ROS_NAV_MAPPING_CLOUD_TOPIC
         self.clear_accumulated_cloud()
         self._cloud_subscription = self._node.create_subscription(

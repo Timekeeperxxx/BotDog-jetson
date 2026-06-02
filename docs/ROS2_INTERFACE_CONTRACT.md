@@ -98,7 +98,7 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 
 - 前端调用 `/api/v1/nav/mapping/set-enabled`
 - 后端启动或停止 `scripts/start_mapping.sh`
-- 建图实时点云通过 `/lio/cloud_world` 订阅并转发给前端预览
+- 建图实时点云通过 `ROS_NAV_MAPPING_CLOUD_TOPIC` 订阅并转发给前端预览，默认 topic 为 `/cloud_world`
 
 ### 2.7 导航状态闭环
 
