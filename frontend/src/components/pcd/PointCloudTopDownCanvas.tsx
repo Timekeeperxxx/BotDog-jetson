@@ -26,7 +26,10 @@ type Props = {
 
 const PADDING = 34
 const MIN_ZOOM = 0.6
-const MAX_ZOOM = 5
+const MAX_ZOOM = 14
+const BUTTON_ZOOM_STEP = 1.28
+const WHEEL_ZOOM_IN_STEP = 1.18
+const WHEEL_ZOOM_OUT_STEP = 0.86
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
@@ -346,14 +349,14 @@ export function PointCloudTopDownCanvas({
       <div className="pcd-topdown-toolbar">
         <button
           className="pcd-icon-button"
-          onClick={() => setView((current) => ({ ...current, zoom: clamp(current.zoom * 1.18, MIN_ZOOM, MAX_ZOOM) }))}
+          onClick={() => setView((current) => ({ ...current, zoom: clamp(current.zoom * BUTTON_ZOOM_STEP, MIN_ZOOM, MAX_ZOOM) }))}
           title="放大"
         >
           <ZoomIn size={15} />
         </button>
         <button
           className="pcd-icon-button"
-          onClick={() => setView((current) => ({ ...current, zoom: clamp(current.zoom / 1.18, MIN_ZOOM, MAX_ZOOM) }))}
+          onClick={() => setView((current) => ({ ...current, zoom: clamp(current.zoom / BUTTON_ZOOM_STEP, MIN_ZOOM, MAX_ZOOM) }))}
           title="缩小"
         >
           <ZoomOut size={15} />
@@ -381,7 +384,7 @@ export function PointCloudTopDownCanvas({
             const centerX = rect.width / 2
             const centerY = rect.height / 2
             const nextZoom = clamp(
-              view.zoom * (event.deltaY < 0 ? 1.12 : 0.9),
+              view.zoom * (event.deltaY < 0 ? WHEEL_ZOOM_IN_STEP : WHEEL_ZOOM_OUT_STEP),
               MIN_ZOOM,
               MAX_ZOOM,
             )

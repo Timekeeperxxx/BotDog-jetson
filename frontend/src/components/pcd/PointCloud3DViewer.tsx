@@ -20,6 +20,17 @@ const WAYPOINT_ARROW_HEAD_WIDTH = 0.12
 const ROBOT_ARROW_LENGTH = 0.62
 const ROBOT_ARROW_HEAD_LENGTH = 0.22
 const ROBOT_ARROW_HEAD_WIDTH = 0.12
+const POINT_CLOUD_PIXEL_RATIO_LIMIT = 1.5
+
+type PointCloudMaterialPreset = {
+  color: number
+  nearSize: number
+  farSize: number
+  nearDistance: number
+  farDistance: number
+  opacity: number
+  renderOrder: number
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
@@ -112,10 +123,99 @@ function createWaypointLabelSprite(text: string) {
   return sprite
 }
 
-function getLayerColor(role: PcdSceneLayerRole) {
-  if (role === 'ground') return 0x38bdf8
-  if (role === 'live') return 0xf97316
-  return 0x166534
+function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPreset {
+  if (role === 'ground') {
+    return {
+      color: 0x0ea5e9,
+      nearSize: 2.8,
+      farSize: 9.0,
+      nearDistance: 1.5,
+      farDistance: 18,
+      opacity: 0.94,
+      renderOrder: 1,
+    }
+  }
+
+  if (role === 'live') {
+    return {
+      color: 0xf97316,
+      nearSize: 2.4,
+      farSize: 3.6,
+      nearDistance: 6,
+      farDistance: 52,
+      opacity: 0.86,
+      renderOrder: 3,
+    }
+  }
+
+  return {
+    color: 0x22c55e,
+    nearSize: 1.7,
+    farSize: 3.0,
+    nearDistance: 6,
+    farDistance: 48,
+    opacity: 0.62,
+    renderOrder: 2,
+  }
+}
+
+function createPointCloudMaterial(preset: PointCloudMaterialPreset, pixelRatio: number) {
+  const color = new THREE.Color(preset.color)
+
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: color },
+      uNearSize: { value: preset.nearSize * pixelRatio },
+      uFarSize: { value: preset.farSize * pixelRatio },
+      uNearDistance: { value: preset.nearDistance },
+      uFarDistance: { value: preset.farDistance },
+      uOpacity: { value: preset.opacity },
+    },
+    vertexShader: `
+      uniform float uNearSize;
+      uniform float uFarSize;
+      uniform float uNearDistance;
+      uniform float uFarDistance;
+      varying float vDistanceMix;
+
+      void main() {
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        float cameraDistance = length(mvPosition.xyz);
+        vDistanceMix = smoothstep(uNearDistance, uFarDistance, cameraDistance);
+        gl_PointSize = mix(uNearSize, uFarSize, vDistanceMix);
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      varying float vDistanceMix;
+
+      void main() {
+        vec2 pointCoord = gl_PointCoord - vec2(0.5);
+        float radius = length(pointCoord);
+        if (radius > 0.5) {
+          discard;
+        }
+
+        float softEdge = 1.0 - smoothstep(0.36, 0.5, radius);
+        float distanceOpacity = mix(0.82, 1.0, vDistanceMix);
+        gl_FragColor = vec4(uColor, uOpacity * distanceOpacity * softEdge);
+      }
+    `,
+    transparent: true,
+    depthTest: true,
+    depthWrite: false,
+  })
+}
+
+function softenGrid(grid: THREE.GridHelper) {
+  const materials = Array.isArray(grid.material) ? grid.material : [grid.material]
+  materials.forEach((material) => {
+    material.transparent = true
+    material.opacity = 0.16
+    material.depthWrite = false
+  })
 }
 
 type Props = {
@@ -164,7 +264,7 @@ export function PointCloud3DViewer({
     if (!host) return
 
     const scene = new THREE.Scene()
-    scene.background = new THREE.Color(0x071013)
+    scene.background = new THREE.Color(0x030506)
     sceneRef.current = scene
 
     const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 10000)
@@ -172,8 +272,8 @@ export function PointCloud3DViewer({
     camera.lookAt(0, 0, 0)
     cameraRef.current = camera
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, POINT_CLOUD_PIXEL_RATIO_LIMIT))
     host.appendChild(renderer.domElement)
     rendererRef.current = renderer
 
@@ -188,6 +288,7 @@ export function PointCloud3DViewer({
     controlsRef.current = controls
 
     const grid = new THREE.GridHelper(80, 40, 0x33515a, 0x1d333a)
+    softenGrid(grid)
     gridRef.current = grid
     scene.add(grid)
     scene.add(new THREE.AmbientLight(0xffffff, 0.85))
@@ -307,14 +408,14 @@ export function PointCloud3DViewer({
       geometry.computeBoundingBox()
       geometry.computeBoundingSphere()
 
-      const material = new THREE.PointsMaterial({
-        color: getLayerColor(layer.role),
-        size: 0.2,
-        sizeAttenuation: true,
-      })
+      const preset = getLayerPreset(layer.role)
+      const material = createPointCloudMaterial(
+        preset,
+        Math.min(window.devicePixelRatio || 1, POINT_CLOUD_PIXEL_RATIO_LIMIT),
+      )
 
       const cloud = new THREE.Points(geometry, material)
-      cloud.renderOrder = layer.role === 'ground' ? 1 : layer.role === 'live' ? 3 : 2
+      cloud.renderOrder = preset.renderOrder
       cloudGroup.add(cloud)
 
       if (!hasPoints) {
@@ -361,6 +462,7 @@ export function PointCloud3DViewer({
       grid.geometry.dispose()
       grid.geometry = new THREE.GridHelper(gridSize, divisions, 0x33515a, 0x1d333a).geometry
       grid.position.set(center.x, targetHeight, center.z)
+      softenGrid(grid)
     }
   }, [centerHeight, normalizedLayers, webglSupported])
 
