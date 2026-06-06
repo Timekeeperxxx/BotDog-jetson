@@ -64,8 +64,10 @@ class RosNavBridge:
         self,
         broadcaster: EventBroadcaster,
         loop: asyncio.AbstractEventLoop,
+        mapping_cloud_broadcaster: EventBroadcaster | None = None,
     ) -> None:
         self._broadcaster = broadcaster
+        self._mapping_cloud_broadcaster = mapping_cloud_broadcaster or broadcaster
         self._loop = loop
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
@@ -1073,11 +1075,17 @@ class RosNavBridge:
         if self._loop.is_closed():
             return
 
+        broadcaster = self._broadcaster_for_event(event_type)
         future = asyncio.run_coroutine_threadsafe(
-            self._broadcaster.broadcast_event(event_type, data),
+            broadcaster.broadcast_event(event_type, data),
             self._loop,
         )
         future.add_done_callback(self._log_broadcast_error)
+
+    def _broadcaster_for_event(self, event_type: str) -> EventBroadcaster:
+        if event_type == "nav.mapping_cloud":
+            return self._mapping_cloud_broadcaster
+        return self._broadcaster
 
     @staticmethod
     def _log_broadcast_error(future: asyncio.Future[Any]) -> None:

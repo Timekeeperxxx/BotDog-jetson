@@ -11,18 +11,21 @@ if TYPE_CHECKING:
 _queue_manager: "TelemetryQueueManager | None" = None
 _state_machine: "StateMachine | None" = None
 _event_broadcaster: "EventBroadcaster | None" = None
+_mapping_cloud_broadcaster: "EventBroadcaster | None" = None
 
 
 def set_ws_runtime(
     queue_manager: "TelemetryQueueManager | None",
     state_machine: "StateMachine | None",
     event_broadcaster: "EventBroadcaster | None",
+    mapping_cloud_broadcaster: "EventBroadcaster | None" = None,
 ) -> None:
     """设置 WebSocket 路由所需的运行时对象。"""
-    global _queue_manager, _state_machine, _event_broadcaster
+    global _queue_manager, _state_machine, _event_broadcaster, _mapping_cloud_broadcaster
     _queue_manager = queue_manager
     _state_machine = state_machine
     _event_broadcaster = event_broadcaster
+    _mapping_cloud_broadcaster = mapping_cloud_broadcaster
 
 
 def clear_ws_runtime() -> None:
@@ -43,3 +46,8 @@ def get_state_machine() -> "StateMachine | None":
 def get_event_broadcaster() -> "EventBroadcaster | None":
     """返回当前事件广播器。"""
     return _event_broadcaster
+
+
+def get_mapping_cloud_broadcaster() -> "EventBroadcaster | None":
+    """返回当前导航建图点云广播器。"""
+    return _mapping_cloud_broadcaster

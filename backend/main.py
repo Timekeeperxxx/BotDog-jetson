@@ -265,7 +265,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             startup_summary.set("AI识别", "disabled", "AI_ENABLED=false")
             ai_logger.info("AI 识别已禁用：AI_ENABLED=false")
 
-        await initialize_runtime_services(
+        (
+            _runtime_ws_broadcaster,
+            _runtime_event_broadcaster,
+            _runtime_mapping_cloud_broadcaster,
+            _ros_nav_bridge,
+            _runtime_control_service,
+            _runtime_zone_service,
+            _runtime_auto_track_service,
+            _runtime_guard_mission_service,
+        ) = await initialize_runtime_services(
             queue_manager=_queue_manager,
             state_machine=_state_machine,
             session_factory=get_session_factory(),

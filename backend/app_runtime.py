@@ -42,7 +42,7 @@ async def initialize_runtime_services(
     startup_summary: StartupSummary,
     mavlink_gateway,
     tasks: list[asyncio.Task[None]],
-) -> tuple[Any, Any, Any, Any, Any, Any, Any]:
+) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any]:
     """
     装配运行时服务。
 
@@ -59,16 +59,19 @@ async def initialize_runtime_services(
 
     # 2) 事件广播器与 ROS 导航桥
     event_broadcaster = EventBroadcaster()
+    mapping_cloud_broadcaster = EventBroadcaster()
     from .global_event_broadcaster import set_global_event_broadcaster
 
     set_global_event_broadcaster(event_broadcaster)
-    set_ws_runtime(queue_manager, state_machine, event_broadcaster)
+    set_ws_runtime(queue_manager, state_machine, event_broadcaster, mapping_cloud_broadcaster)
     get_logger("WebSocket事件").info("事件广播器已初始化")
+    get_logger("WebSocket事件").info("导航建图点云广播器已初始化")
 
     ros_nav_bridge = None
     if settings.ROS_NAV_ENABLED:
         ros_nav_bridge = RosNavBridge(
             broadcaster=event_broadcaster,
+            mapping_cloud_broadcaster=mapping_cloud_broadcaster,
             loop=asyncio.get_running_loop(),
         )
         ros_nav_bridge.start()
@@ -227,6 +230,7 @@ async def initialize_runtime_services(
     return (
         ws_broadcaster,
         event_broadcaster,
+        mapping_cloud_broadcaster,
         ros_nav_bridge,
         control_service,
         _zone_service,

@@ -173,6 +173,7 @@ SYSTEM_INFO_ROUTES = [
 WEBSOCKET_ROUTES = [
     "/ws/telemetry",
     "/ws/event",
+    "/ws/nav-mapping-cloud",
 ]
 
 

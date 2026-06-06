@@ -5,6 +5,7 @@ from fastapi import APIRouter, WebSocket
 from ...ws_broadcaster import websocket_telemetry_handler
 from ...ws_runtime_state import (
     get_event_broadcaster,
+    get_mapping_cloud_broadcaster,
     get_queue_manager,
     get_state_machine,
 )
@@ -52,3 +53,18 @@ async def event_ws(websocket: WebSocket) -> None:
         return
 
     await event_broadcaster.handle_connection(websocket)
+
+
+@router.websocket("/ws/nav-mapping-cloud")
+async def nav_mapping_cloud_ws(websocket: WebSocket) -> None:
+    """
+    导航建图点云 WebSocket 端点。
+
+    大体积点云不再和导航状态共用 /ws/event，避免阻塞位姿、路径和导航状态更新。
+    """
+    broadcaster = get_mapping_cloud_broadcaster()
+    if broadcaster is None:
+        await websocket.close(code=1011, reason="导航建图点云广播服务未初始化")
+        return
+
+    await broadcaster.handle_connection(websocket)

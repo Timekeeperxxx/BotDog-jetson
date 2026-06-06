@@ -36,6 +36,7 @@ import { TaskCreatorDrawer } from '../components/pcd/TaskCreatorDrawer'
 import { TaskDrawerPanel } from '../components/pcd/TaskDrawerPanel'
 import { useRobotControl } from '../hooks/useRobotControl'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
+import { useMappingCloudWebSocket } from '../hooks/useMappingCloudWebSocket'
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
 import type { LocalizationPosePayload, NavWaypoint, PcdBounds, PcdSceneItem } from '../types/pcdMap'
 import type { TaskDefinition, TaskDraft, TaskDraftStep } from '../types/taskWorkflow'
@@ -135,7 +136,8 @@ export function PcdMapDemoPage() {
   // ── 高危操作确认 ──
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
   const navWs = useNavWebSocket()
-  const { robotPose, globalPath, localizationStatus, mappingCloudPoints, setInitialState, clearMappingCloud } = navWs
+  const { robotPose, globalPath, localizationStatus, setInitialState } = navWs
+  const { mappingCloudPoints, clearMappingCloud } = useMappingCloudWebSocket(mappingActive)
   const {
     startCommand,
     stopCommand,

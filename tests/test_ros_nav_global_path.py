@@ -103,3 +103,14 @@ def test_mapping_cloud_points_under_limit_are_unchanged():
     limited = RosNavBridge._limit_cloud_points(points, 3)
 
     assert limited is points
+
+
+def test_mapping_cloud_uses_dedicated_broadcaster():
+    event_broadcaster = object()
+    cloud_broadcaster = object()
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._broadcaster = event_broadcaster
+    bridge._mapping_cloud_broadcaster = cloud_broadcaster
+
+    assert bridge._broadcaster_for_event("nav.mapping_cloud") is cloud_broadcaster
+    assert bridge._broadcaster_for_event("nav.robot_pose") is event_broadcaster
