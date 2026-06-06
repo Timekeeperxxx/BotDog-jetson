@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
 
+from backend.config import settings
 from backend.services_nav_state import get_nav_state, set_navigation_idle
 from backend.services_ros_nav import RosNavBridge
 
@@ -138,3 +140,28 @@ def test_nav_status_invalid_json_is_ignored(monkeypatch):
     assert after["status"] == before["status"]
     assert after["message"] == before["message"]
     assert broadcast_calls == []
+
+
+def test_tf_pose_uses_receive_time_for_freshness(monkeypatch):
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._tf_buffer = SimpleNamespace(
+        lookup_transform=lambda _target, _source, _time: SimpleNamespace(
+            header=SimpleNamespace(stamp=SimpleNamespace(sec=1, nanosec=500_000_000)),
+            transform=SimpleNamespace(
+                translation=SimpleNamespace(x=1.0, y=2.0, z=0.0),
+                rotation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
+    bridge._rclpy = object()
+    monkeypatch.setattr(settings, "ROS_NAV_FRAME_ID", "map")
+    monkeypatch.setattr(settings, "ROS_NAV_BASE_FRAME_ID", "base_footprint")
+
+    before = time.time()
+    pose = bridge._lookup_tf_pose()
+    after = time.time()
+
+    assert pose["x"] == 1.0
+    assert pose["source_frame"] == "base_footprint"
+    assert before <= pose["timestamp"] <= after
+    assert pose["ros_timestamp"] == pytest.approx(1.5)

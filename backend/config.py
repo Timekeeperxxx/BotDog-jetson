@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     ROS_NAV_POSE_TYPE: str = "TF"
     ROS_NAV_FRAME_ID: str = "map"
     ROS_NAV_BASE_FRAME_ID: str = "base_footprint"
-    ROS_NAV_BROADCAST_HZ: float = 5.0
+    ROS_NAV_BROADCAST_HZ: float = 10.0
     ROS_NAV_PAGE_OPEN_TOPIC: str = "/lidar_start"
     ROS_NAV_START_TOPIC: str = "/nav_start"
     ROS_NAV_GOAL_TOPIC: str = "/goal_pose"

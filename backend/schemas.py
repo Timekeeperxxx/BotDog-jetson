@@ -485,6 +485,7 @@ class RobotPoseDTO(BaseModel):
     frame_id: str
     source: str
     timestamp: float
+    ros_timestamp: float | None = None
 
 
 class NavigationStatusDTO(BaseModel):

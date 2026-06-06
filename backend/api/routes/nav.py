@@ -347,7 +347,7 @@ async def nav_set_localization_pose(
     user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
-    from ...services_nav_localization import save_localization_pose
+    from ...services_nav_localization import inspect_relocation_initialization, save_localization_pose
     from ...services_nav_state import reset_localization_tracking, update_localization_status
     from ...services_pcd_maps import PcdMapError
 
@@ -374,16 +374,21 @@ async def nav_set_localization_pose(
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
+    relocation_init = inspect_relocation_initialization(timeout_s=2.0)
+    relocation_message = relocation_init["message"]
+    message = (
+        f"已发布 initial_pose: "
+        f"x={pose['x']:.3f}, y={pose['y']:.3f}, z={pose['z']:.3f}, "
+        f"roll={pose['roll']:.3f}, pitch={pose['pitch']:.3f}, yaw={pose['yaw']:.3f}；"
+        f"{relocation_message}"
+    )
+
     update_localization_status(
         {
             "status": "initializing",
             "frame_id": pose["frame_id"],
             "source": initial_pose_result["topic"],
-            "message": (
-                f"已发布 initial_pose: "
-                f"x={pose['x']:.3f}, y={pose['y']:.3f}, z={pose['z']:.3f}, "
-                f"roll={pose['roll']:.3f}, pitch={pose['pitch']:.3f}, yaw={pose['yaw']:.3f}"
-            ),
+            "message": message,
         }
     )
     await safe_write_audit_log(

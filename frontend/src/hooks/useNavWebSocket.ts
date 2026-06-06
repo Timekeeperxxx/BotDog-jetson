@@ -9,7 +9,7 @@ import type {
   RobotPose,
 } from '../types/navState'
 
-const ROBOT_POSE_UI_INTERVAL_MS = 200
+const ROBOT_POSE_UI_INTERVAL_MS = 80
 
 type NavWebSocketState = {
   connected: boolean

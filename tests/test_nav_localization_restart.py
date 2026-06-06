@@ -81,6 +81,71 @@ def test_localization_restart_response_preserves_initialpose_log_offset():
     assert response.model_dump()["initialpose_wait_log_offset"] == 12345
 
 
+def test_inspect_relocation_initialization_detects_direct_pose(monkeypatch, tmp_path):
+    log_path = tmp_path / "restart_navigation_localization.log"
+    log_path.write_text(
+        "Using initial pose from topic directly, skipping NDT/ICP...\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(services_nav_localization, "_restart_log_path", lambda: log_path)
+
+    result = services_nav_localization.inspect_relocation_initialization(timeout_s=0)
+
+    assert result["mode"] == "direct_pose"
+    assert result["matched_map"] is False
+    assert "未执行 NDT/ICP" in result["message"]
+
+
+def test_inspect_relocation_initialization_detects_icp_success(monkeypatch, tmp_path):
+    log_path = tmp_path / "restart_navigation_localization.log"
+    log_path.write_text(
+        "Global ICP Converged Succeed! FitnessScore: 0.42\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(services_nav_localization, "_restart_log_path", lambda: log_path)
+
+    result = services_nav_localization.inspect_relocation_initialization(timeout_s=0)
+
+    assert result["mode"] == "scan_match"
+    assert result["matched_map"] is True
+    assert "地图匹配" in result["message"]
+
+
+def test_inspect_relocation_initialization_unknown_without_marker(monkeypatch, tmp_path):
+    log_path = tmp_path / "restart_navigation_localization.log"
+    log_path.write_text("Waiting for initial pose from topic\n", encoding="utf-8")
+    monkeypatch.setattr(services_nav_localization, "_restart_log_path", lambda: log_path)
+
+    result = services_nav_localization.inspect_relocation_initialization(timeout_s=0)
+
+    assert result["mode"] == "unknown"
+    assert result["matched_map"] is None
+
+
+def test_wait_for_initialpose_log_waits_for_stable_init_frames(monkeypatch, tmp_path):
+    log_path = tmp_path / "restart_navigation_localization.log"
+    monkeypatch.setattr(services_nav_localization, "_restart_log_path", lambda: log_path)
+    monkeypatch.setenv("NAV_INITIALPOSE_READY_MIN_INIT_FRAMES", "50")
+
+    log_path.write_text(
+        "kf_init() called. flg_get_init_guess_=false init_frame_count=9 imu_cout=190\n"
+        "Waiting for initial pose from topic (/initialpose)...\n",
+        encoding="utf-8",
+    )
+    result = services_nav_localization.wait_for_initialpose_log(offset=0, timeout_s=0.1)
+    assert result["ready"] is False
+
+    log_path.write_text(
+        "kf_init() called. flg_get_init_guess_=false init_frame_count=9 imu_cout=190\n"
+        "Waiting for initial pose from topic (/initialpose)...\n"
+        "kf_init() called. flg_get_init_guess_=false init_frame_count=50 imu_cout=1030\n",
+        encoding="utf-8",
+    )
+    result = services_nav_localization.wait_for_initialpose_log(offset=0, timeout_s=0.5)
+    assert result["ready"] is True
+    assert result["init_frame_count"] == 50
+
+
 def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeypatch, tmp_path):
     scene_root = tmp_path / "MAPS"
     scene_dir = scene_root / "Scene1_测试"
@@ -535,3 +600,13 @@ def test_restart_navigation_script_uses_real_time_and_cleans_local_navigation_no
     assert "navigation_ready.json" in content
     assert '"map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD"' in content
     assert 'p2p_move_base go2_localization_launch.py "启动 P2P move base 定位导航..." P2P_MOVE_BASE_PID p2p_move_base.pid "use_sim:=false"' in content
+
+
+def test_restart_navigation_script_retries_livox_topic_waits():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "restart_navigation_localization.sh"
+    content = script_path.read_text(encoding="utf-8")
+
+    assert 'timeout 5s ros2 topic echo "$topic" --once' in content
+    assert '仍在等待 $label 数据：$topic' in content
+    assert 'wait_for_topic_once /livox/imu "${NAV_LIVOX_IMU_WAIT_TIMEOUT_S:-30}" "Livox IMU"' in content
+    assert 'wait_for_topic_once /livox/lidar "${NAV_LIVOX_LIDAR_WAIT_TIMEOUT_S:-60}" "Livox LiDAR"' in content

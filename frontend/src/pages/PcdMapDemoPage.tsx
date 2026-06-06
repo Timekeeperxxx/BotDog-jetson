@@ -25,6 +25,7 @@ import {
   setMappingEnabled,
   setLocalizationPose,
   triggerNavEmergencyStop,
+  waitInitialposeReady,
 } from '../api/pcdMapApi'
 import { NavWaypointPanel } from '../components/pcd/NavWaypointPanel'
 import { PcdFileListPanel } from '../components/pcd/PcdFileListPanel'
@@ -71,6 +72,10 @@ type MappingSessionInfo = {
   mapDir: string
 }
 
+type RelocationPromptState =
+  | { status: 'idle'; message: string }
+  | { status: 'restarting' | 'waiting' | 'ready' | 'localized' | 'error'; message: string }
+
 const DEFAULT_LINEAR_SPEED = 0.3
 const DEFAULT_TURN_SPEED = 0.5
 const SPEED_STEP = 0.1
@@ -114,6 +119,10 @@ export function PcdMapDemoPage() {
   const [mappingSceneName, setMappingSceneName] = useState('')
   const [mappingSceneError, setMappingSceneError] = useState<string | null>(null)
   const [mappingSessionInfo, setMappingSessionInfo] = useState<MappingSessionInfo | null>(null)
+  const [relocationPrompt, setRelocationPrompt] = useState<RelocationPromptState>({
+    status: 'idle',
+    message: '',
+  })
   const [mappingStartTime, setMappingStartTime] = useState<number | null>(null)
   const [mappingStopConfirmOpen, setMappingStopConfirmOpen] = useState(false)
   const [keyboardControlEnabled, setKeyboardControlEnabled] = useState(false)
@@ -262,6 +271,10 @@ export function PcdMapDemoPage() {
       })
       await setLocalizationPose(payload)
       setToolMode('none')
+      setRelocationPrompt({
+        status: 'localized',
+        message: '重定位已发送，正在等待 TF 恢复。位姿恢复为 ok 后即可导航。',
+      })
       addLog(
         `已发送重定位: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${waypointZ.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
       )
@@ -359,16 +372,36 @@ export function PcdMapDemoPage() {
     setAddMode(false)
     setToolMode('none')
     setRestartLocalizationSending(true)
+    setRelocationPrompt({
+      status: 'restarting',
+      message: '正在重启导航定位进程，暂时不要标记重定位点。',
+    })
     try {
       const result = await restartNavigationLocalization()
       addLog(formatRestartHealth(result), result.navigation_ready ? 'info' : 'error')
-      addLog('导航定位进程已拉起，请点击“重定位”并在 2D 地图标记机器人当前位置和朝向')
+      setRelocationPrompt({
+        status: 'waiting',
+        message: '导航定位进程已拉起，正在等待 Super-LIO 进入 initialpose 接收状态。',
+      })
+      addLog('导航定位进程已拉起，正在等待 Super-LIO initialpose 接收状态')
+
+      const ready = await waitInitialposeReady(result.initialpose_wait_log_offset ?? 0, 60)
+      setToolMode('pose')
+      setRelocationPrompt({
+        status: 'ready',
+        message: `${ready.message}。现在请直接在右侧 2D 地图标记机器人当前位置和朝向。`,
+      })
+      addLog('Super-LIO 已准备接收 initialpose，已自动进入重定位标记模式')
     } catch (error) {
       const message = error instanceof Error && error.name === 'AbortError'
         ? '重启导航定位请求超时，后端可能仍在执行，请查看 restart_navigation_localization.log'
         : error instanceof Error
           ? error.message
           : '重启导航定位失败'
+      setRelocationPrompt({
+        status: 'error',
+        message,
+      })
       addLog(message, 'error')
     } finally {
       setRestartLocalizationSending(false)
@@ -1089,6 +1122,22 @@ export function PcdMapDemoPage() {
                       {localizationStatus.message}
                     </div>
                   ) : null}
+                  {relocationPrompt.status !== 'idle' ? (
+                    <div className={`pcd-nav-runtime-banner is-${relocationPrompt.status}`}>
+                      <strong>
+                        {relocationPrompt.status === 'ready'
+                          ? '可以标记重定位点'
+                          : relocationPrompt.status === 'waiting'
+                            ? '等待重定位接收'
+                            : relocationPrompt.status === 'restarting'
+                              ? '导航定位重启中'
+                              : relocationPrompt.status === 'localized'
+                                ? '重定位已发送'
+                                : '导航定位异常'}
+                      </strong>
+                      <span>{relocationPrompt.message}</span>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </section>
@@ -1188,6 +1237,20 @@ export function PcdMapDemoPage() {
         </section>
 
         <aside className="pcd-right-rail">
+          {relocationPrompt.status !== 'idle' && relocationPrompt.status !== 'localized' ? (
+            <section className={`pcd-nav-runtime-banner is-${relocationPrompt.status}`}>
+              <strong>
+                {relocationPrompt.status === 'ready'
+                  ? '现在标记重定位点'
+                  : relocationPrompt.status === 'waiting'
+                    ? '等待 Super-LIO'
+                    : relocationPrompt.status === 'restarting'
+                      ? '重启中'
+                      : '需要处理'}
+              </strong>
+              <span>{relocationPrompt.message}</span>
+            </section>
+          ) : null}
           {toolMode === 'pose' ? (
             <section className="pcd-pose-pending-banner">
               <strong>重定位模式</strong>

@@ -25,8 +25,12 @@ from .ws_event_broadcaster import EventBroadcaster
 nav_logger = get_logger("ROS导航")
 tf_logger = get_logger("ROS TF")
 GLOBAL_PATH_BROADCAST_MIN_INTERVAL_S = 1.0
+MAPPING_CLOUD_BROADCAST_MIN_INTERVAL_S = 10.0
+MAPPING_CLOUD_MAX_BROADCAST_POINTS = 1500
 INITIAL_POSE_PUBLISH_COUNT = 20
 INITIAL_POSE_PUBLISH_INTERVAL_S = 0.2
+GOAL_PUBLISH_COUNT = 3
+GOAL_PUBLISH_INTERVAL_S = 0.15
 
 
 def quaternion_to_yaw(x: float, y: float, z: float, w: float) -> float:
@@ -81,6 +85,7 @@ class RosNavBridge:
         self._cloud_subscription: Any | None = None
         self._publisher_lock = threading.RLock()
         self._last_broadcast_at = 0.0
+        self._last_tf_lookup_at = 0.0
         self._last_localization_broadcast_at = 0.0
         self._last_global_path_broadcast_at = 0.0
         self._last_global_path_signature: tuple[Any, ...] | None = None
@@ -195,6 +200,7 @@ class RosNavBridge:
         self._paused = False
         self._tf_available = False
         self._tf_wait_started_at = 0.0
+        self._last_tf_lookup_at = 0.0
 
         update_localization_status(
             {
@@ -397,14 +403,21 @@ class RosNavBridge:
         point_msg.point.y = float(waypoint["y"])
         point_msg.point.z = float(waypoint.get("z", 0.0))
 
-        with self._publisher_lock:
-            self._goal_yaw_publisher.publish(yaw_msg)
-            self._goal_xyz_publisher.publish(point_msg)
+        publish_count = 0
+        for index in range(GOAL_PUBLISH_COUNT):
+            point_msg.header.stamp = self._node.get_clock().now().to_msg()
+            with self._publisher_lock:
+                self._goal_yaw_publisher.publish(yaw_msg)
+                self._goal_xyz_publisher.publish(point_msg)
+            publish_count += 1
+            if index < GOAL_PUBLISH_COUNT - 1:
+                time.sleep(GOAL_PUBLISH_INTERVAL_S)
 
         return {
             "success": True,
             "xyz_topic": settings.ROS_NAV_GOAL_XYZ_TOPIC,
             "yaw_topic": settings.ROS_NAV_GOAL_YAW_TOPIC,
+            "publish_count": publish_count,
             "waypoint_id": waypoint.get("id"),
             "x": point_msg.point.x,
             "y": point_msg.point.y,
@@ -522,6 +535,11 @@ class RosNavBridge:
 
     def _handle_cloud_message(self, msg: Any) -> None:
         now = time.monotonic()
+        if self._is_navigation_active():
+            if len(self._accumulated_cloud) > 0:
+                self.clear_accumulated_cloud()
+            return
+
         if now - self._last_cloud_broadcast_at < 0.5:
             return
         self._last_cloud_broadcast_at = now
@@ -536,17 +554,34 @@ class RosNavBridge:
             else new_pts
         )
 
-        if now - self._last_full_map_broadcast_at < 3.0:
+        if now - self._last_full_map_broadcast_at < MAPPING_CLOUD_BROADCAST_MIN_INTERVAL_S:
             return
         self._last_full_map_broadcast_at = now
 
         downsampled = self._voxel_downsample(self._accumulated_cloud, voxel_size=0.1)
+        downsampled = self._limit_cloud_points(downsampled, MAPPING_CLOUD_MAX_BROADCAST_POINTS)
         self._accumulated_cloud = downsampled
 
         self._submit_broadcast("nav.mapping_cloud", {
             "points": downsampled.tolist(),
             "timestamp": time.time(),
         })
+
+    @staticmethod
+    def _is_navigation_active() -> bool:
+        try:
+            nav_status = get_nav_state().get("navigation_status", {})
+            status = str(nav_status.get("status") or "").strip().lower()
+        except Exception:
+            return False
+        return status == "navigating"
+
+    @staticmethod
+    def _limit_cloud_points(points: np.ndarray, max_points: int) -> np.ndarray:
+        if max_points <= 0 or len(points) <= max_points:
+            return points
+        step = max(1, math.ceil(len(points) / max_points))
+        return points[::step][:max_points]
 
     @staticmethod
     def _voxel_downsample(points: np.ndarray, voxel_size: float) -> np.ndarray:
@@ -827,8 +862,9 @@ class RosNavBridge:
     def _update_pose_from_tf_if_needed(self) -> None:
         now = time.monotonic()
         min_interval = 1.0 / max(0.1, settings.ROS_NAV_BROADCAST_HZ)
-        if now - self._last_broadcast_at < min_interval:
+        if now - self._last_tf_lookup_at < min_interval:
             return
+        self._last_tf_lookup_at = now
 
         try:
             pose = self._lookup_tf_pose()
@@ -917,6 +953,7 @@ class RosNavBridge:
         translation = transform.translation
         rotation = transform.rotation
         header = transform_stamped.header
+        received_at = time.time()
 
         return {
             "x": float(translation.x),
@@ -931,7 +968,8 @@ class RosNavBridge:
             "frame_id": settings.ROS_NAV_FRAME_ID,
             "source": self._tf_source_for(source_frame),
             "source_frame": source_frame,
-            "timestamp": _stamp_to_seconds(header.stamp),
+            "timestamp": received_at,
+            "ros_timestamp": _stamp_to_seconds(header.stamp),
         }
 
     def _resolve_msg_type(
@@ -1013,7 +1051,8 @@ class RosNavBridge:
             ),
             "frame_id": frame_id,
             "source": settings.ROS_NAV_POSE_TOPIC,
-            "timestamp": _header_timestamp(msg),
+            "timestamp": time.time(),
+            "ros_timestamp": _header_timestamp(msg),
         }
 
     def _broadcast_latest_if_needed(self) -> None:

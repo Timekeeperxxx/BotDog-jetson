@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from backend.services_ros_nav import RosNavBridge
@@ -81,3 +82,24 @@ def test_global_path_broadcast_throttles_changed_paths(monkeypatch):
     assert bridge._should_broadcast_global_path(first_path) is True
     assert bridge._should_broadcast_global_path(changed_path) is False
     assert bridge._should_broadcast_global_path(changed_path) is True
+
+
+def test_mapping_cloud_points_are_limited():
+    points = np.arange(30, dtype=np.float32).reshape((10, 3))
+
+    limited = RosNavBridge._limit_cloud_points(points, 3)
+
+    assert limited.shape == (3, 3)
+    assert limited.tolist() == [
+        [0.0, 1.0, 2.0],
+        [12.0, 13.0, 14.0],
+        [24.0, 25.0, 26.0],
+    ]
+
+
+def test_mapping_cloud_points_under_limit_are_unchanged():
+    points = np.arange(9, dtype=np.float32).reshape((3, 3))
+
+    limited = RosNavBridge._limit_cloud_points(points, 3)
+
+    assert limited is points

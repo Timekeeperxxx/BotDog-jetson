@@ -6,6 +6,7 @@ export type RobotPose = {
   frame_id: string
   source: string
   timestamp: number
+  ros_timestamp?: number | null
 }
 
 export type GlobalPathPoint = {

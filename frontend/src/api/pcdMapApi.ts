@@ -64,6 +64,14 @@ export function executeNavTask(taskId: string): Promise<{
     topic: string
     data: boolean
   }
+  cmd_vel?: {
+    success: boolean
+    running: boolean
+    pid: number | null
+    ready?: boolean
+    ready_wait_s?: number
+    message?: string
+  }
   message: string
   runtime_file?: string | null
   runtime_task?: Record<string, unknown> | null
@@ -184,6 +192,7 @@ export function goToWaypoint(
     success: boolean
     xyz_topic: string
     yaw_topic: string
+    publish_count?: number
     waypoint_id?: string
     x: number
     y: number
@@ -192,6 +201,14 @@ export function goToWaypoint(
     frame_id: string
   }
   message?: string | null
+  cmd_vel?: {
+    success: boolean
+    running: boolean
+    pid: number | null
+    ready?: boolean
+    ready_wait_s?: number
+    message?: string
+  }
 }> {
   return requestJson(
     getApiUrl(

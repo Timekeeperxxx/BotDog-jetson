@@ -1075,6 +1075,62 @@
   color: #fde68a;
 }
 
+.pcd-nav-runtime-banner {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  border-radius: 7px;
+  background: rgba(14, 116, 144, 0.18);
+  color: #e0f2fe;
+  font-size: 12px;
+}
+
+.pcd-right-rail > .pcd-nav-runtime-banner {
+  margin-top: 0;
+  flex: 0 0 auto;
+}
+
+.pcd-nav-runtime-banner strong {
+  color: #f8fafc;
+  font-size: 13px;
+}
+
+.pcd-nav-runtime-banner span {
+  color: #bae6fd;
+  line-height: 1.5;
+}
+
+.pcd-nav-runtime-banner.is-ready {
+  border-color: rgba(34, 197, 94, 0.62);
+  background: rgba(22, 101, 52, 0.3);
+}
+
+.pcd-nav-runtime-banner.is-ready span {
+  color: #bbf7d0;
+}
+
+.pcd-nav-runtime-banner.is-restarting,
+.pcd-nav-runtime-banner.is-waiting {
+  border-color: rgba(250, 204, 21, 0.5);
+  background: rgba(113, 63, 18, 0.28);
+}
+
+.pcd-nav-runtime-banner.is-restarting span,
+.pcd-nav-runtime-banner.is-waiting span {
+  color: #fde68a;
+}
+
+.pcd-nav-runtime-banner.is-error {
+  border-color: rgba(248, 113, 113, 0.62);
+  background: rgba(127, 29, 29, 0.32);
+}
+
+.pcd-nav-runtime-banner.is-error span {
+  color: #fecaca;
+}
+
 .pcd-empty {
   background: rgba(15, 23, 42, 0.55);
   color: #8ea3ad;

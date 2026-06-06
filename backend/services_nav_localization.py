@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -19,6 +20,10 @@ nav_logger = get_logger("导航定位服务")
 _restart_proc: subprocess.Popen[str] | None = None
 _restart_lock = threading.Lock()
 INITIALPOSE_WAIT_LOG_MARKER = "Waiting for initial pose from topic"
+INITIALPOSE_FRAME_COUNT_PATTERN = re.compile(r"init_frame_count=(\d+)")
+RELOCATION_DIRECT_POSE_MARKER = "Using initial pose from topic directly, skipping NDT/ICP"
+RELOCATION_ICP_SUCCESS_MARKER = "Global ICP Converged Succeed"
+RELOCATION_ICP_FAIL_MARKER = "Global ICP Converged Fail"
 
 
 def _utc_now_iso() -> str:
@@ -67,6 +72,7 @@ def wait_for_initialpose_log(offset: int = 0, timeout_s: float = 45.0) -> dict[s
     path = _restart_log_path()
     deadline = time.time() + max(0.1, timeout_s)
     safe_offset = max(0, int(offset))
+    min_init_frames = max(0, int(os.environ.get("NAV_INITIALPOSE_READY_MIN_INIT_FRAMES", "50")))
 
     while time.time() < deadline:
         try:
@@ -81,11 +87,21 @@ def wait_for_initialpose_log(offset: int = 0, timeout_s: float = 45.0) -> dict[s
             next_offset = 0
 
         if INITIALPOSE_WAIT_LOG_MARKER in content:
+            init_frame_counts = [
+                int(match.group(1))
+                for match in INITIALPOSE_FRAME_COUNT_PATTERN.finditer(content)
+            ]
+            max_init_frame_count = max(init_frame_counts, default=0)
+            if max_init_frame_count < min_init_frames:
+                time.sleep(0.25)
+                continue
+
             return {
                 "ready": True,
                 "marker": INITIALPOSE_WAIT_LOG_MARKER,
                 "offset": next_offset,
-                "message": "Super-LIO 已开始等待 initialpose",
+                "init_frame_count": max_init_frame_count,
+                "message": f"Super-LIO 已稳定等待 initialpose，初始化帧数 {max_init_frame_count}",
             }
 
         time.sleep(0.25)
@@ -95,6 +111,54 @@ def wait_for_initialpose_log(offset: int = 0, timeout_s: float = 45.0) -> dict[s
         "marker": INITIALPOSE_WAIT_LOG_MARKER,
         "offset": get_restart_log_offset(),
         "message": "等待 Super-LIO initialpose 日志超时",
+    }
+
+
+def _tail_restart_log(max_bytes: int = 256_000) -> str:
+    path = _restart_log_path()
+    try:
+        size = path.stat().st_size
+        with path.open("r", encoding="utf-8", errors="ignore") as log_file:
+            if size > max_bytes:
+                log_file.seek(size - max_bytes)
+            return log_file.read()
+    except FileNotFoundError:
+        return ""
+
+
+def inspect_relocation_initialization(timeout_s: float = 2.0) -> dict[str, Any]:
+    deadline = time.time() + max(0.0, timeout_s)
+    content = ""
+
+    while True:
+        content = _tail_restart_log()
+        if RELOCATION_DIRECT_POSE_MARKER in content:
+            return {
+                "mode": "direct_pose",
+                "matched_map": False,
+                "message": "Super-LIO 当前直接使用 initialpose 初始化，未执行 NDT/ICP 地图匹配",
+            }
+        if RELOCATION_ICP_SUCCESS_MARKER in content:
+            return {
+                "mode": "scan_match",
+                "matched_map": True,
+                "message": "Super-LIO 已完成 NDT/ICP 地图匹配",
+            }
+        if RELOCATION_ICP_FAIL_MARKER in content:
+            return {
+                "mode": "scan_match_failed",
+                "matched_map": False,
+                "message": "Super-LIO NDT/ICP 地图匹配失败",
+            }
+
+        if time.time() >= deadline:
+            break
+        time.sleep(0.2)
+
+    return {
+        "mode": "unknown",
+        "matched_map": None,
+        "message": "尚未从 Super-LIO 日志确认重定位匹配模式",
     }
 
 
@@ -619,6 +683,8 @@ def start_cmd_vel_script() -> dict[str, Any]:
             "pid": existing_pid,
             "pid_file": str(pid_file),
             "log_file": str(log_file),
+            "ready": True,
+            "ready_wait_s": 0.0,
             "message": "cmd_vel 桥接已在运行",
         }
 
@@ -641,11 +707,18 @@ def start_cmd_vel_script() -> dict[str, Any]:
             cwd=str(_project_root().parent),
         )
 
-    time.sleep(1.5)
-    if proc.poll() is not None:
-        raise RuntimeError(f"cmd_vel 桥接启动失败，请查看 {log_file}")
+    wait_started_at = time.monotonic()
+    ready = False
+    while time.monotonic() - wait_started_at < 5.0:
+        if proc.poll() is not None:
+            raise RuntimeError(f"cmd_vel 桥接启动失败，请查看 {log_file}")
+        if time.monotonic() - wait_started_at >= 3.0:
+            ready = True
+            break
+        time.sleep(0.2)
 
     atomic_write_json(pid_file, proc.pid)
+    ready_wait_s = round(time.monotonic() - wait_started_at, 2)
     nav_logger.info("cmd_vel 桥接已启动：pid={} log={}", proc.pid, log_file)
     return {
         "success": True,
@@ -653,7 +726,9 @@ def start_cmd_vel_script() -> dict[str, Any]:
         "pid": proc.pid,
         "pid_file": str(pid_file),
         "log_file": str(log_file),
-        "message": "cmd_vel 桥接已启动",
+        "ready": ready,
+        "ready_wait_s": ready_wait_s,
+        "message": f"cmd_vel 桥接已启动并等待 {ready_wait_s:.1f}s",
     }
 
 

@@ -406,13 +406,22 @@ wait_for_topic_once() {
   local topic="$1"
   local timeout_s="$2"
   local label="$3"
+  local deadline=$((SECONDS + timeout_s))
+  local attempt=1
 
   echo "等待 $label 数据：$topic ..."
-  if ! timeout "${timeout_s}s" ros2 topic echo "$topic" --once >/dev/null 2>&1; then
-    echo "错误：${timeout_s}s 内未收到 $label 数据：$topic" >&2
-    return 1
-  fi
-  echo "$label 数据正常：$topic"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if timeout 5s ros2 topic echo "$topic" --once >/dev/null 2>&1; then
+      echo "$label 数据正常：$topic"
+      return 0
+    fi
+    echo "仍在等待 $label 数据：$topic (attempt=$attempt, timeout=${timeout_s}s)"
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  echo "错误：${timeout_s}s 内未收到 $label 数据：$topic" >&2
+  return 1
 }
 
 wait_for_navigation_maps() {
@@ -518,8 +527,8 @@ start_cmd_vel_test() {
 start_launch "$HOME/superlio" livox_ros_driver2 msg_MID360_launch.py "启动 Livox MID360 驱动..." LIVOX_PID livox.pid
 echo "Livox PID: $LIVOX_PID"
 sleep 5
-wait_for_topic_once /livox/imu 15 "Livox IMU"
-wait_for_topic_once /livox/lidar 15 "Livox LiDAR"
+wait_for_topic_once /livox/imu "${NAV_LIVOX_IMU_WAIT_TIMEOUT_S:-30}" "Livox IMU"
+wait_for_topic_once /livox/lidar "${NAV_LIVOX_LIDAR_WAIT_TIMEOUT_S:-60}" "Livox LiDAR"
 
 start_relocation_node "启动 Super-LIO 重定位..." RELOCATION_PID relocation.pid
 echo "Relocation PID: $RELOCATION_PID"
