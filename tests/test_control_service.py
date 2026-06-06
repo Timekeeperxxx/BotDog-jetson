@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+import queue
 import time
 from unittest.mock import AsyncMock, MagicMock
 from backend.config import settings
@@ -13,7 +14,7 @@ from backend.control_service import (
     RESULT_REJECTED_ADAPTER_ERROR,
     RESULT_REJECTED_SAFETY_BLOCKED,
 )
-from backend.robot_adapter import BaseRobotAdapter
+from backend.robot_adapter import BaseRobotAdapter, UnitreeB2Adapter
 from backend.state_machine import StateMachine, SystemState
 from backend.state_machine_state import set_state_machine
 
@@ -48,6 +49,22 @@ async def test_handle_command_accepted(control_service, adapter):
     res = await control_service.handle_command("forward")
     assert res.result == RESULT_ACCEPTED
     adapter.send_command.assert_called_once_with("forward", vx=None, vyaw=None)
+
+
+@pytest.mark.asyncio
+async def test_handle_command_passes_velocity_overrides(control_service, adapter):
+    adapter.send_command = AsyncMock()
+    res = await control_service.handle_command("forward", vx=0.4, vyaw=0.2)
+    assert res.result == RESULT_ACCEPTED
+    adapter.send_command.assert_called_once_with("forward", vx=0.4, vyaw=0.2)
+
+
+@pytest.mark.asyncio
+async def test_handle_command_clamps_unitree_b2_velocity_limits(control_service, adapter):
+    adapter.send_command = AsyncMock()
+    res = await control_service.handle_command("backward", vx=2.0, vyaw=-2.0)
+    assert res.result == RESULT_ACCEPTED
+    adapter.send_command.assert_called_once_with("backward", vx=0.6, vyaw=-0.8)
 
 @pytest.mark.asyncio
 async def test_handle_command_invalid(control_service):
@@ -160,3 +177,21 @@ def test_get_adapter_status_ready(adapter):
     status = cs.get_adapter_status()
     assert status["type"] == "MockAdapter"
     assert status["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_unitree_velocity_override_keeps_forward_backward_yaw_zero():
+    adapter = UnitreeB2Adapter.__new__(UnitreeB2Adapter)
+    adapter._initialized = True
+    adapter._sport_client = object()
+    adapter._busy_with_posture = False
+    adapter._cmd_queue = queue.Queue(maxsize=1)
+    adapter._vx = 0.3
+    adapter._vy = 0.25
+    adapter._vyaw = 0.5
+
+    await adapter.send_command("forward", vx=0.4)
+    assert adapter._cmd_queue.get_nowait() == ("velocity", 0.4, 0.0, 0.0)
+
+    await adapter.send_command("backward", vx=0.2)
+    assert adapter._cmd_queue.get_nowait() == ("velocity", -0.2, 0.0, 0.0)

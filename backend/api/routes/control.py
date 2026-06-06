@@ -6,7 +6,11 @@ from pydantic import BaseModel
 from ...auth.dependencies import require_admin, require_operator
 from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
-from ...control_service import get_control_service
+from ...control_service import (
+    UNITREE_B2_MAX_VX,
+    UNITREE_B2_MAX_VYAW,
+    get_control_service,
+)
 from ...database import get_db
 from ...schemas import ControlAckDTO, EStopResetResponse, EStopResponse, utc_now_iso
 from ...state_machine_state import get_state_machine
@@ -18,6 +22,14 @@ class ControlCommandRequest(BaseModel):
     """控制命令请求体。"""
 
     cmd: str
+    vx: float | None = None
+    vyaw: float | None = None
+
+
+def _clamp_optional(value: float | None, limit: float) -> float | None:
+    if value is None:
+        return None
+    return max(-limit, min(limit, value))
 
 
 @router.post("/command", response_model=ControlAckDTO)
@@ -49,7 +61,11 @@ async def control_command(
         if body.cmd != "stop":
             arbiter.request_control(ControlOwner.WEB_MANUAL)
 
-    ack = await svc.handle_command(body.cmd)
+    ack = await svc.handle_command(
+        body.cmd,
+        vx=_clamp_optional(body.vx, UNITREE_B2_MAX_VX),
+        vyaw=_clamp_optional(body.vyaw, UNITREE_B2_MAX_VYAW),
+    )
     # 只对失败/拒绝命令写审计日志；ACCEPTED 跳过，避免高频写 SQLite 阻塞响应
     if ack.result != "ACCEPTED":
         await safe_write_audit_log(

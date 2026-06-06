@@ -7,7 +7,7 @@
  * 行3: [起立]   [    ]  [下蹲]
  */
 
-import React, { useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowUp,
   ArrowDown,
@@ -19,7 +19,7 @@ import {
   ArrowRightFromLine,
   AlertCircle,
 } from 'lucide-react';
-import { useRobotControl, type RobotCommand } from '../hooks/useRobotControl';
+import { useRobotControl, type RobotCommand, type RobotCommandOptions } from '../hooks/useRobotControl';
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore';
 
 interface ControlPadProps {
@@ -49,16 +49,72 @@ const BUTTONS: ButtonConfig[] = [
   { cmd: 'sit',          label: '下蹲',   icon: <ChevronsDown size={14} /> },
 ];
 
+const DEFAULT_LINEAR_SPEED = 0.3;
+const DEFAULT_TURN_SPEED = 0.5;
+const SPEED_STEP = 0.1;
+const MAX_LINEAR_SPEED = 0.6;
+const MAX_TURN_SPEED = 0.8;
+
+function clampSpeed(value: number, limit: number) {
+  return Math.max(0, Math.min(limit, Number(value.toFixed(1))));
+}
+
+function isArrowSpeedKey(key: string) {
+  return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key);
+}
+
+function formatSpeed(value: number) {
+  return value.toFixed(1);
+}
+
 export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadProps) {
   useAuthState();
   const canOperate = hasAuthSession() && hasRole('operator');
   const { startCommand, stopCommand, isControlling, lastResult, currentCmd, resultMessage } =
     useRobotControl();
+  const [linearSpeed, setLinearSpeed] = useState(DEFAULT_LINEAR_SPEED);
+  const [turnSpeed, setTurnSpeed] = useState(DEFAULT_TURN_SPEED);
+  const linearSpeedRef = useRef(DEFAULT_LINEAR_SPEED);
+  const turnSpeedRef = useRef(DEFAULT_TURN_SPEED);
+
+  const getCommandOptions = useCallback((cmd: RobotCommand): RobotCommandOptions => {
+    if (cmd === 'forward' || cmd === 'backward') {
+      return { vx: linearSpeedRef.current };
+    }
+    if (cmd === 'left' || cmd === 'right') {
+      return { vyaw: turnSpeedRef.current };
+    }
+    return {};
+  }, []);
+
+  const startControlCommand = useCallback((cmd: RobotCommand) => {
+    startCommand(cmd, getCommandOptions(cmd));
+  }, [getCommandOptions, startCommand]);
+
+  const adjustKeyboardSpeed = useCallback((key: string) => {
+    let nextLinearSpeed = linearSpeedRef.current;
+    let nextTurnSpeed = turnSpeedRef.current;
+
+    if (key === 'ArrowUp') {
+      nextLinearSpeed = clampSpeed(nextLinearSpeed + SPEED_STEP, MAX_LINEAR_SPEED);
+    } else if (key === 'ArrowDown') {
+      nextLinearSpeed = clampSpeed(nextLinearSpeed - SPEED_STEP, MAX_LINEAR_SPEED);
+    } else if (key === 'ArrowLeft') {
+      nextTurnSpeed = clampSpeed(nextTurnSpeed + SPEED_STEP, MAX_TURN_SPEED);
+    } else if (key === 'ArrowRight') {
+      nextTurnSpeed = clampSpeed(nextTurnSpeed - SPEED_STEP, MAX_TURN_SPEED);
+    }
+
+    linearSpeedRef.current = nextLinearSpeed;
+    turnSpeedRef.current = nextTurnSpeed;
+    setLinearSpeed(nextLinearSpeed);
+    setTurnSpeed(nextTurnSpeed);
+  }, []);
 
   const handlePointerDown = (cmd: RobotCommand) => (e: React.PointerEvent) => {
     if (isDisabled || !canOperate) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    startCommand(cmd);
+    startControlCommand(cmd);
   };
 
   const handlePointerUp = () => {
@@ -77,35 +133,45 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
       if (e.repeat) return; // 防止长按重复触发
 
+      if (isArrowSpeedKey(e.key)) {
+        e.preventDefault();
+        adjustKeyboardSpeed(e.key);
+        return;
+      }
+
       let cmd: RobotCommand | null = null;
       switch (e.key.toLowerCase()) {
-        case 'w': case 'arrowup': cmd = 'forward'; break;
-        case 's': case 'arrowdown': cmd = 'backward'; break;
+        case 'w': cmd = 'forward'; break;
+        case 's': cmd = 'backward'; break;
         case 'a': cmd = 'strafe_left'; break;
         case 'd': cmd = 'strafe_right'; break;
-        case 'q': case 'arrowleft': cmd = 'left'; break;
-        case 'e': case 'arrowright': cmd = 'right'; break;
+        case 'q': cmd = 'left'; break;
+        case 'e': cmd = 'right'; break;
         case 'control': cmd = 'sit'; break;
         case 'shift': cmd = 'stand'; break;
       }
 
       if (cmd) {
         e.preventDefault();
-        startCommand(cmd);
+        startControlCommand(cmd);
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName)) return;
+      if (isArrowSpeedKey(e.key)) {
+        e.preventDefault();
+        return;
+      }
 
       let cmd: RobotCommand | null = null;
       switch (e.key.toLowerCase()) {
-        case 'w': case 'arrowup': cmd = 'forward'; break;
-        case 's': case 'arrowdown': cmd = 'backward'; break;
+        case 'w': cmd = 'forward'; break;
+        case 's': cmd = 'backward'; break;
         case 'a': cmd = 'strafe_left'; break;
         case 'd': cmd = 'strafe_right'; break;
-        case 'q': case 'arrowleft': cmd = 'left'; break;
-        case 'e': case 'arrowright': cmd = 'right'; break;
+        case 'q': cmd = 'left'; break;
+        case 'e': cmd = 'right'; break;
         case 'control': cmd = 'sit'; break;
         case 'shift': cmd = 'stand'; break;
       }
@@ -123,7 +189,7 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [isDisabled, canOperate, isControlling, currentCmd, startCommand, stopCommand]);
+  }, [adjustKeyboardSpeed, isDisabled, canOperate, isControlling, currentCmd, startControlCommand, stopCommand]);
 
   const resultColor =
     lastResult?.result === 'ACCEPTED'
@@ -202,10 +268,16 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
             </>
           ) : (
             <span className="text-white/20 w-full text-center tracking-tighter">
-              {canOperate ? '按住按钮控制机器狗 (WASD/QE)' : '登录后可进行手动控制'}
+              {canOperate ? 'W/S/Q/E 控制，方向键调速' : '登录后可进行手动控制'}
             </span>
           )}
         </div>
+        {canOperate && (
+          <div className="flex items-center justify-between text-[8px] text-white/30">
+            <span>前后 {formatSpeed(linearSpeed)} m/s</span>
+            <span>转向 {formatSpeed(turnSpeed)} rad/s</span>
+          </div>
+        )}
       </div>
     </div>
   );

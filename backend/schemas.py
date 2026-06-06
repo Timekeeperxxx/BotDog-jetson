@@ -451,6 +451,7 @@ class NavWaypointGoToResponse(BaseModel):
     xyz_topic: str
     yaw_topic: str
     goal: NavWaypointGoToGoalDTO
+    cmd_vel: dict[str, Any] | None = None
     message: str | None = None
 
 
@@ -460,6 +461,7 @@ class NavTaskExecuteResponse(BaseModel):
     topic: str
     data: bool
     nav_start: NavTaskExecuteNavStartDTO
+    cmd_vel: dict[str, Any] | None = None
     message: str
     runtime_file: str | None = None
     runtime_task: dict[str, Any] | None = None
@@ -471,6 +473,7 @@ class NavTaskStopResponse(BaseModel):
     topic: str
     data: bool
     nav_start: NavTaskExecuteNavStartDTO
+    cmd_vel_stop: dict[str, Any] | None = None
     message: str
 
 

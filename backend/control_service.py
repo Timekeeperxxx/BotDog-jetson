@@ -30,6 +30,15 @@ RESULT_REJECTED_ADAPTER_NOT_READY = "REJECTED_ADAPTER_NOT_READY"
 RESULT_REJECTED_ADAPTER_ERROR = "REJECTED_ADAPTER_ERROR"
 RESULT_REJECTED_SAFETY_BLOCKED = "REJECTED_SAFETY_BLOCKED"
 
+UNITREE_B2_MAX_VX = 0.6
+UNITREE_B2_MAX_VYAW = 0.8
+
+
+def _clamp_optional(value: Optional[float], limit: float) -> Optional[float]:
+    if value is None:
+        return None
+    return max(-limit, min(limit, value))
+
 
 class ControlService:
     """
@@ -84,6 +93,8 @@ class ControlService:
         """
         start_ts = time.monotonic()
         control_logger = get_logger("机器人控制")
+        vx = _clamp_optional(vx, UNITREE_B2_MAX_VX)
+        vyaw = _clamp_optional(vyaw, UNITREE_B2_MAX_VYAW)
 
         # 1. 校验命令名
         if cmd not in VALID_COMMANDS:

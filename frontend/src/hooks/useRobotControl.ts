@@ -47,6 +47,11 @@ export interface ControlAck {
   latency_ms: number;
 }
 
+export interface RobotCommandOptions {
+  vx?: number;
+  vyaw?: number;
+}
+
 // 命令发送间隔（ms）
 const SEND_INTERVAL_MS = 500;
 
@@ -56,7 +61,7 @@ const STOP_URL = getApiUrl('/api/v1/control/stop');
 
 export interface UseRobotControlReturn {
   /** 开始持续发送命令（长按时调用） */
-  startCommand: (cmd: RobotCommand) => void;
+  startCommand: (cmd: RobotCommand, options?: RobotCommandOptions) => void;
   /** 停止发送，立即发 stop（松手时调用） */
   stopCommand: () => void;
   /** 当前是否正在控制中 */
@@ -75,6 +80,7 @@ export function useRobotControl(): UseRobotControlReturn {
   const [currentCmd, setCurrentCmd] = useState<RobotCommand | null>(null);
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isControllingRef = useRef(false);
   // 普通运动命令的发送锁：防止 forward/backward/... 请求在上一个未完成时堆积
   const normalSendingRef = useRef(false);
   // stop 命令的独立发送锁：只防止 stop 自身并发，与 normalSendingRef 完全隔离
@@ -115,15 +121,20 @@ export function useRobotControl(): UseRobotControlReturn {
 
   // ── 发送普通运动命令（受 normalSendingRef 保护，防止请求堆积）──────────────
 
-  const sendNormalCommand = useCallback(async (cmd: RobotCommand) => {
+  const sendNormalCommand = useCallback(async (cmd: RobotCommand, options: RobotCommandOptions = {}) => {
     if (normalSendingRef.current) return;
     normalSendingRef.current = true;
 
     try {
+      const body = {
+        cmd,
+        ...(options.vx !== undefined ? { vx: options.vx } : {}),
+        ...(options.vyaw !== undefined ? { vyaw: options.vyaw } : {}),
+      };
       const res = await fetch(CONTROL_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cmd }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(2000),
       });
 
@@ -167,16 +178,17 @@ export function useRobotControl(): UseRobotControlReturn {
 
   // ── startCommand：长按开始持续发送 ────────────────────────────────────────
 
-  const startCommand = useCallback((cmd: RobotCommand) => {
+  const startCommand = useCallback((cmd: RobotCommand, options: RobotCommandOptions = {}) => {
     clearInterval_();
 
+    isControllingRef.current = true;
     setIsControlling(true);
     setCurrentCmd(cmd);
 
-    sendNormalCommand(cmd);
+    sendNormalCommand(cmd, options);
 
     intervalRef.current = setInterval(() => {
-      sendNormalCommand(cmd);
+      sendNormalCommand(cmd, options);
     }, SEND_INTERVAL_MS);
   }, [sendNormalCommand, clearInterval_]);
 
@@ -184,6 +196,7 @@ export function useRobotControl(): UseRobotControlReturn {
 
   const stopCommand = useCallback(() => {
     clearInterval_();
+    isControllingRef.current = false;
     setIsControlling(false);
     setCurrentCmd(null);
     sendStopCommand();
@@ -193,14 +206,16 @@ export function useRobotControl(): UseRobotControlReturn {
 
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.hidden) {
+      if (document.hidden && isControllingRef.current) {
         stopCommand();
       }
     };
 
     const handleBeforeUnload = () => {
-      // sendBeacon 保证页面卸载时请求能发出
-      navigator.sendBeacon(STOP_URL);
+      if (isControllingRef.current) {
+        // sendBeacon 保证页面卸载时请求能发出
+        navigator.sendBeacon(STOP_URL);
+      }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -210,7 +225,10 @@ export function useRobotControl(): UseRobotControlReturn {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('beforeunload', handleBeforeUnload);
       clearInterval_();
-      sendStopCommand();
+      if (isControllingRef.current) {
+        isControllingRef.current = false;
+        sendStopCommand();
+      }
     };
   }, [stopCommand, sendStopCommand, clearInterval_]);
 
