@@ -31,6 +31,31 @@ _latest_localization_status: dict[str, Any] = {
     "message": "尚未收到定位数据",
     "timestamp": None,
 }
+ROBOT_POSE_STALE_SECONDS = 3.0
+
+
+def _is_pose_stale(pose: dict[str, Any] | None, now: float | None = None) -> bool:
+    if pose is None:
+        return False
+    timestamp = pose.get("timestamp")
+    if timestamp is None:
+        return True
+    try:
+        pose_time = float(timestamp)
+    except Exception:
+        return True
+    return ((now or time.time()) - pose_time) > ROBOT_POSE_STALE_SECONDS
+
+
+def _stale_localization_status(now: float) -> dict[str, Any]:
+    return {
+        **copy.deepcopy(_latest_localization_status),
+        "status": "initializing",
+        "frame_id": settings.ROS_NAV_FRAME_ID,
+        "source": _latest_localization_status.get("source"),
+        "message": "定位数据超时，等待 TF 恢复",
+        "timestamp": now,
+    }
 
 
 def update_robot_pose(pose: dict[str, Any]) -> dict[str, Any]:
@@ -43,6 +68,13 @@ def update_robot_pose(pose: dict[str, Any]) -> dict[str, Any]:
         _latest_robot_pose = next_pose
 
     return copy.deepcopy(next_pose)
+
+
+def clear_robot_pose() -> None:
+    global _latest_robot_pose
+
+    with _lock:
+        _latest_robot_pose = None
 
 
 def update_global_path(path: dict[str, Any]) -> dict[str, Any]:
@@ -62,6 +94,19 @@ def clear_global_path() -> None:
 
     with _lock:
         _latest_global_path = None
+
+
+def reset_localization_tracking(message: str = "等待重定位数据") -> dict[str, Any]:
+    clear_robot_pose()
+    clear_global_path()
+    return update_localization_status(
+        {
+            "status": "initializing",
+            "frame_id": settings.ROS_NAV_FRAME_ID,
+            "source": None,
+            "message": message,
+        }
+    )
 
 
 def update_navigation_status(status: dict[str, Any]) -> dict[str, Any]:
@@ -115,6 +160,8 @@ def update_localization_status(status: dict[str, Any]) -> dict[str, Any]:
 
 def get_robot_pose() -> dict[str, Any] | None:
     with _lock:
+        if _is_pose_stale(_latest_robot_pose):
+            return None
         return copy.deepcopy(_latest_robot_pose)
 
 
@@ -125,9 +172,16 @@ def get_global_path() -> dict[str, Any] | None:
 
 def get_nav_state() -> dict[str, Any]:
     with _lock:
+        now = time.time()
+        pose = None if _is_pose_stale(_latest_robot_pose, now) else copy.deepcopy(_latest_robot_pose)
+        localization_status = (
+            _stale_localization_status(now)
+            if pose is None and _latest_robot_pose is not None
+            else copy.deepcopy(_latest_localization_status)
+        )
         return {
-            "robot_pose": copy.deepcopy(_latest_robot_pose),
+            "robot_pose": pose,
             "navigation_status": copy.deepcopy(_latest_navigation_status),
-            "localization_status": copy.deepcopy(_latest_localization_status),
+            "localization_status": localization_status,
             "global_path": copy.deepcopy(_latest_global_path),
         }

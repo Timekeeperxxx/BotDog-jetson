@@ -12,6 +12,7 @@ import {
   insertTaskDraftStep,
   summarizeWorkflowSteps,
   taskContainsPostureControl,
+  resolveRobotCommandFromKey,
   resolveInitialTaskMapId,
   resolveTaskSceneId,
   removeTaskDraftStep,
@@ -152,6 +153,15 @@ describe('navPageUtils', () => {
     expect(resolveInitialTaskMapId('scene-a', ['map-a'])).toBe('scene-a')
     expect(resolveInitialTaskMapId(null, ['map-a', 'map-b'])).toBe('map-a')
     expect(resolveInitialTaskMapId(null, [])).toBe('')
+  })
+
+  it('keeps arrow keys out of navigation movement commands', () => {
+    expect(resolveRobotCommandFromKey('w')).toBe('forward')
+    expect(resolveRobotCommandFromKey('s')).toBe('backward')
+    expect(resolveRobotCommandFromKey('ArrowUp')).toBeNull()
+    expect(resolveRobotCommandFromKey('ArrowDown')).toBeNull()
+    expect(resolveRobotCommandFromKey('ArrowLeft')).toBeNull()
+    expect(resolveRobotCommandFromKey('ArrowRight')).toBeNull()
   })
 
   it('finds tasks and scenes by id', () => {

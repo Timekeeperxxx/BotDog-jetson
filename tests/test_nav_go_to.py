@@ -20,10 +20,18 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
     audit_messages: list[str] = []
     nav_status_updates: list[dict[str, object]] = []
     publish_order: list[str] = []
+    nav_start_calls: list[bool] = []
 
     class DummyBridge:
         def publish_navigation_start(self, enabled: bool = True) -> dict[str, object]:
-            raise AssertionError("go-to 不允许发布 /nav_start")
+            publish_order.append("nav_start")
+            nav_start_calls.append(enabled)
+            assert enabled is False
+            return {
+                "success": True,
+                "topic": "/nav_start",
+                "data": False,
+            }
 
         def publish_goal_xyz_yaw(self, payload: dict[str, object]) -> dict[str, object]:
             publish_order.append("goal")
@@ -49,6 +57,29 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
 
     monkeypatch.setattr(nav_routes, "get_ros_nav_bridge", lambda: DummyBridge())
     monkeypatch.setattr("backend.services_nav_waypoints.get_waypoint", lambda map_id, waypoint_id: waypoint)
+    monkeypatch.setattr(
+        "backend.services_nav_localization.start_cmd_vel_script",
+        lambda: {"success": True, "running": True, "pid": 1234},
+    )
+    monkeypatch.setattr(
+        "backend.services_nav_localization.assert_navigation_runtime_ready",
+        lambda: {"navigation_ready": True},
+    )
+    monkeypatch.setattr(
+        "backend.services_nav_state.get_nav_state",
+        lambda: {
+            "robot_pose": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "yaw": 0.0,
+                "frame_id": "map",
+                "source": "test",
+                "timestamp": 1.0,
+            },
+            "localization_status": {"status": "ok", "message": "定位正常"},
+        },
+    )
     monkeypatch.setattr(nav_routes, "safe_write_audit_log", fake_audit_log)
     monkeypatch.setattr("backend.services_nav_state.update_navigation_status", fake_update_navigation_status)
 
@@ -66,18 +97,13 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
     assert result["xyz_topic"] == "/clicked_point"
     assert result["yaw_topic"] == "goal_yaw"
     assert result["goal"]["waypoint_id"] == "wp_001"
-    assert publish_order == ["goal"]
+    assert result["stop_task_nav"]["data"] is False
+    assert publish_order == ["nav_start", "goal"]
+    assert nav_start_calls == [False]
     assert audit_messages
     assert "clicked_point_topic=/clicked_point" in audit_messages[0]
     assert "yaw_topic=goal_yaw" in audit_messages[0]
-    assert "nav_start_topic" not in audit_messages[0]
+    assert "stop_task_nav_topic=/nav_start" in audit_messages[0]
     assert nav_status_updates
     assert nav_status_updates[0]["status"] == "navigating"
     assert "已发布 clicked_point 和 goal_yaw" in nav_status_updates[0]["message"]
-
-    try:
-        DummyBridge().publish_navigation_start()
-    except AssertionError as exc:
-        assert "go-to 不允许发布 /nav_start" in str(exc)
-    else:
-        raise AssertionError("go-to 调用 publish_navigation_start 时测试必须失败")

@@ -40,6 +40,10 @@ def test_nav_stop_task_publishes_nav_start_false_and_clears_state(monkeypatch):
 
     monkeypatch.setattr(nav_routes, "get_ros_nav_bridge", lambda: DummyBridge())
     monkeypatch.setattr("backend.services_nav_tasks.get_nav_task", lambda task_id: {"id": task_id, "name": "任务1"})
+    monkeypatch.setattr(
+        "backend.services_nav_localization.stop_cmd_vel_script",
+        lambda: {"success": True, "running": False, "pid": 1234},
+    )
     monkeypatch.setattr("backend.services_nav_state.clear_global_path", fake_clear_global_path)
     monkeypatch.setattr("backend.services_nav_state.update_navigation_status", fake_update_navigation_status)
     monkeypatch.setattr(nav_routes, "safe_write_audit_log", fake_audit_log)
@@ -97,6 +101,10 @@ def test_nav_emergency_stop_stops_processes_and_sets_idle(monkeypatch):
         return {"status": "idle", "message": message}
 
     monkeypatch.setattr("backend.control_service.get_control_service", lambda: DummyControlService())
+    monkeypatch.setattr(
+        "backend.services_nav_localization.stop_cmd_vel_script",
+        lambda: {"success": True, "running": False, "pid": 1234},
+    )
     monkeypatch.setattr("backend.services_nav_localization.stop_navigation_processes", fake_stop_navigation_processes)
     monkeypatch.setattr("backend.services_nav_state.clear_global_path", fake_clear_global_path)
     monkeypatch.setattr("backend.services_nav_state.set_navigation_idle", fake_set_navigation_idle)
@@ -133,4 +141,3 @@ def test_services_nav_state_clear_global_path_and_idle():
     state = get_nav_state()
     assert state["navigation_status"]["status"] == "idle"
     assert state["navigation_status"]["message"] == "测试 idle"
-

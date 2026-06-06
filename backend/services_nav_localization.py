@@ -45,6 +45,10 @@ def _restart_script_path() -> Path:
     return _project_root() / "scripts" / "restart_navigation_localization.sh"
 
 
+def _cmd_vel_script_path() -> Path:
+    return _project_root().parent / "test_cmd_vel_fixed.sh"
+
+
 def _restart_log_path() -> Path:
     logs_dir = _project_root() / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -100,6 +104,10 @@ def _current_scene_path() -> Path:
 
 def _cmd_vel_pid_path() -> Path:
     return _runtime_dir() / "cmd_vel.pid"
+
+
+def _navigation_ready_path() -> Path:
+    return _runtime_dir() / "navigation_ready.json"
 
 
 def _named_pid_path(name: str) -> Path:
@@ -345,6 +353,9 @@ def _find_pids_by_needles(needles: list[str]) -> list[int]:
 def _find_cmd_vel_pids() -> list[int]:
     return _find_pids_by_needles([
         "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py",
+        "/home/jetson/Project/BOTDOG/test_cmd_vel_fixed.sh",
+        "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel_udp_bridge.py",
+        "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel_ros2_udp_sender.py",
     ])
 
 
@@ -384,6 +395,27 @@ def _inspect_tf_health() -> tuple[bool | None, list[str], list[str]]:
     except Exception as exc:
         warnings.append(f"TF 状态未确认：{exc}")
         return None, warnings, errors
+
+
+def _inspect_navigation_ready_marker(scene: dict[str, Any]) -> tuple[bool, list[str]]:
+    path = _navigation_ready_path()
+    errors: list[str] = []
+
+    if not path.exists():
+        return False, ["navigation_ready 标记未生成，global planner 静态地图层尚未确认"]
+
+    marker = read_json(path, None)
+    if not isinstance(marker, dict) or marker.get("ready") is not True:
+        return False, ["navigation_ready 标记格式非法"]
+
+    expected_fields = ("scene_dir", "map_pcd", "ground_pcd")
+    for field in expected_fields:
+        expected = str(scene.get(field) or "")
+        actual = str(marker.get(field) or "")
+        if expected and actual and Path(actual).expanduser() != Path(expected).expanduser():
+            errors.append(f"navigation_ready 标记与当前场景不一致: {field}")
+
+    return len(errors) == 0, errors
 
 
 def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | None]) -> dict[str, Any]:
@@ -427,6 +459,9 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
     if cmd_vel_test_publisher_running:
         warnings.append("检测到 cmd_vel 测试发布器残留，请先停止，否则可能导致机器狗异常移动")
 
+    navigation_ready_marker_ok, marker_errors = _inspect_navigation_ready_marker(scene)
+    errors.extend(marker_errors)
+
     navigation_ready = (
         scene_ok
         and map_pcd_ok
@@ -435,6 +470,7 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
         and relocation_ok
         and global_planner_ok
         and p2p_move_base_ok
+        and navigation_ready_marker_ok
         and not cmd_vel_test_publisher_running
         and tf_ok is not False
     )
@@ -454,6 +490,8 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
         "cmd_vel_test_publisher_running": cmd_vel_test_publisher_running,
         "cmd_vel_running": cmd_vel_running,
         "cmd_vel_pid": cmd_vel_pid,
+        "navigation_ready_marker_ok": navigation_ready_marker_ok,
+        "navigation_ready_marker": str(_navigation_ready_path()),
         "tf_ok": tf_ok,
         "warnings": warnings,
         "errors": errors,
@@ -465,6 +503,22 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
         "warnings": warnings,
         "errors": errors,
     }
+
+
+def assert_navigation_runtime_ready() -> dict[str, Any]:
+    scene = load_current_scene(strict=False)
+    child_pids = {
+        "livox_pid": _read_pid_file(_named_pid_path("livox")),
+        "relocation_pid": _read_pid_file(_named_pid_path("relocation")),
+        "global_planner_pid": _read_pid_file(_named_pid_path("global_planner")),
+        "p2p_move_base_pid": _read_pid_file(_named_pid_path("p2p_move_base")),
+        "cmd_vel_pid": _read_cmd_vel_pid(),
+    }
+    health_result = _build_restart_health(scene, child_pids)
+    if not health_result["navigation_ready"]:
+        details = list(health_result["errors"] or health_result["warnings"] or ["导航链路未就绪"])
+        raise RuntimeError("导航链路未就绪，禁止发布目标点: " + "；".join(details))
+    return health_result
 
 
 def _kill_pid_tree(pid: int, sig: int) -> None:
@@ -549,6 +603,57 @@ def stop_cmd_vel_script() -> dict[str, Any]:
         "pid": unique_pids[0],
         "pid_file": str(pid_file),
         "message": "已停止后台 cmd_vel 脚本",
+    }
+
+
+def start_cmd_vel_script() -> dict[str, Any]:
+    pid_file = _cmd_vel_pid_path()
+    log_file = _runtime_dir() / "cmd_vel.log"
+    script_path = _cmd_vel_script_path()
+
+    existing_pid = _read_cmd_vel_pid()
+    if _is_pid_alive(existing_pid):
+        return {
+            "success": True,
+            "running": True,
+            "pid": existing_pid,
+            "pid_file": str(pid_file),
+            "log_file": str(log_file),
+            "message": "cmd_vel 桥接已在运行",
+        }
+
+    stale_pids = _find_cmd_vel_pids()
+    if stale_pids:
+        stop_cmd_vel_script()
+
+    if not script_path.exists():
+        raise RuntimeError(f"cmd_vel 启动脚本不存在: {script_path}")
+    if not script_path.is_file():
+        raise RuntimeError(f"cmd_vel 启动脚本不是文件: {script_path}")
+
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    with log_file.open("a", encoding="utf-8") as stdout:
+        proc = subprocess.Popen(
+            ["bash", str(script_path)],
+            stdout=stdout,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            cwd=str(_project_root().parent),
+        )
+
+    time.sleep(1.5)
+    if proc.poll() is not None:
+        raise RuntimeError(f"cmd_vel 桥接启动失败，请查看 {log_file}")
+
+    atomic_write_json(pid_file, proc.pid)
+    nav_logger.info("cmd_vel 桥接已启动：pid={} log={}", proc.pid, log_file)
+    return {
+        "success": True,
+        "running": True,
+        "pid": proc.pid,
+        "pid_file": str(pid_file),
+        "log_file": str(log_file),
+        "message": "cmd_vel 桥接已启动",
     }
 
 
@@ -687,9 +792,9 @@ def restart_navigation_localization() -> dict[str, Any]:
             "relocation_pid": _named_pid_path("relocation"),
             "global_planner_pid": _named_pid_path("global_planner"),
             "p2p_move_base_pid": _named_pid_path("p2p_move_base"),
-            "cmd_vel_pid": _cmd_vel_pid_path(),
         }
         child_pids = _wait_for_pid_files(pid_files, timeout_s=20.0)
+        child_pids["cmd_vel_pid"] = _read_cmd_vel_pid()
         health_result = _build_restart_health(scene, child_pids)
         navigation_ready = bool(health_result["navigation_ready"])
         warnings = list(health_result["warnings"] or [])

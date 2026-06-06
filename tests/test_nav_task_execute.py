@@ -53,6 +53,29 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
     monkeypatch.setattr("backend.services_nav_waypoints.settings.NAV_WAYPOINT_STORE_DIR", str(waypoint_root))
     monkeypatch.setattr("backend.services_nav_localization.settings.NAV_RUNTIME_DIR", str(runtime_root))
     monkeypatch.setattr("backend.services_nav_task_runtime.settings.NAV_RUNTIME_DIR", str(runtime_root))
+    monkeypatch.setattr(
+        "backend.services_nav_localization.start_cmd_vel_script",
+        lambda: {"success": True, "running": True, "pid": 1234},
+    )
+    monkeypatch.setattr(
+        "backend.services_nav_localization.assert_navigation_runtime_ready",
+        lambda: {"navigation_ready": True},
+    )
+    monkeypatch.setattr(
+        "backend.services_nav_state.get_nav_state",
+        lambda: {
+            "robot_pose": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "yaw": 0.0,
+                "frame_id": "map",
+                "source": "test",
+                "timestamp": 1.0,
+            },
+            "localization_status": {"status": "ok", "message": "定位正常"},
+        },
+    )
 
     waypoint = create_waypoint(
         scene_id,
@@ -141,6 +164,14 @@ def test_nav_execute_task_missing_waypoint_returns_404(monkeypatch, tmp_path):
     monkeypatch.setattr("backend.services_nav_waypoints.settings.NAV_WAYPOINT_STORE_DIR", str(waypoint_root))
     monkeypatch.setattr("backend.services_nav_localization.settings.NAV_RUNTIME_DIR", str(runtime_root))
     monkeypatch.setattr("backend.services_nav_task_runtime.settings.NAV_RUNTIME_DIR", str(runtime_root))
+    monkeypatch.setattr(
+        "backend.services_nav_localization.start_cmd_vel_script",
+        lambda: {"success": True, "running": True, "pid": 1234},
+    )
+    monkeypatch.setattr(
+        "backend.services_nav_localization.assert_navigation_runtime_ready",
+        lambda: {"navigation_ready": True},
+    )
 
     save_nav_task(
         {

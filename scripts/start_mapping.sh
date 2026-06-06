@@ -341,6 +341,8 @@ NAV_NEEDLES=(
   "/home/jetson/dddmr_navigation_new_local/install/dddmr_local_map/lib/dddmr_local_map/local_map_builder"
   "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py"
   "/home/jetson/Project/BOTDOG/test_cmd_vel_fixed.sh"
+  "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel_udp_bridge.py"
+  "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel_ros2_udp_sender.py"
   "local_map_builder"
 )
 

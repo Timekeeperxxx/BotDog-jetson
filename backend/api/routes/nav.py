@@ -42,6 +42,26 @@ from ...nav_bridge_state import get_ros_nav_bridge
 router = APIRouter(prefix="/api/v1/nav", tags=["nav"])
 
 
+def _ensure_localization_ready_for_navigation() -> None:
+    from ...services_nav_state import get_nav_state
+
+    state = get_nav_state()
+    pose = state.get("robot_pose")
+    localization = state.get("localization_status") or {}
+    if pose is None or localization.get("status") != "ok":
+        message = localization.get("message") or "定位未就绪"
+        raise HTTPException(status_code=409, detail=f"定位未就绪，禁止启动导航: {message}")
+
+
+def _ensure_navigation_runtime_ready() -> None:
+    from ...services_nav_localization import assert_navigation_runtime_ready
+
+    try:
+        assert_navigation_runtime_ready()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
 @router.get("/tasks", response_model=NavTaskListResponse)
 async def nav_list_tasks():
     from ...services_nav_tasks import NavTaskError, list_nav_tasks
@@ -90,6 +110,7 @@ async def nav_execute_task(
     from ...services_nav_state import update_navigation_status
     from ...services_nav_tasks import NavTaskError, get_nav_task
     from ...services_nav_task_runtime import materialize_nav_task_runtime
+    from ...services_nav_localization import start_cmd_vel_script, stop_cmd_vel_script
 
     bridge = get_ros_nav_bridge()
     if bridge is None:
@@ -98,7 +119,14 @@ async def nav_execute_task(
     try:
         task = get_nav_task(task_id)
         runtime_result = materialize_nav_task_runtime(task_id)
-        nav_start_result = bridge.publish_navigation_start(True)
+        _ensure_localization_ready_for_navigation()
+        _ensure_navigation_runtime_ready()
+        cmd_vel_result = start_cmd_vel_script()
+        try:
+            nav_start_result = bridge.publish_navigation_start(True)
+        except RuntimeError:
+            stop_cmd_vel_script()
+            raise
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except KeyError as exc:
@@ -122,7 +150,8 @@ async def nav_execute_task(
         module="BACKEND",
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.task.execute "
-            f"目标={task_id} 结果=success topic={nav_start_result['topic']}"
+            f"目标={task_id} 结果=success topic={nav_start_result['topic']} "
+            f"cmd_vel_pid={cmd_vel_result.get('pid')}"
         ),
     )
     return {
@@ -131,6 +160,7 @@ async def nav_execute_task(
         "topic": nav_start_result["topic"],
         "data": nav_start_result["data"],
         "nav_start": nav_start_result,
+        "cmd_vel": cmd_vel_result,
         "message": "已发布导航启动信号并生成任务运行时文件",
         "runtime_file": runtime_result["runtime_file"],
         "runtime_task": runtime_result["runtime_task"],
@@ -145,6 +175,7 @@ async def nav_stop_task(
 ):
     from ...services_nav_state import clear_global_path, update_navigation_status
     from ...services_nav_tasks import NavTaskError, get_nav_task
+    from ...services_nav_localization import stop_cmd_vel_script
 
     bridge = get_ros_nav_bridge()
     if bridge is None:
@@ -153,6 +184,7 @@ async def nav_stop_task(
     try:
         _task = get_nav_task(task_id)
         nav_stop_result = bridge.publish_navigation_start(False)
+        cmd_vel_stop_result = stop_cmd_vel_script()
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except NavTaskError as exc:
@@ -175,7 +207,8 @@ async def nav_stop_task(
         module="BACKEND",
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.task.stop "
-            f"目标={task_id} 结果=success topic={nav_stop_result['topic']} data={nav_stop_result['data']}"
+            f"目标={task_id} 结果=success topic={nav_stop_result['topic']} "
+            f"data={nav_stop_result['data']} cmd_vel_pid={cmd_vel_stop_result.get('pid')}"
         ),
     )
     return {
@@ -184,6 +217,7 @@ async def nav_stop_task(
         "topic": nav_stop_result["topic"],
         "data": nav_stop_result["data"],
         "nav_start": nav_stop_result,
+        "cmd_vel_stop": cmd_vel_stop_result,
         "message": "已发布导航停止信号",
     }
 
@@ -269,7 +303,9 @@ async def nav_select_pcd_scene(
     db=Depends(get_db),
 ):
     from ...services_nav_localization import save_current_scene
+    from ...services_nav_state import reset_localization_tracking
     from ...services_pcd_maps import PcdMapError, find_scene_pcd_files, resolve_scene_path
+    from ...services_nav_task_runtime import clear_nav_task_runtime
 
     try:
         scene_path = resolve_scene_path(scene_id)
@@ -279,6 +315,8 @@ async def nav_select_pcd_scene(
         if files["ground"] is None:
             raise HTTPException(status_code=400, detail="场景缺少 ground.pcd")
         result = save_current_scene(scene_id)
+        clear_nav_task_runtime()
+        reset_localization_tracking(f"已切换场景 {scene_id}，等待重新定位")
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except PcdMapError as exc:
@@ -310,7 +348,7 @@ async def nav_set_localization_pose(
     db=Depends(get_db),
 ):
     from ...services_nav_localization import save_localization_pose
-    from ...services_nav_state import update_localization_status
+    from ...services_nav_state import reset_localization_tracking, update_localization_status
     from ...services_pcd_maps import PcdMapError
 
     bridge = get_ros_nav_bridge()
@@ -318,6 +356,7 @@ async def nav_set_localization_pose(
         raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
 
     try:
+        reset_localization_tracking("已发送重定位请求，等待 TF 恢复")
         pose = save_localization_pose(body.model_dump())
         initial_pose_result = bridge.publish_initial_pose(
             x=pose["x"],
@@ -365,8 +404,12 @@ async def nav_restart_localization(
     db=Depends(get_db),
 ):
     from ...services_nav_localization import restart_navigation_localization
+    from ...services_nav_state import reset_localization_tracking
+    from ...services_nav_task_runtime import clear_nav_task_runtime
 
     try:
+        clear_nav_task_runtime()
+        reset_localization_tracking("正在重启导航定位，等待 initialpose")
         result = restart_navigation_localization()
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -543,6 +586,7 @@ async def nav_go_to_waypoint(
     from ...services_nav_state import update_navigation_status
     from ...services_nav_waypoints import get_waypoint
     from ...services_pcd_maps import PcdMapError
+    from ...services_nav_localization import start_cmd_vel_script, stop_cmd_vel_script
 
     bridge = get_ros_nav_bridge()
     if bridge is None:
@@ -558,7 +602,15 @@ async def nav_go_to_waypoint(
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        goal_result = bridge.publish_goal_xyz_yaw(waypoint)
+        _ensure_localization_ready_for_navigation()
+        _ensure_navigation_runtime_ready()
+        stop_task_nav_result = bridge.publish_navigation_start(False)
+        cmd_vel_result = start_cmd_vel_script()
+        try:
+            goal_result = bridge.publish_goal_xyz_yaw(waypoint)
+        except RuntimeError:
+            stop_cmd_vel_script()
+            raise
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
@@ -569,7 +621,8 @@ async def nav_go_to_waypoint(
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.go_to "
             f"目标={waypoint_id} map={map_id} 结果=success "
-            f"clicked_point_topic={goal_result['xyz_topic']} yaw_topic={goal_result['yaw_topic']}"
+            f"clicked_point_topic={goal_result['xyz_topic']} yaw_topic={goal_result['yaw_topic']} "
+            f"stop_task_nav_topic={stop_task_nav_result['topic']} cmd_vel_pid={cmd_vel_result.get('pid')}"
         ),
     )
     update_navigation_status(
@@ -593,6 +646,8 @@ async def nav_go_to_waypoint(
         "xyz_topic": goal_result["xyz_topic"],
         "yaw_topic": goal_result["yaw_topic"],
         "goal": goal_result,
+        "stop_task_nav": stop_task_nav_result,
+        "cmd_vel": cmd_vel_result,
         "message": "已发布 clicked_point 和 goal_yaw",
     }
 
@@ -603,7 +658,7 @@ async def nav_emergency_stop(
     db=Depends(get_db),
 ):
     from ...control_service import get_control_service
-    from ...services_nav_localization import stop_navigation_processes
+    from ...services_nav_localization import stop_cmd_vel_script, stop_navigation_processes
     from ...services_nav_state import clear_global_path, set_navigation_idle
     control_service = get_control_service()
 
@@ -612,6 +667,7 @@ async def nav_emergency_stop(
         if control_service is not None:
             control_result = await control_service.force_stop()
 
+        cmd_vel_result = stop_cmd_vel_script()
         nav_result = stop_navigation_processes()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -625,6 +681,7 @@ async def nav_emergency_stop(
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.e_stop 目标=nav 结果=success "
             f"control_result={getattr(control_result, 'result', 'N/A')} "
+            f"cmd_vel_pid={cmd_vel_result.get('pid') if isinstance(cmd_vel_result, dict) else 'N/A'} "
             f"nav_pids={nav_result.get('pids') if isinstance(nav_result, dict) else 'N/A'}"
         ),
     )
@@ -636,6 +693,7 @@ async def nav_emergency_stop(
             "result": getattr(control_result, "result", None),
             "ack_cmd": getattr(control_result, "ack_cmd", None),
         } if control_result is not None else None,
+        "cmd_vel_stop": cmd_vel_result,
         "nav_stop": nav_result,
     }
 

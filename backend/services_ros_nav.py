@@ -12,6 +12,7 @@ import numpy as np
 from .config import settings
 from .logging_config import get_logger
 from .services_nav_state import (
+    clear_robot_pose,
     update_global_path,
     get_robot_pose,
     get_nav_state,
@@ -24,7 +25,7 @@ from .ws_event_broadcaster import EventBroadcaster
 nav_logger = get_logger("ROS导航")
 tf_logger = get_logger("ROS TF")
 GLOBAL_PATH_BROADCAST_MIN_INTERVAL_S = 1.0
-INITIAL_POSE_PUBLISH_COUNT = 5
+INITIAL_POSE_PUBLISH_COUNT = 20
 INITIAL_POSE_PUBLISH_INTERVAL_S = 0.2
 
 
@@ -799,6 +800,21 @@ class RosNavBridge:
     def _tf_source(self) -> str:
         return f"tf:{settings.ROS_NAV_FRAME_ID}->{settings.ROS_NAV_BASE_FRAME_ID}"
 
+    def _tf_source_for(self, source_frame: str) -> str:
+        return f"tf:{settings.ROS_NAV_FRAME_ID}->{source_frame}"
+
+    def _base_frame_candidates(self) -> list[str]:
+        configured = [
+            item.strip()
+            for item in str(settings.ROS_NAV_BASE_FRAME_ID).split(",")
+            if item.strip()
+        ]
+        candidates: list[str] = []
+        for frame in [*configured, "base_footprint", "base_link"]:
+            if frame and frame not in candidates:
+                candidates.append(frame)
+        return candidates
+
     def _setup_tf_listener(self) -> None:
         try:
             from tf2_ros import Buffer, TransformListener
@@ -817,9 +833,10 @@ class RosNavBridge:
         try:
             pose = self._lookup_tf_pose()
         except Exception as exc:
+            clear_robot_pose()
             message = (
                 f"TF 暂未就绪：target={settings.ROS_NAV_FRAME_ID}，"
-                f"source={settings.ROS_NAV_BASE_FRAME_ID}，原因={exc}"
+                f"source={','.join(self._base_frame_candidates())}，原因={exc}"
             )
             update_localization_status(
                 {
@@ -837,7 +854,7 @@ class RosNavBridge:
                 tf_logger.warning(
                     "TF 暂未就绪：target={}，source={}，原因={}",
                     settings.ROS_NAV_FRAME_ID,
-                    settings.ROS_NAV_BASE_FRAME_ID,
+                    ",".join(self._base_frame_candidates()),
                     exc,
                 )
             elif now - self._last_tf_warning_at >= 30.0:
@@ -846,7 +863,7 @@ class RosNavBridge:
                 tf_logger.warning(
                     "TF 仍未就绪：target={}，source={}，已等待={}s",
                     settings.ROS_NAV_FRAME_ID,
-                    settings.ROS_NAV_BASE_FRAME_ID,
+                    ",".join(self._base_frame_candidates()),
                     waited,
                 )
             return
@@ -855,7 +872,7 @@ class RosNavBridge:
             tf_logger.info(
                 "TF 已恢复：target={}，source={}",
                 settings.ROS_NAV_FRAME_ID,
-                settings.ROS_NAV_BASE_FRAME_ID,
+                pose["source_frame"],
             )
         self._tf_available = True
         self._tf_wait_started_at = 0.0
@@ -866,7 +883,7 @@ class RosNavBridge:
             {
                 "status": "ok",
                 "frame_id": settings.ROS_NAV_FRAME_ID,
-                "source": self._tf_source(),
+                "source": self._tf_source_for(pose["source_frame"]),
                 "message": "TF 定位正常",
                 "timestamp": pose["timestamp"],
             }
@@ -878,11 +895,24 @@ class RosNavBridge:
 
         from rclpy.time import Time
 
-        transform_stamped = self._tf_buffer.lookup_transform(
-            settings.ROS_NAV_FRAME_ID,
-            settings.ROS_NAV_BASE_FRAME_ID,
-            Time(),
-        )
+        errors: list[str] = []
+        transform_stamped = None
+        source_frame = ""
+        for candidate in self._base_frame_candidates():
+            try:
+                transform_stamped = self._tf_buffer.lookup_transform(
+                    settings.ROS_NAV_FRAME_ID,
+                    candidate,
+                    Time(),
+                )
+                source_frame = candidate
+                break
+            except Exception as exc:
+                errors.append(f"{candidate}: {exc}")
+
+        if transform_stamped is None:
+            raise RuntimeError("; ".join(errors) or "没有可用 base frame")
+
         transform = transform_stamped.transform
         translation = transform.translation
         rotation = transform.rotation
@@ -899,7 +929,8 @@ class RosNavBridge:
                 float(rotation.w),
             ),
             "frame_id": settings.ROS_NAV_FRAME_ID,
-            "source": self._tf_source(),
+            "source": self._tf_source_for(source_frame),
+            "source_frame": source_frame,
             "timestamp": _stamp_to_seconds(header.stamp),
         }
 

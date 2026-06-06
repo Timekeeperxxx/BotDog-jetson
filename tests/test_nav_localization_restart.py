@@ -21,6 +21,18 @@ def _make_pid_paths(root: Path) -> dict[str, Path]:
     }
 
 
+def _write_navigation_ready_marker(runtime_root: Path, scene_dir: Path) -> None:
+    atomic_write_json(
+        runtime_root / "navigation_ready.json",
+        {
+            "ready": True,
+            "scene_dir": str(scene_dir),
+            "map_pcd": str(scene_dir / "map.pcd"),
+            "ground_pcd": str(scene_dir / "ground.pcd"),
+        },
+    )
+
+
 def test_wait_for_pid_files_reads_all_files(tmp_path):
     pid_paths = _make_pid_paths(tmp_path)
     values = {
@@ -93,6 +105,7 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
             "updated_at": "2026-05-11T00:00:00.000Z",
         },
     )
+    _write_navigation_ready_marker(runtime_root, scene_dir)
 
     monkeypatch.setattr(services_nav_localization.settings, "NAV_RUNTIME_DIR", str(runtime_root))
     monkeypatch.setattr(services_nav_localization, "_restart_script_path", lambda: script_path)
@@ -149,7 +162,8 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
     assert result["warnings"] == []
     assert result["errors"] == []
     assert result["process_pids"]["livox"] == 101
-    assert result["process_pids"]["cmd_vel"] == 105
+    assert result["process_pids"]["cmd_vel"] is None
+    assert result["health"]["cmd_vel_running"] is False
     assert result["message"] == "已启动重启脚本，导航可用"
 
 
@@ -174,6 +188,7 @@ def test_restart_navigation_localization_marks_missing_ground_unavailable(monkey
             "updated_at": "2026-05-11T00:00:00.000Z",
         },
     )
+    _write_navigation_ready_marker(runtime_root, scene_dir)
 
     monkeypatch.setattr(services_nav_localization.settings, "NAV_RUNTIME_DIR", str(runtime_root))
     monkeypatch.setattr(services_nav_localization, "_restart_script_path", lambda: script_path)
@@ -235,6 +250,7 @@ def test_restart_navigation_localization_detects_cmd_vel_test_publisher_residual
             "updated_at": "2026-05-11T00:00:00.000Z",
         },
     )
+    _write_navigation_ready_marker(runtime_root, scene_dir)
 
     monkeypatch.setattr(services_nav_localization.settings, "NAV_RUNTIME_DIR", str(runtime_root))
     monkeypatch.setattr(services_nav_localization, "_restart_script_path", lambda: script_path)
@@ -380,9 +396,11 @@ def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
     superlio_setup = fake_home / "superlio" / "install" / "setup.bash"
     navigation_setup = fake_home / "dddmr_navigation_new_local" / "install" / "setup.bash"
     ros2_setup = tmp_path / "opt" / "ros" / "humble" / "setup.bash"
+    superlio_root = fake_home / "superlio" / "Super-LIO-ros2" / "src" / "super_lio"
     superlio_setup.parent.mkdir(parents=True, exist_ok=True)
     navigation_setup.parent.mkdir(parents=True, exist_ok=True)
     ros2_setup.parent.mkdir(parents=True, exist_ok=True)
+    superlio_root.mkdir(parents=True, exist_ok=True)
     superlio_setup.write_text("", encoding="utf-8")
     navigation_setup.write_text("", encoding="utf-8")
     ros2_setup.write_text("", encoding="utf-8")
@@ -390,6 +408,10 @@ def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
     fake_ros2 = fake_bin / "ros2"
     fake_ros2.write_text(
         "#!/usr/bin/env bash\n"
+        "if [ \"${1:-}\" = \"topic\" ] && [ \"${2:-}\" = \"echo\" ]; then\n"
+        "  echo 'data: ok'\n"
+        "  exit 0\n"
+        "fi\n"
         "tail -f /dev/null\n",
         encoding="utf-8",
     )
@@ -429,11 +451,11 @@ def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
             runtime_dir / "relocation.pid",
             runtime_dir / "global_planner.pid",
             runtime_dir / "p2p_move_base.pid",
-            runtime_dir / "cmd_vel.pid",
         ]
+        ready_file = runtime_dir / "navigation_ready.json"
 
         while time.time() < deadline:
-            if all(path.exists() for path in expected_pid_files):
+            if all(path.exists() for path in expected_pid_files) and ready_file.exists():
                 break
             if proc.poll() is not None:
                 break
@@ -463,7 +485,9 @@ def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
         assert str(scene_dir / "ground.pcd") in output
         for path in expected_pid_files:
             assert path.exists()
-        assert int((runtime_dir / "cmd_vel.pid").read_text(encoding="utf-8").strip()) > 0
+        assert ready_file.exists()
+        assert not (runtime_dir / "cmd_vel.pid").exists()
+        assert "跳过 cmd_vel 硬件桥接启动" in output
     finally:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
@@ -504,5 +528,10 @@ def test_restart_navigation_script_uses_real_time_and_cleans_local_navigation_no
     assert '"local_map_builder"' in content
     assert '"/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/p2p_move_base_node"' in content
     assert '"/home/jetson/dddmr_navigation_new_local/install/dddmr_local_map/lib/dddmr_local_map/local_map_builder"' in content
-    assert 'super_lio relocation.py "启动 Super-LIO 重定位..." RELOCATION_PID relocation.pid "map_file:=$MAP_PCD" "rviz:=false"' in content
+    assert "ros2 run super_lio relocation_node" in content
+    assert '-p "lio.map.save_map_dir:=$relative_map_dir"' in content
+    assert '-p "lio.map.map_name:=$map_name"' in content
+    assert "wait_for_navigation_maps" in content
+    assert "navigation_ready.json" in content
+    assert '"map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD"' in content
     assert 'p2p_move_base go2_localization_launch.py "启动 P2P move base 定位导航..." P2P_MOVE_BASE_PID p2p_move_base.pid "use_sim:=false"' in content

@@ -25,6 +25,17 @@ def _runtime_file() -> Path:
     return _runtime_dir() / "current_task.json"
 
 
+def clear_nav_task_runtime() -> dict[str, Any]:
+    path = _runtime_file()
+    existed = path.exists()
+    path.unlink(missing_ok=True)
+    return {
+        "success": True,
+        "cleared": existed,
+        "runtime_file": str(path),
+    }
+
+
 def _materialize_step(_scene_id: str, step: dict[str, Any]) -> dict[str, Any] | None:
     step_type = str(step.get("type") or "").strip()
 

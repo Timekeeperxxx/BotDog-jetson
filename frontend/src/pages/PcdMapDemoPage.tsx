@@ -71,6 +71,24 @@ type MappingSessionInfo = {
   mapDir: string
 }
 
+const DEFAULT_LINEAR_SPEED = 0.3
+const DEFAULT_TURN_SPEED = 0.5
+const SPEED_STEP = 0.1
+const MAX_LINEAR_SPEED = 0.6
+const MAX_TURN_SPEED = 0.8
+
+function clampSpeed(value: number, limit: number) {
+  return Math.max(0, Math.min(limit, Number(value.toFixed(1))))
+}
+
+function isArrowSpeedKey(key: string) {
+  return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)
+}
+
+function formatSpeed(value: number) {
+  return value.toFixed(1)
+}
+
 export function PcdMapDemoPage() {
   useAuthState()
   const canOperate = hasAuthSession() && hasRole('operator')
@@ -99,6 +117,8 @@ export function PcdMapDemoPage() {
   const [mappingStartTime, setMappingStartTime] = useState<number | null>(null)
   const [mappingStopConfirmOpen, setMappingStopConfirmOpen] = useState(false)
   const [keyboardControlEnabled, setKeyboardControlEnabled] = useState(false)
+  const [linearSpeed, setLinearSpeed] = useState(DEFAULT_LINEAR_SPEED)
+  const [turnSpeed, setTurnSpeed] = useState(DEFAULT_TURN_SPEED)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
   const [webglSupported, setWebglSupported] = useState(true)
@@ -117,6 +137,8 @@ export function PcdMapDemoPage() {
   } = useRobotControl()
 
   const prevMappingActiveRef = useRef(mappingActive)
+  const linearSpeedRef = useRef(DEFAULT_LINEAR_SPEED)
+  const turnSpeedRef = useRef(DEFAULT_TURN_SPEED)
   useEffect(() => {
     if (prevMappingActiveRef.current !== mappingActive) {
       prevMappingActiveRef.current = mappingActive
@@ -135,7 +157,18 @@ export function PcdMapDemoPage() {
 
   const handleSceneChanging = useCallback(() => {
     setAddMode(false)
-  }, [])
+    setInitialState({
+      robotPose: null,
+      globalPath: null,
+      localizationStatus: {
+        status: 'initializing',
+        frame_id: 'map',
+        source: null,
+        message: '场景已切换，等待重新定位',
+        timestamp: Date.now() / 1000,
+      },
+    })
+  }, [setInitialState])
 
   const {
     scenes,
@@ -216,6 +249,17 @@ export function PcdMapDemoPage() {
     }
 
     try {
+      setInitialState({
+        robotPose: null,
+        globalPath: null,
+        localizationStatus: {
+          status: 'initializing',
+          frame_id: 'map',
+          source: '/initialpose',
+          message: '已发送重定位，等待 TF 恢复',
+          timestamp: Date.now() / 1000,
+        },
+      })
       await setLocalizationPose(payload)
       setToolMode('none')
       addLog(
@@ -235,6 +279,7 @@ export function PcdMapDemoPage() {
     selectedSceneId,
     selectedSceneNavigable,
     waypointZ,
+    setInitialState,
   ])
 
   const handleDeleteWaypoint = useCallback(async (waypointId: string) => {
@@ -458,9 +503,59 @@ export function PcdMapDemoPage() {
     }
   }, [selectedTaskId, tasks])
 
+  const resetKeyboardSpeeds = useCallback(() => {
+    linearSpeedRef.current = DEFAULT_LINEAR_SPEED
+    turnSpeedRef.current = DEFAULT_TURN_SPEED
+    setLinearSpeed(DEFAULT_LINEAR_SPEED)
+    setTurnSpeed(DEFAULT_TURN_SPEED)
+  }, [])
+
+  const adjustKeyboardSpeed = useCallback((key: string) => {
+    let nextLinearSpeed = linearSpeedRef.current
+    let nextTurnSpeed = turnSpeedRef.current
+
+    if (key === 'ArrowUp') {
+      nextLinearSpeed = clampSpeed(nextLinearSpeed + SPEED_STEP, MAX_LINEAR_SPEED)
+    } else if (key === 'ArrowDown') {
+      nextLinearSpeed = clampSpeed(nextLinearSpeed - SPEED_STEP, MAX_LINEAR_SPEED)
+    } else if (key === 'ArrowLeft') {
+      nextTurnSpeed = clampSpeed(nextTurnSpeed + SPEED_STEP, MAX_TURN_SPEED)
+    } else if (key === 'ArrowRight') {
+      nextTurnSpeed = clampSpeed(nextTurnSpeed - SPEED_STEP, MAX_TURN_SPEED)
+    }
+
+    linearSpeedRef.current = nextLinearSpeed
+    turnSpeedRef.current = nextTurnSpeed
+    setLinearSpeed(nextLinearSpeed)
+    setTurnSpeed(nextTurnSpeed)
+  }, [])
+
+  const startKeyboardCommand = useCallback((cmd: ReturnType<typeof resolveRobotCommandFromKey>) => {
+    if (!cmd) return
+
+    if (cmd === 'forward' || cmd === 'backward') {
+      const vx = linearSpeedRef.current
+      if (vx === 0) return
+      startCommand(cmd, { vx })
+      return
+    }
+
+    if (cmd === 'left' || cmd === 'right') {
+      const vyaw = turnSpeedRef.current
+      if (vyaw === 0) return
+      startCommand(cmd, { vyaw })
+      return
+    }
+
+    startCommand(cmd)
+  }, [startCommand])
+
   useEffect(() => {
-    if (!keyboardControlEnabled && isControlling) stopCommand()
-  }, [keyboardControlEnabled, isControlling, stopCommand])
+    if (!keyboardControlEnabled) {
+      resetKeyboardSpeeds()
+      if (isControlling) stopCommand()
+    }
+  }, [keyboardControlEnabled, isControlling, resetKeyboardSpeeds, stopCommand])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -468,16 +563,26 @@ export function PcdMapDemoPage() {
       if (event.repeat) return
       if (!canOperate || !keyboardControlEnabled) return
 
+      if (isArrowSpeedKey(event.key)) {
+        event.preventDefault()
+        adjustKeyboardSpeed(event.key)
+        return
+      }
+
       const cmd = resolveRobotCommandFromKey(event.key)
 
       if (cmd) {
         event.preventDefault()
-        startCommand(cmd)
+        startKeyboardCommand(cmd)
       }
     }
 
     const handleKeyUp = (event: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((event.target as HTMLElement).tagName)) return
+      if (isArrowSpeedKey(event.key)) {
+        event.preventDefault()
+        return
+      }
 
       const cmd = resolveRobotCommandFromKey(event.key)
 
@@ -494,7 +599,7 @@ export function PcdMapDemoPage() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [canOperate, keyboardControlEnabled, currentCmd, startCommand, stopCommand])
+  }, [adjustKeyboardSpeed, canOperate, keyboardControlEnabled, currentCmd, startKeyboardCommand, stopCommand])
 
   const handleToolMode = useCallback((nextMode: 'obstacle' | 'pose') => {
     setToolMode((current) => {
@@ -1025,7 +1130,7 @@ export function PcdMapDemoPage() {
               className={`pcd-tool-button ${keyboardControlEnabled ? 'is-active' : ''}`}
               onClick={() => setKeyboardControlEnabled((v) => !v)}
               disabled={!canOperate}
-              title={keyboardControlEnabled ? '关闭键盘控制' : '开启键盘控制 (WASD/QE)'}
+              title={keyboardControlEnabled ? '关闭键盘控制' : '开启键盘控制，方向键调节速度，W/S/Q/E 控制移动'}
             >
               <Keyboard size={15} />
               <span>{keyboardControlEnabled ? '控制中' : '移动控制'}</span>
@@ -1062,7 +1167,13 @@ export function PcdMapDemoPage() {
             </button>
             {keyboardControlEnabled && (
               <div className="pcd-keyboard-hint">
-                <span>{isControlling ? `控制中: ${currentCmd}` : 'WASD / QE / Shift / Ctrl'}</span>
+                <span>
+                  {isControlling ? `控制中: ${currentCmd}` : '方向键调速'}
+                  {' · '}
+                  前后 {formatSpeed(linearSpeed)} m/s
+                  {' · '}
+                  转向 {formatSpeed(turnSpeed)} rad/s
+                </span>
                 {resultMessage ? <small>{resultMessage}</small> : null}
                 {!resultMessage && lastResult ? <small>{lastResult.result}</small> : null}
               </div>

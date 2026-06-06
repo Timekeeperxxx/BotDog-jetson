@@ -21,9 +21,12 @@ LIVOX_PID_FILE="$RUNTIME_DIR/livox.pid"
 RELOCATION_PID_FILE="$RUNTIME_DIR/relocation.pid"
 GLOBAL_PLANNER_PID_FILE="$RUNTIME_DIR/global_planner.pid"
 P2P_MOVE_BASE_PID_FILE="$RUNTIME_DIR/p2p_move_base.pid"
+CURRENT_TASK_FILE="$RUNTIME_DIR/current_task.json"
+NAV_READY_FILE="$RUNTIME_DIR/navigation_ready.json"
+SUPERLIO_ROOT_DIR="${SUPERLIO_ROOT_DIR:-$HOME/superlio/Super-LIO-ros2/src/super_lio}"
 
 mkdir -p "$RUNTIME_DIR" "$LOGS_DIR" "$SCRIPT_LOG_DIR"
-exec > >(tee -a "$ROOT_LOG_FILE" "$SCRIPT_LOG_FILE") 2>&1
+exec > >(tee -a "$SCRIPT_LOG_FILE") 2>&1
 
 RAW_SCENE_DIR="$1"
 
@@ -102,14 +105,23 @@ echo "当前 map.pcd: $MAP_PCD"
 echo "当前 ground.pcd: $GROUND_PCD"
 echo "PID 目录: $RUNTIME_DIR"
 
+if [ ! -d "$SUPERLIO_ROOT_DIR" ]; then
+  echo "错误：找不到 Super-LIO 源码根目录：$SUPERLIO_ROOT_DIR" >&2
+  exit 1
+fi
+
 rm -f \
   "$LIVOX_PID_FILE" \
   "$RELOCATION_PID_FILE" \
   "$GLOBAL_PLANNER_PID_FILE" \
   "$P2P_MOVE_BASE_PID_FILE" \
-  "$CMD_VEL_PID_FILE"
+  "$CMD_VEL_PID_FILE" \
+  "$CURRENT_TASK_FILE" \
+  "$NAV_READY_FILE"
 
 echo "清理可能残留的 ROS2 导航定位进程..."
+
+STARTED_PIDS=()
 
 find_matching_pids() {
   local needle="$1"
@@ -151,6 +163,27 @@ kill_needle_kill() {
     done < <(pgrep -P "$pid" 2>/dev/null || true)
   done < <(find_matching_pids "$needle" | sort -u)
 }
+
+cleanup_started_on_error() {
+  local status=$?
+  local pid
+  if [ "$status" -eq 0 ]; then
+    return
+  fi
+
+  echo "启动失败，清理本轮已启动的导航定位进程..."
+  for pid in "${STARTED_PIDS[@]:-}"; do
+    [ -n "$pid" ] || continue
+    kill_pid_tree "$pid"
+  done
+  sleep 1
+  for pid in "${STARTED_PIDS[@]:-}"; do
+    [ -n "$pid" ] || continue
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+}
+
+trap cleanup_started_on_error EXIT
 
 ROS_NEEDLES=(
   "ros2 launch livox_ros_driver2 msg_MID360_launch.py"
@@ -316,10 +349,117 @@ start_launch() {
   source_ros_setup "$setup_file"
   ros2 launch "$launch_pkg" "$launch_file" "${@:7}" &
   local pid=$!
+  STARTED_PIDS+=("$pid")
   printf -v "$pid_var" '%s' "$pid"
   if [ -n "${pid_file:-}" ]; then
     printf '%s\n' "$pid" > "$RUNTIME_DIR/$pid_file"
   fi
+
+  sleep 2
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo "错误：$title 启动后立即退出，请检查日志：$ROOT_LOG_FILE" >&2
+    exit 1
+  fi
+}
+
+start_relocation_node() {
+  local title="$1"
+  local pid_var="$2"
+  local pid_file="$3"
+  local map_dir
+  local map_name
+  local relative_map_dir
+
+  map_dir="$(dirname "$MAP_PCD")"
+  map_name="$(basename "$MAP_PCD")"
+  relative_map_dir="$(realpath --relative-to="$SUPERLIO_ROOT_DIR" "$map_dir" 2>/dev/null || true)"
+  if [ -z "$relative_map_dir" ]; then
+    echo "错误：无法计算 Super-LIO map 相对路径：root=$SUPERLIO_ROOT_DIR map_dir=$map_dir" >&2
+    exit 1
+  fi
+
+  echo "$title"
+  echo "Relocation map 参数：save_map_dir=$relative_map_dir map_name=$map_name"
+  cd "$HOME/superlio"
+  source_ros_setup "$HOME/superlio/install/setup.bash"
+  ros2 run super_lio relocation_node \
+    --ros-args \
+    --log-level info \
+    --params-file "$HOME/superlio/install/super_lio/share/super_lio/config/relocation.yaml" \
+    -p "lio.map.save_map_dir:=$relative_map_dir" \
+    -p "lio.map.map_name:=$map_name" &
+  local pid=$!
+  STARTED_PIDS+=("$pid")
+  printf -v "$pid_var" '%s' "$pid"
+  if [ -n "${pid_file:-}" ]; then
+    printf '%s\n' "$pid" > "$RUNTIME_DIR/$pid_file"
+  fi
+
+  sleep 2
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo "错误：$title 启动后立即退出，请检查日志：$ROOT_LOG_FILE" >&2
+    exit 1
+  fi
+}
+
+wait_for_topic_once() {
+  local topic="$1"
+  local timeout_s="$2"
+  local label="$3"
+
+  echo "等待 $label 数据：$topic ..."
+  if ! timeout "${timeout_s}s" ros2 topic echo "$topic" --once >/dev/null 2>&1; then
+    echo "错误：${timeout_s}s 内未收到 $label 数据：$topic" >&2
+    return 1
+  fi
+  echo "$label 数据正常：$topic"
+}
+
+wait_for_navigation_maps() {
+  local timeout_s="$1"
+
+  wait_for_topic_once /mapcloud "$timeout_s" "global planner mapcloud"
+  wait_for_topic_once /mapground "$timeout_s" "global planner mapground"
+}
+
+write_navigation_ready_file() {
+  local ready_at
+  ready_at="$(date -Iseconds)"
+
+  cat > "$NAV_READY_FILE" <<EOF
+{
+  "ready": true,
+  "ready_at": "$ready_at",
+  "scene_dir": "$SCENE_DIR",
+  "map_pcd": "$MAP_PCD",
+  "ground_pcd": "$GROUND_PCD",
+  "livox_pid": $LIVOX_PID,
+  "relocation_pid": $RELOCATION_PID,
+  "global_planner_pid": $GLOBAL_PLANNER_PID,
+  "p2p_move_base_pid": $P2P_MOVE_BASE_PID
+}
+EOF
+  echo "导航链路 ready：global planner 静态地图层已发布，ready_file=$NAV_READY_FILE"
+}
+
+wait_for_lio_odom_sane() {
+  local timeout_s="$1"
+  local deadline=$((SECONDS + timeout_s))
+  local sample
+
+  echo "等待 /lio/odom 输出 ..."
+  echo "提示：Super-LIO relocation 收到 /initialpose 后才会发布有效 /lio/odom，请在前端发送重定位。"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    sample="$(timeout 4s ros2 topic echo /lio/odom --once 2>/dev/null || true)"
+    if [ -n "$sample" ]; then
+      echo "/lio/odom 已输出"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "错误：${timeout_s}s 内未收到 /lio/odom" >&2
+  return 1
 }
 
 start_cmd_vel_test() {
@@ -378,20 +518,30 @@ start_cmd_vel_test() {
 start_launch "$HOME/superlio" livox_ros_driver2 msg_MID360_launch.py "启动 Livox MID360 驱动..." LIVOX_PID livox.pid
 echo "Livox PID: $LIVOX_PID"
 sleep 5
+wait_for_topic_once /livox/imu 15 "Livox IMU"
+wait_for_topic_once /livox/lidar 15 "Livox LiDAR"
 
-start_launch "$HOME/superlio" super_lio relocation.py "启动 Super-LIO 重定位..." RELOCATION_PID relocation.pid "map_file:=$MAP_PCD" "rviz:=false"
+start_relocation_node "启动 Super-LIO 重定位..." RELOCATION_PID relocation.pid
 echo "Relocation PID: $RELOCATION_PID"
 sleep 5
-
-start_launch "$HOME/dddmr_navigation_new_local" global_planner path_planning_with_polygon.launch "启动全局路径规划..." GLOBAL_PLANNER_PID global_planner.pid "map_dir:=$GROUND_PCD"
-echo "Global Planner PID: $GLOBAL_PLANNER_PID"
-sleep 5
+wait_for_lio_odom_sane "${NAV_LIO_ODOM_WAIT_TIMEOUT_S:-300}"
 
 start_launch "$HOME/dddmr_navigation_new_local" p2p_move_base go2_localization_launch.py "启动 P2P move base 定位导航..." P2P_MOVE_BASE_PID p2p_move_base.pid "use_sim:=false"
 echo "P2P Move Base PID: $P2P_MOVE_BASE_PID"
 sleep 5
 
-start_cmd_vel_test "启动 cmd_vel 测试脚本..." CMD_VEL_TEST_PID
-echo "Cmd Vel PID: $CMD_VEL_TEST_PID"
+wait_for_topic_once /tf_static 10 "base 静态 TF"
+
+start_launch "$HOME/dddmr_navigation_new_local" global_planner path_planning_with_polygon.launch "启动全局路径规划..." GLOBAL_PLANNER_PID global_planner.pid "map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD"
+echo "Global Planner PID: $GLOBAL_PLANNER_PID"
+wait_for_navigation_maps "${NAV_GLOBAL_MAP_WAIT_TIMEOUT_S:-90}"
+write_navigation_ready_file
+
+if [ "${NAV_START_CMD_VEL_BRIDGE:-false}" = "true" ]; then
+  start_cmd_vel_test "启动 cmd_vel 桥接脚本..." CMD_VEL_TEST_PID
+  echo "Cmd Vel PID: $CMD_VEL_TEST_PID"
+else
+  echo "跳过 cmd_vel 硬件桥接启动：NAV_START_CMD_VEL_BRIDGE=${NAV_START_CMD_VEL_BRIDGE:-false}"
+fi
 
 wait
