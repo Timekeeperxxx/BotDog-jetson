@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import signal
 import subprocess
 import time
 from pathlib import Path
 
+import pytest
+from fastapi import HTTPException
+
 from backend import services_nav_localization
+from backend.api.routes import nav as nav_routes
+from backend.auth.schemas import AuthUserInternal
 from backend.repositories.json_store import atomic_write_json
 from backend.schemas import LocalizationRestartResponse
+from backend.services_ros_nav import RosNavBridge
 
 
 def _make_pid_paths(root: Path) -> dict[str, Path]:
@@ -144,6 +151,157 @@ def test_wait_for_initialpose_log_waits_for_stable_init_frames(monkeypatch, tmp_
     result = services_nav_localization.wait_for_initialpose_log(offset=0, timeout_s=0.5)
     assert result["ready"] is True
     assert result["init_frame_count"] == 50
+
+
+def test_initialpose_ready_route_waits_for_ros_subscriber(monkeypatch):
+    subscriber_waits: list[float] = []
+
+    class DummyBridge:
+        def wait_for_initial_pose_subscribers(self, timeout_s: float) -> dict[str, object]:
+            subscriber_waits.append(timeout_s)
+            return {
+                "ready": True,
+                "topic": "/initialpose",
+                "subscriber_count": 1,
+                "graph_count": 1,
+                "matched_count": 0,
+                "message": "/initialpose 已匹配订阅者 1 个",
+            }
+
+    def fake_wait_for_initialpose_log(offset: int, timeout_s: float) -> dict[str, object]:
+        assert offset == 7
+        assert timeout_s == 3.0
+        return {
+            "ready": True,
+            "marker": "Waiting for initial pose from topic",
+            "offset": 99,
+            "message": "Super-LIO 已稳定等待 initialpose",
+        }
+
+    monkeypatch.setattr(services_nav_localization, "wait_for_initialpose_log", fake_wait_for_initialpose_log)
+    monkeypatch.setattr(
+        services_nav_localization,
+        "get_relocation_process_status",
+        lambda: {"running": True, "pid": 123, "message": "Super-LIO relocation 进程运行中"},
+    )
+    monkeypatch.setattr(nav_routes, "get_ros_nav_bridge", lambda: DummyBridge())
+
+    result = asyncio.run(
+        nav_routes.nav_wait_initialpose_ready(
+            offset=7,
+            timeout_s=3.0,
+            user=AuthUserInternal(id=1, username="admin", role="operator", token_version=1),
+        )
+    )
+
+    assert result["ready"] is True
+    assert result["initialpose_topic"] == "/initialpose"
+    assert result["initialpose_subscriber_count"] == 1
+    assert result["initialpose_graph_subscriber_count"] == 1
+    assert result["initialpose_matched_subscriber_count"] == 0
+    assert result["relocation_pid"] == 123
+    assert result["relocation_running"] is True
+    assert subscriber_waits == [3.0]
+
+
+def test_initialpose_ready_route_rejects_without_ros_subscriber(monkeypatch):
+    class DummyBridge:
+        def wait_for_initial_pose_subscribers(self, timeout_s: float) -> dict[str, object]:
+            return {
+                "ready": False,
+                "topic": "/initialpose",
+                "subscriber_count": 0,
+                "graph_count": 0,
+                "matched_count": 0,
+                "message": "/initialpose 暂无订阅者",
+            }
+
+    monkeypatch.setattr(
+        services_nav_localization,
+        "wait_for_initialpose_log",
+        lambda offset, timeout_s: {
+            "ready": True,
+            "marker": "Waiting for initial pose from topic",
+            "offset": 99,
+            "message": "Super-LIO 已稳定等待 initialpose",
+        },
+    )
+    monkeypatch.setattr(
+        services_nav_localization,
+        "get_relocation_process_status",
+        lambda: {"running": True, "pid": 123, "message": "Super-LIO relocation 进程运行中"},
+    )
+    monkeypatch.setattr(nav_routes, "get_ros_nav_bridge", lambda: DummyBridge())
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            nav_routes.nav_wait_initialpose_ready(
+                offset=0,
+                timeout_s=2.0,
+                user=AuthUserInternal(id=1, username="admin", role="operator", token_version=1),
+            )
+        )
+
+    assert exc_info.value.status_code == 504
+    assert exc_info.value.detail == "/initialpose 暂无订阅者"
+
+
+def test_initialpose_ready_route_rejects_when_relocation_process_exited(monkeypatch):
+    class DummyBridge:
+        def wait_for_initial_pose_subscribers(self, timeout_s: float) -> dict[str, object]:
+            raise AssertionError("subscriber check should not run when relocation is down")
+
+    monkeypatch.setattr(
+        services_nav_localization,
+        "wait_for_initialpose_log",
+        lambda offset, timeout_s: {
+            "ready": True,
+            "marker": "Waiting for initial pose from topic",
+            "offset": 99,
+            "message": "Super-LIO 已稳定等待 initialpose",
+        },
+    )
+    monkeypatch.setattr(
+        services_nav_localization,
+        "get_relocation_process_status",
+        lambda: {"running": False, "pid": 12192, "message": "Super-LIO relocation 进程未运行，pid=12192"},
+    )
+    monkeypatch.setattr(nav_routes, "get_ros_nav_bridge", lambda: DummyBridge())
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            nav_routes.nav_wait_initialpose_ready(
+                offset=0,
+                timeout_s=2.0,
+                user=AuthUserInternal(id=1, username="admin", role="operator", token_version=1),
+            )
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == "Super-LIO relocation 进程未运行，pid=12192"
+
+
+def test_initialpose_subscriber_count_uses_ros_graph_when_matched_count_is_zero():
+    class DummyPublisher:
+        def get_subscription_count(self) -> int:
+            return 0
+
+    class DummyNode:
+        def count_subscribers(self, topic: str) -> int:
+            assert topic == "/initialpose"
+            return 1
+
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._node = DummyNode()
+    bridge._initial_pose_publisher = DummyPublisher()
+
+    counts = bridge.get_initial_pose_subscription_counts()
+
+    assert counts == {
+        "graph_count": 1,
+        "matched_count": 0,
+        "subscriber_count": 1,
+    }
 
 
 def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeypatch, tmp_path):

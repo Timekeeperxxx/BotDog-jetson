@@ -29,6 +29,7 @@ MAPPING_CLOUD_BROADCAST_MIN_INTERVAL_S = 10.0
 MAPPING_CLOUD_MAX_BROADCAST_POINTS = 1500
 INITIAL_POSE_PUBLISH_COUNT = 20
 INITIAL_POSE_PUBLISH_INTERVAL_S = 0.2
+INITIAL_POSE_SUBSCRIBER_WAIT_S = 5.0
 GOAL_PUBLISH_COUNT = 3
 GOAL_PUBLISH_INTERVAL_S = 0.15
 
@@ -349,10 +350,17 @@ class RosNavBridge:
             from geometry_msgs.msg import PoseWithCovarianceStamped as _PwCS
         except Exception as exc:
             raise RuntimeError(f"PoseWithCovarianceStamped 不可用: {exc}") from exc
+        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+
+        initial_pose_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
         self._initial_pose_publisher = self._node.create_publisher(
             _PwCS,
             settings.ROS_NAV_INITIAL_POSE_TOPIC,
-            1,
+            initial_pose_qos,
         )
         nav_logger.info(
             "ROS2 导航发布器已启动：nav_start_topic={}，clicked_point_topic={}，goal_yaw_topic={}，stop_topic={}，initial_pose_topic={}，status_topic={}，global_path_topic={}",
@@ -459,6 +467,10 @@ class RosNavBridge:
 
         from geometry_msgs.msg import PoseWithCovarianceStamped
 
+        subscriber_status = self.wait_for_initial_pose_subscribers(INITIAL_POSE_SUBSCRIBER_WAIT_S)
+        if not subscriber_status["ready"]:
+            raise RuntimeError(subscriber_status["message"])
+
         # Euler ZYX -> quaternion
         cr = math.cos(float(roll) / 2.0)
         sr = math.sin(float(roll) / 2.0)
@@ -497,6 +509,7 @@ class RosNavBridge:
             "success": True,
             "topic": settings.ROS_NAV_INITIAL_POSE_TOPIC,
             "publish_count": publish_count,
+            "subscriber_count": subscriber_status["subscriber_count"],
             "x": float(x),
             "y": float(y),
             "z": float(z),
@@ -504,6 +517,63 @@ class RosNavBridge:
             "pitch": float(pitch),
             "yaw": float(yaw),
             "frame_id": frame,
+        }
+
+    def get_initial_pose_subscription_counts(self) -> dict[str, int]:
+        if self._node is None or self._initial_pose_publisher is None:
+            raise RuntimeError("ROS2 initial_pose 发布器未就绪")
+
+        graph_count = 0
+        matched_count = 0
+
+        count_subscribers = getattr(self._node, "count_subscribers", None)
+        if callable(count_subscribers):
+            graph_count = int(count_subscribers(settings.ROS_NAV_INITIAL_POSE_TOPIC))
+
+        get_count = getattr(self._initial_pose_publisher, "get_subscription_count", None)
+        if callable(get_count):
+            matched_count = int(get_count())
+
+        if not callable(count_subscribers) and not callable(get_count):
+            raise RuntimeError("ROS2 initial_pose 发布器不支持订阅者计数")
+
+        return {
+            "graph_count": graph_count,
+            "matched_count": matched_count,
+            "subscriber_count": max(graph_count, matched_count),
+        }
+
+    def get_initial_pose_subscription_count(self) -> int:
+        return self.get_initial_pose_subscription_counts()["subscriber_count"]
+
+    def wait_for_initial_pose_subscribers(self, timeout_s: float = INITIAL_POSE_SUBSCRIBER_WAIT_S) -> dict[str, Any]:
+        deadline = time.time() + max(0.1, float(timeout_s))
+        last_counts = {"graph_count": 0, "matched_count": 0, "subscriber_count": 0}
+
+        while time.time() < deadline:
+            last_counts = self.get_initial_pose_subscription_counts()
+            if last_counts["subscriber_count"] > 0:
+                return {
+                    "ready": True,
+                    "topic": settings.ROS_NAV_INITIAL_POSE_TOPIC,
+                    **last_counts,
+                    "message": (
+                        f"{settings.ROS_NAV_INITIAL_POSE_TOPIC} 已发现订阅者 "
+                        f"{last_counts['subscriber_count']} 个"
+                        f"（graph={last_counts['graph_count']} matched={last_counts['matched_count']}）"
+                    ),
+                }
+            time.sleep(0.2)
+
+        return {
+            "ready": False,
+            "topic": settings.ROS_NAV_INITIAL_POSE_TOPIC,
+            **last_counts,
+            "message": (
+                f"{settings.ROS_NAV_INITIAL_POSE_TOPIC} 暂无订阅者"
+                f"（graph={last_counts['graph_count']} matched={last_counts['matched_count']}），"
+                "Super-LIO 还未准备接收 initialpose 或后端 ROS graph 与导航进程不一致"
+            ),
         }
 
     def _setup_cloud_subscription(self) -> None:

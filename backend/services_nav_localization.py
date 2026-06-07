@@ -114,6 +114,16 @@ def wait_for_initialpose_log(offset: int = 0, timeout_s: float = 45.0) -> dict[s
     }
 
 
+def get_relocation_process_status() -> dict[str, Any]:
+    pid = _read_pid_file(_named_pid_path("relocation"))
+    running = _is_pid_alive(pid)
+    return {
+        "running": running,
+        "pid": pid,
+        "message": "Super-LIO relocation 进程运行中" if running else f"Super-LIO relocation 进程未运行，pid={pid}",
+    }
+
+
 def _tail_restart_log(max_bytes: int = 256_000) -> str:
     path = _restart_log_path()
     try:

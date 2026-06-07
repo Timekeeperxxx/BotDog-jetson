@@ -441,12 +441,35 @@ async def nav_wait_initialpose_ready(
     timeout_s: float = 45.0,
     user: AuthUserInternal = Depends(require_operator),
 ):
-    from ...services_nav_localization import wait_for_initialpose_log
+    from ...services_nav_localization import get_relocation_process_status, wait_for_initialpose_log
+
+    bridge = get_ros_nav_bridge()
+    if bridge is None:
+        raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
 
     timeout = min(max(timeout_s, 1.0), 90.0)
     result = await asyncio.to_thread(wait_for_initialpose_log, offset, timeout)
     if not result["ready"]:
         raise HTTPException(status_code=504, detail=result["message"])
+    relocation_status = await asyncio.to_thread(get_relocation_process_status)
+    result["relocation_pid"] = relocation_status["pid"]
+    result["relocation_running"] = relocation_status["running"]
+    if not relocation_status["running"]:
+        raise HTTPException(status_code=503, detail=relocation_status["message"])
+    try:
+        subscriber_result = await asyncio.to_thread(
+            bridge.wait_for_initial_pose_subscribers,
+            min(max(timeout_s, 1.0), 10.0),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    if not subscriber_result["ready"]:
+        raise HTTPException(status_code=504, detail=subscriber_result["message"])
+    result["initialpose_subscriber_count"] = subscriber_result["subscriber_count"]
+    result["initialpose_graph_subscriber_count"] = subscriber_result["graph_count"]
+    result["initialpose_matched_subscriber_count"] = subscriber_result["matched_count"]
+    result["initialpose_topic"] = subscriber_result["topic"]
+    result["message"] = f"{result['message']}；{subscriber_result['message']}"
     return result
 
 
