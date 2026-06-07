@@ -62,7 +62,7 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
         lambda: {"success": True, "running": True, "pid": 1234},
     )
     monkeypatch.setattr(
-        "backend.services_nav_localization.assert_navigation_runtime_ready",
+        "backend.services_nav_localization.wait_navigation_runtime_ready",
         lambda: {"navigation_ready": True},
     )
     monkeypatch.setattr(

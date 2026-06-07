@@ -560,6 +560,7 @@ def test_restart_navigation_localization_marks_missing_pid_false(monkeypatch, tm
     monkeypatch.setattr(services_nav_localization, "_restart_script_path", lambda: script_path)
     monkeypatch.setattr(services_nav_localization, "_project_root", lambda: tmp_path)
     monkeypatch.setattr(services_nav_localization, "_find_cmd_vel_test_publisher_pids", lambda: [])
+    monkeypatch.setattr(services_nav_localization, "_find_pids_by_needles", lambda needles: [])
     monkeypatch.setattr(services_nav_localization, "_inspect_tf_health", lambda: (True, [], []))
     monkeypatch.setattr(
         services_nav_localization,
@@ -589,6 +590,93 @@ def test_restart_navigation_localization_marks_missing_pid_false(monkeypatch, tm
     assert result["health"]["global_planner_ok"] is False
     assert result["navigation_ready"] is False
     assert any("global_planner 未就绪" in error for error in result["errors"])
+
+
+def test_global_planner_health_falls_back_to_node_process_when_launch_pid_exited(monkeypatch, tmp_path):
+    scene_dir = tmp_path / "Scene1_测试"
+    runtime_root = tmp_path / "data" / "nav_runtime"
+    scene_dir.mkdir(parents=True)
+    runtime_root.mkdir(parents=True)
+    (scene_dir / "map.pcd").write_text("", encoding="utf-8")
+    (scene_dir / "ground.pcd").write_text("", encoding="utf-8")
+    atomic_write_json(
+        runtime_root / "current_scene.json",
+        {
+            "scene_id": "Scene1_测试",
+            "scene_dir": str(scene_dir),
+            "map_pcd": str(scene_dir / "map.pcd"),
+            "ground_pcd": str(scene_dir / "ground.pcd"),
+            "updated_at": "2026-05-11T00:00:00.000Z",
+        },
+    )
+    _write_navigation_ready_marker(runtime_root, scene_dir)
+
+    monkeypatch.setattr(services_nav_localization.settings, "NAV_RUNTIME_DIR", str(runtime_root))
+    monkeypatch.setattr(services_nav_localization, "_is_pid_alive", lambda pid: pid not in {103})
+    monkeypatch.setattr(services_nav_localization, "_find_cmd_vel_test_publisher_pids", lambda: [])
+    monkeypatch.setattr(services_nav_localization, "_inspect_tf_health", lambda: (True, [], []))
+
+    def fake_find_pids_by_needles(needles):
+        joined = "\n".join(needles)
+        if "global_planner_node" in joined:
+            return [2203]
+        return []
+
+    monkeypatch.setattr(services_nav_localization, "_find_pids_by_needles", fake_find_pids_by_needles)
+
+    result = services_nav_localization._build_restart_health(
+        services_nav_localization.load_current_scene(strict=False),
+        {
+            "livox_pid": 101,
+            "relocation_pid": 102,
+            "global_planner_pid": 103,
+            "p2p_move_base_pid": 104,
+            "cmd_vel_pid": None,
+        },
+    )
+
+    assert result["health"]["global_planner_ok"] is True
+    assert result["navigation_ready"] is True
+
+
+def test_wait_navigation_runtime_ready_retries_transient_global_planner_not_ready(monkeypatch):
+    calls = {"count": 0}
+
+    def fake_assert_navigation_runtime_ready():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("导航链路未就绪，禁止发布目标点: global_planner 未就绪")
+        return {"navigation_ready": True}
+
+    monkeypatch.setattr(
+        services_nav_localization,
+        "assert_navigation_runtime_ready",
+        fake_assert_navigation_runtime_ready,
+    )
+
+    result = services_nav_localization.wait_navigation_runtime_ready(timeout_s=0.5, poll_interval_s=0.01)
+
+    assert result["navigation_ready"] is True
+    assert calls["count"] == 2
+
+
+def test_wait_navigation_runtime_ready_raises_last_error_after_timeout(monkeypatch):
+    calls = {"count": 0}
+
+    def fake_assert_navigation_runtime_ready():
+        calls["count"] += 1
+        raise RuntimeError("导航链路未就绪，禁止发布目标点: global_planner 未就绪")
+
+    monkeypatch.setattr(
+        services_nav_localization,
+        "assert_navigation_runtime_ready",
+        fake_assert_navigation_runtime_ready,
+    )
+
+    with pytest.raises(RuntimeError, match="global_planner 未就绪"):
+        services_nav_localization.wait_navigation_runtime_ready(timeout_s=0.03, poll_interval_s=0.01)
+
+    assert calls["count"] >= 2
 
 
 def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):

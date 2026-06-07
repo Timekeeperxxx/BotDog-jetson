@@ -54,10 +54,10 @@ def _ensure_localization_ready_for_navigation() -> None:
 
 
 def _ensure_navigation_runtime_ready() -> None:
-    from ...services_nav_localization import assert_navigation_runtime_ready
+    from ...services_nav_localization import wait_navigation_runtime_ready
 
     try:
-        assert_navigation_runtime_ready()
+        wait_navigation_runtime_ready()
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
@@ -470,6 +470,24 @@ async def nav_wait_initialpose_ready(
     result["initialpose_matched_subscriber_count"] = subscriber_result["matched_count"]
     result["initialpose_topic"] = subscriber_result["topic"]
     result["message"] = f"{result['message']}；{subscriber_result['message']}"
+    return result
+
+
+@router.get("/localization/navigation-ready")
+async def nav_wait_navigation_ready(
+    timeout_s: float = 45.0,
+    user: AuthUserInternal = Depends(require_operator),
+):
+    from ...services_nav_localization import wait_navigation_runtime_ready
+
+    timeout = min(max(timeout_s, 1.0), 90.0)
+    try:
+        result = await asyncio.to_thread(wait_navigation_runtime_ready, timeout, 0.5)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=504, detail=str(exc))
+
+    result["ready"] = True
+    result["message"] = "导航控制链路已恢复，导航和任务可用"
     return result
 
 

@@ -24,6 +24,25 @@ INITIALPOSE_FRAME_COUNT_PATTERN = re.compile(r"init_frame_count=(\d+)")
 RELOCATION_DIRECT_POSE_MARKER = "Using initial pose from topic directly, skipping NDT/ICP"
 RELOCATION_ICP_SUCCESS_MARKER = "Global ICP Converged Succeed"
 RELOCATION_ICP_FAIL_MARKER = "Global ICP Converged Fail"
+NAV_PROCESS_NEEDLES: dict[str, list[str]] = {
+    "livox": [
+        "ros2 launch livox_ros_driver2 msg_MID360_launch.py",
+        "/home/jetson/superlio/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node",
+    ],
+    "relocation": [
+        "ros2 run super_lio relocation_node",
+        "/home/jetson/superlio/install/super_lio/lib/super_lio/relocation_node",
+    ],
+    "global_planner": [
+        "ros2 launch global_planner path_planning_with_polygon.launch",
+        "/home/jetson/dddmr_navigation_new_local/install/global_planner/lib/global_planner/global_planner_node",
+    ],
+    "p2p_move_base": [
+        "ros2 launch p2p_move_base go2_localization_launch.py",
+        "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/p2p_move_base_node",
+        "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/clicked2goal.py",
+    ],
+}
 
 
 def _utc_now_iso() -> str:
@@ -441,6 +460,12 @@ def _find_cmd_vel_test_publisher_pids() -> list[int]:
     ])
 
 
+def _is_nav_process_alive(name: str, pid: int | None) -> bool:
+    if _is_pid_alive(pid):
+        return True
+    return len(_find_pids_by_needles(NAV_PROCESS_NEEDLES.get(name, []))) > 0
+
+
 def _inspect_tf_health() -> tuple[bool | None, list[str], list[str]]:
     warnings: list[str] = []
     errors: list[str] = []
@@ -501,10 +526,10 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
     map_pcd_ok = map_pcd.exists()
     ground_pcd_ok = ground_pcd.exists()
 
-    livox_ok = _is_pid_alive(child_pids.get("livox_pid"))
-    relocation_ok = _is_pid_alive(child_pids.get("relocation_pid"))
-    global_planner_ok = _is_pid_alive(child_pids.get("global_planner_pid"))
-    p2p_move_base_ok = _is_pid_alive(child_pids.get("p2p_move_base_pid"))
+    livox_ok = _is_nav_process_alive("livox", child_pids.get("livox_pid"))
+    relocation_ok = _is_nav_process_alive("relocation", child_pids.get("relocation_pid"))
+    global_planner_ok = _is_nav_process_alive("global_planner", child_pids.get("global_planner_pid"))
+    p2p_move_base_ok = _is_nav_process_alive("p2p_move_base", child_pids.get("p2p_move_base_pid"))
     cmd_vel_pid = child_pids.get("cmd_vel_pid")
     cmd_vel_running = _is_pid_alive(cmd_vel_pid)
 
@@ -593,6 +618,30 @@ def assert_navigation_runtime_ready() -> dict[str, Any]:
         details = list(health_result["errors"] or health_result["warnings"] or ["导航链路未就绪"])
         raise RuntimeError("导航链路未就绪，禁止发布目标点: " + "；".join(details))
     return health_result
+
+
+def wait_navigation_runtime_ready(timeout_s: float | None = None, poll_interval_s: float = 0.25) -> dict[str, Any]:
+    """Wait briefly for nav runtime files/processes to settle before rejecting a goal."""
+    if timeout_s is None:
+        timeout_s = float(os.environ.get("NAV_RUNTIME_READY_WAIT_S", "5.0"))
+
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    interval = max(0.05, poll_interval_s)
+    last_error: RuntimeError | None = None
+
+    while True:
+        try:
+            return assert_navigation_runtime_ready()
+        except RuntimeError as exc:
+            last_error = exc
+
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(interval)
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("导航链路未就绪，禁止发布目标点: readiness 检查未返回结果")
 
 
 def _kill_pid_tree(pid: int, sig: int) -> None:

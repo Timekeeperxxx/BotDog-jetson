@@ -58,7 +58,7 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
         lambda: {"success": True, "running": True, "pid": 1234},
     )
     monkeypatch.setattr(
-        "backend.services_nav_localization.assert_navigation_runtime_ready",
+        "backend.services_nav_localization.wait_navigation_runtime_ready",
         lambda: {"navigation_ready": True},
     )
     monkeypatch.setattr(
@@ -169,7 +169,7 @@ def test_nav_execute_task_missing_waypoint_returns_404(monkeypatch, tmp_path):
         lambda: {"success": True, "running": True, "pid": 1234},
     )
     monkeypatch.setattr(
-        "backend.services_nav_localization.assert_navigation_runtime_ready",
+        "backend.services_nav_localization.wait_navigation_runtime_ready",
         lambda: {"navigation_ready": True},
     )
 
