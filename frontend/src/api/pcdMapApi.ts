@@ -320,6 +320,21 @@ export function waitInitialposeReady(
   )
 }
 
+export function waitNavigationRuntimeReady(timeoutSeconds = 45): Promise<{
+  ready: boolean
+  navigation_ready: boolean
+  health?: LocalizationRestartHealth | null
+  warnings?: string[] | null
+  errors?: string[] | null
+  message: string
+}> {
+  return requestJson(
+    getApiUrl(
+      `/api/v1/nav/localization/navigation-ready?timeout_s=${encodeURIComponent(String(timeoutSeconds))}`,
+    ),
+  )
+}
+
 export function setMappingEnabled(
   enabled: boolean,
   sceneName?: string,

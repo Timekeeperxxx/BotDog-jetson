@@ -26,6 +26,7 @@ import {
   setLocalizationPose,
   triggerNavEmergencyStop,
   waitInitialposeReady,
+  waitNavigationRuntimeReady,
 } from '../api/pcdMapApi'
 import { NavWaypointPanel } from '../components/pcd/NavWaypointPanel'
 import { PcdFileListPanel } from '../components/pcd/PcdFileListPanel'
@@ -75,7 +76,7 @@ type MappingSessionInfo = {
 
 type RelocationPromptState =
   | { status: 'idle'; message: string }
-  | { status: 'restarting' | 'waiting' | 'ready' | 'localized' | 'error'; message: string }
+  | { status: 'restarting' | 'waiting' | 'ready' | 'localized' | 'nav-waiting' | 'nav-ready' | 'error'; message: string }
 
 const DEFAULT_LINEAR_SPEED = 0.3
 const DEFAULT_TURN_SPEED = 0.5
@@ -121,6 +122,10 @@ function getRelocationNotice(prompt: RelocationPromptState) {
       return { title: '现在标记重定位点', message: '在 2D 地图按住当前位置，拖动确定朝向。' }
     case 'localized':
       return { title: '重定位已发送', message: '正在等待位姿恢复。' }
+    case 'nav-waiting':
+      return { title: '导航控制链路恢复中', message: compactRuntimeMessage(prompt.message) }
+    case 'nav-ready':
+      return { title: '导航和任务可用', message: prompt.message || 'global_planner 已加载完成。' }
     case 'error':
       return { title: '重定位未就绪', message: compactRuntimeMessage(prompt.message) }
     case 'idle':
@@ -184,7 +189,11 @@ export function PcdMapDemoPage() {
     : null
   const currentNotice = relocationNotice ?? poseModeNotice ?? localizationNotice
   const currentNoticeKind = relocationPrompt.status !== 'idle'
-    ? relocationPrompt.status
+    ? relocationPrompt.status === 'nav-waiting'
+      ? 'waiting'
+      : relocationPrompt.status === 'nav-ready'
+        ? 'ready'
+        : relocationPrompt.status
     : toolMode === 'pose'
       ? 'ready'
       : localizationNotice
@@ -334,12 +343,18 @@ export function PcdMapDemoPage() {
       await setLocalizationPose(payload)
       setToolMode('none')
       setRelocationPrompt({
-        status: 'localized',
-        message: '重定位已发送，正在等待 TF 恢复。位姿恢复为 ok 后即可导航。',
+        status: 'nav-waiting',
+        message: '重定位已发送，正在等待 global_planner 和导航控制链路恢复。',
       })
       addLog(
         `已发送重定位: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${waypointZ.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
       )
+      const ready = await waitNavigationRuntimeReady(60)
+      setRelocationPrompt({
+        status: 'nav-ready',
+        message: ready.message || 'global_planner 已加载完成，导航和任务可用。',
+      })
+      addLog(ready.message || 'global_planner 已加载完成，导航和任务可用')
     } catch (error) {
       addLog(
         error instanceof Error
@@ -355,6 +370,7 @@ export function PcdMapDemoPage() {
     selectedSceneNavigable,
     waypointZ,
     setInitialState,
+    waitNavigationRuntimeReady,
   ])
 
   const handleDeleteWaypoint = useCallback(async (waypointId: string) => {
