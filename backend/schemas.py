@@ -391,9 +391,16 @@ class MappingControlResponse(BaseModel):
     success: bool
     enabled: bool
     running: bool = False
+    saving: bool | None = None
+    saved: bool | None = None
     scene_name: str | None = None
     map_dir: str | None = None
     pid: int | None = None
+    map_pcd_candidates: list[str] | None = None
+    ground_pcd_candidates: list[str] | None = None
+    pcd_files: list[dict[str, Any]] | None = None
+    origin_waypoint: NavWaypointDTO | None = None
+    origin_waypoint_error: str | None = None
     message: str | None = None
 
 

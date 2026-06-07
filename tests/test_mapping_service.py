@@ -9,6 +9,7 @@ import pytest
 from backend.api.routes import nav as nav_routes
 from backend.auth.schemas import AuthUserInternal
 from backend import services_mapping as mapping_service_module
+from backend.services_nav_waypoints import list_waypoints
 from backend.schemas import MappingControlRequest
 
 
@@ -228,6 +229,54 @@ def test_stop_mapping_sends_sigint_to_mapping_script(monkeypatch, tmp_path):
     assert result["scene_name"] == "Scene1_实验室一楼"
     assert kills == [(4321, signal.SIGINT)]
     assert tracker_calls == ["auto_track.pause", "auto_track.resume"]
+
+
+def test_stop_mapping_creates_origin_waypoint_after_saved(monkeypatch, tmp_path):
+    script = tmp_path / "start_mapping.sh"
+    script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    maps_root = tmp_path / "MAPS"
+    waypoint_root = tmp_path / "waypoints"
+    kills: list[tuple[int, signal.Signals]] = []
+
+    monkeypatch.setattr(mapping_service_module, "MAPS_ROOT", maps_root)
+    monkeypatch.setattr(mapping_service_module, "START_MAPPING_SCRIPT", script)
+    monkeypatch.setattr("backend.services_pcd_maps.settings.SCENE_MAP_ROOT", str(maps_root))
+    monkeypatch.setattr("backend.services_nav_waypoints.settings.NAV_WAYPOINT_STORE_DIR", str(waypoint_root))
+    monkeypatch.setattr("backend.services_nav_waypoints.settings.NAV_ORIGIN_WAYPOINT_Z", -0.83)
+    monkeypatch.setattr("backend.services_nav_waypoints.settings.NAV_ORIGIN_WAYPOINT_YAW", 0.0)
+
+    def fake_popen(command, *args, **kwargs):
+        map_dir = Path(command[2])
+        map_dir.mkdir(parents=True, exist_ok=True)
+        mapping_service_module.mapping_ready_flag_path(map_dir).write_text("ready\n", encoding="utf-8")
+        (map_dir / "map.pcd").write_text("map\n", encoding="utf-8")
+        (map_dir / "ground.pcd").write_text("ground\n", encoding="utf-8")
+        return DummyProcess()
+
+    monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(mapping_service_module.os, "kill", lambda pid, sig: kills.append((pid, sig)))
+    monkeypatch.setattr(mapping_service_module, "stop_navigation_processes", lambda: {"pids": []})
+    monkeypatch.setattr(mapping_service_module, "stop_cmd_vel_script", lambda: {"pid": None})
+
+    service = mapping_service_module.MappingService()
+    start_result = service.start("实验室一楼")
+    result = service.stop()
+
+    waypoint_data = list_waypoints(start_result["scene_name"])
+    origin = waypoint_data["items"][0]
+
+    assert result["saved"] is True
+    assert result["origin_waypoint"] == origin
+    assert result["origin_waypoint_error"] is None
+    assert result["message"] == "地图已保存：map.pcd x1，ground.pcd x1，已自动添加原点导航点"
+    assert origin["name"] == "原点"
+    assert origin["x"] == 0.0
+    assert origin["y"] == 0.0
+    assert origin["z"] == -0.83
+    assert origin["yaw"] == 0.0
+    assert origin["frame_id"] == "map"
+    assert kills == [(4321, signal.SIGINT)]
 
 
 def test_stop_mapping_waits_longer_than_script_cleanup_before_force_kill(monkeypatch, tmp_path):

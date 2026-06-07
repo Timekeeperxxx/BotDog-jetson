@@ -73,6 +73,45 @@ def create_waypoint(map_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return waypoint
 
 
+def upsert_origin_waypoint(map_id: str, *, z: float | None = None, yaw: float | None = None) -> dict[str, Any]:
+    existing = list_waypoints(map_id)["items"]
+    now = _utc_now_iso()
+    target_name = "原点"
+    waypoint = {
+        "map_id": map_id,
+        "name": target_name,
+        "x": 0.0,
+        "y": 0.0,
+        "z": float(settings.NAV_ORIGIN_WAYPOINT_Z if z is None else z),
+        "yaw": float(settings.NAV_ORIGIN_WAYPOINT_YAW if yaw is None else yaw),
+        "frame_id": settings.PCD_FRAME_ID,
+        "updated_at": now,
+    }
+
+    for index, item in enumerate(existing):
+        if item.get("name") != target_name:
+            continue
+
+        updated = {
+            **item,
+            **waypoint,
+            "id": item.get("id") or f"wp_{uuid.uuid4().hex[:12]}",
+            "created_at": item.get("created_at") or now,
+        }
+        existing[index] = updated
+        _write_waypoints(map_id, existing)
+        return updated
+
+    created = {
+        **waypoint,
+        "id": f"wp_{uuid.uuid4().hex[:12]}",
+        "created_at": now,
+    }
+    existing.insert(0, created)
+    _write_waypoints(map_id, existing)
+    return created
+
+
 def delete_waypoint(map_id: str, waypoint_id: str) -> bool:
     existing = list_waypoints(map_id)["items"]
     next_items = [item for item in existing if item.get("id") != waypoint_id]

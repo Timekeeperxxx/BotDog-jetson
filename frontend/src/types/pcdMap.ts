@@ -174,5 +174,7 @@ export type MappingControlResponse = {
   map_pcd_candidates: string[]
   ground_pcd_candidates: string[]
   pcd_files: Array<{ name: string; path: string; size_bytes: number }>
+  origin_waypoint?: NavWaypoint | null
+  origin_waypoint_error?: string | null
   message: string | null
 }

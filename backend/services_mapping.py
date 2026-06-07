@@ -13,6 +13,7 @@ from typing import Any
 from .logging_config import get_logger
 from .nav_bridge_state import get_ros_nav_bridge
 from .services_nav_localization import stop_cmd_vel_script, stop_navigation_processes
+from .services_nav_waypoints import upsert_origin_waypoint
 
 
 mapping_logger = get_logger("建图服务")
@@ -453,8 +454,24 @@ class MappingService:
                     ground_pcd_candidates.append(fname)
 
         saved = len(map_pcd_candidates) > 0 and len(ground_pcd_candidates) > 0
+        origin_waypoint: dict[str, Any] | None = None
+        origin_waypoint_error: str | None = None
         if saved:
             message = f"地图已保存：map.pcd x{len(map_pcd_candidates)}，ground.pcd x{len(ground_pcd_candidates)}"
+            try:
+                origin_waypoint = upsert_origin_waypoint(scene_name)
+                message += "，已自动添加原点导航点"
+                mapping_logger.info(
+                    "建图完成后已自动写入原点导航点：scene_name={} waypoint_id={} z={} yaw={}",
+                    scene_name,
+                    origin_waypoint.get("id"),
+                    origin_waypoint.get("z"),
+                    origin_waypoint.get("yaw"),
+                )
+            except Exception as exc:
+                origin_waypoint_error = str(exc)
+                message += "，但原点导航点添加失败"
+                mapping_logger.warning("建图完成后自动添加原点导航点失败：scene_name={}，原因={}", scene_name, exc)
         elif len(map_pcd_candidates) == 0 and len(ground_pcd_candidates) == 0:
             message = "地图保存失败：未找到 map.pcd 和 ground.pcd，请查看 start_mapping_debug.log"
         elif len(map_pcd_candidates) == 0:
@@ -495,6 +512,8 @@ class MappingService:
             "map_pcd_candidates": map_pcd_candidates,
             "ground_pcd_candidates": ground_pcd_candidates,
             "pcd_files": pcd_files,
+            "origin_waypoint": origin_waypoint,
+            "origin_waypoint_error": origin_waypoint_error,
             "message": message,
         }
 

@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     NAV_LOCALIZATION_STORE_DIR: str = "./data/nav_localization"
     NAV_RUNTIME_DIR: str = "./data/nav_runtime"
     NAV_TASK_STORE_DIR: str = "./data/nav_tasks"
+    # 建图保存成功后自动创建/更新“原点”导航点，x=0、y=0。
+    # z 使用导航目标点固定高度；yaw=0 表示沿建图启动时的初始朝向。
+    NAV_ORIGIN_WAYPOINT_Z: float = -0.83
+    NAV_ORIGIN_WAYPOINT_YAW: float = 0.0
 
     # ==================== ROS2 导航状态订阅转发 ====================
     ROS_NAV_ENABLED: bool = True
