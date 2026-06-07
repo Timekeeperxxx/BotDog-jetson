@@ -199,7 +199,7 @@
 .pcd-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 332px;
-  grid-template-rows: minmax(0, 1fr) 44px;
+  grid-template-rows: minmax(0, 1fr) 34px;
   gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
@@ -208,7 +208,7 @@
 
 .pcd-main-stage,
 .pcd-right-rail,
-.pcd-log-panel,
+.pcd-message-center,
 .pcd-viewer-shell,
 .pcd-panel {
   min-width: 0;
@@ -1250,23 +1250,103 @@
   opacity: 0.6;
 }
 
-.pcd-log-panel {
+.pcd-message-center {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   grid-column: 1 / -1;
-  padding: 10px 12px;
-  min-height: 44px;
+  padding: 4px 8px;
+  min-height: 34px;
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 8px;
   background: rgba(8, 15, 19, 0.9);
-  overflow-x: auto;
   color: #94a3b8;
   font-size: 11px;
+  overflow: hidden;
+}
+
+.pcd-message-primary,
+.pcd-message-log {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.48);
+  overflow: hidden;
+}
+
+.pcd-message-primary {
+  flex: 1 1 auto;
+}
+
+.pcd-message-log {
+  flex: 0 1 42%;
+}
+
+.pcd-message-label {
+  padding: 3px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 999px;
+  color: #8ea3ad;
+  font-size: 10px;
+  font-weight: 700;
   white-space: nowrap;
 }
 
-.pcd-log-panel .is-error {
+.pcd-message-primary strong,
+.pcd-message-primary span:last-child,
+.pcd-message-log span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcd-message-primary strong {
+  flex: 0 0 auto;
+  color: #f8fafc;
+  font-size: 12px;
+}
+
+.pcd-message-primary span:last-child,
+.pcd-message-log span:last-child {
+  color: #cbd5e1;
+}
+
+.pcd-message-center.is-ready .pcd-message-primary,
+.pcd-message-center.is-localized .pcd-message-primary {
+  border: 1px solid rgba(34, 197, 94, 0.34);
+  background: rgba(22, 101, 52, 0.2);
+}
+
+.pcd-message-center.is-ready .pcd-message-primary span:last-child,
+.pcd-message-center.is-localized .pcd-message-primary span:last-child {
+  color: #bbf7d0;
+}
+
+.pcd-message-center.is-restarting .pcd-message-primary,
+.pcd-message-center.is-waiting .pcd-message-primary {
+  border: 1px solid rgba(250, 204, 21, 0.32);
+  background: rgba(113, 63, 18, 0.18);
+}
+
+.pcd-message-center.is-restarting .pcd-message-primary span:last-child,
+.pcd-message-center.is-waiting .pcd-message-primary span:last-child {
+  color: #fde68a;
+}
+
+.pcd-message-center.is-error .pcd-message-primary {
+  border: 1px solid rgba(248, 113, 113, 0.38);
+  background: rgba(127, 29, 29, 0.2);
+}
+
+.pcd-message-center.is-error .pcd-message-primary span:last-child {
+  color: #fecaca;
+}
+
+.pcd-message-log .is-error {
   color: #fca5a5;
 }
 
@@ -1472,12 +1552,21 @@
 
   .pcd-workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(480px, 58vh) minmax(540px, auto) 44px;
+    grid-template-rows: minmax(480px, 58vh) minmax(540px, auto) auto;
   }
 
   .pcd-right-rail,
-  .pcd-log-panel {
+  .pcd-message-center {
     grid-column: auto;
+  }
+
+  .pcd-message-center {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pcd-message-log {
+    flex-basis: auto;
   }
 
   .pcd-right-rail {
@@ -1519,7 +1608,7 @@
   }
 
   .pcd-workspace {
-    grid-template-rows: 420px auto 44px;
+    grid-template-rows: 420px auto auto;
   }
 
   .pcd-main-stage {

@@ -305,6 +305,12 @@ export function waitInitialposeReady(
   ready: boolean
   marker: string
   offset: number
+  initialpose_subscriber_count?: number
+  initialpose_graph_subscriber_count?: number
+  initialpose_matched_subscriber_count?: number
+  initialpose_topic?: string
+  relocation_pid?: number | null
+  relocation_running?: boolean
   message: string
 }> {
   return requestJson(
