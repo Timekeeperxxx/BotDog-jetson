@@ -1,8 +1,8 @@
-# BotDog 在 OrangePi 5 Ultra 上的完整部署文档
+# BotDog 在 ARM64 主机上的完整部署文档
 
 > 适用对象：
 >
-> - 开发板：OrangePi 5 Ultra
+> - 开发板：ARM64 主机
 > - 系统：Linux / Ubuntu / Debian 系
 > - 项目：BotDog
 > - 目标：从本地运行、模拟模式、到 Unitree B2 真机联调、AI、视频链路的完整部署
@@ -186,7 +186,7 @@ sqlite+aiosqlite:///./data/botdog.db
 ```bash
 mkdir -p data
 chmod u+rwx data
-sudo chown -R orangepi:orangepi data
+sudo chown -R "$USER:$USER" data
 ```
 
 ### 6.3 数据库初始化
@@ -220,8 +220,8 @@ PYTHONPATH=. python run_backend.py
 浏览器打开：
 
 ```text
-http://<OrangePi_IP>:8000/api/docs
-http://<OrangePi_IP>:8000/api/v1/system/health
+http://<ARM64_HOST>:8000/api/docs
+http://<ARM64_HOST>:8000/api/v1/system/health
 ```
 
 说明：
@@ -266,7 +266,7 @@ nano .env
 建议改成：
 
 ```ini
-VITE_API_BASE_URL=http://<OrangePi_IP>:8000
+VITE_API_BASE_URL=http://<ARM64_HOST>:8000
 VITE_WHEP_URL=
 ```
 
@@ -282,7 +282,7 @@ npm run dev -- --host 0.0.0.0
 浏览器打开：
 
 ```text
-http://<OrangePi_IP>:5174
+http://<ARM64_HOST>:5174
 ```
 
 ---
@@ -473,7 +473,7 @@ Permission denied: .../install_manifest.txt
 处理：
 
 ```bash
-sudo chown -R orangepi:orangepi ~/cyclonedds
+sudo chown -R "$USER:$USER" ~/cyclonedds
 chmod -R u+rwX ~/cyclonedds
 cd ~/cyclonedds/build
 cmake --build . --target install -j$(nproc)
@@ -660,7 +660,7 @@ python -m pip install -r requirements.txt
 
 ### 18.2 下载 YOLO 模型 (推荐 YOLOv8n)
 
-在 OrangePi 等部署版上，推荐体积更小、推理更快的 **`yolov8n.pt`** (Nano 版，约 6MB)；如果是在 PC 上或者对检测精度要求极高，可以选择 **`yolov8s.pt`** (Small 版，约 22MB)。
+在 ARM64 等部署版上，推荐体积更小、推理更快的 **`yolov8n.pt`** (Nano 版，约 6MB)；如果是在 PC 上或者对检测精度要求极高，可以选择 **`yolov8s.pt`** (Small 版，约 22MB)。
 **注意：两者都完全支持自动跟踪功能，跟踪有无与模型带不带 "n" 或 "s" 无关。**
 
 **下载 YOLOv8n (首选):**
@@ -705,7 +705,7 @@ AI_DEVICE=cpu
 
 说明：
 
-- 在 OrangePi 上先用 `cpu` 更稳
+- 在 ARM64 主机上先用 `cpu` 更稳
 - 不要依赖模糊路径，直接指定 `models/yolov8n.pt`
 
 ### 18.5 重启后端
@@ -734,7 +734,7 @@ PYTHONPATH=. python run_backend.py
 - 仓库：<https://github.com/bluenviron/mediamtx>
 - Releases：<https://github.com/bluenviron/mediamtx/releases>
 
-OrangePi 5 Ultra 一般使用：
+ARM64 主机一般使用：
 
 - Linux ARM64 版本
 
@@ -794,7 +794,7 @@ ffmpeg -version
 
 ### 19.5 替代视频源：使用 USB 摄像头推流
 
-如果由于天空端/局域网限制无法拉取图传视频流，可直接将一个 UVC 免驱 USB 摄像头插在 OrangePi 的 USB 口上：
+如果由于天空端/局域网限制无法拉取图传视频流，可直接将一个 UVC 免驱 USB 摄像头插在 ARM64 主机的 USB 口上：
 
 1. **查看摄像头设备号：**
    ```bash
@@ -842,7 +842,7 @@ tail -f logs/ffmpeg.log
 视频链路正常后，前端可配置：
 
 ```ini
-VITE_WHEP_URL=http://<OrangePi_IP>:8889/cam/whep
+VITE_WHEP_URL=http://<ARM64_HOST>:8889/cam/whep
 ```
 
 如果视频没准备好，也可以先留空，前端其他功能仍可正常使用。
@@ -928,7 +928,7 @@ PYTHONPATH=. python run_backend.py
 ```bash
 mkdir -p data
 chmod u+rwx data
-sudo chown -R orangepi:orangepi data
+sudo chown -R "$USER:$USER" data
 ```
 
 ### 23.4 `vite: not found`
@@ -961,7 +961,7 @@ npm run dev -- --host 0.0.0.0
 处理：
 
 ```bash
-sudo chown -R orangepi:orangepi ~/cyclonedds
+sudo chown -R "$USER:$USER" ~/cyclonedds
 chmod -R u+rwX ~/cyclonedds
 cd ~/cyclonedds/build
 cmake --build . --target install -j$(nproc)
@@ -1101,7 +1101,7 @@ sudo ip route replace 224.0.0.0/4 dev enP3p49s0
 
 ### 下载 YOLO 模型 (推荐 YOLOv8n)
 
-体积更小、速度更快（约 6MB），适用于 OrangePi：
+体积更小、速度更快（约 6MB），适用于 ARM64 主机：
 ```bash
 mkdir -p models
 wget -O models/yolov8n.pt \
@@ -1128,7 +1128,7 @@ bash scripts/run-pipeline.sh
 2. 先确保 SDK 官方示例可用，再调 BotDog 真机控制。
 3. 真机初次动作一定保守，先 `stand` / `stop`。
 4. AI 和视频不要和真机控制同时第一次联调，建议分阶段。
-5. 对 OrangePi 这类开发板，尽量保持：
+5. 对 ARM64 这类开发板，尽量保持：
    - Python 环境稳定
    - `.venv` 固定
    - `CYCLONEDDS_HOME` 固定

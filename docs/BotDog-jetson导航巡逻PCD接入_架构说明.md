@@ -1068,7 +1068,7 @@ export function canvasToMap(
 │               │ - 鼠标 map 坐标               │ - 添加点       │
 │               │ - 点击添加导航点              │ - 删除点       │
 ├───────────────┴──────────────────────────────┴───────────────┤
-│ 操作日志                                                       │
+│ 提示中心 / 最近日志                                             │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -1076,11 +1076,43 @@ export function canvasToMap(
 
 ---
 
-## 12. 后续真实导航接口预留
+## 12. 当前真实导航接口
 
-Demo 通过后，再加以下接口。第一版文档只预留，不让 Codex 立即实现真实控制。
+当前导航巡逻页已接入真实 ROS2 导航定位链路，以下接口为当前主路径。
 
-### 12.1 设置位姿
+### 12.1 重启导航定位
+
+```http
+POST /api/v1/nav/localization/restart
+```
+
+职责：
+
+```text
+1. 清理旧导航定位进程；
+2. 启动 scripts/restart_navigation_localization.sh；
+3. 返回本轮重启前的 restart_navigation_localization.log offset；
+4. 返回 livox / relocation / global_planner / p2p_move_base 等子进程 PID；
+5. 返回导航健康检查结果。
+```
+
+前端拿到 `initialpose_wait_log_offset` 后，继续调用：
+
+```http
+GET /api/v1/nav/localization/initialpose-ready?offset={offset}&timeout_s=60
+```
+
+后端只有在以下条件全部满足时返回 ready：
+
+```text
+1. 本轮日志中出现 Super-LIO 等待 /initialpose 的标记；
+2. data/nav_runtime/relocation.pid 对应进程仍在运行；
+3. ROS graph 中 /initialpose 存在订阅者，或 initial pose publisher 已匹配订阅者。
+```
+
+如果 `relocation.pid` 已退出，接口返回 503；如果 `/initialpose` 没有订阅者，接口返回 504。
+
+### 12.2 设置位姿
 
 ```http
 POST /api/v1/nav/localization/set-pose
@@ -1103,9 +1135,11 @@ POST /api/v1/nav/localization/set-pose
 /initialpose
 ```
 
+发布前后端会再次等待 `/initialpose` 订阅者，避免 Super-LIO 尚未接收时丢消息。
+
 ---
 
-### 12.2 单点导航
+### 12.3 单点导航
 
 ```http
 POST /api/v1/nav/go-to

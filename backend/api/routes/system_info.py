@@ -35,7 +35,7 @@ async def get_system_info() -> dict:
                         "key": "unitree_network_iface",
                         "label": "宇树 B2 网卡名",
                         "value": settings.UNITREE_NETWORK_IFACE,
-                        "note": "OrangePi 上连接机器狗的物理网卡，用 `ip addr` 查看",
+                        "note": "ARM64 主机上连接机器狗的物理网卡，用 `ip addr` 查看",
                         "env_key": "UNITREE_NETWORK_IFACE",
                     },
                     {

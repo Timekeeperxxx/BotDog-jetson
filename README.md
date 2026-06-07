@@ -2,14 +2,14 @@
 
 ![Version](https://img.shields.io/badge/version-6.0-blue)
 ![Python](https://img.shields.io/badge/python-3.12+-blue)
-![Platform](https://img.shields.io/badge/platform-OrangePi%205%20Ultra-orange)
+![Platform](https://img.shields.io/badge/platform-ARM64-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
 ## 项目简介
 
-BotDog 是一个完整的**四足机器狗远程控制系统**，运行在 OrangePi 5 Ultra 上，通过 HM30 无线图传与地面端浏览器实现实时的视频监控、AI 目标识别、自动跟踪和键盘/触控遥控。
+BotDog 是一个完整的**四足机器狗远程控制系统**，运行在 ARM64 主机上，通过 HM30 无线图传与地面端浏览器实现实时的视频监控、AI 目标识别、自动跟踪和键盘/触控遥控。
 
 ### 核心功能
 
@@ -18,6 +18,7 @@ BotDog 是一个完整的**四足机器狗远程控制系统**，运行在 Orang
 - ✅ **自动跟踪** — AutoTrackService 状态机，目标进入画面即自动跟随
 - ✅ **低延迟视频图传** — HM30 无线图传 + WHEP WebRTC 浏览器播放
 - ✅ **遥测监控** — 实时姿态、温度、电量 WebSocket 推送
+- ✅ **导航巡逻** — PCD 点云场景预览、导航点管理、ROS2 重定位与巡逻任务
 - ✅ **配置管理** — 可视化配置界面，无需重启即可热更新参数
 - ✅ **告警与证据** — 异常自动告警、快照落盘、历史查询
 
@@ -31,7 +32,7 @@ BotDog 是一个完整的**四足机器狗远程控制系统**，运行在 Orang
         ├── FFmpeg(软解转码) → MediaMTX(:8889 WHEP) → 浏览器视频
         └── AIWorker(YOLOv8 推理) → AutoTrackService → 控制指令
                                                           │
-[ OrangePi 5 Ultra ]                              UnitreeB2Adapter
+[ ARM64 主机 ]                              UnitreeB2Adapter
         │ 网线 192.168.123.222                            │
 [ Unitree B2 机器狗 ]  ←─────────────────────────────────┘
         │
@@ -51,9 +52,36 @@ BotDog 是一个完整的**四足机器狗远程控制系统**，运行在 Orang
 
 ---
 
+## 导航巡逻
+
+导航巡逻页面面向 PCD 点云场景和 ROS2 导航定位链路：
+
+- 扫描并预览 PCD 场景，支持 3D 点云与 2D 俯视投影。
+- 管理导航点和巡逻任务，单点导航发布 `clicked_point` / `goal_yaw`，任务执行发布 `/nav_start`。
+- 重启导航定位后，后端会确认 Super-LIO 日志、`relocation` 进程和 `/initialpose` 订阅者，再允许前端标记重定位点。
+- 前端底部使用“提示中心 / 最近日志”状态条收敛导航定位提示，避免技术日志干扰标点操作。
+
+关键接口：
+
+```text
+POST /api/v1/nav/localization/restart
+GET  /api/v1/nav/localization/initialpose-ready
+POST /api/v1/nav/localization/set-pose
+POST /api/v1/nav/waypoints/{map_id}/{waypoint_id}/go-to
+```
+
+排查重点：
+
+```bash
+ros2 topic info /initialpose -v
+ros2 run tf2_ros tf2_echo map base_link
+```
+
+---
+
 ## 快速开始
 
-### 1. 环境要求（OrangePi 5 Ultra）
+### 1. 环境要求（ARM64 主机）
 
 ```bash
 python3 --version   # 3.12+
@@ -106,7 +134,7 @@ bash scripts/run-pipeline.sh
 bash scripts/start_backend.sh
 
 # 浏览器访问
-# http://<OrangePi_IP>:8000
+# http://<ARM64_HOST>:8000
 ```
 
 ---
@@ -157,11 +185,14 @@ BotDog/
 │   ├── auto_track_service.py  # 自动跟踪状态机
 │   ├── control_arbiter.py     # 控制权仲裁
 │   ├── workers_ai.py          # YOLOv8 推理 Worker
+│   ├── services_nav_localization.py # 导航定位重启与重定位状态检查
+│   ├── services_ros_nav.py    # ROS2 导航 topic 桥接
 │   └── config.py         # 全量配置项
 │
 ├── frontend/             # React 前端
 │   └── src/
 │       ├── components/   # ControlPad（键盘+触控）、VideoPlayer 等
+│       ├── pages/        # PcdMapDemoPage（导航巡逻页面）
 │       ├── hooks/        # useRobotControl、useWebSocket 等
 │       └── config/       # api.ts（动态 API 地址）
 │
@@ -187,8 +218,10 @@ BotDog/
 | 文件 | 说明 |
 |------|------|
 | [docs/03_实施计划与架构.md](docs/03_实施计划与架构.md) | 系统架构与功能完成清单 |
-| [docs/04_开发环境搭建.md](docs/04_开发环境搭建.md) | OrangePi 环境搭建详细步骤 |
+| [docs/04_开发环境搭建.md](docs/04_开发环境搭建.md) | ARM64 环境搭建详细步骤 |
 | [docs/12_宇树B2硬件接入指南.md](docs/12_宇树B2硬件接入指南.md) | B2 SDK、HM30、网络配置 |
+| [docs/ROS2_INTERFACE_CONTRACT.md](docs/ROS2_INTERFACE_CONTRACT.md) | ROS2 topic、导航、重定位对接契约 |
+| [docs/BotDog-jetson导航巡逻PCD接入_架构说明.md](docs/BotDog-jetson导航巡逻PCD接入_架构说明.md) | PCD 导航巡逻与真实重定位链路说明 |
 
 ---
 
@@ -222,5 +255,5 @@ MIT License
 
 **状态**：✅ 生产就绪  
 **最后更新**：2026-04-08  
-**平台**：OrangePi 5 Ultra / Unitree B2  
+**平台**：ARM64 主机 / Unitree B2
 **仓库**：https://github.com/Timekeeperxxx/BotDog

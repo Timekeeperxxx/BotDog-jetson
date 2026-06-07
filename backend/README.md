@@ -1,6 +1,6 @@
 # BotDog 后端
 
-BotDog 机器人控制系统的后端服务，运行于 **OrangePi 5 Ultra**，负责遥测采集、AI 识别、运动控制、任务管理与 WebSocket 广播。
+BotDog 机器人控制系统的后端服务，运行于 **ARM64 主机**，负责遥测采集、AI 识别、运动控制、任务管理与 WebSocket 广播。
 
 ## 技术栈
 
@@ -18,7 +18,7 @@ BotDog 机器人控制系统的后端服务，运行于 **OrangePi 5 Ultra**，�
 ## 系统架构
 
 ```
-OrangePi 5 Ultra
+ARM64 主机
 ├── backend/          ← 本服务（FastAPI）
 │   ├── 遥测广播 (WebSocket /ws/telemetry)
 │   ├── 事件广播 (WebSocket /ws/events)
@@ -65,7 +65,7 @@ cp backend/.env.example backend/.env
 # 开发模式（热重载）
 uvicorn backend.main:app --reload
 
-# 生产模式（OrangePi 上推荐）
+# 生产模式（ARM64 主机上推荐）
 python run_backend.py
 ```
 
@@ -333,7 +333,7 @@ ffmpeg -f v4l2 -input_format mjpeg -framerate 30 -video_size 1280x720 \
 curl http://127.0.0.1:8889/v3/paths/list | python3 -m json.tool
 
 # cam2 WHEP 地址
-# http://<OrangePi_IP>:8889/cam2/whep
+# http://<ARM64_HOST>:8889/cam2/whep
 ```
 
 ## 开发调试
@@ -372,7 +372,7 @@ python backend/test_keyboard_to_dog.py
 
 **Q: 后端启动报 `unitree sdk` 相关错误？**
 
-将 `CONTROL_ADAPTER_TYPE=simulation` 改为模拟模式，或确认宇树 SDK 已正确安装（参见 `arm46orangepi_bulid.md`）。
+将 `CONTROL_ADAPTER_TYPE=simulation` 改为模拟模式，或确认宇树 SDK 已正确安装（参见 `arm64_deploy.md`）。
 
 **Q: AI Worker 不推理？**
 
@@ -394,4 +394,4 @@ python backend/test_keyboard_to_dog.py
 
 1. 确认后端服务正常运行
 2. 检查 `CORS_ALLOW_ORIGINS` 是否包含前端地址
-3. OrangePi 防火墙确认 8000 端口开放
+3. ARM64 主机防火墙确认 8000 端口开放

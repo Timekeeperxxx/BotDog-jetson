@@ -832,7 +832,7 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
                   <AlertTriangle size={10} className="shrink-0 mt-0.5" />
                   <span>
                     以上参数来源于部署时的 <code className="text-zinc-500">.env</code> 文件。
-                    如需修改，请在 OrangePi 上编辑 <code className="text-zinc-500">backend/.env</code>
+                    如需修改，请在 ARM64 主机上编辑 <code className="text-zinc-500">backend/.env</code>
                     后重启后端服务生效。「硬件固定」项由硬件厂商出厂设定，无法通过软件修改。
                   </span>
                 </div>

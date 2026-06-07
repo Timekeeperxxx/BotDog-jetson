@@ -8,7 +8,7 @@ export interface WhepState {
 }
 
 // 未设置 VITE_WHEP_URL 时，自动使用当前页面的 hostname 拼接 MediaMTX 地址，
-// 兼容后端托管 SPA 的场景（OrangePi 部署无需写死 IP）。
+// 兼容后端托管 SPA 的场景（ARM64 部署无需写死 IP）。
 const DEFAULT_WHEP_URL = `http://${window.location.hostname}:8889/cam/whep`;
 
 // 重试退避阶梯（ms）

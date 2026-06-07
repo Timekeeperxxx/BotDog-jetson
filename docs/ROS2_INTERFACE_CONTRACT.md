@@ -87,9 +87,16 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 
 当前真实链路是：
 
+- 前端调用 `/api/v1/nav/localization/restart` 重启导航定位链路
+- 前端调用 `/api/v1/nav/localization/initialpose-ready` 等待后端确认可接收重定位点
+- 后端只在以下条件全部满足时允许前端进入重定位标记模式：
+  - 本轮 `restart_navigation_localization.log` 中出现 Super-LIO 等待 `/initialpose` 的日志
+  - `relocation.pid` 对应的 Super-LIO relocation 进程仍在运行
+  - ROS graph 上 `/initialpose` 存在订阅者，或 initial pose publisher 已匹配订阅者
 - 后端保存 localization pose
 - 后端发布 `ROS_NAV_INITIAL_POSE_TOPIC` 指定的初始位姿 topic
 - 消息类型：`geometry_msgs/msg/PoseWithCovarianceStamped`
+- 后端发布 `/initialpose` 前会再次等待订阅者，避免重启窗口内消息丢失
 - 当前不再发布 `/initialpose_start`
 
 ### 2.6 建图
@@ -263,6 +270,8 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
   -> 后端将 navigation_status 置为 idle
 
 前端设置重定位
+  -> 前端等待 /api/v1/nav/localization/initialpose-ready
+  -> 后端确认 Super-LIO 日志、relocation 进程、/initialpose 订阅者
   -> 后端保存 localization pose
   -> 后端发布 initial pose PoseWithCovarianceStamped
 
@@ -300,6 +309,9 @@ ROS2 发布 /nav_status String(JSON)
 - `x/y/z` 是否为米
 - `yaw` 是否为弧度
 - 是否能查到 `map -> base_link` TF
+- `/initialpose` 是否有订阅者：`ros2 topic info /initialpose -v`
+- `data/nav_runtime/relocation.pid` 对应进程是否仍在运行
+- `restart_navigation_localization.log` 中的 initialpose 等待日志是否属于本轮重启
 - 如果采用后续建议，是否能解析 `/nav_goal_json`
 - 如果采用后续建议，是否能发布 `/nav_status`
 
@@ -314,6 +326,7 @@ ros2 topic echo /nav_status
 ros2 topic echo /nav_goal_json
 ros2 topic echo /initialpose_json
 ros2 run tf2_ros tf2_echo map base_link
+ros2 topic info /initialpose -v
 ```
 
 发布 `Bool` 示例：
