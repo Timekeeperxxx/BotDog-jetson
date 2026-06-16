@@ -129,6 +129,76 @@ def test_inspect_relocation_initialization_unknown_without_marker(monkeypatch, t
     assert result["matched_map"] is None
 
 
+@pytest.mark.parametrize(
+    "log_line,error_code,message_part",
+    [
+        (
+            "Received the request before static layer is ready\n",
+            "GLOBAL_PLANNER_STATIC_LAYER_NOT_READY",
+            "静态地图层还没加载完成",
+        ),
+        (
+            "Goal is not found.\nUsing vertical search to find a goal on the ground.\n",
+            "GLOBAL_PLANNER_GOAL_NOT_ON_GROUND",
+            "目标点不在 global_planner 的地面点云附近",
+        ),
+        (
+            "Start is not found.\n",
+            "GLOBAL_PLANNER_START_NOT_ON_GROUND",
+            "机器狗当前位置不在 global_planner 的地面点云附近",
+        ),
+        (
+            "No path found from: 10 to 42\n",
+            "GLOBAL_PLANNER_NO_CONNECTED_PATH",
+            "没有可连通路径",
+        ),
+        (
+            "Failed to transform pointcloud: lookupTransform failed\n",
+            "GLOBAL_PLANNER_TF_LOOKUP_FAILED",
+            "获取机器狗 TF 失败",
+        ),
+    ],
+)
+def test_diagnose_recent_navigation_failure_classifies_planner_logs(monkeypatch, tmp_path, log_line, error_code, message_part):
+    log_path = tmp_path / "restart_navigation_localization.log"
+    log_path.write_text(log_line, encoding="utf-8")
+    monkeypatch.setattr(services_nav_localization, "_restart_log_path", lambda: log_path)
+
+    result = services_nav_localization.diagnose_recent_navigation_failure(max_log_age_s=60)
+
+    assert result is not None
+    assert result["error_code"] == error_code
+    assert message_part in result["message"]
+
+
+def test_diagnose_recent_navigation_failure_ignores_stale_logs(monkeypatch, tmp_path):
+    log_path = tmp_path / "restart_navigation_localization.log"
+    log_path.write_text("Goal is not found.\n", encoding="utf-8")
+    old_time = time.time() - 3600
+    os.utime(log_path, (old_time, old_time))
+    monkeypatch.setattr(services_nav_localization, "_restart_log_path", lambda: log_path)
+
+    result = services_nav_localization.diagnose_recent_navigation_failure(max_log_age_s=60)
+
+    assert result is None
+
+
+def test_diagnose_recent_navigation_failure_prefers_specific_goal_error_over_generic_no_path(monkeypatch, tmp_path):
+    log_path = tmp_path / "restart_navigation_localization.log"
+    log_path.write_text(
+        "Goal is not found.\n"
+        "Using vertical search to find a goal on the ground.\n"
+        "No path found from: 10 to 42\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(services_nav_localization, "_restart_log_path", lambda: log_path)
+
+    result = services_nav_localization.diagnose_recent_navigation_failure(max_log_age_s=60)
+
+    assert result is not None
+    assert result["error_code"] == "GLOBAL_PLANNER_GOAL_NOT_ON_GROUND"
+
+
 def test_wait_for_initialpose_log_waits_for_stable_init_frames(monkeypatch, tmp_path):
     log_path = tmp_path / "restart_navigation_localization.log"
     monkeypatch.setattr(services_nav_localization, "_restart_log_path", lambda: log_path)

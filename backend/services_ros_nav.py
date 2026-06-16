@@ -857,6 +857,13 @@ class RosNavBridge:
         target_waypoint_id = _to_optional_str(payload.get("target_waypoint_id")) or waypoint_id
         target_name = _to_optional_str(payload.get("target_name") or payload.get("waypoint_name"))
         message = _to_optional_str(payload.get("message")) or ""
+        error_code = _to_optional_str(payload.get("error_code"))
+        if mapped_status == "error":
+            diagnosis = self._diagnose_navigation_failure()
+            if diagnosis is not None:
+                message = str(diagnosis["message"])
+                error_code = str(diagnosis["error_code"])
+
         timestamp_value = _to_optional_float(payload.get("timestamp"))
         timestamp = timestamp_value if timestamp_value is not None else time.time()
 
@@ -870,9 +877,18 @@ class RosNavBridge:
             "task_id": _to_optional_str(payload.get("task_id")),
             "waypoint_id": waypoint_id,
             "distance_to_goal": _to_optional_float(payload.get("distance_to_goal")),
-            "error_code": _to_optional_str(payload.get("error_code")),
+            "error_code": error_code,
             "source": settings.ROS_NAV_STATUS_TOPIC,
         }
+
+    def _diagnose_navigation_failure(self) -> dict[str, Any] | None:
+        try:
+            from .services_nav_localization import diagnose_recent_navigation_failure
+
+            return diagnose_recent_navigation_failure()
+        except Exception as exc:
+            nav_logger.warning("导航失败诊断失败：{}", exc)
+            return None
 
     def _extract_global_path(self, msg: Any) -> dict[str, Any]:
         poses = getattr(msg, "poses", []) or []

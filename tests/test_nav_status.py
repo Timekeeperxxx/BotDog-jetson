@@ -23,6 +23,7 @@ def _make_bridge(monkeypatch, broadcast_calls: list[tuple[str, dict[str, object]
         broadcast_calls.append((event_type, data))
 
     monkeypatch.setattr(bridge, "_submit_broadcast", fake_submit_broadcast)
+    monkeypatch.setattr(bridge, "_diagnose_navigation_failure", lambda: None)
     return bridge
 
 
@@ -98,6 +99,41 @@ def test_nav_status_failed_preserves_error_fields(monkeypatch):
     assert broadcast_calls[0][0] == "nav.navigation_status"
     assert broadcast_calls[0][1]["status"] == "error"
     assert broadcast_calls[0][1]["error_code"] == "PLAN_FAILED"
+
+
+def test_nav_status_failed_uses_global_planner_diagnosis(monkeypatch):
+    broadcast_calls: list[tuple[str, dict[str, object]]] = []
+    bridge = _make_bridge(monkeypatch, broadcast_calls)
+    monkeypatch.setattr(
+        bridge,
+        "_diagnose_navigation_failure",
+        lambda: {
+            "error_code": "GLOBAL_PLANNER_GOAL_NOT_ON_GROUND",
+            "message": "目标点不在 global_planner 的地面点云附近",
+            "evidence": "Goal is not found.",
+        },
+    )
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(
+            data=json.dumps(
+                {
+                    "status": "failed",
+                    "task_id": "task_002",
+                    "waypoint_id": "wp_002",
+                    "message": "路径规划失败",
+                    "error_code": "PLAN_FAILED",
+                    "timestamp": 1770000001.0,
+                }
+            )
+        )
+    )
+
+    state = get_nav_state()["navigation_status"]
+    assert state["status"] == "error"
+    assert state["error_code"] == "GLOBAL_PLANNER_GOAL_NOT_ON_GROUND"
+    assert state["message"] == "目标点不在 global_planner 的地面点云附近"
+    assert broadcast_calls[0][1]["error_code"] == "GLOBAL_PLANNER_GOAL_NOT_ON_GROUND"
 
 
 def test_nav_status_unknown_status_maps_to_error_and_preserves_raw_status(monkeypatch):

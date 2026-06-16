@@ -191,6 +191,80 @@ def inspect_relocation_initialization(timeout_s: float = 2.0) -> dict[str, Any]:
     }
 
 
+def diagnose_recent_navigation_failure(max_log_age_s: float = 60.0) -> dict[str, Any] | None:
+    """Classify the latest planner failure from the restart log.
+
+    p2p_move_base reports many planner failures as a generic nav_status
+    "failed". The global_planner launch output carries the actionable cause.
+    Keep this parser conservative so stale logs do not overwrite fresh status.
+    """
+    path = _restart_log_path()
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        return None
+
+    if time.time() - mtime > max_log_age_s:
+        return None
+
+    content = _tail_restart_log()
+    if not content:
+        return None
+
+    specific_checks: list[tuple[str, tuple[str, ...], str]] = [
+        (
+            "GLOBAL_PLANNER_STATIC_LAYER_NOT_READY",
+            (
+                "Received the request before static layer is ready",
+                "Received clicked goal before static layer is ready",
+            ),
+            "global_planner 静态地图层还没加载完成，请等待导航链路 ready 后再下发目标。",
+        ),
+        (
+            "GLOBAL_PLANNER_GOAL_NOT_ON_GROUND",
+            ("Goal is not found.",),
+            "目标点不在 global_planner 的地面点云附近：请把导航点放到地面点云上，或重新保存更贴近地面的点位。",
+        ),
+        (
+            "GLOBAL_PLANNER_START_NOT_ON_GROUND",
+            ("Start is not found.",),
+            "机器狗当前位置不在 global_planner 的地面点云附近：请检查重定位/TF 是否落在当前地图地面上。",
+        ),
+        (
+            "GLOBAL_PLANNER_TF_LOOKUP_FAILED",
+            ("Failed to transform pointcloud:",),
+            "global_planner 获取机器狗 TF 失败：请检查 map 到 base_footprint/base_link 的 TF 是否稳定。",
+        ),
+    ]
+    generic_checks: list[tuple[str, tuple[str, ...], str]] = [
+        (
+            "GLOBAL_PLANNER_NO_CONNECTED_PATH",
+            ("No path found from:",),
+            "目标点和机器狗当前位置之间没有可连通路径：可能是地面图断裂、下采样过稀或障碍/边界阻断。",
+        ),
+    ]
+
+    matches: list[tuple[int, str, str, str]] = []
+    for code, needles, message in [*specific_checks, *generic_checks]:
+        for needle in needles:
+            index = content.rfind(needle)
+            if index >= 0:
+                matches.append((index, code, message, needle))
+
+    if not matches:
+        return None
+
+    specific_codes = {code for code, _, _ in specific_checks}
+    specific_matches = [match for match in matches if match[1] in specific_codes]
+    candidates = specific_matches or matches
+    _, code, message, needle = max(candidates, key=lambda item: item[0])
+    return {
+        "error_code": code,
+        "message": message,
+        "evidence": needle,
+    }
+
+
 def _current_scene_path() -> Path:
     return _runtime_dir() / "current_scene.json"
 

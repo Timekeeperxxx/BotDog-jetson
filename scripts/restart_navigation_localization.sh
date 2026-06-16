@@ -429,6 +429,10 @@ wait_for_navigation_maps() {
 
   wait_for_topic_once /mapcloud "$timeout_s" "global planner mapcloud"
   wait_for_topic_once /mapground "$timeout_s" "global planner mapground"
+  # /weighted_ground is published after global_planner copies the static layer
+  # and builds its internal graph, so it is a stronger readiness signal than
+  # simply receiving mapcloud/mapground from pcl_publisher.
+  wait_for_topic_once /weighted_ground "$timeout_s" "global planner weighted_ground"
 }
 
 write_navigation_ready_file() {
@@ -445,10 +449,11 @@ write_navigation_ready_file() {
   "livox_pid": $LIVOX_PID,
   "relocation_pid": $RELOCATION_PID,
   "global_planner_pid": $GLOBAL_PLANNER_PID,
-  "p2p_move_base_pid": $P2P_MOVE_BASE_PID
+  "p2p_move_base_pid": $P2P_MOVE_BASE_PID,
+  "global_planner_ready_topic": "/weighted_ground"
 }
 EOF
-  echo "导航链路 ready：global planner 静态地图层已发布，ready_file=$NAV_READY_FILE"
+  echo "导航链路 ready：global planner weighted_ground 已发布，ready_file=$NAV_READY_FILE"
 }
 
 wait_for_lio_odom_sane() {
@@ -543,7 +548,7 @@ wait_for_topic_once /tf_static 10 "base 静态 TF"
 
 start_launch "$HOME/dddmr_navigation_new_local" global_planner path_planning_with_polygon.launch "启动全局路径规划..." GLOBAL_PLANNER_PID global_planner.pid "map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD"
 echo "Global Planner PID: $GLOBAL_PLANNER_PID"
-wait_for_navigation_maps "${NAV_GLOBAL_MAP_WAIT_TIMEOUT_S:-90}"
+wait_for_navigation_maps "${NAV_GLOBAL_MAP_WAIT_TIMEOUT_S:-600}"
 write_navigation_ready_file
 
 if [ "${NAV_START_CMD_VEL_BRIDGE:-false}" = "true" ]; then

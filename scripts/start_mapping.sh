@@ -165,12 +165,12 @@ cleanup() {
     echo "  [1/3] SIGINT terrain_analysis 进程组 (PID=$TERRAIN_PID)，等待 ground.pcd 保存..." | tee -a "$DEBUG_LOG"
     _signal_process_group "$TERRAIN_PID" INT
     local waited=0
-    while [ $waited -lt 60 ] && kill -0 "$TERRAIN_PID" 2>/dev/null; do
+    while [ $waited -lt 2000 ] && kill -0 "$TERRAIN_PID" 2>/dev/null; do
       sleep 1
       waited=$((waited + 1))
     done
     if kill -0 "$TERRAIN_PID" 2>/dev/null; then
-      echo "  terrain_analysis 60s 未退出，SIGKILL 进程组" | tee -a "$DEBUG_LOG"
+      echo "  terrain_analysis 2000s 未退出，SIGKILL 进程组" | tee -a "$DEBUG_LOG"
       _signal_process_group "$TERRAIN_PID" KILL
     else
       echo "  terrain_analysis 已退出 (${waited}s)" | tee -a "$DEBUG_LOG"
@@ -186,12 +186,12 @@ cleanup() {
     echo "  [2/4] SIGINT super_lio_node (PID=$superlio_node_pid)，等待原始 map.pcd 保存..." | tee -a "$DEBUG_LOG"
     kill -INT "$superlio_node_pid" 2>/dev/null || true
     local waited=0
-    while [ $waited -lt 90 ] && kill -0 "$superlio_node_pid" 2>/dev/null; do
+    while [ $waited -lt 2000 ] && kill -0 "$superlio_node_pid" 2>/dev/null; do
       sleep 1
       waited=$((waited + 1))
     done
     if kill -0 "$superlio_node_pid" 2>/dev/null; then
-      echo "  super_lio_node 90s 未退出，SIGKILL" | tee -a "$DEBUG_LOG"
+      echo "  super_lio_node 2000s 未退出，SIGKILL" | tee -a "$DEBUG_LOG"
       kill -KILL "$superlio_node_pid" 2>/dev/null || true
     else
       echo "  super_lio_node 已退出 (${waited}s)" | tee -a "$DEBUG_LOG"
@@ -205,12 +205,12 @@ cleanup() {
     echo "  [3/4] SIGINT super_lio 进程组 (PID=$SUPERLIO_PID)，等待剩余进程退出..." | tee -a "$DEBUG_LOG"
     _signal_process_group "$SUPERLIO_PID" INT
     waited=0
-    while [ $waited -lt 90 ] && kill -0 "$SUPERLIO_PID" 2>/dev/null; do
+    while [ $waited -lt 2000 ] && kill -0 "$SUPERLIO_PID" 2>/dev/null; do
       sleep 1
       waited=$((waited + 1))
     done
     if kill -0 "$SUPERLIO_PID" 2>/dev/null; then
-      echo "  super_lio 进程组 90s 未退出，SIGKILL" | tee -a "$DEBUG_LOG"
+      echo "  super_lio 进程组 2000s 未退出，SIGKILL" | tee -a "$DEBUG_LOG"
       _signal_process_group "$SUPERLIO_PID" KILL
     else
       echo "  super_lio 进程组已退出 (${waited}s)" | tee -a "$DEBUG_LOG"
