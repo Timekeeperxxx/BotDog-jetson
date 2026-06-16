@@ -4,7 +4,10 @@ import os
 import struct
 from pathlib import Path
 
+import pytest
+
 from backend import services_pcd_maps as pcd_services
+from backend.services_nav_waypoints import create_waypoint
 
 
 ASCII_PCD_TEMPLATE = """# .PCD v0.7 - Point Cloud Data file format
@@ -169,3 +172,99 @@ def test_scene_preview_binary_pcd_with_count_fields_reads_xyz_correctly(monkeypa
     assert preview["bounds"]["max_y"] == 8.0
     assert preview["bounds"]["min_z"] == -3.0
     assert preview["bounds"]["max_z"] == 9.0
+
+
+def test_snap_xy_to_ground_fits_local_ground_plane(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    scene_root.mkdir()
+    scene = scene_root / "Scene5_地面吸附"
+    scene.mkdir()
+
+    write_ascii_pcd(scene / "map.pcd", [(0.0, 0.0, 0.0)])
+    write_ascii_pcd(
+        scene / "ground.pcd",
+        [
+            (0.0, 0.0, 1.0),
+            (2.0, 0.0, 1.2),
+            (0.0, 2.0, 1.4),
+            (2.0, 2.0, 1.6),
+        ],
+    )
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+
+    snapped = pcd_services.snap_xy_to_ground("Scene5_地面吸附", 1.0, 1.0, max_distance_m=2.0)
+
+    assert snapped["source_file"] == "ground.pcd"
+    assert snapped["method"] == "plane"
+    assert snapped["z"] == pytest.approx(1.3)
+
+
+def test_snap_xy_to_ground_rejects_points_far_from_ground(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    scene_root.mkdir()
+    scene = scene_root / "Scene6_远离地面"
+    scene.mkdir()
+
+    write_ascii_pcd(scene / "map.pcd", [(0.0, 0.0, 0.0)])
+    write_ascii_pcd(scene / "ground.pcd", [(0.0, 0.0, 0.0)])
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+
+    with pytest.raises(pcd_services.PcdMapError, match="不在 ground.pcd 附近"):
+        pcd_services.snap_xy_to_ground("Scene6_远离地面", 5.0, 5.0, max_distance_m=1.0)
+
+
+def test_create_waypoint_uses_payload_z_from_3d_ground_preview(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    waypoint_root = tmp_path / "waypoints"
+    scene_root.mkdir()
+    scene = scene_root / "Scene7_点位吸附"
+    scene.mkdir()
+
+    write_ascii_pcd(scene / "map.pcd", [(0.0, 0.0, 0.0)])
+    write_ascii_pcd(scene / "ground.pcd", [(1.0, 2.0, 0.42), (1.2, 2.0, 0.44), (1.0, 2.2, 0.46)])
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr("backend.services_nav_waypoints.settings.NAV_WAYPOINT_STORE_DIR", str(waypoint_root))
+
+    waypoint = create_waypoint(
+        "Scene7_点位吸附",
+        {
+            "name": "测试点",
+            "x": 1.0,
+            "y": 2.0,
+            "z": 99.0,
+            "yaw": 0.5,
+            "frame_id": "map",
+        },
+    )
+
+    assert waypoint["x"] == 1.0
+    assert waypoint["y"] == 2.0
+    assert waypoint["z"] == pytest.approx(99.0)
+
+
+def test_create_waypoint_uses_payload_z_without_scanning_ground_file(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    waypoint_root = tmp_path / "waypoints"
+    scene_root.mkdir()
+    scene = scene_root / "Scene8_超大地面"
+    scene.mkdir()
+
+    write_ascii_pcd(scene / "map.pcd", [(0.0, 0.0, 0.0)])
+    write_ascii_pcd(scene / "ground.pcd", [(1.0, 2.0, 0.42)])
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr("backend.services_nav_waypoints.settings.NAV_WAYPOINT_STORE_DIR", str(waypoint_root))
+    waypoint = create_waypoint(
+        "Scene8_超大地面",
+        {
+            "name": "快速点",
+            "x": 1.0,
+            "y": 2.0,
+            "z": 9.87,
+            "yaw": 0.5,
+            "frame_id": "map",
+        },
+    )
+
+    assert waypoint["x"] == 1.0
+    assert waypoint["y"] == 2.0
+    assert waypoint["z"] == pytest.approx(9.87)

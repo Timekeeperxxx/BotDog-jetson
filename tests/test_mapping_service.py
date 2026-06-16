@@ -279,6 +279,60 @@ def test_stop_mapping_creates_origin_waypoint_after_saved(monkeypatch, tmp_path)
     assert kills == [(4321, signal.SIGINT)]
 
 
+def test_stop_mapping_creates_origin_waypoint_from_initial_pose(monkeypatch, tmp_path):
+    script = tmp_path / "start_mapping.sh"
+    script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    maps_root = tmp_path / "MAPS"
+    waypoint_root = tmp_path / "waypoints"
+
+    monkeypatch.setattr(mapping_service_module, "MAPS_ROOT", maps_root)
+    monkeypatch.setattr(mapping_service_module, "START_MAPPING_SCRIPT", script)
+    monkeypatch.setattr("backend.services_pcd_maps.settings.SCENE_MAP_ROOT", str(maps_root))
+    monkeypatch.setattr("backend.services_nav_waypoints.settings.NAV_WAYPOINT_STORE_DIR", str(waypoint_root))
+    monkeypatch.setattr(
+        mapping_service_module.MappingService,
+        "_capture_initial_origin_pose",
+        classmethod(
+            lambda cls: {
+                "x": 1.25,
+                "y": -0.5,
+                "z": -0.72,
+                "yaw": 0.35,
+                "frame_id": "map",
+                "source": "test-initial-tf",
+            }
+        ),
+    )
+
+    def fake_popen(command, *args, **kwargs):
+        map_dir = Path(command[2])
+        map_dir.mkdir(parents=True, exist_ok=True)
+        mapping_service_module.mapping_ready_flag_path(map_dir).write_text("ready\n", encoding="utf-8")
+        (map_dir / "map.pcd").write_text("map\n", encoding="utf-8")
+        (map_dir / "ground.pcd").write_text("ground\n", encoding="utf-8")
+        return DummyProcess()
+
+    monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(mapping_service_module.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(mapping_service_module, "stop_navigation_processes", lambda: {"pids": []})
+    monkeypatch.setattr(mapping_service_module, "stop_cmd_vel_script", lambda: {"pid": None})
+
+    service = mapping_service_module.MappingService()
+    start_result = service.start("初始坐标场景")
+    result = service.stop()
+
+    waypoint_data = list_waypoints(start_result["scene_name"])
+    origin = waypoint_data["items"][0]
+
+    assert result["saved"] is True
+    assert origin["name"] == "原点"
+    assert origin["x"] == 1.25
+    assert origin["y"] == -0.5
+    assert origin["z"] == -0.72
+    assert origin["yaw"] == 0.35
+
+
 def test_stop_mapping_waits_longer_than_script_cleanup_before_force_kill(monkeypatch, tmp_path):
     script = tmp_path / "start_mapping.sh"
     script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -522,5 +576,5 @@ def test_start_mapping_script_waits_for_superlio_save_on_shutdown():
 
     assert "SIGINT super_lio_node" in content
     assert "SIGINT super_lio 进程组" in content
-    assert 'while [ $waited -lt 90 ] && kill -0 "$superlio_node_pid" 2>/dev/null; do' in content
-    assert "super_lio_node 90s 未退出，SIGKILL" in content
+    assert 'while [ $waited -lt 2000 ] && kill -0 "$superlio_node_pid" 2>/dev/null; do' in content
+    assert "super_lio_node 2000s 未退出，SIGKILL" in content

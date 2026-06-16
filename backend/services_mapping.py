@@ -7,11 +7,14 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
+from .config import settings
 from .logging_config import get_logger
 from .nav_bridge_state import get_ros_nav_bridge
+from .services_nav_state import clear_robot_pose, get_robot_pose
 from .services_nav_localization import stop_cmd_vel_script, stop_navigation_processes
 from .services_nav_waypoints import upsert_origin_waypoint
 
@@ -97,6 +100,7 @@ class MappingSession:
     process: subprocess.Popen[Any]
     started_at: float
     runtime_pause_state: dict[str, bool]
+    initial_origin_pose: dict[str, Any]
 
     def is_running(self) -> bool:
         return self.process.poll() is None
@@ -186,6 +190,84 @@ class MappingService:
                 mapping_logger.info("后端 ROS2 导航节点已恢复")
         except Exception as exc:
             mapping_logger.warning("恢复 ROS2 导航节点失败：{}", exc)
+
+    @staticmethod
+    def _fallback_initial_origin_pose() -> dict[str, Any]:
+        return {
+            "x": 0.0,
+            "y": 0.0,
+            "z": float(settings.NAV_ORIGIN_WAYPOINT_Z),
+            "yaw": float(settings.NAV_ORIGIN_WAYPOINT_YAW),
+            "frame_id": settings.PCD_FRAME_ID,
+            "source": "config:NAV_ORIGIN_WAYPOINT",
+        }
+
+    @staticmethod
+    def _normalize_initial_origin_pose(pose: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not pose:
+            return None
+        try:
+            x = float(pose["x"])
+            y = float(pose["y"])
+            z = float(pose["z"])
+            yaw = float(pose.get("yaw", settings.NAV_ORIGIN_WAYPOINT_YAW))
+        except Exception:
+            return None
+        if not all(isfinite(value) for value in (x, y, z, yaw)):
+            return None
+        frame_id = str(pose.get("frame_id") or settings.PCD_FRAME_ID)
+        if frame_id != settings.PCD_FRAME_ID:
+            mapping_logger.warning(
+                "建图初始位姿坐标系不是 {}，忽略：frame_id={} pose={}",
+                settings.PCD_FRAME_ID,
+                frame_id,
+                pose,
+            )
+            return None
+        return {
+            "x": x,
+            "y": y,
+            "z": z,
+            "yaw": yaw,
+            "frame_id": frame_id,
+            "source": pose.get("source") or "nav.robot_pose",
+            "source_frame": pose.get("source_frame"),
+            "timestamp": pose.get("timestamp"),
+        }
+
+    @classmethod
+    def _capture_initial_origin_pose(cls) -> dict[str, Any]:
+        pose: dict[str, Any] | None = None
+        bridge = get_ros_nav_bridge()
+        if bridge is not None:
+            get_current_robot_pose = getattr(bridge, "get_current_robot_pose", None)
+            if callable(get_current_robot_pose):
+                try:
+                    pose = get_current_robot_pose()
+                except Exception as exc:
+                    mapping_logger.warning("读取建图初始 ROS 位姿失败：{}", exc)
+
+        captured = cls._normalize_initial_origin_pose(pose or get_robot_pose())
+        if captured is not None:
+            mapping_logger.info(
+                "已捕获建图初始原点位姿：x={} y={} z={} yaw={} source={}",
+                captured["x"],
+                captured["y"],
+                captured["z"],
+                captured["yaw"],
+                captured.get("source"),
+            )
+            return captured
+
+        fallback = cls._fallback_initial_origin_pose()
+        mapping_logger.warning(
+            "未读到建图初始 TF/位姿，使用配置兜底原点：x={} y={} z={} yaw={}",
+            fallback["x"],
+            fallback["y"],
+            fallback["z"],
+            fallback["yaw"],
+        )
+        return fallback
 
     @staticmethod
     def _pause_runtime_interferers() -> dict[str, bool]:
@@ -289,6 +371,7 @@ class MappingService:
             mapping_logger.info("开始建图前，准备停止导航相关后台进程")
             nav_stop_result = stop_navigation_processes()
             cmd_vel_stop_result = stop_cmd_vel_script()
+            clear_robot_pose()
             mapping_logger.info(
                 "导航后台进程停止结果：nav_pids={} cmd_vel_pid={}",
                 nav_stop_result.get("pids"),
@@ -320,18 +403,21 @@ class MappingService:
             start_wait_deadline = time.monotonic() + MAPPING_START_READY_TIMEOUT_SECONDS
             while time.monotonic() < start_wait_deadline:
                 if ready_flag.exists():
+                    initial_origin_pose = self._capture_initial_origin_pose()
                     self._session = MappingSession(
                         scene_name=map_dir.name,
                         map_dir=map_dir,
                         process=process,
                         started_at=time.time(),
                         runtime_pause_state=runtime_pause_state,
+                        initial_origin_pose=initial_origin_pose,
                     )
                     mapping_logger.info(
-                        "建图已进入 ground 生成阶段：scene_name={}，pid={}，map_dir={}",
+                        "建图已进入 ground 生成阶段：scene_name={}，pid={}，map_dir={}，initial_origin={}",
                         map_dir.name,
                         process.pid,
                         map_dir,
+                        initial_origin_pose,
                     )
                     return {
                         "success": True,
@@ -384,6 +470,7 @@ class MappingService:
             map_dir = str(self._session.map_dir)
             started_at = self._session.started_at
             runtime_pause_state = self._session.runtime_pause_state
+            initial_origin_pose = self._session.initial_origin_pose
             elapsed = time.time() - started_at
 
             mapping_logger.info(
@@ -459,14 +546,23 @@ class MappingService:
         if saved:
             message = f"地图已保存：map.pcd x{len(map_pcd_candidates)}，ground.pcd x{len(ground_pcd_candidates)}"
             try:
-                origin_waypoint = upsert_origin_waypoint(scene_name)
+                origin_waypoint = upsert_origin_waypoint(
+                    scene_name,
+                    x=initial_origin_pose.get("x"),
+                    y=initial_origin_pose.get("y"),
+                    z=initial_origin_pose.get("z"),
+                    yaw=initial_origin_pose.get("yaw"),
+                )
                 message += "，已自动添加原点导航点"
                 mapping_logger.info(
-                    "建图完成后已自动写入原点导航点：scene_name={} waypoint_id={} z={} yaw={}",
+                    "建图完成后已自动写入原点导航点：scene_name={} waypoint_id={} x={} y={} z={} yaw={} source={}",
                     scene_name,
                     origin_waypoint.get("id"),
+                    origin_waypoint.get("x"),
+                    origin_waypoint.get("y"),
                     origin_waypoint.get("z"),
                     origin_waypoint.get("yaw"),
+                    initial_origin_pose.get("source"),
                 )
             except Exception as exc:
                 origin_waypoint_error = str(exc)

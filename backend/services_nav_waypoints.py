@@ -7,7 +7,7 @@ from typing import Any
 
 from .config import settings
 from .repositories.json_store import atomic_write_json, read_json, safe_json_path_name
-from .services_pcd_maps import resolve_scene_ground_path
+from .services_pcd_maps import resolve_scene_ground_path, snap_xy_to_ground
 
 
 def _utc_now_iso() -> str:
@@ -50,14 +50,20 @@ def _write_waypoints(map_id: str, items: list[dict[str, Any]]) -> None:
 def create_waypoint(map_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     existing = list_waypoints(map_id)["items"]
     now = _utc_now_iso()
+    snapped = snap_xy_to_ground(
+        map_id,
+        float(payload["x"]),
+        float(payload["y"]),
+        fallback_z=float(payload["z"]) if payload.get("z") is not None else None,
+    )
 
     waypoint = {
         "id": f"wp_{uuid.uuid4().hex[:12]}",
         "map_id": map_id,
         "name": payload["name"],
-        "x": float(payload["x"]),
-        "y": float(payload["y"]),
-        "z": float(payload.get("z", 0.0)),
+        "x": snapped["x"],
+        "y": snapped["y"],
+        "z": snapped["z"],
         "yaw": float(payload.get("yaw", 0.0)),
         "frame_id": payload.get("frame_id", settings.PCD_FRAME_ID),
         "created_at": now,
@@ -73,15 +79,22 @@ def create_waypoint(map_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     return waypoint
 
 
-def upsert_origin_waypoint(map_id: str, *, z: float | None = None, yaw: float | None = None) -> dict[str, Any]:
+def upsert_origin_waypoint(
+    map_id: str,
+    *,
+    x: float | None = None,
+    y: float | None = None,
+    z: float | None = None,
+    yaw: float | None = None,
+) -> dict[str, Any]:
     existing = list_waypoints(map_id)["items"]
     now = _utc_now_iso()
     target_name = "原点"
     waypoint = {
         "map_id": map_id,
         "name": target_name,
-        "x": 0.0,
-        "y": 0.0,
+        "x": float(0.0 if x is None else x),
+        "y": float(0.0 if y is None else y),
         "z": float(settings.NAV_ORIGIN_WAYPOINT_Z if z is None else z),
         "yaw": float(settings.NAV_ORIGIN_WAYPOINT_YAW if yaw is None else yaw),
         "frame_id": settings.PCD_FRAME_ID,

@@ -119,7 +119,7 @@ function getRelocationNotice(prompt: RelocationPromptState) {
     case 'waiting':
       return { title: '等待 Super-LIO', message: '正在确认重定位接收端。' }
     case 'ready':
-      return { title: '现在标记重定位点', message: '在 2D 地图按住当前位置，拖动确定朝向。' }
+      return { title: '现在标记重定位点', message: '在 3D 蓝色 ground.pcd 上按住当前位置，拖动确定朝向。' }
     case 'localized':
       return { title: '重定位已发送', message: '正在等待位姿恢复。' }
     case 'nav-waiting':
@@ -141,7 +141,7 @@ function summarizeLocalizationStatus(status: string, message: string) {
 export function PcdMapDemoPage() {
   useAuthState()
   const canOperate = hasAuthSession() && hasRole('operator')
-  const previewPointLimit = 15000
+  const previewPointLimit = 100000
   const [waypoints, setWaypoints] = useState<NavWaypoint[]>([])
   const [addMode, setAddMode] = useState(false)
   const [tasks, setTasks] = useState<TaskDefinition[]>([])
@@ -153,7 +153,6 @@ export function PcdMapDemoPage() {
   const [infoOpen, setInfoOpen] = useState(true)
   const [followRobot, setFollowRobot] = useState(false)
   const [toolMode, setToolMode] = useState<'none' | 'obstacle' | 'pose'>('none')
-  const [waypointZ, setWaypointZ] = useState(-0.83)
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
   const [estopSending, setEstopSending] = useState(false)
   const [restartLocalizationSending, setRestartLocalizationSending] = useState(false)
@@ -181,20 +180,23 @@ export function PcdMapDemoPage() {
   const navWs = useNavWebSocket()
   const { robotPose, globalPath, localizationStatus, setInitialState } = navWs
   const relocationNotice = getRelocationNotice(relocationPrompt)
+  const waypointModeNotice = addMode
+    ? { title: '3D ground 标点', message: '在 3D 蓝色 ground.pcd 上按住并拖动确定朝向。' }
+    : null
   const poseModeNotice = toolMode === 'pose'
-    ? { title: '重定位模式', message: '在 2D 地图按住当前位置，拖动确定朝向。' }
+    ? { title: '重定位模式', message: '在 3D 蓝色 ground.pcd 上按住当前位置，拖动确定朝向。' }
     : null
   const localizationNotice = localizationStatus && localizationStatus.status !== 'ok'
     ? { title: '定位状态', message: summarizeLocalizationStatus(localizationStatus.status, localizationStatus.message) }
     : null
-  const currentNotice = relocationNotice ?? poseModeNotice ?? localizationNotice
+  const currentNotice = relocationNotice ?? waypointModeNotice ?? poseModeNotice ?? localizationNotice
   const currentNoticeKind = relocationPrompt.status !== 'idle'
     ? relocationPrompt.status === 'nav-waiting'
       ? 'waiting'
       : relocationPrompt.status === 'nav-ready'
         ? 'ready'
         : relocationPrompt.status
-    : toolMode === 'pose'
+    : addMode || toolMode === 'pose'
       ? 'ready'
       : localizationNotice
         ? 'waiting'
@@ -282,9 +284,13 @@ export function PcdMapDemoPage() {
       return
     }
 
+    setAddMode(false)
     const defaultName = `巡检点${waypoints.length + 1}`
     const name = window.prompt('导航点名称', defaultName)?.trim()
-    if (!name) return
+    if (!name) {
+      addLog('已退出标点，未保存导航点')
+      return
+    }
 
     const validatedName = validateWaypointName(name, waypoints.map((waypoint) => waypoint.name))
     if (!validatedName.ok) {
@@ -293,7 +299,7 @@ export function PcdMapDemoPage() {
     }
 
     try {
-      await createWaypoint(selectedSceneId, {
+      const created = await createWaypoint(selectedSceneId, {
         name: validatedName.value,
         x: pos.x,
         y: pos.y,
@@ -303,16 +309,15 @@ export function PcdMapDemoPage() {
       })
       const nextWaypoints = await listWaypoints(selectedSceneId)
       setWaypoints(nextWaypoints.items)
-      setAddMode(false)
       addLog(
-        `已保存导航点 ${validatedName.value}: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${pos.z.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
+        `已保存导航点 ${validatedName.value}: x=${created.x.toFixed(3)}, y=${created.y.toFixed(3)}, z=${created.z.toFixed(3)}, yaw=${created.yaw.toFixed(3)}`,
       )
     } catch (error) {
       addLog(error instanceof Error ? error.message : '保存导航点失败', 'error')
     }
-  }, [addLog, selectedSceneId, selectedSceneNavigable, waypoints.length])
+  }, [addLog, selectedSceneId, selectedSceneNavigable, waypoints])
 
-  const handleSetPose = useCallback(async (pos: { x: number; y: number; yaw: number }) => {
+  const handleSetPose = useCallback(async (pos: { x: number; y: number; z: number; yaw: number }) => {
     if (!selectedSceneId) return
     if (!canOperate || !selectedSceneNavigable) {
       addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
@@ -323,7 +328,7 @@ export function PcdMapDemoPage() {
       map_id: selectedSceneId,
       x: pos.x,
       y: pos.y,
-      z: waypointZ,
+      z: pos.z,
       yaw: pos.yaw,
       frame_id: 'map',
     }
@@ -340,14 +345,14 @@ export function PcdMapDemoPage() {
           timestamp: Date.now() / 1000,
         },
       })
-      await setLocalizationPose(payload)
+      const pose = await setLocalizationPose(payload)
       setToolMode('none')
       setRelocationPrompt({
         status: 'nav-waiting',
         message: '重定位已发送，正在等待 global_planner 和导航控制链路恢复。',
       })
       addLog(
-        `已发送重定位: x=${pos.x.toFixed(3)}, y=${pos.y.toFixed(3)}, z=${waypointZ.toFixed(3)}, yaw=${pos.yaw.toFixed(3)}`,
+        `已发送重定位: x=${pose.x.toFixed(3)}, y=${pose.y.toFixed(3)}, z=${pose.z.toFixed(3)}, yaw=${pose.yaw.toFixed(3)}`,
       )
       const ready = await waitNavigationRuntimeReady(60)
       setRelocationPrompt({
@@ -368,9 +373,7 @@ export function PcdMapDemoPage() {
     canOperate,
     selectedSceneId,
     selectedSceneNavigable,
-    waypointZ,
     setInitialState,
-    waitNavigationRuntimeReady,
   ])
 
   const handleDeleteWaypoint = useCallback(async (waypointId: string) => {
@@ -740,7 +743,7 @@ export function PcdMapDemoPage() {
     })
   }, [addLog])
 
-  const interactionMode: 'none' | 'waypoint' | 'pose' =
+  const pointCloudMode: 'none' | 'waypoint' | 'pose' =
     addMode ? 'waypoint' : (toolMode === 'pose' ? 'pose' : 'none')
 
   const selectedTask = useMemo(
@@ -788,6 +791,11 @@ export function PcdMapDemoPage() {
       max_z: maxZ,
     }
   }, [mappingActive, mappingCloudPoints])
+
+  const groundCenterHeight = useMemo(() => {
+    const bounds = preview?.layers.ground?.bounds ?? metadata?.files.ground?.bounds ?? null
+    return bounds ? (bounds.min_z + bounds.max_z) / 2 : null
+  }, [metadata?.files.ground?.bounds, preview?.layers.ground?.bounds])
 
   const mapOptions = useMemo(
     () => scenes.map((scene) => ({ id: scene.id, name: scene.name })),
@@ -1003,26 +1011,17 @@ export function PcdMapDemoPage() {
           ) : null}
           <button
             className="pcd-secondary-button"
-            disabled={!canOperate || restartLocalizationSending || !selectedSceneNavigable}
+            disabled={!canOperate || restartLocalizationSending || !selectedSceneNavigable || !webglSupported}
             onClick={() => void handleRestartNavigationLocalization()}
-            title={!selectedSceneNavigable ? '当前场景缺少 ground.pcd' : undefined}
+            title={!webglSupported ? '当前浏览器无法使用 3D 点云标记' : !selectedSceneNavigable ? '当前场景缺少 ground.pcd' : undefined}
           >
             {restartLocalizationSending ? '重启中...' : '重启导航定位'}
           </button>
-          <label className="pcd-z-control">
-            <span>Z</span>
-            <input
-              type="number"
-              step="0.05"
-              value={waypointZ}
-              disabled={!preview}
-              onChange={(event) => setWaypointZ(Number(event.target.value) || 0)}
-            />
-          </label>
           <button
             className={`pcd-primary-button ${addMode ? 'is-active' : ''}`}
-            disabled={!preview || !selectedSceneNavigable}
+            disabled={!preview || !selectedSceneNavigable || !webglSupported}
             onClick={handleToggleWaypointMode}
+            title={!webglSupported ? '当前浏览器无法使用 3D 点云标记' : !selectedSceneNavigable ? '当前场景缺少 ground.pcd' : undefined}
           >
             <Crosshair size={16} />
             {addMode ? '退出标点' : '添加导航点'}
@@ -1039,8 +1038,12 @@ export function PcdMapDemoPage() {
                 waypoints={waypoints}
                 robotPose={robotPose}
                 globalPath={globalPath}
+                mode={pointCloudMode}
                 followRobot={followRobot}
-                centerHeight={waypointZ}
+                centerHeight={groundCenterHeight}
+                onGroundPointerChange={setMouseMapPosition}
+                onAddWaypoint={handleAddWaypoint}
+                onSetPose={handleSetPose}
               />
             ) : (
               <div className="flex min-h-[520px] items-center justify-center rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top,rgba(16,24,32,0.92),rgba(4,7,10,0.98))] px-6 text-center">
@@ -1234,8 +1237,8 @@ export function PcdMapDemoPage() {
             <button
               className={`pcd-tool-button ${toolMode === 'pose' ? 'is-active' : ''}`}
               onClick={() => handleToolMode('pose')}
-              disabled={!canOperate || !selectedSceneNavigable}
-              title={!selectedSceneNavigable ? '当前场景缺少 ground.pcd' : undefined}
+              disabled={!canOperate || !selectedSceneNavigable || !webglSupported}
+              title={!webglSupported ? '当前浏览器无法使用 3D 点云标记' : !selectedSceneNavigable ? '当前场景缺少 ground.pcd' : undefined}
             >
               <Crosshair size={15} />
               <span>重定位</span>
@@ -1308,8 +1311,8 @@ export function PcdMapDemoPage() {
             waypoints={waypoints}
             robotPose={robotPose}
             globalPath={globalPath}
-            mode={interactionMode}
-            waypointZ={waypointZ}
+            mode="none"
+            waypointZ={0}
             onMouseMapPositionChange={setMouseMapPosition}
             onAddWaypoint={handleAddWaypoint}
             onSetPose={handleSetPose}

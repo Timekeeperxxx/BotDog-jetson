@@ -452,6 +452,19 @@ class RosNavBridge:
             "topic": settings.ROS_NAV_STOP_TOPIC,
         }
 
+    def get_current_robot_pose(self) -> dict[str, Any] | None:
+        if self._use_tf_pose():
+            try:
+                pose = self._lookup_tf_pose()
+            except Exception as exc:
+                nav_logger.warning("读取当前 TF 位姿失败：{}", exc)
+                return get_robot_pose()
+
+            update_robot_pose(pose)
+            return pose
+
+        return get_robot_pose()
+
     def publish_initial_pose(
         self,
         x: float,

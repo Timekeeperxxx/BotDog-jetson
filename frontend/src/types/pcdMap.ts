@@ -152,6 +152,7 @@ export type LocalizationPose = {
   map_id: string
   x: number
   y: number
+  z: number
   yaw: number
   frame_id: string
   updated_at: string

@@ -1172,6 +1172,11 @@
   cursor: crosshair;
 }
 
+.pcd-three-host.is-adding,
+.pcd-three-host.is-adding canvas {
+  cursor: crosshair;
+}
+
 .pcd-canvas-host canvas.is-draggable {
   cursor: grab;
 }

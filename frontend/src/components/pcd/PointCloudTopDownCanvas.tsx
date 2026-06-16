@@ -21,7 +21,7 @@ type Props = {
   waypointZ: number
   onMouseMapPositionChange: (pos: { x: number; y: number } | null) => void
   onAddWaypoint: (pos: { x: number; y: number; z: number; yaw: number }) => void
-  onSetPose: (pos: { x: number; y: number; yaw: number }) => void
+  onSetPose: (pos: { x: number; y: number; z: number; yaw: number }) => void
 }
 
 const PADDING = 34
@@ -462,6 +462,7 @@ export function PointCloudTopDownCanvas({
               onSetPose({
                 x: pendingWaypoint.x,
                 y: pendingWaypoint.y,
+                z: pendingWaypoint.z,
                 yaw: pendingWaypoint.yaw,
               })
             }

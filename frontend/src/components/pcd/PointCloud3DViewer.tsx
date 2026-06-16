@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { PointerEvent } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { NavWaypoint, PcdSceneLayerRole } from '../../types/pcdMap'
 import type { GlobalPath, RobotPose } from '../../types/navState'
-import { mapToThree } from '../../utils/pointCloudTransform'
+import { mapToThree, threeToMap } from '../../utils/pointCloudTransform'
 import { detectWebGLSupport } from './webglSupport'
 
 type PointCloudLayer = {
@@ -21,6 +22,8 @@ const ROBOT_ARROW_LENGTH = 0.62
 const ROBOT_ARROW_HEAD_LENGTH = 0.22
 const ROBOT_ARROW_HEAD_WIDTH = 0.12
 const POINT_CLOUD_PIXEL_RATIO_LIMIT = 1.5
+const GROUND_PICK_THRESHOLD_PX = 44
+const GROUND_FALLBACK_BOUNDS_MARGIN_M = 1.0
 
 type PointCloudMaterialPreset = {
   color: number
@@ -224,8 +227,12 @@ type Props = {
   waypoints: NavWaypoint[]
   robotPose: RobotPose | null
   globalPath: GlobalPath | null
+  mode?: 'none' | 'waypoint' | 'pose'
   followRobot?: boolean
   centerHeight?: number | null
+  onGroundPointerChange?: (pos: { x: number; y: number; z: number } | null) => void
+  onAddWaypoint?: (pos: { x: number; y: number; z: number; yaw: number }) => void
+  onSetPose?: (pos: { x: number; y: number; z: number; yaw: number }) => void
 }
 
 export function PointCloud3DViewer({
@@ -234,8 +241,12 @@ export function PointCloud3DViewer({
   waypoints,
   robotPose,
   globalPath,
+  mode = 'none',
   followRobot = false,
   centerHeight = null,
+  onGroundPointerChange,
+  onAddWaypoint,
+  onSetPose,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const [webglSupported] = useState(() => detectWebGLSupport())
@@ -248,14 +259,62 @@ export function PointCloud3DViewer({
   const cloudGroupRef = useRef<THREE.Group | null>(null)
   const pathGroupRef = useRef<THREE.Group | null>(null)
   const waypointGroupRef = useRef<THREE.Group | null>(null)
+  const pendingGroupRef = useRef<THREE.Group | null>(null)
   const robotGroupRef = useRef<THREE.Group | null>(null)
+  const pendingTargetRef = useRef<{
+    x: number
+    y: number
+    z: number
+    yaw: number
+  } | null>(null)
+  const [pendingTarget, setPendingTarget] = useState<{
+    x: number
+    y: number
+    z: number
+    yaw: number
+  } | null>(null)
 
-  const normalizedLayers: PointCloudLayer[] =
-    layers?.length
-      ? layers
-      : points && points.length > 0
-        ? [{ role: 'ground', points }]
-        : []
+  const normalizedLayers: PointCloudLayer[] = useMemo(
+    () => (
+      layers?.length
+        ? layers
+        : points && points.length > 0
+          ? [{ role: 'ground', points }]
+          : []
+    ),
+    [layers, points],
+  )
+  const groundPreviewBounds = useMemo(() => {
+    const groundLayers = normalizedLayers.filter((layer) => layer.role === 'ground')
+    if (groundLayers.length === 0) return null
+
+    let minX = Number.POSITIVE_INFINITY
+    let maxX = Number.NEGATIVE_INFINITY
+    let minY = Number.POSITIVE_INFINITY
+    let maxY = Number.NEGATIVE_INFINITY
+    let minZ = Number.POSITIVE_INFINITY
+    let maxZ = Number.NEGATIVE_INFINITY
+
+    groundLayers.forEach((layer) => {
+      layer.points.forEach(([x, y, z]) => {
+        minX = Math.min(minX, x)
+        maxX = Math.max(maxX, x)
+        minY = Math.min(minY, y)
+        maxY = Math.max(maxY, y)
+        minZ = Math.min(minZ, z)
+        maxZ = Math.max(maxZ, z)
+      })
+    })
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(minZ)) return null
+    return {
+      minX,
+      maxX,
+      minY,
+      maxY,
+      centerZ: (minZ + maxZ) / 2,
+    }
+  }, [normalizedLayers])
   const totalPointCount = normalizedLayers.reduce((sum, layer) => sum + layer.points.length, 0)
 
   useEffect(() => {
@@ -304,6 +363,10 @@ export function PointCloud3DViewer({
     const waypointGroup = new THREE.Group()
     waypointGroupRef.current = waypointGroup
     scene.add(waypointGroup)
+
+    const pendingGroup = new THREE.Group()
+    pendingGroupRef.current = pendingGroup
+    scene.add(pendingGroup)
 
     const robotGroup = new THREE.Group()
     robotGroup.visible = false
@@ -359,6 +422,8 @@ export function PointCloud3DViewer({
       pathGroup.clear()
       waypointGroup.children.forEach(disposeObject3D)
       waypointGroup.clear()
+      pendingGroup.children.forEach(disposeObject3D)
+      pendingGroup.clear()
       robotGroup.children.forEach(disposeObject3D)
       renderer.dispose()
       renderer.domElement.remove()
@@ -416,6 +481,7 @@ export function PointCloud3DViewer({
 
       const cloud = new THREE.Points(geometry, material)
       cloud.renderOrder = preset.renderOrder
+      cloud.userData.role = layer.role
       cloudGroup.add(cloud)
 
       if (!hasPoints) {
@@ -548,16 +614,49 @@ export function PointCloud3DViewer({
 
   useEffect(() => {
     if (!webglSupported) return
+    const group = pendingGroupRef.current
+    if (!group) return
+
+    group.children.forEach(disposeObject3D)
+    group.clear()
+
+    if (!pendingTarget || mode === 'none') return
+
+    const pos = mapToThree(pendingTarget.x, pendingTarget.y, pendingTarget.z)
+    const sphere = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 18, 12),
+      new THREE.MeshBasicMaterial({ color: 0x22c55e }),
+    )
+    sphere.position.set(pos.x, pos.y + 0.16, pos.z)
+    sphere.renderOrder = 60
+    group.add(sphere)
+
+    const arrow = new THREE.ArrowHelper(
+      createMapYawDirection(pendingTarget.yaw),
+      new THREE.Vector3(pos.x, pos.y + 0.24, pos.z),
+      0.78,
+      0x86efac,
+      0.24,
+      0.14,
+    )
+    arrow.renderOrder = 61
+    group.add(arrow)
+  }, [mode, pendingTarget, webglSupported])
+
+  useEffect(() => {
+    if (!webglSupported) return
     const controls = controlsRef.current
     if (!controls) return
 
+    controls.enabled = mode === 'none'
     controls.enablePan = !followRobot
     controls.update()
 
     return () => {
+      controls.enabled = true
       controls.enablePan = true
     }
-  }, [followRobot, webglSupported])
+  }, [followRobot, mode, webglSupported])
 
   useEffect(() => {
     if (!webglSupported) return
@@ -588,6 +687,142 @@ export function PointCloud3DViewer({
     }
   }, [followRobot, robotPose, webglSupported])
 
+  const readGroundPlanePoint = (event: PointerEvent<HTMLDivElement>) => {
+    const host = hostRef.current
+    const camera = cameraRef.current
+    if (!host || !camera || !groundPreviewBounds) return null
+
+    const rect = host.getBoundingClientRect()
+    const ndc = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -(((event.clientY - rect.top) / rect.height) * 2 - 1),
+    )
+    const raycaster = new THREE.Raycaster()
+    raycaster.setFromCamera(ndc, camera)
+    const planeZ = centerHeight ?? groundPreviewBounds.centerZ
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -planeZ)
+    const hit = new THREE.Vector3()
+    if (!raycaster.ray.intersectPlane(plane, hit)) return null
+
+    const mapPoint = threeToMap(hit.x, hit.y, hit.z)
+    const margin = GROUND_FALLBACK_BOUNDS_MARGIN_M
+    if (
+      mapPoint.x < groundPreviewBounds.minX - margin ||
+      mapPoint.x > groundPreviewBounds.maxX + margin ||
+      mapPoint.y < groundPreviewBounds.minY - margin ||
+      mapPoint.y > groundPreviewBounds.maxY + margin
+    ) {
+      return null
+    }
+
+    return {
+      x: mapPoint.x,
+      y: mapPoint.y,
+      z: planeZ,
+    }
+  }
+
+  const readGroundPoint = (event: PointerEvent<HTMLDivElement>) => {
+    const host = hostRef.current
+    const camera = cameraRef.current
+    const cloudGroup = cloudGroupRef.current
+    if (!host || !camera || !cloudGroup) return null
+
+    const groundObjects = cloudGroup.children.filter((child) => child.userData.role === 'ground')
+    if (groundObjects.length === 0) return null
+
+    const rect = host.getBoundingClientRect()
+    const pointerX = event.clientX - rect.left
+    const pointerY = event.clientY - rect.top
+    const worldPoint = new THREE.Vector3()
+    const screenPoint = new THREE.Vector3()
+    let bestPoint: THREE.Vector3 | null = null
+    let bestDistanceSq = GROUND_PICK_THRESHOLD_PX * GROUND_PICK_THRESHOLD_PX
+
+    groundObjects.forEach((object) => {
+      if (!(object instanceof THREE.Points)) return
+      const position = object.geometry.getAttribute('position')
+      if (!position) return
+
+      object.updateMatrixWorld()
+      for (let index = 0; index < position.count; index += 1) {
+        worldPoint.fromBufferAttribute(position, index).applyMatrix4(object.matrixWorld)
+        screenPoint.copy(worldPoint).project(camera)
+        if (screenPoint.z < -1 || screenPoint.z > 1) continue
+
+        const screenX = (screenPoint.x * 0.5 + 0.5) * rect.width
+        const screenY = (-screenPoint.y * 0.5 + 0.5) * rect.height
+        const distanceSq = (screenX - pointerX) ** 2 + (screenY - pointerY) ** 2
+        if (distanceSq <= bestDistanceSq) {
+          bestDistanceSq = distanceSq
+          bestPoint = worldPoint.clone()
+        }
+      }
+    })
+
+    const pickedPoint = bestPoint as THREE.Vector3 | null
+    if (!pickedPoint) return readGroundPlanePoint(event)
+
+    const mapPoint = threeToMap(pickedPoint.x, pickedPoint.y, pickedPoint.z)
+    return {
+      x: mapPoint.x,
+      y: mapPoint.y,
+      z: mapPoint.z,
+    }
+  }
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (mode === 'none') return
+    event.preventDefault()
+    const point = readGroundPoint(event)
+    onGroundPointerChange?.(point)
+    if (!point) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const nextTarget = {
+      ...point,
+      yaw: 0,
+    }
+    pendingTargetRef.current = nextTarget
+    setPendingTarget(nextTarget)
+  }
+
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (mode === 'none') return
+    event.preventDefault()
+    const point = readGroundPoint(event)
+    onGroundPointerChange?.(point)
+    if (!point) return
+    setPendingTarget((current) => {
+      if (!current) return current
+      const dx = point.x - current.x
+      const dy = point.y - current.y
+      const yaw = Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001
+        ? current.yaw
+        : Math.atan2(dy, dx)
+      const nextTarget = { ...current, yaw }
+      pendingTargetRef.current = nextTarget
+      return nextTarget
+    })
+  }
+
+  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    if (mode === 'none') return
+    event.preventDefault()
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    const target = pendingTargetRef.current
+    if (!target) return
+
+    if (mode === 'waypoint') {
+      onAddWaypoint?.(target)
+    } else {
+      onSetPose?.(target)
+    }
+    pendingTargetRef.current = null
+    setPendingTarget(null)
+  }
+
   if (!webglSupported) {
     return (
       <div className="pcd-viewer-shell">
@@ -611,7 +846,16 @@ export function PointCloud3DViewer({
   return (
     <div className="pcd-viewer-shell">
       <div className="pcd-viewer-label">3D 点云</div>
-      <div className="pcd-three-host" ref={hostRef} />
+      <div
+        className={`pcd-three-host ${mode !== 'none' ? 'is-adding' : ''}`}
+        ref={hostRef}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerLeave={() => {
+          onGroundPointerChange?.(null)
+        }}
+        onPointerUp={handlePointerUp}
+      />
       {totalPointCount === 0 ? <div className="pcd-viewer-empty">等待点云预览数据</div> : null}
     </div>
   )

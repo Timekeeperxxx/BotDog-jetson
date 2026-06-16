@@ -26,7 +26,7 @@ export function NavWaypointPanel({ waypoints, navigatingWaypointId, sceneNavigab
 
       <div className="pcd-waypoint-list">
         {waypoints.length === 0 ? (
-          <div className="pcd-empty">在 2D 俯视图中开启标点后点击添加</div>
+          <div className="pcd-empty">在 3D 蓝色 ground.pcd 中开启标点后点击添加</div>
         ) : (
           waypoints.map((point) => (
             <div className="pcd-waypoint-item" key={point.id}>

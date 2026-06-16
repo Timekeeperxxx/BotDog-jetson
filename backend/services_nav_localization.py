@@ -13,7 +13,7 @@ from typing import Any
 from .config import settings
 from .logging_config import get_logger, trim_log_file_tail
 from .repositories.json_store import atomic_write_json, read_json, safe_json_path_name
-from .services_pcd_maps import find_scene_pcd_files, resolve_scene_ground_path, resolve_scene_path
+from .services_pcd_maps import find_scene_pcd_files, resolve_scene_ground_path, resolve_scene_path, snap_xy_to_ground
 
 
 nav_logger = get_logger("导航定位服务")
@@ -303,12 +303,18 @@ def _safe_pose_file(map_id: str) -> Path:
 def save_localization_pose(payload: dict[str, Any]) -> dict[str, Any]:
     map_id = str(payload["map_id"])
     path = _safe_pose_file(map_id)
+    snapped = snap_xy_to_ground(
+        map_id,
+        float(payload["x"]),
+        float(payload["y"]),
+        fallback_z=float(payload["z"]) if payload.get("z") is not None else None,
+    )
 
     pose = {
         "map_id": map_id,
-        "x": float(payload["x"]),
-        "y": float(payload["y"]),
-        "z": float(payload.get("z", 0.0)),
+        "x": snapped["x"],
+        "y": snapped["y"],
+        "z": snapped["z"],
         "roll": float(payload.get("roll", 0.0)),
         "pitch": float(payload.get("pitch", 0.0)),
         "yaw": float(payload.get("yaw", 0.0)),
