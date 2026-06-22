@@ -5,6 +5,7 @@ import type { MappingCloud, NavWebSocketEvent } from '../types/navState'
 type MappingCloudWebSocketState = {
   connected: boolean
   mappingCloudPoints: [number, number, number][]
+  liveMappingCloudPoints: [number, number, number][]
   lastMessageAt: number | null
 }
 
@@ -12,6 +13,7 @@ export function useMappingCloudWebSocket(active: boolean) {
   const [state, setState] = useState<MappingCloudWebSocketState>({
     connected: false,
     mappingCloudPoints: [],
+    liveMappingCloudPoints: [],
     lastMessageAt: null,
   })
 
@@ -22,7 +24,12 @@ export function useMappingCloudWebSocket(active: boolean) {
   const connectRef = useRef<() => void>(() => {})
 
   const clearMappingCloud = useCallback(() => {
-    setState((prev) => ({ ...prev, mappingCloudPoints: [], lastMessageAt: Date.now() }))
+    setState((prev) => ({
+      ...prev,
+      mappingCloudPoints: [],
+      liveMappingCloudPoints: [],
+      lastMessageAt: Date.now(),
+    }))
   }, [])
 
   const disconnect = useCallback(() => {
@@ -36,7 +43,12 @@ export function useMappingCloudWebSocket(active: boolean) {
       wsRef.current.close(1000)
       wsRef.current = null
     }
-    setState((prev) => ({ ...prev, connected: false, mappingCloudPoints: [] }))
+    setState((prev) => ({
+      ...prev,
+      connected: false,
+      mappingCloudPoints: [],
+      liveMappingCloudPoints: [],
+    }))
   }, [])
 
   const connect = useCallback(() => {
@@ -74,8 +86,15 @@ export function useMappingCloudWebSocket(active: boolean) {
         if (message?.type !== 'nav.mapping_cloud') return
 
         const navEvent = message as Extract<NavWebSocketEvent, { type: 'nav.mapping_cloud' }>
-        const newPts = (navEvent.data as MappingCloud).points as [number, number, number][]
-        setState((prev) => ({ ...prev, mappingCloudPoints: newPts, lastMessageAt: Date.now() }))
+        const cloud = navEvent.data as MappingCloud
+        const accumulatedPts = cloud.accumulated_points ?? cloud.points
+        const livePts = cloud.live_points
+        setState((prev) => ({
+          ...prev,
+          mappingCloudPoints: accumulatedPts ?? prev.mappingCloudPoints,
+          liveMappingCloudPoints: livePts ?? prev.liveMappingCloudPoints,
+          lastMessageAt: Date.now(),
+        }))
       } catch (error) {
         console.error('解析建图点云 WebSocket 消息失败:', error)
       }

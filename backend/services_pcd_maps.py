@@ -170,12 +170,16 @@ def find_scene_pcd_files(scene_path: Path) -> dict[str, Path | None]:
 
     ground_candidates: list[Path] = []
     wall_candidates: list[Path] = []
+    footprint_fill_candidates: list[Path] = []
 
     for path in scene_path.iterdir():
         if not path.is_file() or path.suffix.lower() != ".pcd":
             continue
 
         lower_name = path.name.lower()
+        if lower_name.endswith("footprint_fill.pcd"):
+            footprint_fill_candidates.append(path)
+            continue
         if lower_name.endswith("ground.pcd"):
             ground_candidates.append(path)
             continue
@@ -185,6 +189,7 @@ def find_scene_pcd_files(scene_path: Path) -> dict[str, Path | None]:
     return {
         "wall": _preferred_scene_pcd(wall_candidates, "map.pcd", "wall/map.pcd", scene_path.name),
         "ground": _preferred_scene_pcd(ground_candidates, "ground.pcd", "ground.pcd", scene_path.name),
+        "footprint_fill": _latest_path(footprint_fill_candidates, "*footprint_fill.pcd", scene_path.name),
     }
 
 
@@ -222,6 +227,7 @@ def list_pcd_scenes() -> dict[str, Any]:
         files = find_scene_pcd_files(path)
         wall_info = _file_info(files["wall"]) if files["wall"] else None
         ground_info = _file_info(files["ground"]) if files["ground"] else None
+        footprint_fill_info = _file_info(files["footprint_fill"]) if files["footprint_fill"] else None
         ready = wall_info is not None and ground_info is not None
         navigable = ground_info is not None
 
@@ -242,6 +248,7 @@ def list_pcd_scenes() -> dict[str, Any]:
                 "modified_at": _utc_from_timestamp(scene_stat.st_mtime),
                 "wall": wall_info,
                 "ground": ground_info,
+                "footprint_fill": footprint_fill_info,
                 "ready": ready,
                 "navigable": navigable,
                 "message": message,
@@ -1374,10 +1381,15 @@ def get_scene_metadata(scene_id: str) -> dict[str, Any]:
     files = find_scene_pcd_files(scene_path)
     wall_meta = _build_file_metadata(files["wall"]) if files["wall"] else None
     ground_meta = _build_file_metadata(files["ground"]) if files["ground"] else None
+    footprint_fill_meta = _build_file_metadata(files["footprint_fill"]) if files["footprint_fill"] else None
     summary_meta = ground_meta or wall_meta
 
     bounds = _merge_bounds(
-        [wall_meta["bounds"] if wall_meta else None, ground_meta["bounds"] if ground_meta else None],
+        [
+            wall_meta["bounds"] if wall_meta else None,
+            ground_meta["bounds"] if ground_meta else None,
+            footprint_fill_meta["bounds"] if footprint_fill_meta else None,
+        ],
     )
 
     if ground_meta is None:
@@ -1404,6 +1416,7 @@ def get_scene_metadata(scene_id: str) -> dict[str, Any]:
         "files": {
             "wall": wall_meta,
             "ground": ground_meta,
+            "footprint_fill": footprint_fill_meta,
         },
         "bounds": bounds,
         "supported": supported,
@@ -1420,10 +1433,10 @@ def get_scene_preview(scene_id: str, max_points: int | None = None) -> dict[str,
     scene_path = resolve_scene_path(scene_id)
     files = find_scene_pcd_files(scene_path)
 
-    layers: dict[str, dict[str, Any] | None] = {"ground": None, "wall": None}
+    layers: dict[str, dict[str, Any] | None] = {"ground": None, "wall": None, "footprint_fill": None}
     layer_bounds: list[dict[str, float] | None] = []
 
-    for role in ("ground", "wall"):
+    for role in ("ground", "wall", "footprint_fill"):
         path = files[role]
         if path is None:
             continue

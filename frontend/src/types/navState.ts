@@ -51,7 +51,9 @@ export type NavStateResponse = {
 }
 
 export type MappingCloud = {
-  points: [number, number, number][]
+  points?: [number, number, number][]
+  accumulated_points?: [number, number, number][]
+  live_points?: [number, number, number][]
   timestamp: number
 }
 

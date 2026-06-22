@@ -1,10 +1,12 @@
 import { Info, Pause, Play, Plus, Trash2 } from 'lucide-react'
+import type { NavigationStatus } from '../../types/navState'
 import type { TaskDefinition } from '../../types/taskWorkflow'
 import { summarizeWorkflowSteps } from '../../pages/nav/navPageUtils'
 
 type Props = {
   tasks: TaskDefinition[]
   selectedTaskId: string | null
+  navigationStatus: NavigationStatus | null
   canStartCreate: boolean
   canExecuteTask: boolean
   canStopTask: boolean
@@ -19,6 +21,7 @@ type Props = {
 export function TaskDrawerPanel({
   tasks,
   selectedTaskId,
+  navigationStatus,
   canStartCreate,
   canExecuteTask,
   canStopTask,
@@ -51,6 +54,9 @@ export function TaskDrawerPanel({
         ) : (
           tasks.map((task) => {
             const isActive = task.id === selectedTaskId
+            const isRunning = navigationStatus?.status === 'navigating' && navigationStatus.task_id === task.id
+            const statusClassName = isRunning ? 'pcd-task-status-running' : 'pcd-task-status-pending'
+            const statusLabel = isRunning ? '执行中' : '未执行'
             return (
               <article
                 key={task.id}
@@ -75,7 +81,7 @@ export function TaskDrawerPanel({
                   <span>场景：{task.mapName}</span>
                   <span>步骤：{task.steps.length} 个</span>
                   <span className="pcd-task-card-flow">流程：{summarizeWorkflowSteps(task.steps) || '未配置'}</span>
-                  <span>状态：<strong className="pcd-task-status-pending">未执行</strong></span>
+                  <span>状态：<strong className={statusClassName}>{statusLabel}</strong></span>
                 </div>
 
                 <div className="pcd-task-card-actions">

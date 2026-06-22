@@ -65,8 +65,10 @@ def test_list_pcd_scenes_and_find_layer_files(monkeypatch, tmp_path):
 
     wall = scene_a / "abcmap.pcd"
     ground = scene_a / "abcground.pcd"
+    footprint_fill = scene_a / "abc_footprint_fill.pcd"
     write_ascii_pcd(wall, [(0.0, 0.0, 0.0)])
     write_ascii_pcd(ground, [(1.0, 2.0, 3.0)])
+    write_ascii_pcd(footprint_fill, [(2.0, 3.0, 4.0)])
 
     monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
 
@@ -79,6 +81,7 @@ def test_list_pcd_scenes_and_find_layer_files(monkeypatch, tmp_path):
     assert item["navigable"] is True
     assert item["wall"]["name"] == "abcmap.pcd"
     assert item["ground"]["name"] == "abcground.pcd"
+    assert item["footprint_fill"]["name"] == "abc_footprint_fill.pcd"
 
 
 def test_find_scene_pcd_files_prefers_exact_names(monkeypatch, tmp_path):
@@ -115,28 +118,34 @@ def test_scene_metadata_and_preview_merge_bounds(monkeypatch, tmp_path):
 
     wall = scene / "scene_wall_map.pcd"
     ground = scene / "scene_ground.pcd"
+    footprint_fill = scene / "terrain_map_20260622_192856_base_footprint_fill.pcd"
     write_ascii_pcd(wall, [(-1.0, 0.0, 0.0), (2.0, 4.0, 1.0)])
     write_ascii_pcd(ground, [(3.0, -2.0, -1.0), (4.0, 1.0, 2.0)])
+    write_ascii_pcd(footprint_fill, [(-2.0, -3.0, -0.5), (5.0, 2.0, 0.5)])
 
     monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
 
     metadata = pcd_services.get_scene_metadata("Scene2_走廊")
     assert metadata["supported"] is True
     assert metadata["message"] is None
-    assert metadata["bounds"]["min_x"] == -1.0
-    assert metadata["bounds"]["max_x"] == 4.0
-    assert metadata["bounds"]["min_y"] == -2.0
+    assert metadata["bounds"]["min_x"] == -2.0
+    assert metadata["bounds"]["max_x"] == 5.0
+    assert metadata["bounds"]["min_y"] == -3.0
     assert metadata["bounds"]["max_y"] == 4.0
     assert metadata["files"]["wall"]["point_count"] == 2
     assert metadata["files"]["ground"]["point_count"] == 2
+    assert metadata["files"]["footprint_fill"]["point_count"] == 2
 
     preview = pcd_services.get_scene_preview("Scene2_走廊", max_points=1000)
     assert preview["layers"]["ground"] is not None
     assert preview["layers"]["wall"] is not None
+    assert preview["layers"]["footprint_fill"] is not None
     assert len(preview["layers"]["ground"]["points"]) == 2
     assert len(preview["layers"]["wall"]["points"]) == 2
-    assert preview["bounds"]["min_x"] == -1.0
-    assert preview["bounds"]["max_x"] == 4.0
+    assert len(preview["layers"]["footprint_fill"]["points"]) == 2
+    assert preview["layers"]["footprint_fill"]["file_name"] == footprint_fill.name
+    assert preview["bounds"]["min_x"] == -2.0
+    assert preview["bounds"]["max_x"] == 5.0
 
 
 def test_scene_preview_binary_pcd_with_count_fields_reads_xyz_correctly(monkeypatch, tmp_path):

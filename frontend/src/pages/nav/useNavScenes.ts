@@ -64,6 +64,7 @@ export function useNavScenes({
     () => [
       { role: 'ground', points: preview?.layers.ground?.points ?? [] },
       { role: 'wall', points: preview?.layers.wall?.points ?? [] },
+      { role: 'footprint_fill', points: preview?.layers.footprint_fill?.points ?? [] },
     ],
     [preview],
   )
@@ -123,7 +124,10 @@ export function useNavScenes({
       onWaypointsLoaded(nextWaypoints.items)
       const groundPoints = nextPreview.layers.ground?.points.length || 0
       const wallPoints = nextPreview.layers.wall?.points.length || 0
-      onLog(`已加载场景预览点云：ground ${groundPoints.toLocaleString()} 点，wall ${wallPoints.toLocaleString()} 点`)
+      const footprintFillPoints = nextPreview.layers.footprint_fill?.points.length || 0
+      onLog(
+        `已加载场景预览点云：ground ${groundPoints.toLocaleString()} 点，wall ${wallPoints.toLocaleString()} 点，footprint_fill ${footprintFillPoints.toLocaleString()} 点`,
+      )
 
       try {
         const navState = await getNavState()

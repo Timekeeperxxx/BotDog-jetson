@@ -554,6 +554,10 @@
   color: #f59e0b;
 }
 
+.pcd-task-status-running {
+  color: #22c55e;
+}
+
 .pcd-task-card-actions {
   display: flex;
   justify-content: flex-end;
@@ -1256,8 +1260,9 @@
 }
 
 .pcd-message-center {
+  position: relative;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
   grid-column: 1 / -1;
   padding: 4px 8px;
@@ -1267,7 +1272,7 @@
   background: rgba(8, 15, 19, 0.9);
   color: #94a3b8;
   font-size: 11px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .pcd-message-primary,
@@ -1283,11 +1288,17 @@
 }
 
 .pcd-message-primary {
+  align-items: center;
   flex: 1 1 auto;
 }
 
 .pcd-message-log {
+  position: relative;
+  align-items: stretch;
   flex: 0 1 42%;
+  padding: 0;
+  flex-direction: column;
+  overflow: visible;
 }
 
 .pcd-message-label {
@@ -1302,7 +1313,7 @@
 
 .pcd-message-primary strong,
 .pcd-message-primary span:last-child,
-.pcd-message-log span:last-child {
+.pcd-message-log-toggle span:nth-child(2) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1316,7 +1327,7 @@
 }
 
 .pcd-message-primary span:last-child,
-.pcd-message-log span:last-child {
+.pcd-message-log-toggle span:nth-child(2) {
   color: #cbd5e1;
 }
 
@@ -1351,8 +1362,62 @@
   color: #fecaca;
 }
 
-.pcd-message-log .is-error {
+.pcd-message-log .is-error,
+.pcd-message-log-toggle .is-error {
   color: #fca5a5;
+}
+
+.pcd-message-log-toggle {
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.pcd-message-log-toggle svg {
+  flex: 0 0 auto;
+  color: #8ea3ad;
+}
+
+.pcd-message-log-toggle:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.pcd-message-log-history {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  width: min(620px, calc(100vw - 32px));
+  max-height: min(260px, 38vh);
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(8, 15, 19, 0.96);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+  color: #cbd5e1;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.pcd-message-log-history div {
+  padding: 3px 0;
+  overflow-wrap: anywhere;
+}
+
+.pcd-message-center.is-log-expanded {
+  align-items: stretch;
 }
 
 .pcd-tool-strip {
@@ -1385,6 +1450,16 @@
   border-color: rgba(45, 212, 191, 0.7);
   background: rgba(13, 148, 136, 0.22);
   color: #ccfbf1;
+}
+
+.pcd-spin {
+  animation: pcdSpin 0.8s linear infinite;
+}
+
+@keyframes pcdSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .pcd-pose-pending-banner {

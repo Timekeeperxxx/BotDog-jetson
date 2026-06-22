@@ -69,8 +69,14 @@ export function SceneFolderListPanel({
                 <small>
                   墙壁: {scene.wall ? fileStatusLabel(scene.wall, 'wall/map.pcd') : '缺少 wall/map.pcd'}
                 </small>
+                {scene.footprint_fill ? (
+                  <small>
+                    足迹填充: {fileStatusLabel(scene.footprint_fill, '*footprint_fill.pcd')}
+                  </small>
+                ) : null}
                 <small>{scene.ground ? `地面 ${formatBytes(scene.ground.size_bytes)}` : ''}</small>
                 <small>{scene.wall ? `墙壁 ${formatBytes(scene.wall.size_bytes)}` : ''}</small>
+                <small>{scene.footprint_fill ? `足迹填充 ${formatBytes(scene.footprint_fill.size_bytes)}` : ''}</small>
                 {scene.message ? <small className="text-amber-300">{scene.message}</small> : null}
               </div>
               <div className="pcd-file-item-actions">

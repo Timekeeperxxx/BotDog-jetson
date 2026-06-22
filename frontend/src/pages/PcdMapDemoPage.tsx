@@ -8,6 +8,7 @@ import {
   Keyboard,
   Loader2,
   LocateFixed,
+  Radar,
   Square,
 } from 'lucide-react'
 import {
@@ -19,6 +20,8 @@ import {
   deletePcdScene,
   deleteNavTask,
   executeNavTask,
+  checkRadarHealth,
+  getMappingStatus,
   saveNavTask,
   stopNavTask,
   restartNavigationLocalization,
@@ -162,6 +165,7 @@ export function PcdMapDemoPage() {
   const [mappingSceneName, setMappingSceneName] = useState('')
   const [mappingSceneError, setMappingSceneError] = useState<string | null>(null)
   const [mappingSessionInfo, setMappingSessionInfo] = useState<MappingSessionInfo | null>(null)
+  const [radarChecking, setRadarChecking] = useState(false)
   const [relocationPrompt, setRelocationPrompt] = useState<RelocationPromptState>({
     status: 'idle',
     message: '',
@@ -173,12 +177,13 @@ export function PcdMapDemoPage() {
   const [turnSpeed, setTurnSpeed] = useState(DEFAULT_TURN_SPEED)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
+  const [logsExpanded, setLogsExpanded] = useState(false)
   const [webglSupported, setWebglSupported] = useState(true)
   const [sceneDeleteConfirm, setSceneDeleteConfirm] = useState<PcdSceneItem | null>(null)
   // ── 高危操作确认 ──
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
   const navWs = useNavWebSocket()
-  const { robotPose, globalPath, localizationStatus, setInitialState } = navWs
+  const { robotPose, globalPath, localizationStatus, navigationStatus, setInitialState } = navWs
   const relocationNotice = getRelocationNotice(relocationPrompt)
   const waypointModeNotice = addMode
     ? { title: '3D ground 标点', message: '在 3D 蓝色 ground.pcd 上按住并拖动确定朝向。' }
@@ -202,7 +207,7 @@ export function PcdMapDemoPage() {
         ? 'waiting'
         : 'idle'
   const latestLog = logs[0] ?? null
-  const { mappingCloudPoints, clearMappingCloud } = useMappingCloudWebSocket(mappingActive)
+  const { mappingCloudPoints, liveMappingCloudPoints, clearMappingCloud } = useMappingCloudWebSocket(mappingActive)
   const {
     startCommand,
     stopCommand,
@@ -234,6 +239,38 @@ export function PcdMapDemoPage() {
       ...items,
     ].slice(0, 30))
   }, [])
+
+  useEffect(() => {
+    if (!canOperate) return
+    let cancelled = false
+
+    const syncMappingStatus = async () => {
+      try {
+        const status = await getMappingStatus()
+        if (cancelled) return
+        if (!status.running) {
+          return
+        }
+
+        setMappingActive(true)
+        setMappingSessionInfo({
+          sceneName: status.scene_name || '未命名场景',
+          mapDir: status.map_dir || '',
+        })
+        setMappingStartTime(status.started_at ? status.started_at * 1000 : Date.now())
+        addLog(status.message || '检测到后端建图正在运行，已恢复实时点云预览')
+      } catch (error) {
+        if (!cancelled) {
+          addLog(error instanceof Error ? error.message : '读取建图状态失败', 'error')
+        }
+      }
+    }
+
+    void syncMappingStatus()
+    return () => {
+      cancelled = true
+    }
+  }, [addLog, canOperate])
 
   const formatRestartHealth = formatRestartHealthLog
 
@@ -759,12 +796,22 @@ export function PcdMapDemoPage() {
 
   const allLayers = useMemo(() => {
     if (!mappingActive) return previewLayers ?? []
-    if (mappingCloudPoints.length === 0) return []
-    return [{ role: 'live' as const, points: mappingCloudPoints }]
-  }, [previewLayers, mappingActive, mappingCloudPoints])
+    if (mappingCloudPoints.length === 0 && liveMappingCloudPoints.length === 0) return []
+    const layers = []
+    if (mappingCloudPoints.length > 0) {
+      layers.push({ role: 'mapping' as const, points: mappingCloudPoints })
+    }
+    if (liveMappingCloudPoints.length > 0) {
+      layers.push({ role: 'live' as const, points: liveMappingCloudPoints })
+    }
+    return layers
+  }, [previewLayers, mappingActive, mappingCloudPoints, liveMappingCloudPoints])
+  const pointCloudViewKey = mappingActive
+    ? `mapping:${mappingSessionInfo?.sceneName || mappingSessionInfo?.mapDir || 'active'}`
+    : `scene:${selectedSceneId || 'none'}`
 
   const liveMappingBounds = useMemo<PcdBounds | null>(() => {
-    if (!mappingActive || mappingCloudPoints.length === 0) return null
+    if (!mappingActive || (mappingCloudPoints.length === 0 && liveMappingCloudPoints.length === 0)) return null
 
     let minX = Number.POSITIVE_INFINITY
     let maxX = Number.NEGATIVE_INFINITY
@@ -773,14 +820,17 @@ export function PcdMapDemoPage() {
     let minZ = Number.POSITIVE_INFINITY
     let maxZ = Number.NEGATIVE_INFINITY
 
-    mappingCloudPoints.forEach(([x, y, z]) => {
+    const updateBounds = ([x, y, z]: [number, number, number]) => {
       minX = Math.min(minX, x)
       maxX = Math.max(maxX, x)
       minY = Math.min(minY, y)
       maxY = Math.max(maxY, y)
       minZ = Math.min(minZ, z)
       maxZ = Math.max(maxZ, z)
-    })
+    }
+
+    mappingCloudPoints.forEach(updateBounds)
+    liveMappingCloudPoints.forEach(updateBounds)
 
     return {
       min_x: minX,
@@ -790,7 +840,7 @@ export function PcdMapDemoPage() {
       min_z: minZ,
       max_z: maxZ,
     }
-  }, [mappingActive, mappingCloudPoints])
+  }, [mappingActive, mappingCloudPoints, liveMappingCloudPoints])
 
   const groundCenterHeight = useMemo(() => {
     const bounds = preview?.layers.ground?.bounds ?? metadata?.files.ground?.bounds ?? null
@@ -956,6 +1006,7 @@ export function PcdMapDemoPage() {
           status: 'navigating',
           target_waypoint_id: null,
           target_name: task.name,
+          task_id: task.id,
           message: result.message,
           timestamp: Date.now() / 1000,
         },
@@ -993,6 +1044,27 @@ export function PcdMapDemoPage() {
       addLog(error instanceof Error ? error.message : '停止导航任务失败', 'error')
     }
   }, [addLog, canOperate, setInitialState, tasks])
+
+  const handleCheckRadar = useCallback(async () => {
+    if (!canOperate) {
+      addLog('当前无操作权限，无法检查雷达', 'error')
+      return
+    }
+    if (radarChecking) return
+
+    setRadarChecking(true)
+    try {
+      const result = await checkRadarHealth()
+      const frequency = typeof result.frequency_hz === 'number' ? ` ${result.frequency_hz.toFixed(2)}Hz` : ''
+      const topic = result.topic ? `${result.topic}${frequency}` : '未识别 topic'
+      const level = result.level === 'normal' ? '正常' : result.level === 'warning' ? '警告' : '异常'
+      addLog(`雷达${level}：${topic}；${result.message}`, result.ok ? 'info' : 'error')
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '雷达检查失败', 'error')
+    } finally {
+      setRadarChecking(false)
+    }
+  }, [addLog, canOperate, radarChecking])
 
   return (
     <main className="pcd-demo-page">
@@ -1035,6 +1107,7 @@ export function PcdMapDemoPage() {
             {webglSupported ? (
               <PointCloud3DViewer
                 layers={allLayers}
+                viewKey={pointCloudViewKey}
                 waypoints={waypoints}
                 robotPose={robotPose}
                 globalPath={globalPath}
@@ -1088,6 +1161,7 @@ export function PcdMapDemoPage() {
                 <TaskDrawerPanel
                   tasks={tasks}
                   selectedTaskId={selectedTaskId}
+                  navigationStatus={navigationStatus}
                   canStartCreate={selectedSceneNavigable}
                   canExecuteTask={canOperate && selectedTaskSceneNavigable}
                   canStopTask={canOperate && Boolean(selectedTaskId)}
@@ -1282,6 +1356,15 @@ export function PcdMapDemoPage() {
               <Square size={15} />
               <span>停止任务</span>
             </button>
+            <button
+              className="pcd-tool-button"
+              onClick={() => void handleCheckRadar()}
+              disabled={!canOperate || radarChecking}
+              title="检查雷达 ROS2 topic、发布者和数据频率"
+            >
+              {radarChecking ? <Loader2 size={15} className="pcd-spin" /> : <Radar size={15} />}
+              <span>{radarChecking ? '检查中' : '检查雷达'}</span>
+            </button>
             {keyboardControlEnabled && (
               <div className="pcd-keyboard-hint">
                 <span>
@@ -1307,6 +1390,7 @@ export function PcdMapDemoPage() {
         <aside className="pcd-right-rail">
           <PointCloudTopDownCanvas
             layers={allLayers}
+            viewKey={pointCloudViewKey}
             bounds={mappingActive ? liveMappingBounds : (preview?.bounds || metadata?.bounds || null)}
             waypoints={waypoints}
             robotPose={robotPose}
@@ -1335,17 +1419,39 @@ export function PcdMapDemoPage() {
           </section>
         </aside>
 
-        <section className={`pcd-message-center is-${currentNoticeKind}`} aria-live="polite">
+        <section className={`pcd-message-center is-${currentNoticeKind} ${logsExpanded ? 'is-log-expanded' : ''}`} aria-live="polite">
           <div className="pcd-message-primary" title={currentNotice?.message || undefined}>
             <span className="pcd-message-label">提示中心</span>
             <strong>{currentNotice?.title || '待命'}</strong>
             <span>{currentNotice?.message || '无新的操作提醒。'}</span>
           </div>
-          <div className="pcd-message-log" title={latestLog?.message || undefined}>
-            <span className="pcd-message-label">最近日志</span>
-            <span className={latestLog?.level === 'error' ? 'is-error' : ''}>
-              {latestLog?.message || '等待操作日志'}
-            </span>
+          <div className="pcd-message-log">
+            <button
+              type="button"
+              className="pcd-message-log-toggle"
+              onClick={() => setLogsExpanded((value) => !value)}
+              title={logsExpanded ? '收起导航日志' : '展开导航历史日志'}
+              aria-expanded={logsExpanded}
+            >
+              <span className="pcd-message-label">最近日志</span>
+              <span className={latestLog?.level === 'error' ? 'is-error' : ''}>
+                {latestLog?.message || '等待操作日志'}
+              </span>
+              {logsExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+            {logsExpanded ? (
+              <div className="pcd-message-log-history" role="log" aria-label="导航历史日志">
+                {logs.length > 0 ? (
+                  logs.map((item) => (
+                    <div key={item.id} className={item.level === 'error' ? 'is-error' : ''}>
+                      {item.message}
+                    </div>
+                  ))
+                ) : (
+                  <div>暂无历史日志</div>
+                )}
+              </div>
+            ) : null}
           </div>
         </section>
       </div>
