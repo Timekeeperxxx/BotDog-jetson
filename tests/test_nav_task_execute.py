@@ -61,6 +61,13 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
         "backend.services_nav_localization.wait_navigation_runtime_ready",
         lambda: {"navigation_ready": True},
     )
+    nav_status_updates = []
+
+    def fake_update_navigation_status(payload: dict[str, object]) -> dict[str, object]:
+        nav_status_updates.append(payload)
+        return payload
+
+    monkeypatch.setattr("backend.services_nav_state.update_navigation_status", fake_update_navigation_status)
     monkeypatch.setattr(
         "backend.services_nav_state.get_nav_state",
         lambda: {
@@ -128,6 +135,8 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
     assert result["nav_start"]["topic"] == "/nav_start"
     assert result["runtime_file"].endswith("current_task.json")
     assert Path(result["runtime_file"]).exists()
+    assert nav_status_updates[-1]["status"] == "navigating"
+    assert nav_status_updates[-1]["task_id"] == "task_001"
 
     runtime = read_json(Path(result["runtime_file"]), {})
     assert runtime["task_id"] == "task_001"
@@ -140,6 +149,9 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
             "x": waypoint["x"],
             "y": waypoint["y"],
             "z": waypoint["z"],
+            "ground_z": waypoint["z"],
+            "planner_goal_z": waypoint["z"],
+            "planner_goal_z_offset_m": 0.0,
             "yaw": waypoint["yaw"],
             "frame_id": waypoint["frame_id"],
         }

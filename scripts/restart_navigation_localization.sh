@@ -322,6 +322,15 @@ source_ros_setup "$ROS2_SETUP_FILE"
 unset CYCLONEDDS_HOME
 unset CYCLONEDDS_URI
 export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
+if [ -f "${FASTRTPS_DEFAULT_PROFILES_FILE:-}" ]; then
+  echo "FASTRTPS_DEFAULT_PROFILES_FILE 已继承：$FASTRTPS_DEFAULT_PROFILES_FILE"
+elif [ -f "/home/jetson/fastdds_wired.xml" ]; then
+  export FASTRTPS_DEFAULT_PROFILES_FILE="/home/jetson/fastdds_wired.xml"
+  echo "FASTRTPS_DEFAULT_PROFILES_FILE 设定为 $FASTRTPS_DEFAULT_PROFILES_FILE"
+else
+  echo "警告：未找到 FastDDS 有线 profile：/home/jetson/fastdds_wired.xml"
+fi
 _remove_path_segment LD_LIBRARY_PATH "/home/jetson/cyclonedds-0.10x/install/lib"
 _remove_path_segment LD_LIBRARY_PATH "/home/jetson/Project/BOTDOG/BotDog/.venv/lib/python3.10/site-packages/cv2/../../lib64"
 _remove_path_segment PYTHONPATH "/home/jetson/Project/BOTDOG/BotDog"
@@ -406,12 +415,13 @@ wait_for_topic_once() {
   local topic="$1"
   local timeout_s="$2"
   local label="$3"
+  shift 3
   local deadline=$((SECONDS + timeout_s))
   local attempt=1
 
   echo "等待 $label 数据：$topic ..."
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if timeout 5s ros2 topic echo "$topic" --once >/dev/null 2>&1; then
+    if timeout 5s ros2 topic echo "$topic" --once "$@" >/dev/null 2>&1; then
       echo "$label 数据正常：$topic"
       return 0
     fi
@@ -424,15 +434,48 @@ wait_for_topic_once() {
   return 1
 }
 
+warn_for_topic_once() {
+  local topic="$1"
+  local timeout_s="$2"
+  local label="$3"
+  shift 3
+
+  if ! wait_for_topic_once "$topic" "$timeout_s" "$label" "$@"; then
+    echo "警告：未通过 $label topic 自检，将继续启动后续节点，由 Super-LIO initialpose 日志做最终接收确认。"
+  fi
+}
+
+wait_for_log_marker() {
+  local marker="$1"
+  local timeout_s="$2"
+  local label="$3"
+  local deadline=$((SECONDS + timeout_s))
+  local attempt=1
+
+  echo "等待 $label 日志：$marker"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if grep -Fq "$marker" "$SCRIPT_LOG_FILE" "$ROOT_LOG_FILE" 2>/dev/null; then
+      echo "$label 已确认"
+      return 0
+    fi
+    echo "仍在等待 $label 日志 (attempt=$attempt, timeout=${timeout_s}s)"
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  echo "错误：${timeout_s}s 内未确认 $label：$marker" >&2
+  return 1
+}
+
 wait_for_navigation_maps() {
   local timeout_s="$1"
 
-  wait_for_topic_once /mapcloud "$timeout_s" "global planner mapcloud"
-  wait_for_topic_once /mapground "$timeout_s" "global planner mapground"
-  # /weighted_ground is published after global_planner copies the static layer
-  # and builds its internal graph, so it is a stronger readiness signal than
-  # simply receiving mapcloud/mapground from pcl_publisher.
-  wait_for_topic_once /weighted_ground "$timeout_s" "global planner weighted_ground"
+  wait_for_log_marker "Map pointcloud size after down size" "$timeout_s" "global planner mapcloud"
+  wait_for_log_marker "Ground pointcloud size after down size" "$timeout_s" "global planner mapground"
+  # weighted_ground is emitted after global_planner receives the static layer
+  # and builds its internal graph. ROS CLI graph/echo can miss these one-shot
+  # point clouds, so the launch log is the stable readiness source here.
+  wait_for_log_marker "Publish weighted ground point cloud." "$timeout_s" "global planner weighted_ground"
 }
 
 write_navigation_ready_file() {
@@ -532,19 +575,18 @@ start_cmd_vel_test() {
 start_launch "$HOME/superlio" livox_ros_driver2 msg_MID360_launch.py "启动 Livox MID360 驱动..." LIVOX_PID livox.pid
 echo "Livox PID: $LIVOX_PID"
 sleep 5
-wait_for_topic_once /livox/imu "${NAV_LIVOX_IMU_WAIT_TIMEOUT_S:-30}" "Livox IMU"
-wait_for_topic_once /livox/lidar "${NAV_LIVOX_LIDAR_WAIT_TIMEOUT_S:-60}" "Livox LiDAR"
+warn_for_topic_once /livox/imu "${NAV_LIVOX_IMU_WAIT_TIMEOUT_S:-5}" "Livox IMU" --qos-reliability best_effort
+warn_for_topic_once /livox/lidar "${NAV_LIVOX_LIDAR_WAIT_TIMEOUT_S:-5}" "Livox LiDAR" --qos-reliability best_effort
 
 start_relocation_node "启动 Super-LIO 重定位..." RELOCATION_PID relocation.pid
 echo "Relocation PID: $RELOCATION_PID"
-sleep 5
-wait_for_lio_odom_sane "${NAV_LIO_ODOM_WAIT_TIMEOUT_S:-300}"
+echo "Super-LIO relocation 已启动，等待前端发送 /initialpose；/lio/odom 会在重定位后恢复。"
 
 start_launch "$HOME/dddmr_navigation_new_local" p2p_move_base go2_localization_launch.py "启动 P2P move base 定位导航..." P2P_MOVE_BASE_PID p2p_move_base.pid "use_sim:=false"
 echo "P2P Move Base PID: $P2P_MOVE_BASE_PID"
 sleep 5
 
-wait_for_topic_once /tf_static 10 "base 静态 TF"
+warn_for_topic_once /tf_static "${NAV_TF_STATIC_WAIT_TIMEOUT_S:-10}" "base 静态 TF" --qos-durability transient_local
 
 start_launch "$HOME/dddmr_navigation_new_local" global_planner path_planning_with_polygon.launch "启动全局路径规划..." GLOBAL_PLANNER_PID global_planner.pid "map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD"
 echo "Global Planner PID: $GLOBAL_PLANNER_PID"

@@ -789,6 +789,12 @@ def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
     fake_ros2 = fake_bin / "ros2"
     fake_ros2.write_text(
         "#!/usr/bin/env bash\n"
+        "if [ \"${1:-}\" = \"topic\" ] && [ \"${2:-}\" = \"info\" ]; then\n"
+        "  echo 'Type: sensor_msgs/msg/PointCloud2'\n"
+        "  echo 'Publisher count: 1'\n"
+        "  echo 'Subscription count: 1'\n"
+        "  exit 0\n"
+        "fi\n"
         "if [ \"${1:-}\" = \"topic\" ] && [ \"${2:-}\" = \"echo\" ]; then\n"
         "  echo 'data: ok'\n"
         "  exit 0\n"
@@ -896,6 +902,9 @@ def test_restart_navigation_script_resets_backend_python_and_qt_env():
     assert "unset QT_QPA_PLATFORM" in content
     assert "unset CYCLONEDDS_HOME" in content
     assert "unset CYCLONEDDS_URI" in content
+    assert 'export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"' in content
+    assert 'export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"' in content
+    assert 'FASTRTPS_DEFAULT_PROFILES_FILE="/home/jetson/fastdds_wired.xml"' in content
     assert '_remove_path_segment LD_LIBRARY_PATH "/home/jetson/cyclonedds-0.10x/install/lib"' in content
     assert '_remove_path_segment LD_LIBRARY_PATH "/home/jetson/Project/BOTDOG/BotDog/.venv/lib/python3.10/site-packages/cv2/../../lib64"' in content
     assert '_remove_path_segment PYTHONPATH "/home/jetson/Project/BOTDOG/BotDog"' in content
@@ -922,7 +931,13 @@ def test_restart_navigation_script_retries_livox_topic_waits():
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "restart_navigation_localization.sh"
     content = script_path.read_text(encoding="utf-8")
 
-    assert 'timeout 5s ros2 topic echo "$topic" --once' in content
+    assert 'timeout 5s ros2 topic echo "$topic" --once "$@"' in content
+    assert 'grep -Fq "$marker" "$SCRIPT_LOG_FILE" "$ROOT_LOG_FILE"' in content
     assert '仍在等待 $label 数据：$topic' in content
-    assert 'wait_for_topic_once /livox/imu "${NAV_LIVOX_IMU_WAIT_TIMEOUT_S:-30}" "Livox IMU"' in content
-    assert 'wait_for_topic_once /livox/lidar "${NAV_LIVOX_LIDAR_WAIT_TIMEOUT_S:-60}" "Livox LiDAR"' in content
+    assert 'wait_for_log_marker "Map pointcloud size after down size" "$timeout_s" "global planner mapcloud"' in content
+    assert 'wait_for_log_marker "Publish weighted ground point cloud." "$timeout_s" "global planner weighted_ground"' in content
+    assert 'warn_for_topic_once /livox/imu "${NAV_LIVOX_IMU_WAIT_TIMEOUT_S:-5}" "Livox IMU" --qos-reliability best_effort' in content
+    assert 'warn_for_topic_once /livox/lidar "${NAV_LIVOX_LIDAR_WAIT_TIMEOUT_S:-5}" "Livox LiDAR" --qos-reliability best_effort' in content
+    assert 'warn_for_topic_once /tf_static "${NAV_TF_STATIC_WAIT_TIMEOUT_S:-10}" "base 静态 TF" --qos-durability transient_local' in content
+    assert 'Super-LIO relocation 已启动，等待前端发送 /initialpose' in content
+    assert 'wait_for_lio_odom_sane "${NAV_LIO_ODOM_WAIT_TIMEOUT_S:-300}"' not in content

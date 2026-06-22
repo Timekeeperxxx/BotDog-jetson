@@ -141,6 +141,7 @@ async def nav_execute_task(
             "status": "navigating",
             "target_waypoint_id": None,
             "target_name": task.get("name"),
+            "task_id": task_id,
             "message": "已发布导航启动信号并生成任务运行时文件",
         }
     )
@@ -198,6 +199,7 @@ async def nav_stop_task(
             "status": "idle",
             "target_waypoint_id": None,
             "target_name": None,
+            "task_id": None,
             "message": "已发布导航停止信号",
         }
     )
@@ -530,6 +532,31 @@ async def nav_set_mapping_enabled(
         return result
     except MappingError as exc:
         raise HTTPException(status_code=409 if "进行中" in str(exc) else 400, detail=str(exc))
+
+
+@router.get("/mapping/status", response_model=MappingControlResponse)
+async def nav_get_mapping_status(
+    user: AuthUserInternal = Depends(require_operator),
+):
+    from ...services_mapping import get_mapping_service
+
+    status = await asyncio.to_thread(get_mapping_service().get_status)
+    running = bool(status.get("running"))
+    return {
+        "success": True,
+        "enabled": running,
+        "running": running,
+        "saving": False,
+        "saved": False,
+        "scene_name": status.get("scene_name"),
+        "map_dir": status.get("map_dir"),
+        "pid": status.get("pid"),
+        "started_at": status.get("started_at"),
+        "map_pcd_candidates": [],
+        "ground_pcd_candidates": [],
+        "pcd_files": [],
+        "message": "建图正在运行" if running else "建图未运行",
+    }
 
 
 @router.get("/pcd-maps/{map_id}/metadata", response_model=PcdMetadataResponse)

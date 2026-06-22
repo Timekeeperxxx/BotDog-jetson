@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import struct
 from types import SimpleNamespace
 
 import numpy as np
@@ -103,6 +104,52 @@ def test_mapping_cloud_points_under_limit_are_unchanged():
     limited = RosNavBridge._limit_cloud_points(points, 3)
 
     assert limited is points
+
+
+def test_mapping_cloud_accumulated_payload_keeps_all_points(monkeypatch):
+    points = [
+        (0.0, 0.0, 0.0),
+        (0.1, 0.0, 0.0),
+        (0.2, 0.0, 0.0),
+        (0.3, 0.0, 0.0),
+    ]
+    msg = SimpleNamespace(
+        point_step=12,
+        width=len(points),
+        height=1,
+        fields=[
+            SimpleNamespace(name="x", offset=0),
+            SimpleNamespace(name="y", offset=4),
+            SimpleNamespace(name="z", offset=8),
+        ],
+        data=b"".join(struct.pack("<fff", *point) for point in points),
+    )
+
+    monkeypatch.setattr("backend.services_ros_nav.time.monotonic", lambda: 100.0)
+    monkeypatch.setattr("backend.services_ros_nav.time.time", lambda: 123.0)
+    monkeypatch.setattr(RosNavBridge, "_is_navigation_active", staticmethod(lambda: False))
+
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._last_cloud_broadcast_at = 0.0
+    bridge._last_full_map_broadcast_at = 0.0
+    bridge._accumulated_cloud = np.empty((0, 3), dtype=np.float32)
+    bridge._accumulated_cloud_voxels = {}
+    broadcasts = []
+    bridge._submit_broadcast = lambda event_type, payload: broadcasts.append((event_type, payload))
+
+    bridge._handle_cloud_message(msg)
+
+    assert len(broadcasts) == 2
+    event_type, payload = broadcasts[0]
+    assert event_type == "nav.mapping_cloud"
+    assert np.array(payload["live_points"]) == pytest.approx(np.array(points))
+    assert "accumulated_points" not in payload
+
+    event_type, payload = broadcasts[1]
+    assert event_type == "nav.mapping_cloud"
+    assert "live_points" not in payload
+    assert np.array(payload["accumulated_points"]) == pytest.approx(np.array(points))
+    assert np.array(payload["points"]) == pytest.approx(np.array(points))
 
 
 def test_mapping_cloud_uses_dedicated_broadcaster():

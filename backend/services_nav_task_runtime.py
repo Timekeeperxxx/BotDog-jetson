@@ -6,6 +6,7 @@ from typing import Any
 
 from .config import settings
 from .repositories.json_store import atomic_write_json
+from .services_nav_goal import planner_goal_z
 from .services_nav_tasks import NavTaskError, get_nav_task
 from .services_nav_waypoints import get_waypoint, list_waypoints
 from .services_pcd_maps import find_scene_pcd_files, resolve_scene_path
@@ -44,13 +45,20 @@ def _materialize_step(_scene_id: str, step: dict[str, Any]) -> dict[str, Any] | 
         if not waypoint_id:
             raise NavTaskError("navigate_waypoint 步骤缺少 waypointId")
         waypoint = get_waypoint(_scene_id, waypoint_id)
+        ground_z = float(waypoint["z"])
+        publish_z = planner_goal_z(ground_z)
         return {
             "type": "navigate_waypoint",
             "waypoint_id": waypoint_id,
             "waypoint_name": str(waypoint.get("name") or ""),
             "x": float(waypoint["x"]),
             "y": float(waypoint["y"]),
-            "z": float(waypoint["z"]),
+            # current_task.json 会被 ROS waypoint_navigator 直接发布为 clicked_point。
+            # 这里的 z 是实际发布给规划器的 z；真实地面 z 保存在 ground_z 中便于排查。
+            "z": publish_z,
+            "ground_z": ground_z,
+            "planner_goal_z": publish_z,
+            "planner_goal_z_offset_m": float(settings.ROS_NAV_GOAL_Z_SEARCH_OFFSET_M),
             "yaw": float(waypoint["yaw"]),
             "frame_id": str(waypoint["frame_id"]),
         }

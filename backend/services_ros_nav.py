@@ -20,13 +20,18 @@ from .services_nav_state import (
     update_robot_pose,
     update_navigation_status,
 )
+from .services_nav_goal import planner_goal_z
 from .ws_event_broadcaster import EventBroadcaster
 
 nav_logger = get_logger("ROS导航")
 tf_logger = get_logger("ROS TF")
 GLOBAL_PATH_BROADCAST_MIN_INTERVAL_S = 1.0
-MAPPING_CLOUD_BROADCAST_MIN_INTERVAL_S = 10.0
-MAPPING_CLOUD_MAX_BROADCAST_POINTS = 1500
+MAPPING_CLOUD_LIVE_MIN_INTERVAL_S = 0.33
+MAPPING_CLOUD_BROADCAST_MIN_INTERVAL_S = 3.0
+MAPPING_CLOUD_ACCUMULATED_VOXEL_SIZE_M = 0.08
+MAPPING_CLOUD_ACCUMULATED_MAX_BROADCAST_POINTS = 120000
+MAPPING_CLOUD_ACCUMULATE_MAX_INPUT_POINTS = 8000
+MAPPING_CLOUD_LIVE_MAX_BROADCAST_POINTS = 3000
 INITIAL_POSE_PUBLISH_COUNT = 20
 INITIAL_POSE_PUBLISH_INTERVAL_S = 0.2
 INITIAL_POSE_SUBSCRIBER_WAIT_S = 5.0
@@ -94,6 +99,7 @@ class RosNavBridge:
         self._last_global_path_signature: tuple[Any, ...] | None = None
         self._last_cloud_broadcast_at = 0.0
         self._accumulated_cloud: np.ndarray = np.empty((0, 3), dtype=np.float32)
+        self._accumulated_cloud_voxels: dict[tuple[int, int, int], tuple[float, float, float]] = {}
         self._last_full_map_broadcast_at = 0.0
         self._tf_available = False
         self._tf_wait_started_at = 0.0
@@ -411,7 +417,8 @@ class RosNavBridge:
         point_msg.header.frame_id = str(waypoint.get("frame_id") or settings.ROS_NAV_FRAME_ID)
         point_msg.point.x = float(waypoint["x"])
         point_msg.point.y = float(waypoint["y"])
-        point_msg.point.z = float(waypoint.get("z", 0.0))
+        original_z = float(waypoint.get("z", 0.0))
+        point_msg.point.z = planner_goal_z(original_z)
 
         publish_count = 0
         for index in range(GOAL_PUBLISH_COUNT):
@@ -432,6 +439,9 @@ class RosNavBridge:
             "x": point_msg.point.x,
             "y": point_msg.point.y,
             "z": point_msg.point.z,
+            "ground_z": original_z,
+            "planner_goal_z": point_msg.point.z,
+            "planner_goal_z_offset_m": float(settings.ROS_NAV_GOAL_Z_SEARCH_OFFSET_M),
             "yaw": yaw,
             "frame_id": point_msg.header.frame_id,
         }
@@ -615,42 +625,48 @@ class RosNavBridge:
 
     def clear_accumulated_cloud(self) -> None:
         self._accumulated_cloud = np.empty((0, 3), dtype=np.float32)
+        self._accumulated_cloud_voxels = {}
         self._last_full_map_broadcast_at = 0.0
         nav_logger.info("建图累积点云已清空")
 
     def _handle_cloud_message(self, msg: Any) -> None:
         now = time.monotonic()
         if self._is_navigation_active():
-            if len(self._accumulated_cloud) > 0:
+            has_voxel_cloud = bool(getattr(self, "_accumulated_cloud_voxels", None))
+            if len(self._accumulated_cloud) > 0 or has_voxel_cloud:
                 self.clear_accumulated_cloud()
             return
 
-        if now - self._last_cloud_broadcast_at < 0.5:
+        if now - self._last_cloud_broadcast_at < MAPPING_CLOUD_LIVE_MIN_INTERVAL_S:
             return
         self._last_cloud_broadcast_at = now
 
-        new_pts = self._extract_cloud_xyz_np(msg, max_points=5000)
-        if new_pts is None or len(new_pts) == 0:
+        cloud_pts = self._extract_cloud_xyz_np(msg, max_points=MAPPING_CLOUD_ACCUMULATE_MAX_INPUT_POINTS)
+        if cloud_pts is None or len(cloud_pts) == 0:
             return
 
-        self._accumulated_cloud = (
-            np.vstack([self._accumulated_cloud, new_pts])
-            if len(self._accumulated_cloud) > 0
-            else new_pts
-        )
+        self._merge_mapping_cloud_voxels(cloud_pts)
 
-        if now - self._last_full_map_broadcast_at < MAPPING_CLOUD_BROADCAST_MIN_INTERVAL_S:
+        live_pts = self._limit_cloud_points(cloud_pts, MAPPING_CLOUD_LIVE_MAX_BROADCAST_POINTS)
+        if live_pts is None or len(live_pts) == 0:
             return
-        self._last_full_map_broadcast_at = now
-
-        downsampled = self._voxel_downsample(self._accumulated_cloud, voxel_size=0.1)
-        downsampled = self._limit_cloud_points(downsampled, MAPPING_CLOUD_MAX_BROADCAST_POINTS)
-        self._accumulated_cloud = downsampled
 
         self._submit_broadcast("nav.mapping_cloud", {
-            "points": downsampled.tolist(),
+            "live_points": live_pts.tolist(),
             "timestamp": time.time(),
         })
+
+        if now - self._last_full_map_broadcast_at >= MAPPING_CLOUD_BROADCAST_MIN_INTERVAL_S:
+            self._last_full_map_broadcast_at = now
+            accumulated_preview = self._mapping_cloud_voxel_preview()
+            if len(accumulated_preview) == 0:
+                return
+            accumulated_points = accumulated_preview.tolist()
+            self._submit_broadcast("nav.mapping_cloud", {
+                "accumulated_points": accumulated_points,
+                "points": accumulated_points,
+                "timestamp": time.time(),
+            })
 
     @staticmethod
     def _is_navigation_active() -> bool:
@@ -668,6 +684,30 @@ class RosNavBridge:
         step = max(1, math.ceil(len(points) / max_points))
         return points[::step][:max_points]
 
+    def _merge_mapping_cloud_voxels(self, points: np.ndarray) -> None:
+        if len(points) == 0:
+            return
+        if not hasattr(self, "_accumulated_cloud_voxels"):
+            self._accumulated_cloud_voxels = {}
+
+        voxel_size = MAPPING_CLOUD_ACCUMULATED_VOXEL_SIZE_M
+        keys = np.floor(points / voxel_size).astype(np.int32)
+        for key, point in zip(keys, points, strict=False):
+            self._accumulated_cloud_voxels[(int(key[0]), int(key[1]), int(key[2]))] = (
+                float(point[0]),
+                float(point[1]),
+                float(point[2]),
+            )
+
+    def _mapping_cloud_voxel_preview(self) -> np.ndarray:
+        if not hasattr(self, "_accumulated_cloud_voxels") or not self._accumulated_cloud_voxels:
+            return np.empty((0, 3), dtype=np.float32)
+        points = np.fromiter(
+            (coord for point in self._accumulated_cloud_voxels.values() for coord in point),
+            dtype=np.float32,
+        ).reshape((-1, 3))
+        return self._limit_cloud_points(points, MAPPING_CLOUD_ACCUMULATED_MAX_BROADCAST_POINTS)
+
     @staticmethod
     def _voxel_downsample(points: np.ndarray, voxel_size: float) -> np.ndarray:
         if len(points) == 0:
@@ -677,7 +717,7 @@ class RosNavBridge:
         return points[np.sort(unique_indices)]
 
     @staticmethod
-    def _extract_cloud_xyz_np(msg: Any, max_points: int = 5000) -> np.ndarray | None:
+    def _extract_cloud_xyz_np(msg: Any, max_points: int | None = None) -> np.ndarray | None:
         import struct as _struct
         try:
             point_step: int = msg.point_step
@@ -691,7 +731,7 @@ class RosNavBridge:
 
             x_off, y_off, z_off = fields["x"], fields["y"], fields["z"]
             raw = bytes(msg.data)
-            step = max(1, n_points // max_points)
+            step = 1 if max_points is None or max_points <= 0 else max(1, math.ceil(n_points / max_points))
             result: list[list[float]] = []
             for i in range(0, n_points, step):
                 base = i * point_step
