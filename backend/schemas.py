@@ -43,6 +43,27 @@ class SystemSafetyResponse(BaseModel):
     control_adapter_ready: bool = Field(..., description="控制适配器是否就绪")
 
 
+class RadarHealthCheckDTO(BaseModel):
+    name: str
+    ok: bool
+    status: str
+    message: str
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class RadarHealthResponse(BaseModel):
+    ok: bool
+    level: str = Field(..., description="normal/warning/error")
+    topic: str | None = None
+    topic_type: str | None = None
+    publisher_count: int | None = None
+    subscription_count: int | None = None
+    frequency_hz: float | None = None
+    checked_at: str
+    checks: list[RadarHealthCheckDTO]
+    message: str
+
+
 class SessionStartRequest(BaseModel):
     task_name: str = Field(..., min_length=1, max_length=255, description="任务名称")
 
@@ -194,6 +215,7 @@ class PcdSceneItemDTO(BaseModel):
     modified_at: str
     wall: PcdSceneFileDTO | None = None
     ground: PcdSceneFileDTO | None = None
+    footprint_fill: PcdSceneFileDTO | None = None
     ready: bool = False
     navigable: bool = False
     message: str | None = None
@@ -236,6 +258,7 @@ class PcdSceneLayerMetadataDTO(BaseModel):
 class PcdSceneMetadataFilesDTO(BaseModel):
     wall: PcdSceneLayerMetadataDTO | None = None
     ground: PcdSceneLayerMetadataDTO | None = None
+    footprint_fill: PcdSceneLayerMetadataDTO | None = None
 
 
 class PcdSceneMetadataResponse(BaseModel):
@@ -262,6 +285,7 @@ class PcdScenePreviewLayerDTO(BaseModel):
 class PcdScenePreviewLayersDTO(BaseModel):
     ground: PcdScenePreviewLayerDTO | None = None
     wall: PcdScenePreviewLayerDTO | None = None
+    footprint_fill: PcdScenePreviewLayerDTO | None = None
 
 
 class PcdScenePreviewResponse(BaseModel):
@@ -396,6 +420,7 @@ class MappingControlResponse(BaseModel):
     scene_name: str | None = None
     map_dir: str | None = None
     pid: int | None = None
+    started_at: float | None = None
     map_pcd_candidates: list[str] | None = None
     ground_pcd_candidates: list[str] | None = None
     pcd_files: list[dict[str, Any]] | None = None

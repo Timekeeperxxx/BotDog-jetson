@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     AI_FRAME_WIDTH: int = 1920
     AI_FRAME_HEIGHT: int = 1080
     AI_FPS: int = 10
+    AI_FFMPEG_RETRY_MIN_SECONDS: float = 1.0
+    AI_FFMPEG_RETRY_MAX_SECONDS: float = 30.0
     AI_PATROL_SKIP: int = 5  # 巡逻态跳帧（10fps / 5 = 2fps 推理）
     AI_SUSPECT_SKIP: int = 1  # 疑似目标全速推理
     AI_STABLE_HITS: int = 3  # 连续命中阈值
@@ -110,6 +112,9 @@ class Settings(BaseSettings):
     ROS_NAV_GOAL_TOPIC: str = "/goal_pose"
     ROS_NAV_GOAL_XYZ_TOPIC: str = "/clicked_point"
     ROS_NAV_GOAL_YAW_TOPIC: str = "goal_yaw"
+    # global_planner 对 clicked_point 先做 3D 半径搜索；当前源码中的向下搜索不会产出有效目标。
+    # 默认保持真实 ground z，不抬高目标点，避免把原本可规划的点排除在 0.5m 搜索半径外。
+    ROS_NAV_GOAL_Z_SEARCH_OFFSET_M: float = 0.0
     ROS_NAV_GLOBAL_PATH_TOPIC: str = "/global_path"
     ROS_NAV_STOP_TOPIC: str = "/nav_stop"
     ROS_NAV_INITIAL_POSE_TOPIC: str = "/initialpose"

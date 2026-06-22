@@ -94,6 +94,7 @@ SYSTEM_ROUTES = [
     ("GET", "/api/v1/system/health"),
     ("GET", "/api/v1/system/startup"),
     ("GET", "/api/v1/system/safety"),
+    ("GET", "/api/v1/system/radar/health"),
 ]
 
 CONTROL_DEBUG_ROUTES = [

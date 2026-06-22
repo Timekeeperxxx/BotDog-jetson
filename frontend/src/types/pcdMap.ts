@@ -7,7 +7,7 @@ export type PcdBounds = {
   max_z: number
 }
 
-export type PcdSceneLayerRole = 'ground' | 'wall' | 'live'
+export type PcdSceneLayerRole = 'ground' | 'wall' | 'footprint_fill' | 'mapping' | 'live'
 
 export type PcdSceneFile = {
   name: string
@@ -22,6 +22,7 @@ export type PcdSceneItem = {
   modified_at: string
   wall: PcdSceneFile | null
   ground: PcdSceneFile | null
+  footprint_fill: PcdSceneFile | null
   ready: boolean
   navigable: boolean
   message: string | null
@@ -62,6 +63,7 @@ export type PcdSceneMetadata = {
   files: {
     wall: PcdSceneLayerMetadata | null
     ground: PcdSceneLayerMetadata | null
+    footprint_fill: PcdSceneLayerMetadata | null
   }
   bounds: PcdBounds
   supported: boolean
@@ -81,6 +83,7 @@ export type PcdScenePreview = {
   layers: {
     ground: PcdSceneLayerPreview | null
     wall: PcdSceneLayerPreview | null
+    footprint_fill: PcdSceneLayerPreview | null
   }
   bounds: PcdBounds
 }
@@ -172,10 +175,32 @@ export type MappingControlResponse = {
   scene_name: string | null
   map_dir: string | null
   pid: number | null
+  started_at?: number | null
   map_pcd_candidates: string[]
   ground_pcd_candidates: string[]
   pcd_files: Array<{ name: string; path: string; size_bytes: number }>
   origin_waypoint?: NavWaypoint | null
   origin_waypoint_error?: string | null
   message: string | null
+}
+
+export type RadarHealthCheck = {
+  name: string
+  ok: boolean
+  status: 'normal' | 'warning' | 'failed' | string
+  message: string
+  details: Record<string, unknown>
+}
+
+export type RadarHealthResponse = {
+  ok: boolean
+  level: 'normal' | 'warning' | 'error' | string
+  topic: string | null
+  topic_type: string | null
+  publisher_count: number | null
+  subscription_count: number | null
+  frequency_hz: number | null
+  checked_at: string
+  checks: RadarHealthCheck[]
+  message: string
 }

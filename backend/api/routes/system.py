@@ -1,5 +1,6 @@
 """系统诊断路由。"""
 
+import asyncio
 import subprocess
 import threading
 import time
@@ -14,7 +15,13 @@ from ...auth.service import safe_write_audit_log
 from ...control_service import get_control_service
 from ...database import get_db
 from ...safety_supervisor import get_safety_supervisor
-from ...schemas import SystemHealthResponse, SystemSafetyResponse, SystemStartupResponse, StartupSummaryItem
+from ...schemas import (
+    RadarHealthResponse,
+    SystemHealthResponse,
+    SystemSafetyResponse,
+    SystemStartupResponse,
+    StartupSummaryItem,
+)
 from ...startup_summary import coerce_startup_summary
 from ...state_machine import SystemState
 from ...state_machine_state import get_state_machine
@@ -103,6 +110,17 @@ async def system_safety() -> SystemSafetyResponse:
         system_state=state_machine.state.value if state_machine is not None else "UNINITIALIZED",
         control_adapter_ready=bool(adapter_status.get("ready")),
     )
+
+
+@router.get("/api/v1/system/radar/health", response_model=RadarHealthResponse)
+async def system_radar_health(
+    user: AuthUserInternal = Depends(require_operator),
+) -> RadarHealthResponse:
+    """检测雷达 ROS2 topic、发布者和数据频率。"""
+    from ...services_radar_health import check_radar_health
+
+    result = await asyncio.to_thread(check_radar_health)
+    return RadarHealthResponse(**result)
 
 
 @router.post("/api/v1/system/pipeline/restart")

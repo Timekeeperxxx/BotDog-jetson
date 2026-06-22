@@ -6,6 +6,7 @@ import type {
   NavWaypoint,
   NavWaypointCreatePayload,
   MappingControlResponse,
+  RadarHealthResponse,
   PcdSceneListResponse,
   NavCurrentScene,
   PcdSceneMetadata,
@@ -354,6 +355,14 @@ export function setMappingEnabled(
       body: JSON.stringify(body),
     },
   )
+}
+
+export function getMappingStatus(): Promise<MappingControlResponse> {
+  return requestJson(getApiUrl('/api/v1/nav/mapping/status'))
+}
+
+export function checkRadarHealth(): Promise<RadarHealthResponse> {
+  return requestJson(getApiUrl('/api/v1/system/radar/health'))
 }
 
 export function triggerNavEmergencyStop(): Promise<{ success: boolean; topic: string | null; message: string }> {

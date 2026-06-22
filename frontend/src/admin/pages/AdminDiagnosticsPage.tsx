@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { ExternalLink, FlaskConical, ServerCog } from 'lucide-react'
+import { ExternalLink, FlaskConical, Radar, ServerCog } from 'lucide-react'
 import { apiFetch } from '../../api/apiFetch'
 import { AdminCard, EmptyState, ToolbarButton } from '../AdminUi'
 
@@ -44,6 +44,13 @@ export function AdminDiagnosticsPage({
             onClick={() => void runDiagnostic('/api/v1/auth/status')}
             loading={loadingKey === '/api/v1/auth/status'}
           />
+          <DiagTile
+            icon={<Radar size={14} />}
+            title="雷达健康检查"
+            desc="检查 ROS2 雷达 topic、发布者和数据频率。"
+            onClick={() => void runDiagnostic('/api/v1/system/radar/health')}
+            loading={loadingKey === '/api/v1/system/radar/health'}
+          />
         </div>
       </AdminCard>
 
@@ -52,6 +59,9 @@ export function AdminDiagnosticsPage({
           <ToolbarButton onClick={onOpenPatrol}><ExternalLink size={14} className="inline-block" /> 打开导航页</ToolbarButton>
           <ToolbarButton onClick={() => void runDiagnostic('/api/v1/system/safety')}>检查安全接口</ToolbarButton>
           <ToolbarButton onClick={() => void runDiagnostic('/api/v1/auth/status')}>检查登录状态</ToolbarButton>
+          <ToolbarButton onClick={() => void runDiagnostic('/api/v1/system/radar/health')}>
+            <Radar size={14} className="inline-block" /> 检查雷达
+          </ToolbarButton>
         </div>
       </AdminCard>
 
