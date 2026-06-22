@@ -223,6 +223,8 @@ class AIWorker:
         self._ffmpeg_last_exit_reason = "unknown"
         self._ffmpeg_banner_logged = False
         self._stream_restored_logged = False
+        self._last_ffmpeg_start_log_at = 0.0
+        self._last_retry_log_at = 0.0
         self._startup_status = "waiting"
         self._startup_detail = (
             f"等待 RTSP 连接：rtsp={settings.AI_RTSP_URL}，fps={settings.AI_FPS}，"
@@ -270,8 +272,8 @@ class AIWorker:
             self._frame_height,
             settings.AI_RTSP_URL,
         )
-        retry_delay = 1.0
-        max_retry_delay = 3.0   # 缩短最大重试间隔，RTSP 流恢复后最多 3 秒内重连
+        retry_delay = max(0.5, settings.AI_FFMPEG_RETRY_MIN_SECONDS)
+        max_retry_delay = max(retry_delay, settings.AI_FFMPEG_RETRY_MAX_SECONDS)
         reset_threshold = 10.0
 
         while not stop_event.is_set():
@@ -292,11 +294,7 @@ class AIWorker:
             else:
                 retry_delay = min(retry_delay * 2, max_retry_delay)
 
-            video_logger.warning(
-                "FFmpeg 已退出，准备重连：原因={}，{:.1f} 秒后重试",
-                self._ffmpeg_last_exit_reason,
-                retry_delay,
-            )
+            self._log_retry_scheduled(retry_delay)
             await asyncio.sleep(retry_delay)
 
         ai_logger.info("AI Worker 已停止")
@@ -388,7 +386,11 @@ class AIWorker:
     async def _start_ffmpeg(self) -> asyncio.subprocess.Process:
         command = [
             "ffmpeg",
+            "-hide_banner",
+            "-nostats",
+            "-loglevel", "warning",
             "-rtsp_transport", "tcp",       # 用 TCP 代替 UDP，避免丢包导致 H.264 解码花屏
+            "-stimeout", "5000000",
             "-hwaccel", "auto",
             "-i", settings.AI_RTSP_URL,
             "-fflags", "+discardcorrupt",   # 解码失败的帧直接丢弃，不输出马赛克帧
@@ -403,6 +405,27 @@ class AIWorker:
         self._ffmpeg_last_exit_reason = "unknown"
         self._stream_restored_logged = False
 
+        self._log_ffmpeg_start()
+
+        return await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+    def _log_ffmpeg_start(self) -> None:
+        now = time.monotonic()
+        if self._last_ffmpeg_start_log_at and now - self._last_ffmpeg_start_log_at < 30.0:
+            video_logger.debug(
+                "启动 FFmpeg 拉流：rtsp={}，fps={}，分辨率={}x{}",
+                settings.AI_RTSP_URL,
+                settings.AI_FPS,
+                self._frame_width,
+                self._frame_height,
+            )
+            return
+
+        self._last_ffmpeg_start_log_at = now
         video_logger.info(
             "启动 FFmpeg 拉流：rtsp={}，fps={}，分辨率={}x{}",
             settings.AI_RTSP_URL,
@@ -411,11 +434,26 @@ class AIWorker:
             self._frame_height,
         )
 
-        return await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+    def _log_retry_scheduled(self, retry_delay: float) -> None:
+        now = time.monotonic()
+        should_warn = (
+            not self._last_retry_log_at
+            or now - self._last_retry_log_at >= 30.0
+            or not self._ffmpeg_stream_unavailable
         )
+        if should_warn:
+            self._last_retry_log_at = now
+            video_logger.warning(
+                "FFmpeg 已退出，准备重连：原因={}，{:.1f} 秒后重试",
+                self._ffmpeg_last_exit_reason,
+                retry_delay,
+            )
+        else:
+            video_logger.debug(
+                "FFmpeg 已退出，准备重连：原因={}，{:.1f} 秒后重试",
+                self._ffmpeg_last_exit_reason,
+                retry_delay,
+            )
 
     async def _drain_stderr(self, process: asyncio.subprocess.Process) -> None:
         if process.stderr is None:
