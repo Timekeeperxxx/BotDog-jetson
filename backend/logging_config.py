@@ -40,10 +40,19 @@ def _patch_record(record: dict[str, Any]) -> None:
 logger = _logger.patch(_patch_record)
 
 
+def _should_drop_standard_log(record: logging.LogRecord) -> bool:
+    if record.levelno >= logging.INFO:
+        return False
+    return record.name.startswith(("aiosqlite", "sqlalchemy"))
+
+
 class InterceptHandler(logging.Handler):
     """将标准 logging 转发到 Loguru。"""
 
     def emit(self, record: logging.LogRecord) -> None:
+        if _should_drop_standard_log(record):
+            return
+
         try:
             level = logger.level(record.levelname).name
         except ValueError:
@@ -110,12 +119,19 @@ class LimitedLineFileSink:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._max_lines = max_lines
         self._lock = threading.Lock()
+        self._writes_since_trim = 0
+        self._last_trim_at = time.monotonic()
 
     def write(self, message: str) -> None:
         with self._lock:
             with self._path.open("a", encoding="utf-8") as f:
                 f.write(message)
-            trim_log_file_tail(self._path, self._max_lines)
+            self._writes_since_trim += 1
+            now = time.monotonic()
+            if self._writes_since_trim >= 250 or now - self._last_trim_at >= 5.0:
+                trim_log_file_tail(self._path, self._max_lines)
+                self._writes_since_trim = 0
+                self._last_trim_at = now
 
     def flush(self) -> None:
         return

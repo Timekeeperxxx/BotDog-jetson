@@ -22,7 +22,7 @@ async def get_log_files(
 async def get_log_file_tail(
     name: str,
     user: AuthUserInternal = Depends(require_viewer),
-    lines: int = Query(300, ge=1, le=1000),
+    lines: int = Query(300, ge=1, le=10000),
 ) -> LogFileTailPage:
     try:
         result = tail_log_file(name, lines=lines)

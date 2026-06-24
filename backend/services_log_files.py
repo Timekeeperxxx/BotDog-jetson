@@ -96,7 +96,7 @@ def tail_log_file(name: str, lines: int = 300) -> dict[str, object]:
     if not candidate.is_file():
         raise FileNotFoundError(name)
 
-    line_limit = max(1, min(int(lines), 1000))
+    line_limit = max(1, min(int(lines), 10000))
     total_lines = 0
     tail = deque[str](maxlen=line_limit)
     with candidate.open("r", encoding="utf-8", errors="ignore") as f:

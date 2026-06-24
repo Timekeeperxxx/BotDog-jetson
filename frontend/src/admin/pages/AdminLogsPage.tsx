@@ -308,7 +308,7 @@ export function AdminLogsPage({
               <div className="rounded-2xl border border-white/8 bg-black/40 p-4">
                 <div className="text-xs font-medium text-zinc-500">尾部行数</div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {[100, 300, 500, 1000].map((value) => (
+                  {[100, 300, 500, 1000, 10000].map((value) => (
                     <ToolbarButton
                       key={value}
                       onClick={() => setRuntimeLines(value)}
@@ -318,7 +318,7 @@ export function AdminLogsPage({
                     </ToolbarButton>
                   ))}
                 </div>
-                <div className="mt-3 text-xs text-zinc-500">默认展示最近 300 行，可根据排障需要切换。</div>
+                <div className="mt-3 text-xs text-zinc-500">默认展示最近 300 行，可根据排障需要切换，最高 10000 行。</div>
               </div>
             </div>
 
