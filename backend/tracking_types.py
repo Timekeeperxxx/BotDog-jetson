@@ -61,6 +61,7 @@ class ControlOwner(str, Enum):
     """控制权拥有者枚举（ControlArbiter 使用）。"""
 
     NONE               = "NONE"
+    NAVIGATION         = "NAVIGATION"
     AUTO_TRACK         = "AUTO_TRACK"
     GUARD_MISSION      = "GUARD_MISSION"
     WEB_MANUAL         = "WEB_MANUAL"

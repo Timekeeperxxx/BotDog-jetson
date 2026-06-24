@@ -7,10 +7,12 @@
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from ...auth.dependencies import require_admin, require_operator
 from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
+from ...config import settings
 from ...database import get_db
 from ...schemas import (
     DeleteWaypointResponse,
@@ -40,6 +42,143 @@ from ...schemas import (
 from ...nav_bridge_state import get_ros_nav_bridge
 
 router = APIRouter(prefix="/api/v1/nav", tags=["nav"])
+
+
+class NavAutoTrackModeRequest(BaseModel):
+    enabled: bool
+
+
+def _get_nav_auto_track_coordinator():
+    from ...nav_auto_track_coordinator import get_nav_auto_track_coordinator
+
+    return get_nav_auto_track_coordinator()
+
+
+def _cancel_pending_auto_track_resume(reason: str) -> None:
+    coordinator = _get_nav_auto_track_coordinator()
+    if coordinator is not None:
+        coordinator.cancel_pending_resume(reason)
+
+
+def _request_navigation_control() -> None:
+    coordinator = _get_nav_auto_track_coordinator()
+    if coordinator is not None:
+        coordinator.request_navigation_control()
+
+
+def _release_navigation_control() -> None:
+    coordinator = _get_nav_auto_track_coordinator()
+    if coordinator is not None:
+        coordinator.release_navigation_control()
+
+
+def _ensure_auto_track_enabled_for_navigation() -> None:
+    if not settings.NAV_AUTO_TRACK_DURING_NAV_ENABLED or not settings.NAV_AUTO_TRACK_AUTO_ENABLE:
+        return
+
+    from ...auto_track_service import get_auto_track_service
+    from ...control_arbiter import get_control_arbiter
+    from ...guard_mission_service import get_guard_mission_service
+
+    arbiter = get_control_arbiter()
+    if arbiter is not None:
+        arbiter.release_manual_override()
+
+    guard_mission = get_guard_mission_service()
+    if guard_mission is not None and guard_mission.enabled:
+        guard_mission.enabled = False
+
+    auto_track = get_auto_track_service()
+    if auto_track is not None:
+        if not auto_track.get_status().get("enabled"):
+            auto_track.enable()
+        if hasattr(auto_track, "resume"):
+            auto_track.resume()
+
+
+@router.get("/auto-track-mode")
+async def nav_get_auto_track_mode(user: AuthUserInternal = Depends(require_operator)):
+    from ...auto_track_service import get_auto_track_service
+
+    auto_track = get_auto_track_service()
+    auto_track_status = auto_track.get_status() if auto_track is not None else None
+    enabled = bool(settings.NAV_AUTO_TRACK_DURING_NAV_ENABLED and settings.NAV_AUTO_TRACK_AUTO_ENABLE)
+    return {
+        "success": True,
+        "enabled": enabled,
+        "auto_track_enabled": bool(auto_track_status.get("enabled")) if auto_track_status else False,
+        "auto_track_state": auto_track_status.get("state") if auto_track_status else None,
+        "message": "导航自动跟踪已开启" if enabled else "导航自动跟踪已关闭",
+    }
+
+
+@router.post("/auto-track-mode")
+async def nav_set_auto_track_mode(
+    body: NavAutoTrackModeRequest,
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    from ...auto_track_service import get_auto_track_service
+    from ...control_arbiter import get_control_arbiter
+    from ...guard_mission_service import get_guard_mission_service
+
+    settings.NAV_AUTO_TRACK_DURING_NAV_ENABLED = bool(body.enabled)
+    settings.NAV_AUTO_TRACK_AUTO_ENABLE = bool(body.enabled)
+    try:
+        from ...services_config import get_config_service
+
+        config_service = get_config_service()
+        value = "true" if body.enabled else "false"
+        await config_service.update_config(
+            db,
+            "nav_auto_track_during_nav_enabled",
+            value,
+            changed_by=user.username,
+            reason="nav_auto_track_mode_button",
+        )
+        await config_service.update_config(
+            db,
+            "nav_auto_track_auto_enable",
+            value,
+            changed_by=user.username,
+            reason="nav_auto_track_mode_button",
+        )
+    except Exception:
+        # 旧数据库未初始化新配置项时不阻断运行时开关，下一次启动会补齐默认项。
+        pass
+
+    auto_track = get_auto_track_service()
+    if auto_track is not None:
+        if body.enabled:
+            arbiter = get_control_arbiter()
+            if arbiter is not None:
+                arbiter.release_manual_override()
+            guard_mission = get_guard_mission_service()
+            if guard_mission is not None and guard_mission.enabled:
+                guard_mission.enabled = False
+            auto_track.enable()
+            if hasattr(auto_track, "resume"):
+                auto_track.resume()
+        elif not body.enabled:
+            auto_track.disable()
+
+    await safe_write_audit_log(
+        db,
+        level="INFO" if body.enabled else "WARN",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.auto_track_mode "
+            f"目标=nav 结果=success enabled={body.enabled}"
+        ),
+    )
+    auto_track_status = auto_track.get_status() if auto_track is not None else None
+    return {
+        "success": True,
+        "enabled": bool(body.enabled),
+        "auto_track_enabled": bool(auto_track_status.get("enabled")) if auto_track_status else False,
+        "auto_track_state": auto_track_status.get("state") if auto_track_status else None,
+        "message": "导航自动跟踪已开启" if body.enabled else "导航自动跟踪已关闭",
+    }
 
 
 def _ensure_localization_ready_for_navigation() -> None:
@@ -122,10 +261,13 @@ async def nav_execute_task(
         _ensure_localization_ready_for_navigation()
         _ensure_navigation_runtime_ready()
         cmd_vel_result = start_cmd_vel_script()
+        _ensure_auto_track_enabled_for_navigation()
+        _request_navigation_control()
         try:
             nav_start_result = bridge.publish_navigation_start(True)
         except RuntimeError:
             stop_cmd_vel_script()
+            _release_navigation_control()
             raise
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -184,8 +326,10 @@ async def nav_stop_task(
 
     try:
         _task = get_nav_task(task_id)
+        _cancel_pending_auto_track_resume("nav_task_stop")
         nav_stop_result = bridge.publish_navigation_start(False)
         cmd_vel_stop_result = stop_cmd_vel_script()
+        _release_navigation_control()
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except NavTaskError as exc:
@@ -317,6 +461,7 @@ async def nav_select_pcd_scene(
         if files["ground"] is None:
             raise HTTPException(status_code=400, detail="场景缺少 ground.pcd")
         result = save_current_scene(scene_id)
+        _cancel_pending_auto_track_resume("nav_scene_select")
         clear_nav_task_runtime()
         reset_localization_tracking(f"已切换场景 {scene_id}，等待重新定位")
     except FileNotFoundError as exc:
@@ -415,6 +560,8 @@ async def nav_restart_localization(
     from ...services_nav_task_runtime import clear_nav_task_runtime
 
     try:
+        _cancel_pending_auto_track_resume("nav_localization_restart")
+        _release_navigation_control()
         clear_nav_task_runtime()
         reset_localization_tracking("正在重启导航定位，等待 initialpose")
         result = restart_navigation_localization()
@@ -470,6 +617,7 @@ async def nav_wait_initialpose_ready(
     result["initialpose_subscriber_count"] = subscriber_result["subscriber_count"]
     result["initialpose_graph_subscriber_count"] = subscriber_result["graph_count"]
     result["initialpose_matched_subscriber_count"] = subscriber_result["matched_count"]
+    result["initialpose_backend_publisher_count"] = subscriber_result.get("backend_publisher_count", 0)
     result["initialpose_topic"] = subscriber_result["topic"]
     result["message"] = f"{result['message']}；{subscriber_result['message']}"
     return result
@@ -505,6 +653,8 @@ async def nav_set_mapping_enabled(
 
     try:
         if body.enabled:
+            _cancel_pending_auto_track_resume("nav_mapping_start")
+            _release_navigation_control()
             if body.scene_name is None:
                 raise MappingError("请输入场景名称")
             result = await asyncio.to_thread(mapping_service.start, body.scene_name)
@@ -679,10 +829,12 @@ async def nav_go_to_waypoint(
         _ensure_navigation_runtime_ready()
         stop_task_nav_result = bridge.publish_navigation_start(False)
         cmd_vel_result = start_cmd_vel_script()
+        _request_navigation_control()
         try:
             goal_result = bridge.publish_goal_xyz_yaw(waypoint)
         except RuntimeError:
             stop_cmd_vel_script()
+            _release_navigation_control()
             raise
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -731,16 +883,28 @@ async def nav_emergency_stop(
     db=Depends(get_db),
 ):
     from ...control_service import get_control_service
-    from ...services_nav_localization import stop_cmd_vel_script, stop_navigation_processes
+    from ...services_nav_localization import set_cmd_vel_estop, stop_navigation_processes
     from ...services_nav_state import clear_global_path, set_navigation_idle
     control_service = get_control_service()
 
     try:
+        _cancel_pending_auto_track_resume("nav_e_stop")
+        _release_navigation_control()
+        cmd_vel_estop_result = set_cmd_vel_estop(True, "nav_e_stop")
+        cmd_vel_zero_result = None
+        bridge = get_ros_nav_bridge()
+        if bridge is not None:
+            try:
+                cmd_vel_zero_result = bridge.publish_zero_cmd_vel(publish_count=20, interval_s=0.02)
+            except RuntimeError as exc:
+                cmd_vel_zero_result = {
+                    "success": False,
+                    "message": str(exc),
+                }
         control_result = None
         if control_service is not None:
             control_result = await control_service.force_stop()
 
-        cmd_vel_result = stop_cmd_vel_script()
         nav_result = stop_navigation_processes()
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -754,7 +918,7 @@ async def nav_emergency_stop(
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.e_stop 目标=nav 结果=success "
             f"control_result={getattr(control_result, 'result', 'N/A')} "
-            f"cmd_vel_pid={cmd_vel_result.get('pid') if isinstance(cmd_vel_result, dict) else 'N/A'} "
+            f"cmd_vel_estop={cmd_vel_estop_result.get('active') if isinstance(cmd_vel_estop_result, dict) else 'N/A'} "
             f"nav_pids={nav_result.get('pids') if isinstance(nav_result, dict) else 'N/A'}"
         ),
     )
@@ -766,7 +930,8 @@ async def nav_emergency_stop(
             "result": getattr(control_result, "result", None),
             "ack_cmd": getattr(control_result, "ack_cmd", None),
         } if control_result is not None else None,
-        "cmd_vel_stop": cmd_vel_result,
+        "cmd_vel_estop": cmd_vel_estop_result,
+        "cmd_vel_zero": cmd_vel_zero_result,
         "nav_stop": nav_result,
     }
 

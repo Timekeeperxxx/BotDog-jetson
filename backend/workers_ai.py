@@ -204,7 +204,7 @@ class AIWorker:
         self._reset_misses = max(1, settings.AI_RESET_MISSES)
         self._cooldown_seconds = max(0.0, settings.AI_COOLDOWN_SECONDS)
 
-        self._current_task_id: Optional[int] = None
+        self._current_task_id: Optional[int | str] = None
         self._last_task_check_time: float = 0.0
 
         # 兼容路径状态（仅当 auto_track_service 未启用时使用）
@@ -543,7 +543,31 @@ class AIWorker:
 
         async with self._session_factory() as session:
             task = await _get_latest_running_task(session)
-            self._current_task_id = task.task_id if task else None
+            self._current_task_id = task.task_id if task else self._get_active_navigation_task_id()
+
+    def _get_active_navigation_task_id(self) -> str | None:
+        try:
+            from .nav_auto_track_coordinator import get_nav_auto_track_coordinator
+
+            coordinator = get_nav_auto_track_coordinator()
+            if coordinator is not None:
+                interrupted_task_id = coordinator.get_status().get("interrupted_task_id")
+                if interrupted_task_id:
+                    return str(interrupted_task_id)
+        except Exception:
+            pass
+
+        try:
+            from .services_nav_state import get_nav_state
+
+            nav_status = get_nav_state().get("navigation_status") or {}
+            status = str(nav_status.get("status") or "").strip().lower()
+            task_id = str(nav_status.get("task_id") or "").strip()
+            if task_id and status in {"navigating", "paused"}:
+                return task_id
+        except Exception:
+            pass
+        return None
 
     def _is_mission_active(self) -> bool:
         # 移除对 self._state_machine.state == SystemState.IN_MISSION 的强依赖
@@ -703,7 +727,7 @@ class AIWorker:
                 image_url=image_url,
                 gps_lat=gps[0],
                 gps_lon=gps[1],
-                task_id=self._current_task_id,
+                task_id=self._current_task_id if isinstance(self._current_task_id, int) else None,
                 session=session,
             )
 

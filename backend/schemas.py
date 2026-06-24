@@ -238,6 +238,7 @@ class NavCurrentSceneResponse(BaseModel):
     scene_dir: str
     map_pcd: str
     ground_pcd: str
+    planground_pcd: str | None = None
     updated_at: str
 
 
@@ -388,6 +389,7 @@ class LocalizationRestartResponse(BaseModel):
     scene_dir: str | None = Field(default=None, description="当前场景目录")
     map_pcd: str | None = Field(default=None, description="当前场景 map.pcd 路径")
     ground_pcd: str | None = Field(default=None, description="当前场景 ground.pcd 路径")
+    planground_pcd: str | None = Field(default=None, description="当前场景 footprint_fill.pcd 路径")
     livox_pid: int | None = Field(default=None, description="Livox 驱动 PID")
     relocation_pid: int | None = Field(default=None, description="Super-LIO PID")
     global_planner_pid: int | None = Field(default=None, description="global_planner PID")

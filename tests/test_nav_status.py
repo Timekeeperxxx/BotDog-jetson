@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.config import settings
-from backend.services_nav_state import get_nav_state, set_navigation_idle
+from backend.services_nav_state import get_nav_state, set_navigation_idle, update_navigation_status
 from backend.services_ros_nav import RosNavBridge
 
 
@@ -69,6 +69,76 @@ def test_nav_status_mappings_update_navigation_state_and_broadcast(monkeypatch, 
     assert broadcast_calls
     assert broadcast_calls[0][0] == "nav.navigation_status"
     assert broadcast_calls[0][1]["status"] == mapped_status
+
+
+def test_nav_status_canceled_preserves_auto_track_paused_navigation(monkeypatch):
+    broadcast_calls: list[tuple[str, dict[str, object]]] = []
+    bridge = _make_bridge(monkeypatch, broadcast_calls)
+    monkeypatch.setattr(
+        bridge,
+        "_auto_track_interrupted_navigation",
+        lambda: {
+            "task_id": "task_auto",
+            "target_waypoint_id": "wp_auto",
+            "target_name": "自动跟踪前目标",
+        },
+    )
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(
+            data=json.dumps(
+                {
+                    "status": "canceled",
+                    "task_id": "task_old",
+                    "waypoint_id": "wp_old",
+                    "message": "导航取消",
+                    "timestamp": 1770000000.123,
+                }
+            )
+        )
+    )
+
+    state = get_nav_state()["navigation_status"]
+    assert state["status"] == "paused"
+    assert state["ros_status"] == "canceled"
+    assert state["task_id"] == "task_auto"
+    assert state["target_waypoint_id"] == "wp_auto"
+    assert state["target_name"] == "自动跟踪前目标"
+    assert "自动跟踪陌生人" in state["message"]
+    assert broadcast_calls[0][1]["status"] == "paused"
+
+
+def test_nav_status_moving_without_task_id_preserves_active_task(monkeypatch):
+    broadcast_calls: list[tuple[str, dict[str, object]]] = []
+    bridge = _make_bridge(monkeypatch, broadcast_calls)
+    update_navigation_status(
+        {
+            "status": "navigating",
+            "task_id": "task_001",
+            "target_waypoint_id": "wp_001",
+            "target_name": "巡检任务",
+            "message": "已发布导航启动信号",
+        }
+    )
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(
+            data=json.dumps(
+                {
+                    "status": "moving",
+                    "waypoint_id": "wp_002",
+                    "message": "导航中",
+                    "timestamp": 1770000000.456,
+                }
+            )
+        )
+    )
+
+    state = get_nav_state()["navigation_status"]
+    assert state["status"] == "navigating"
+    assert state["task_id"] == "task_001"
+    assert state["waypoint_id"] == "wp_002"
+    assert broadcast_calls[0][1]["task_id"] == "task_001"
 
 
 def test_nav_status_failed_preserves_error_fields(monkeypatch):

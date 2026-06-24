@@ -12,6 +12,7 @@ from .config import settings
 from .control_arbiter import ControlArbiter, set_control_arbiter
 from .guard_mission_service import GuardMissionService, set_guard_mission_service
 from .logging_config import get_logger
+from .nav_auto_track_coordinator import NavAutoTrackCoordinator, set_nav_auto_track_coordinator
 from .nav_bridge_state import set_ros_nav_bridge
 from .services_ros_nav import RosNavBridge
 from .state_machine import StateMachine
@@ -174,6 +175,8 @@ async def initialize_runtime_services(
     )
     _arbiter = ControlArbiter()
     set_control_arbiter(_arbiter)
+    _nav_auto_track_coordinator = NavAutoTrackCoordinator()
+    set_nav_auto_track_coordinator(_nav_auto_track_coordinator)
 
     _stranger_policy = StrangerPolicy()
     set_stranger_policy(_stranger_policy)

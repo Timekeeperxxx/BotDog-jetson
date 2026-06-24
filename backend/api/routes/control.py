@@ -12,7 +12,9 @@ from ...control_service import (
     get_control_service,
 )
 from ...database import get_db
+from ...nav_bridge_state import get_ros_nav_bridge
 from ...schemas import ControlAckDTO, EStopResetResponse, EStopResponse, utc_now_iso
+from ...services_nav_localization import set_cmd_vel_estop
 from ...state_machine_state import get_state_machine
 
 router = APIRouter(prefix="/api/v1/control", tags=["control"])
@@ -118,6 +120,13 @@ async def emergency_stop(
         )
 
     state_machine.trigger_emergency_stop()
+    set_cmd_vel_estop(True, "control_e_stop")
+    bridge = get_ros_nav_bridge()
+    if bridge is not None:
+        try:
+            bridge.publish_zero_cmd_vel(publish_count=20, interval_s=0.02)
+        except RuntimeError:
+            pass
 
     await safe_write_audit_log(
         db,
@@ -155,6 +164,7 @@ async def emergency_stop_reset(
 
     old_state = state_machine.state
     state_machine.reset_emergency_stop()
+    set_cmd_vel_estop(False, "control_e_stop_reset")
 
     await safe_write_audit_log(
         db,

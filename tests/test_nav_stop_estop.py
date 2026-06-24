@@ -73,6 +73,7 @@ def test_nav_emergency_stop_stops_processes_and_sets_idle(monkeypatch):
     audit_messages: list[str] = []
     clear_calls: list[str] = []
     idle_messages: list[str] = []
+    zero_cmd_vel_calls: list[tuple[int, float]] = []
 
     class DummyControlResult:
         result = "ACCEPTED"
@@ -81,6 +82,11 @@ def test_nav_emergency_stop_stops_processes_and_sets_idle(monkeypatch):
     class DummyControlService:
         async def force_stop(self) -> DummyControlResult:
             return DummyControlResult()
+
+    class DummyBridge:
+        def publish_zero_cmd_vel(self, publish_count: int = 10, interval_s: float = 0.03) -> dict[str, object]:
+            zero_cmd_vel_calls.append((publish_count, interval_s))
+            return {"success": True, "topic": "/cmd_vel", "publish_count": publish_count}
 
     async def fake_audit_log(*args, **kwargs):
         audit_messages.append(kwargs["message"])
@@ -102,10 +108,11 @@ def test_nav_emergency_stop_stops_processes_and_sets_idle(monkeypatch):
 
     monkeypatch.setattr("backend.control_service.get_control_service", lambda: DummyControlService())
     monkeypatch.setattr(
-        "backend.services_nav_localization.stop_cmd_vel_script",
-        lambda: {"success": True, "running": False, "pid": 1234},
+        "backend.services_nav_localization.set_cmd_vel_estop",
+        lambda active, reason="": {"success": True, "active": active, "reason": reason},
     )
     monkeypatch.setattr("backend.services_nav_localization.stop_navigation_processes", fake_stop_navigation_processes)
+    monkeypatch.setattr(nav_routes, "get_ros_nav_bridge", lambda: DummyBridge())
     monkeypatch.setattr("backend.services_nav_state.clear_global_path", fake_clear_global_path)
     monkeypatch.setattr("backend.services_nav_state.set_navigation_idle", fake_set_navigation_idle)
     monkeypatch.setattr(nav_routes, "safe_write_audit_log", fake_audit_log)
@@ -122,7 +129,10 @@ def test_nav_emergency_stop_stops_processes_and_sets_idle(monkeypatch):
     assert result["topic"] is None
     assert result["control_stop"]["result"] == "ACCEPTED"
     assert result["control_stop"]["ack_cmd"] == "force_stop"
+    assert result["cmd_vel_estop"]["active"] is True
+    assert result["cmd_vel_zero"]["topic"] == "/cmd_vel"
     assert result["nav_stop"]["pids"] == [111, 222]
+    assert zero_cmd_vel_calls == [(20, 0.02)]
     assert clear_calls == ["clear"]
     assert idle_messages == ["已触发导航急停"]
     assert audit_messages

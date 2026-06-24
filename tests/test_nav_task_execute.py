@@ -47,6 +47,7 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
     scene_path.mkdir()
     write_ascii_pcd(scene_path / "map.pcd", [(0.0, 0.0, 0.0)])
     write_ascii_pcd(scene_path / "ground.pcd", [(1.0, 2.0, 3.0)])
+    write_ascii_pcd(scene_path / "terrain_base_footprint_fill.pcd", [(1.0, 2.0, 3.0)])
 
     monkeypatch.setattr("backend.services_pcd_maps.settings.SCENE_MAP_ROOT", str(scene_root))
     monkeypatch.setattr("backend.services_nav_tasks.settings.NAV_TASK_STORE_DIR", str(task_root))
@@ -170,6 +171,7 @@ def test_nav_execute_task_missing_waypoint_returns_404(monkeypatch, tmp_path):
     scene_path.mkdir()
     write_ascii_pcd(scene_path / "map.pcd", [(0.0, 0.0, 0.0)])
     write_ascii_pcd(scene_path / "ground.pcd", [(1.0, 2.0, 3.0)])
+    write_ascii_pcd(scene_path / "terrain_base_footprint_fill.pcd", [(1.0, 2.0, 3.0)])
 
     monkeypatch.setattr("backend.services_pcd_maps.settings.SCENE_MAP_ROOT", str(scene_root))
     monkeypatch.setattr("backend.services_nav_tasks.settings.NAV_TASK_STORE_DIR", str(task_root))

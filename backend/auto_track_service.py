@@ -27,8 +27,9 @@ import asyncio
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Optional, TYPE_CHECKING
 
+from .config import settings
 from .logging_config import logger
 from .tracking_types import (
     AutoTrackState,
@@ -120,8 +121,6 @@ class AutoTrackService:
         # 阶段 2 多目标管理
         self._target_manager: "TargetManager | None" = target_manager
         self._control_arbiter: "ControlArbiter | None" = control_arbiter
-        if self._control_arbiter and default_enabled:
-            self._control_arbiter.request_control(ControlOwner.AUTO_TRACK)
 
         # 决策引擎
         self._decision_engine = FollowDecisionEngine(
@@ -158,8 +157,6 @@ class AutoTrackService:
         self._paused = False
         if self._state == AutoTrackState.DISABLED:
             self._state = AutoTrackState.IDLE
-        if self._control_arbiter:
-            self._control_arbiter.request_control(ControlOwner.AUTO_TRACK)
         logger.info("[AutoTrackService] 自动跟踪已启用")
 
     def disable(self) -> None:
@@ -256,7 +253,7 @@ class AutoTrackService:
         detections: list[DetectionResult],
         frame: bytes,
         frame_index: int,
-        current_task_id: Optional[int] = None,
+        current_task_id: Optional[int | str] = None,
         t_start: float = 0.0,
         t_detect_end: float = 0.0,
     ) -> None:
@@ -345,7 +342,7 @@ class AutoTrackService:
         self,
         persons: list[DetectionResult],
         frame: bytes,
-        task_id: Optional[int],
+        task_id: Optional[int | str],
     ) -> None:
         """IDLE：无目标，等待发现候选。"""
         if not persons:
@@ -396,7 +393,7 @@ class AutoTrackService:
         self,
         persons: list[DetectionResult],
         frame: bytes,
-        task_id: Optional[int],
+        task_id: Optional[int | str],
     ) -> None:
         """DETECTING：候选积累，等待 stable_hits 帧后锁定。"""
         now = time.monotonic()
@@ -447,7 +444,7 @@ class AutoTrackService:
         self,
         persons: list[DetectionResult],
         frame: bytes,
-        task_id: Optional[int],
+        task_id: Optional[int | str],
     ) -> None:
         """FOLLOWING：目标锁定，发送控制命令。"""
         assert self._active_target is not None
@@ -524,7 +521,7 @@ class AutoTrackService:
         self,
         persons: list[DetectionResult],
         frame: bytes,
-        task_id: Optional[int],
+        task_id: Optional[int | str],
     ) -> None:
         """LOST：等待重新发现同一 track_id，或超时回到 IDLE。"""
         assert self._active_target is not None
@@ -555,14 +552,10 @@ class AutoTrackService:
 
         if target.lost_count >= self._lost_timeout_frames:
             logger.info(
-                f"[AutoTrackService] LOST→DETECTING(超时): track_id={target.track_id} "
-                f"连续丢失 {target.lost_count} 帧，重新进入检测"
+                f"[AutoTrackService] LOST→STOPPED(超时): track_id={target.track_id} "
+                f"连续丢失 {target.lost_count} 帧，恢复导航"
             )
-            # 不发 stop 指令，不结束任务，直接重置目标并回到检测状态
-            self._active_target = None
-            self._candidates.clear()
-            self._last_command = None
-            self._state = AutoTrackState.DETECTING
+            await self._stop_with_snapshot(TrackStopReason.TARGET_LOST, frame, task_id)
         # 否则保持 LOST，下帧继续
 
     # ─── 内部工具 ────────────────────────────────────────────────────────────
@@ -622,7 +615,7 @@ class AutoTrackService:
         self,
         candidate: TargetCandidate,
         frame: bytes,
-        task_id: Optional[int],
+        task_id: Optional[int | str],
     ) -> None:
         """候选稳定命中，锁定目标并立即进入 FOLLOWING。"""
         ts = time.monotonic()
@@ -654,6 +647,7 @@ class AutoTrackService:
         await self._broadcast_event("AUTO_TRACK_STARTED", {
             "track_id": candidate.track_id,
         })
+        await self._pause_navigation_for_tracking(candidate.track_id)
 
     def _reset_tracking_state(self) -> None:
         """完全重置跟踪状态（STOPPED → IDLE 时调用）。"""
@@ -674,13 +668,21 @@ class AutoTrackService:
         self._reset_tracking_state()
         if send_stop_command:
             asyncio.create_task(self._send_command_safe("stop"))
+        if reason in (
+            TrackStopReason.DISABLED,
+            TrackStopReason.E_STOP,
+            TrackStopReason.MANUAL,
+            TrackStopReason.MISSION_ENDED,
+            TrackStopReason.MARKED_KNOWN,
+        ):
+            self._cancel_pending_navigation_resume(reason.value)
         logger.info(f"[AutoTrackService] 跟踪停止，原因={reason.value}")
 
     async def _stop_with_snapshot(
         self,
         reason: TrackStopReason,
         frame: bytes,
-        task_id: Optional[int],
+        task_id: Optional[int | str],
     ) -> None:
         if self._stop_snapshot_enabled:
             await self._take_snapshot_safe(frame, "stopped", task_id)
@@ -690,6 +692,7 @@ class AutoTrackService:
         })
         self._do_stop(reason, send_stop_command=True)
         self._state = AutoTrackState.STOPPED
+        await self._resume_navigation_after_tracking(reason.value)
         # STOPPED 将在下一帧 process_frame 自动回到 IDLE
 
     async def _send_stop_after(self, delay_s: float) -> None:
@@ -718,7 +721,12 @@ class AutoTrackService:
                         })
                     return
             self._last_command = cmd
-            await self._control_service.handle_command(cmd)
+            if cmd in {"forward", "backward"}:
+                await self._control_service.handle_command(cmd, vx=settings.AUTO_TRACK_VX)
+            elif cmd in {"left", "right"}:
+                await self._control_service.handle_command(cmd, vyaw=settings.AUTO_TRACK_VYAW)
+            else:
+                await self._control_service.handle_command(cmd)
         except Exception as exc:
             logger.debug(f"[AutoTrackService] 发送命令 {cmd!r} 失败: {exc}")
 
@@ -726,7 +734,7 @@ class AutoTrackService:
         self,
         frame: bytes,
         label: str,
-        task_id: Optional[int],
+        task_id: Optional[int | str],
     ) -> None:
         try:
             image_path, image_url = await _save_snapshot_to_disk(
@@ -749,11 +757,41 @@ class AutoTrackService:
                         image_url=image_url,
                         gps_lat=None,
                         gps_lon=None,
-                        task_id=task_id,
+                        task_id=task_id if isinstance(task_id, int) else None,
                         session=session,
                     )
         except Exception as exc:
             logger.debug(f"[AutoTrackService] 抓拍失败（不影响跟踪）: {exc}")
+
+    async def _pause_navigation_for_tracking(self, track_id: int) -> None:
+        try:
+            from .nav_auto_track_coordinator import get_nav_auto_track_coordinator
+
+            coordinator = get_nav_auto_track_coordinator()
+            if coordinator is not None:
+                await coordinator.pause_navigation_for_tracking(track_id=track_id)
+        except Exception as exc:
+            logger.debug(f"[AutoTrackService] 暂停导航任务失败（不影响跟踪）: {exc}")
+
+    async def _resume_navigation_after_tracking(self, reason: str) -> None:
+        try:
+            from .nav_auto_track_coordinator import get_nav_auto_track_coordinator
+
+            coordinator = get_nav_auto_track_coordinator()
+            if coordinator is not None:
+                await coordinator.resume_navigation_after_tracking(reason=reason)
+        except Exception as exc:
+            logger.debug(f"[AutoTrackService] 恢复导航任务失败: {exc}")
+
+    def _cancel_pending_navigation_resume(self, reason: str) -> None:
+        try:
+            from .nav_auto_track_coordinator import get_nav_auto_track_coordinator
+
+            coordinator = get_nav_auto_track_coordinator()
+            if coordinator is not None:
+                coordinator.cancel_pending_resume(reason)
+        except Exception as exc:
+            logger.debug(f"[AutoTrackService] 取消导航恢复失败: {exc}")
 
     async def _broadcast_event(self, msg_type: str, payload: dict) -> None:
         try:
@@ -784,7 +822,7 @@ class AutoTrackService:
         self._last_status_broadcast = now
         await self._broadcast_event("AUTO_TRACK_STATUS", self.get_status())
 
-    def _is_mission_active(self, task_id: Optional[int]) -> bool:
+    def _is_mission_active(self, task_id: Optional[int | str]) -> bool:
         # 与 AI Worker 保持一致：
         # 解除对 state_machine.state == SystemState.IN_MISSION（需要下位机心跳）的强依赖
         # 只要前端启动了任务 (task_id 存在)，AI 就进入工作状态。

@@ -7,7 +7,7 @@
 - 提供控制权变更通知接口
 
 优先级（高→低）：
-  E_STOP > REMOTE_CONTROLLER > WEB_MANUAL > AUTO_TRACK
+  E_STOP > REMOTE_CONTROLLER > WEB_MANUAL > AUTO_TRACK > GUARD_MISSION > NAVIGATION
 
 注意：
 - ControlArbiter 负责判断"谁应该控制"
@@ -34,11 +34,12 @@ class ControlArbiter:
     # 优先级映射（数字越大优先级越高）
     _PRIORITY: dict[ControlOwner, int] = {
         ControlOwner.NONE: 0,
-        ControlOwner.AUTO_TRACK: 1,
-        ControlOwner.GUARD_MISSION: 1,
-        ControlOwner.WEB_MANUAL: 2,
-        ControlOwner.REMOTE_CONTROLLER: 3,
-        ControlOwner.E_STOP: 4,
+        ControlOwner.NAVIGATION: 1,
+        ControlOwner.GUARD_MISSION: 2,
+        ControlOwner.AUTO_TRACK: 3,
+        ControlOwner.WEB_MANUAL: 4,
+        ControlOwner.REMOTE_CONTROLLER: 5,
+        ControlOwner.E_STOP: 6,
     }
 
     def __init__(self) -> None:
@@ -118,6 +119,12 @@ class ControlArbiter:
         """
         return self._owner == ControlOwner.GUARD_MISSION
 
+    def can_navigation_send(self) -> bool:
+        """
+        导航是否允许下发速度控制命令。
+        """
+        return self._owner == ControlOwner.NAVIGATION
+
     def is_e_stop_active(self) -> bool:
         return self._owner == ControlOwner.E_STOP
 
@@ -133,6 +140,7 @@ class ControlArbiter:
             "owner": self._owner.value,
             "active_requesters": [r.value for r in self._active_requesters],
             "can_auto_track": self.can_auto_track_send(),
+            "can_navigation": self.can_navigation_send(),
         }
 
     # ─── 内部逻辑 ────────────────────────────────────────────────────────────

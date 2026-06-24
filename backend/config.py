@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     AI_FRAME_HEIGHT: int = 1080
     AI_FPS: int = 10
     AI_FFMPEG_RETRY_MIN_SECONDS: float = 1.0
-    AI_FFMPEG_RETRY_MAX_SECONDS: float = 30.0
+    AI_FFMPEG_RETRY_MAX_SECONDS: float = 3.0
     AI_PATROL_SKIP: int = 5  # 巡逻态跳帧（10fps / 5 = 2fps 推理）
     AI_SUSPECT_SKIP: int = 1  # 疑似目标全速推理
     AI_STABLE_HITS: int = 3  # 连续命中阈值
@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     AI_MODEL_PATH: str = "models/yolov8n.pt"  # YOLO 模型路径
     AI_CONFIDENCE_THRESHOLD: float = 0.5  # 推理置信度阈值
     AI_TARGET_CLASSES: list[str] = ["person"]  # 目标类别
+    AI_USE_BYTETRACK: bool = True
 
     # 抓拍存储目录（用于 /api/v1/static）
     SNAPSHOT_DIR: str = "data/snapshots"
@@ -99,6 +100,11 @@ class Settings(BaseSettings):
     # 优先使用建图启动后捕获到的初始 TF/位姿；读不到时用这里的 z/yaw 兜底。
     NAV_ORIGIN_WAYPOINT_Z: float = -0.83
     NAV_ORIGIN_WAYPOINT_YAW: float = 0.0
+    NAV_AUTO_TRACK_DURING_NAV_ENABLED: bool = True
+    NAV_AUTO_TRACK_AUTO_ENABLE: bool = True
+    NAV_AUTO_TRACK_RESUME_TIMEOUT_S: float = 3.0
+    NAV_AUTO_TRACK_REQUIRE_FRESH_TF: bool = True
+    NAV_CONTROL_GATEWAY_ENABLED: bool = True
 
     # ==================== ROS2 导航状态订阅转发 ====================
     ROS_NAV_ENABLED: bool = True
@@ -232,6 +238,8 @@ class Settings(BaseSettings):
     AUTO_TRACK_ANCHOR_Y_STOP_RATIO: float = 0.95  # 锚点纵向停止比（0.90 即留出底部 10% 作为停止区）
     AUTO_TRACK_STOP_SNAPSHOT_ENABLED: bool = True  # 跟踪停止时是否补拍终止证据图
     AUTO_TRACK_YAW_PULSE_MS: float = 0.0           # 脉冲转向时长（ms），0=禁用，推荐80~150ms
+    AUTO_TRACK_VX: float = 0.40                    # 自动跟踪前进/后退速度（m/s）
+    AUTO_TRACK_VYAW: float = 0.22                  # 自动跟踪偏航转速（rad/s），低于手动控制以减少过冲
 
     # 宇树 B2 硬件适配器配置
     UNITREE_NETWORK_IFACE: str = "eth0"       # 连接 B2 的网卡名（eth0/enp2s0/Ethernet）
