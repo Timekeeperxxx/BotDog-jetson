@@ -429,7 +429,6 @@ _prepend_path_segment() {
 unset CYCLONEDDS_HOME
 unset CYCLONEDDS_URI
 export ROS_DOMAIN_ID=0
-
 _remove_path_segment LD_LIBRARY_PATH "/home/jetson/cyclonedds-0.10x/install/lib"
 _remove_path_segment LD_LIBRARY_PATH "/home/jetson/Project/BOTDOG/BotDog/.venv/lib/python3.10/site-packages/cv2/../../lib64"
 _remove_path_segment PYTHONPATH "/home/jetson/Project/BOTDOG/BotDog"

@@ -139,15 +139,10 @@ def test_mapping_cloud_accumulated_payload_keeps_all_points(monkeypatch):
 
     bridge._handle_cloud_message(msg)
 
-    assert len(broadcasts) == 2
+    assert len(broadcasts) == 1
     event_type, payload = broadcasts[0]
     assert event_type == "nav.mapping_cloud"
     assert np.array(payload["live_points"]) == pytest.approx(np.array(points))
-    assert "accumulated_points" not in payload
-
-    event_type, payload = broadcasts[1]
-    assert event_type == "nav.mapping_cloud"
-    assert "live_points" not in payload
     assert np.array(payload["accumulated_points"]) == pytest.approx(np.array(points))
     assert np.array(payload["points"]) == pytest.approx(np.array(points))
 
@@ -161,3 +156,39 @@ def test_mapping_cloud_uses_dedicated_broadcaster():
 
     assert bridge._broadcaster_for_event("nav.mapping_cloud") is cloud_broadcaster
     assert bridge._broadcaster_for_event("nav.robot_pose") is event_broadcaster
+
+
+def test_mapping_cloud_broadcast_drops_frame_when_previous_send_is_pending(monkeypatch):
+    class PendingFuture:
+        def done(self):
+            return False
+
+        def add_done_callback(self, callback):
+            return None
+
+    class DummyBroadcaster:
+        async def broadcast_event(self, event_type, data):
+            return 1
+
+    submitted = []
+
+    def fake_run_coroutine_threadsafe(coro, loop):
+        coro.close()
+        submitted.append((coro, loop))
+        return PendingFuture()
+
+    monkeypatch.setattr(
+        "backend.services_ros_nav.asyncio.run_coroutine_threadsafe",
+        fake_run_coroutine_threadsafe,
+    )
+
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._loop = SimpleNamespace(is_closed=lambda: False)
+    bridge._broadcaster = DummyBroadcaster()
+    bridge._mapping_cloud_broadcaster = DummyBroadcaster()
+    bridge._mapping_cloud_broadcast_future = None
+
+    bridge._submit_broadcast("nav.mapping_cloud", {"live_points": [[0.0, 0.0, 0.0]]})
+    bridge._submit_broadcast("nav.mapping_cloud", {"live_points": [[1.0, 1.0, 1.0]]})
+
+    assert len(submitted) == 1

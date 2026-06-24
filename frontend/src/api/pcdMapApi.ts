@@ -251,6 +251,8 @@ export type LocalizationRestartHealth = {
   map_pcd: string | null
   ground_pcd_ok: boolean
   ground_pcd: string | null
+  planground_pcd_ok: boolean
+  planground_pcd: string | null
   livox_ok: boolean
   relocation_ok: boolean
   global_planner_ok: boolean
@@ -271,6 +273,7 @@ export type LocalizationRestartResponse = {
   scene_dir?: string | null
   map_pcd?: string | null
   ground_pcd?: string | null
+  planground_pcd?: string | null
   livox_pid: number | null
   relocation_pid: number | null
   global_planner_pid: number | null
@@ -286,9 +289,14 @@ export type LocalizationRestartResponse = {
   initialpose_wait_log_offset?: number | null
 }
 
+const RESTART_NAVIGATION_LOCALIZATION_TIMEOUT_MS = 10 * 60 * 1000
+
 export function restartNavigationLocalization(): Promise<LocalizationRestartResponse> {
   const controller = new AbortController()
-  const timeoutId = window.setTimeout(() => controller.abort(), 30000)
+  const timeoutId = window.setTimeout(
+    () => controller.abort(),
+    RESTART_NAVIGATION_LOCALIZATION_TIMEOUT_MS,
+  )
 
   return requestJson<LocalizationRestartResponse>(
     getApiUrl('/api/v1/nav/localization/restart'),
@@ -363,6 +371,29 @@ export function getMappingStatus(): Promise<MappingControlResponse> {
 
 export function checkRadarHealth(): Promise<RadarHealthResponse> {
   return requestJson(getApiUrl('/api/v1/system/radar/health'))
+}
+
+export type NavAutoTrackModeResponse = {
+  success: boolean
+  enabled: boolean
+  auto_track_enabled: boolean
+  auto_track_state: string | null
+  message: string
+}
+
+export function getNavAutoTrackMode(): Promise<NavAutoTrackModeResponse> {
+  return requestJson(getApiUrl('/api/v1/nav/auto-track-mode'))
+}
+
+export function setNavAutoTrackMode(enabled: boolean): Promise<NavAutoTrackModeResponse> {
+  return requestJson(
+    getApiUrl('/api/v1/nav/auto-track-mode'),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    },
+  )
 }
 
 export function triggerNavEmergencyStop(): Promise<{ success: boolean; topic: string | null; message: string }> {

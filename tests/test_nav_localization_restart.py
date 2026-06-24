@@ -4,6 +4,7 @@ import asyncio
 import os
 import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -36,6 +37,7 @@ def _write_navigation_ready_marker(runtime_root: Path, scene_dir: Path) -> None:
             "scene_dir": str(scene_dir),
             "map_pcd": str(scene_dir / "map.pcd"),
             "ground_pcd": str(scene_dir / "ground.pcd"),
+            "planground_pcd": str(scene_dir / "terrain_base_footprint_fill.pcd"),
         },
     )
 
@@ -374,6 +376,67 @@ def test_initialpose_subscriber_count_uses_ros_graph_when_matched_count_is_zero(
     }
 
 
+def test_initialpose_ready_reports_missing_backend_publisher():
+    class DummyPublisher:
+        def get_subscription_count(self) -> int:
+            return 1
+
+    class DummyNode:
+        def count_subscribers(self, topic: str) -> int:
+            assert topic == "/initialpose"
+            return 1
+
+        def count_publishers(self, topic: str) -> int:
+            assert topic == "/initialpose"
+            return 0
+
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._node = DummyNode()
+    bridge._initial_pose_publisher = DummyPublisher()
+
+    result = bridge.wait_for_initial_pose_subscribers(timeout_s=0.1)
+
+    assert result["ready"] is False
+    assert result["subscriber_count"] == 1
+    assert result["backend_publisher_count"] == 0
+    assert "后端 /initialpose publisher 未进入 ROS graph" in result["message"]
+
+
+def test_ros_nav_pause_clears_node_and_publishers(monkeypatch):
+    destroyed = []
+
+    class DummyNode:
+        def destroy_node(self) -> None:
+            destroyed.append(True)
+
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._paused = False
+    bridge._node = DummyNode()
+    bridge._publisher_lock = threading.RLock()
+    bridge._pause_event = threading.Event()
+    bridge._tf_buffer = object()
+    bridge._tf_listener = object()
+    bridge._nav_start_publisher = object()
+    bridge._cmd_vel_publisher = object()
+    bridge._goal_xyz_publisher = object()
+    bridge._goal_yaw_publisher = object()
+    bridge._global_path_subscription = object()
+    bridge._nav_status_subscription = object()
+    bridge._estop_publisher = object()
+    bridge._initial_pose_publisher = object()
+    bridge._cloud_subscription = object()
+    monkeypatch.setattr(bridge, "_use_tf_pose", lambda: True)
+    monkeypatch.setattr(bridge, "_tf_source", lambda: "tf:map->base_footprint")
+
+    bridge._pause_ros_node_for_mapping()
+
+    assert destroyed == [True]
+    assert bridge._paused is True
+    assert bridge._pause_event.is_set()
+    assert bridge._node is None
+    assert bridge._initial_pose_publisher is None
+
+
 def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeypatch, tmp_path):
     scene_root = tmp_path / "MAPS"
     scene_dir = scene_root / "Scene1_测试"
@@ -386,6 +449,7 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
     logs_root.mkdir(parents=True)
     (scene_dir / "map.pcd").write_text("", encoding="utf-8")
     (scene_dir / "ground.pcd").write_text("", encoding="utf-8")
+    (scene_dir / "terrain_base_footprint_fill.pcd").write_text("", encoding="utf-8")
     script_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
     atomic_write_json(
@@ -395,6 +459,7 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
             "scene_dir": str(scene_dir),
             "map_pcd": str(scene_dir / "map.pcd"),
             "ground_pcd": str(scene_dir / "ground.pcd"),
+            "planground_pcd": str(scene_dir / "terrain_base_footprint_fill.pcd"),
             "updated_at": "2026-05-11T00:00:00.000Z",
         },
     )
@@ -442,10 +507,12 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
     assert result["scene_id"] == "Scene1_测试"
     assert str(result["map_pcd"]).endswith("map.pcd")
     assert str(result["ground_pcd"]).endswith("ground.pcd")
+    assert str(result["planground_pcd"]).endswith("terrain_base_footprint_fill.pcd")
     assert result["navigation_ready"] is True
     assert result["health"]["scene_ok"] is True
     assert result["health"]["map_pcd_ok"] is True
     assert result["health"]["ground_pcd_ok"] is True
+    assert result["health"]["planground_pcd_ok"] is True
     assert result["health"]["livox_ok"] is True
     assert result["health"]["relocation_ok"] is True
     assert result["health"]["global_planner_ok"] is True
@@ -469,6 +536,7 @@ def test_restart_navigation_localization_marks_missing_ground_unavailable(monkey
     scene_dir.mkdir(parents=True)
     runtime_root.mkdir(parents=True)
     (scene_dir / "map.pcd").write_text("", encoding="utf-8")
+    (scene_dir / "terrain_base_footprint_fill.pcd").write_text("", encoding="utf-8")
     script_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
     atomic_write_json(
@@ -478,6 +546,7 @@ def test_restart_navigation_localization_marks_missing_ground_unavailable(monkey
             "scene_dir": str(scene_dir),
             "map_pcd": str(scene_dir / "map.pcd"),
             "ground_pcd": str(scene_dir / "ground.pcd"),
+            "planground_pcd": str(scene_dir / "terrain_base_footprint_fill.pcd"),
             "updated_at": "2026-05-11T00:00:00.000Z",
         },
     )
@@ -531,6 +600,7 @@ def test_restart_navigation_localization_detects_cmd_vel_test_publisher_residual
     runtime_root.mkdir(parents=True)
     (scene_dir / "map.pcd").write_text("", encoding="utf-8")
     (scene_dir / "ground.pcd").write_text("", encoding="utf-8")
+    (scene_dir / "terrain_base_footprint_fill.pcd").write_text("", encoding="utf-8")
     script_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
     atomic_write_json(
@@ -540,6 +610,7 @@ def test_restart_navigation_localization_detects_cmd_vel_test_publisher_residual
             "scene_dir": str(scene_dir),
             "map_pcd": str(scene_dir / "map.pcd"),
             "ground_pcd": str(scene_dir / "ground.pcd"),
+            "planground_pcd": str(scene_dir / "terrain_base_footprint_fill.pcd"),
             "updated_at": "2026-05-11T00:00:00.000Z",
         },
     )
@@ -613,6 +684,7 @@ def test_restart_navigation_localization_marks_missing_pid_false(monkeypatch, tm
     runtime_root.mkdir(parents=True)
     (scene_dir / "map.pcd").write_text("", encoding="utf-8")
     (scene_dir / "ground.pcd").write_text("", encoding="utf-8")
+    (scene_dir / "terrain_base_footprint_fill.pcd").write_text("", encoding="utf-8")
     script_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
     atomic_write_json(
@@ -622,6 +694,7 @@ def test_restart_navigation_localization_marks_missing_pid_false(monkeypatch, tm
             "scene_dir": str(scene_dir),
             "map_pcd": str(scene_dir / "map.pcd"),
             "ground_pcd": str(scene_dir / "ground.pcd"),
+            "planground_pcd": str(scene_dir / "terrain_base_footprint_fill.pcd"),
             "updated_at": "2026-05-11T00:00:00.000Z",
         },
     )
@@ -669,6 +742,7 @@ def test_global_planner_health_falls_back_to_node_process_when_launch_pid_exited
     runtime_root.mkdir(parents=True)
     (scene_dir / "map.pcd").write_text("", encoding="utf-8")
     (scene_dir / "ground.pcd").write_text("", encoding="utf-8")
+    (scene_dir / "terrain_base_footprint_fill.pcd").write_text("", encoding="utf-8")
     atomic_write_json(
         runtime_root / "current_scene.json",
         {
@@ -676,6 +750,7 @@ def test_global_planner_health_falls_back_to_node_process_when_launch_pid_exited
             "scene_dir": str(scene_dir),
             "map_pcd": str(scene_dir / "map.pcd"),
             "ground_pcd": str(scene_dir / "ground.pcd"),
+            "planground_pcd": str(scene_dir / "terrain_base_footprint_fill.pcd"),
             "updated_at": "2026-05-11T00:00:00.000Z",
         },
     )
@@ -768,6 +843,7 @@ def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
     (scene_dir / "ground.pcd").write_text("", encoding="utf-8")
     (scene_dir / "Scene1_half_map.pcd").write_text("", encoding="utf-8")
     (scene_dir / "Scene1_half_ground.pcd").write_text("", encoding="utf-8")
+    (scene_dir / "Scene1_base_footprint_fill.pcd").write_text("", encoding="utf-8")
     script_path.write_text(
         (real_repo_root / "scripts" / "restart_navigation_localization.sh").read_text(encoding="utf-8"),
         encoding="utf-8",
@@ -870,6 +946,8 @@ def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
         assert str(scene_dir / "map.pcd") in output
         assert "当前 ground.pcd: " in output
         assert str(scene_dir / "ground.pcd") in output
+        assert "当前 footprint_fill.pcd: " in output
+        assert str(scene_dir / "Scene1_base_footprint_fill.pcd") in output
         for path in expected_pid_files:
             assert path.exists()
         assert ready_file.exists()
@@ -923,7 +1001,9 @@ def test_restart_navigation_script_uses_real_time_and_cleans_local_navigation_no
     assert '-p "lio.map.map_name:=$map_name"' in content
     assert "wait_for_navigation_maps" in content
     assert "navigation_ready.json" in content
-    assert '"map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD"' in content
+    assert 'GLOBAL_PLANNER_ARGS=("map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD")' in content
+    assert 'GLOBAL_PLANNER_ARGS+=("planground_dir:=$PLANGROUND_PCD")' in content
+    assert '"${GLOBAL_PLANNER_ARGS[@]}"' in content
     assert 'p2p_move_base go2_localization_launch.py "启动 P2P move base 定位导航..." P2P_MOVE_BASE_PID p2p_move_base.pid "use_sim:=false"' in content
 
 
@@ -935,6 +1015,9 @@ def test_restart_navigation_script_retries_livox_topic_waits():
     assert 'grep -Fq "$marker" "$SCRIPT_LOG_FILE" "$ROOT_LOG_FILE"' in content
     assert '仍在等待 $label 数据：$topic' in content
     assert 'wait_for_log_marker "Map pointcloud size after down size" "$timeout_s" "global planner mapcloud"' in content
+    assert 'if [ -n "$PLANGROUND_PCD" ]; then' in content
+    assert 'wait_for_log_marker "Planground pointcloud size after down size" "$timeout_s" "global planner planground"' in content
+    assert '跳过 global planner planground 等待：未提供 footprint_fill.pcd' in content
     assert 'wait_for_log_marker "Publish weighted ground point cloud." "$timeout_s" "global planner weighted_ground"' in content
     assert 'warn_for_topic_once /livox/imu "${NAV_LIVOX_IMU_WAIT_TIMEOUT_S:-5}" "Livox IMU" --qos-reliability best_effort' in content
     assert 'warn_for_topic_once /livox/lidar "${NAV_LIVOX_LIDAR_WAIT_TIMEOUT_S:-5}" "Livox LiDAR" --qos-reliability best_effort' in content

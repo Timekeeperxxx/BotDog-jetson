@@ -100,9 +100,19 @@ if ! GROUND_PCD="$(find_scene_pcd_file "$SCENE_DIR" "ground.pcd" "*ground.pcd" "
   exit 1
 fi
 
+if ! PLANGROUND_PCD="$(find_scene_pcd_file "$SCENE_DIR" "footprint_fill.pcd" "*footprint_fill.pcd" "footprint_fill.pcd")"; then
+  PLANGROUND_PCD=""
+  echo "提示：场景缺少 *footprint_fill.pcd，已跳过该辅助图层：$SCENE_DIR"
+fi
+
 echo "当前场景目录: $SCENE_DIR"
 echo "当前 map.pcd: $MAP_PCD"
 echo "当前 ground.pcd: $GROUND_PCD"
+if [ -n "$PLANGROUND_PCD" ]; then
+  echo "当前 footprint_fill.pcd: $PLANGROUND_PCD"
+else
+  echo "当前 footprint_fill.pcd: 已跳过"
+fi
 echo "PID 目录: $RUNTIME_DIR"
 
 if [ ! -d "$SUPERLIO_ROOT_DIR" ]; then
@@ -197,6 +207,8 @@ ROS_NEEDLES=(
   "/home/jetson/superlio/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node"
   "/home/jetson/superlio/install/super_lio/lib/super_lio/relocation_node"
   "/home/jetson/dddmr_navigation_new_local/install/global_planner/lib/global_planner/global_planner_node"
+  "/opt/ros/humble/lib/tf2_ros/static_transform_publisher"
+  "map2baselink"
   "/home/jetson/dddmr_navigation_new_local/install/mcl_3dl/lib/mcl_3dl/pcl_publisher"
   "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/p2p_move_base_node"
   "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/clicked2goal.py"
@@ -472,6 +484,11 @@ wait_for_navigation_maps() {
 
   wait_for_log_marker "Map pointcloud size after down size" "$timeout_s" "global planner mapcloud"
   wait_for_log_marker "Ground pointcloud size after down size" "$timeout_s" "global planner mapground"
+  if [ -n "$PLANGROUND_PCD" ]; then
+    wait_for_log_marker "Planground pointcloud size after down size" "$timeout_s" "global planner planground"
+  else
+    echo "跳过 global planner planground 等待：未提供 footprint_fill.pcd"
+  fi
   # weighted_ground is emitted after global_planner receives the static layer
   # and builds its internal graph. ROS CLI graph/echo can miss these one-shot
   # point clouds, so the launch log is the stable readiness source here.
@@ -489,6 +506,7 @@ write_navigation_ready_file() {
   "scene_dir": "$SCENE_DIR",
   "map_pcd": "$MAP_PCD",
   "ground_pcd": "$GROUND_PCD",
+  "planground_pcd": "$PLANGROUND_PCD",
   "livox_pid": $LIVOX_PID,
   "relocation_pid": $RELOCATION_PID,
   "global_planner_pid": $GLOBAL_PLANNER_PID,
@@ -588,7 +606,13 @@ sleep 5
 
 warn_for_topic_once /tf_static "${NAV_TF_STATIC_WAIT_TIMEOUT_S:-10}" "base 静态 TF" --qos-durability transient_local
 
-start_launch "$HOME/dddmr_navigation_new_local" global_planner path_planning_with_polygon.launch "启动全局路径规划..." GLOBAL_PLANNER_PID global_planner.pid "map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD"
+GLOBAL_PLANNER_ARGS=("map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD")
+if [ -n "$PLANGROUND_PCD" ]; then
+  GLOBAL_PLANNER_ARGS+=("planground_dir:=$PLANGROUND_PCD")
+else
+  echo "启动全局路径规划时跳过 planground_dir 参数"
+fi
+start_launch "$HOME/dddmr_navigation_new_local" global_planner path_planning_with_polygon.launch "启动全局路径规划..." GLOBAL_PLANNER_PID global_planner.pid "${GLOBAL_PLANNER_ARGS[@]}"
 echo "Global Planner PID: $GLOBAL_PLANNER_PID"
 wait_for_navigation_maps "${NAV_GLOBAL_MAP_WAIT_TIMEOUT_S:-600}"
 write_navigation_ready_file

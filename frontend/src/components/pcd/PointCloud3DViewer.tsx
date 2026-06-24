@@ -24,12 +24,11 @@ const ROBOT_HEIGHT = 0.26
 const ROBOT_ARROW_LENGTH = 1.1
 const ROBOT_ARROW_HEAD_LENGTH = 0.34
 const ROBOT_ARROW_HEAD_WIDTH = 0.22
-const GLOBAL_PATH_RADIUS = 0.12
-const GLOBAL_PATH_NODE_RADIUS = 0.095
+const GLOBAL_PATH_RADIUS = 0.06
+const GLOBAL_PATH_NODE_RADIUS = 0.06
 const WAYPOINT_SCREEN_DIAMETER_PX = 13
-const WAYPOINT_ARROW_SCREEN_LENGTH_PX = 22
 const WAYPOINT_LABEL_SCREEN_WIDTH_PX = 48
-const ROBOT_SCREEN_DIAMETER_PX = 13
+const ROBOT_SCREEN_DIAMETER_PX = 18
 const PENDING_TARGET_SCREEN_DIAMETER_PX = 13
 const POINT_CLOUD_PIXEL_RATIO_LIMIT = 1.5
 const GROUND_PICK_THRESHOLD_PX = 44
@@ -49,6 +48,24 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
 
+const POINT_DISPLAY_LIMIT_BY_ROLE: Partial<Record<PcdSceneLayerRole, number>> = {
+  ground: 70000,
+  footprint_fill: 50000,
+  mapping: 25000,
+  live: 1200,
+}
+
+function limitDisplayPoints(
+  role: PcdSceneLayerRole,
+  points: [number, number, number][],
+) {
+  const limit = POINT_DISPLAY_LIMIT_BY_ROLE[role]
+  if (!limit || points.length <= limit) return points
+
+  const stride = Math.max(1, Math.ceil(points.length / limit))
+  return points.filter((_, index) => index % stride === 0).slice(0, limit)
+}
+
 function disposeMaterial(material: THREE.Material | THREE.Material[]) {
   if (Array.isArray(material)) {
     material.forEach((item) => item.dispose())
@@ -57,7 +74,29 @@ function disposeMaterial(material: THREE.Material | THREE.Material[]) {
   }
 }
 
+function setMaterialDepth(
+  material: THREE.Material | THREE.Material[],
+  depthTest: boolean,
+  depthWrite: boolean,
+  transparent = false,
+) {
+  const materials = Array.isArray(material) ? material : [material]
+  materials.forEach((item) => {
+    item.depthTest = depthTest
+    item.depthWrite = depthWrite
+    if (transparent) {
+      item.transparent = true
+      item.opacity = 1
+    }
+  })
+}
+
 function disposeObject3D(object: THREE.Object3D) {
+  if (object instanceof THREE.Group) {
+    object.children.forEach(disposeObject3D)
+    return
+  }
+
   if (object instanceof THREE.Mesh) {
     object.geometry.dispose()
     disposeMaterial(object.material)
@@ -141,8 +180,8 @@ function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPreset {
   if (role === 'ground') {
     return {
       color: 0x0ea5e9,
-      nearSize: 2.8,
-      farSize: 9.0,
+      nearSize: 3.8,
+      farSize: 6.2,
       nearDistance: 1.5,
       farDistance: 18,
       opacity: 0.94,
@@ -153,8 +192,8 @@ function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPreset {
   if (role === 'live') {
     return {
       color: 0xffb020,
-      nearSize: 3.0,
-      farSize: 5.2,
+      nearSize: 3.4,
+      farSize: 4.6,
       nearDistance: 6,
       farDistance: 52,
       opacity: 0.94,
@@ -165,8 +204,8 @@ function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPreset {
   if (role === 'footprint_fill') {
     return {
       color: 0xffffff,
-      nearSize: 2.0,
-      farSize: 4.2,
+      nearSize: 2.6,
+      farSize: 3.8,
       nearDistance: 4,
       farDistance: 42,
       opacity: 0.72,
@@ -177,8 +216,8 @@ function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPreset {
   if (role === 'mapping') {
     return {
       color: 0x67e8f9,
-      nearSize: 1.35,
-      farSize: 3.2,
+      nearSize: 1.9,
+      farSize: 2.8,
       nearDistance: 4,
       farDistance: 48,
       opacity: 0.42,
@@ -188,8 +227,8 @@ function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPreset {
 
   return {
     color: 0x22c55e,
-    nearSize: 1.7,
-    farSize: 3.0,
+    nearSize: 2.2,
+    farSize: 2.8,
     nearDistance: 6,
     farDistance: 48,
     opacity: 0.62,
@@ -360,13 +399,18 @@ export function PointCloud3DViewer({
   } | null>(null)
 
   const normalizedLayers: PointCloudLayer[] = useMemo(
-    () => (
-      layers?.length
+    () => {
+      const sourceLayers = layers?.length
         ? layers
         : points && points.length > 0
-          ? [{ role: 'ground', points }]
+          ? [{ role: 'ground' as const, points }]
           : []
-    ),
+
+      return sourceLayers.map((layer) => ({
+        ...layer,
+        points: limitDisplayPoints(layer.role, layer.points),
+      }))
+    },
     [layers, points],
   )
   const groundPreviewBounds = useMemo(() => {
@@ -455,12 +499,35 @@ export function PointCloud3DViewer({
 
     const robotGroup = new THREE.Group()
     robotGroup.visible = false
+    robotGroup.renderOrder = 90
+    const halo = new THREE.Mesh(
+      new THREE.RingGeometry(ROBOT_RADIUS * 1.15, ROBOT_RADIUS * 1.75, 32),
+      new THREE.MeshBasicMaterial({
+        color: ROBOT_BODY_COLOR,
+        transparent: true,
+        opacity: 0.32,
+        side: THREE.DoubleSide,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    )
+    halo.rotation.x = -Math.PI / 2
+    halo.position.y = 0.012
+    halo.renderOrder = 79
+    robotGroup.add(halo)
+
     const body = new THREE.Mesh(
       new THREE.CylinderGeometry(ROBOT_RADIUS, ROBOT_RADIUS, ROBOT_HEIGHT, 24),
-      new THREE.MeshBasicMaterial({ color: ROBOT_BODY_COLOR }),
+      new THREE.MeshBasicMaterial({
+        color: ROBOT_BODY_COLOR,
+        transparent: true,
+        opacity: 1,
+        depthTest: false,
+        depthWrite: false,
+      }),
     )
     body.position.y = ROBOT_HEIGHT / 2
-    body.renderOrder = 30
+    body.renderOrder = 90
     robotGroup.add(body)
 
     const direction = new THREE.ArrowHelper(
@@ -471,7 +538,9 @@ export function PointCloud3DViewer({
       ROBOT_ARROW_HEAD_LENGTH,
       ROBOT_ARROW_HEAD_WIDTH,
     )
-    direction.renderOrder = 31
+    setMaterialDepth(direction.line.material, false, false, true)
+    setMaterialDepth(direction.cone.material, false, false, true)
+    direction.renderOrder = 91
     robotGroup.add(direction)
     robotGroup.userData.adaptiveScale = {
       pixels: ROBOT_SCREEN_DIAMETER_PX,
@@ -663,12 +732,12 @@ export function PointCloud3DViewer({
       color: 0xfacc15,
       transparent: true,
       opacity: 0.96,
-      depthTest: false,
+      depthTest: true,
       depthWrite: false,
     })
 
     const pathMesh = new THREE.Mesh(geometry, material)
-    pathMesh.renderOrder = 20
+    pathMesh.renderOrder = 12
     pathGroup.add(pathMesh)
 
     const markerStride = Math.max(1, Math.ceil(globalPath.points.length / 80))
@@ -683,12 +752,12 @@ export function PointCloud3DViewer({
           color: isTarget ? 0x22c55e : 0xfacc15,
           transparent: true,
           opacity: 0.98,
-          depthTest: false,
+          depthTest: true,
           depthWrite: false,
         }),
       )
       marker.position.set(converted.x, converted.y + zLift, converted.z)
-      marker.renderOrder = 21
+      marker.renderOrder = 13
       pathGroup.add(marker)
     })
 
@@ -708,40 +777,39 @@ export function PointCloud3DViewer({
 
     waypoints.forEach((waypoint) => {
       const pos = mapToThree(waypoint.x, waypoint.y, waypoint.z)
-      const sphere = new THREE.Mesh(
-        new THREE.SphereGeometry(WAYPOINT_RADIUS, 24, 16),
-        new THREE.MeshBasicMaterial({ color: WAYPOINT_COLOR }),
-      )
-      sphere.position.set(pos.x, pos.y + WAYPOINT_RADIUS * 0.8, pos.z)
-      sphere.renderOrder = 42
-      sphere.userData.adaptiveScale = {
+      const marker = new THREE.Group()
+      marker.position.set(pos.x, pos.y, pos.z)
+      marker.renderOrder = 42
+      marker.userData.adaptiveScale = {
         pixels: WAYPOINT_SCREEN_DIAMETER_PX,
         baseSize: WAYPOINT_RADIUS * 2,
         minScale: 0.05,
         maxScale: 120,
       }
-      group.add(sphere)
+
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(WAYPOINT_RADIUS, 24, 16),
+        new THREE.MeshBasicMaterial({ color: WAYPOINT_COLOR }),
+      )
+      sphere.position.set(0, WAYPOINT_RADIUS, 0)
+      sphere.renderOrder = 42
+      marker.add(sphere)
 
       const arrow = new THREE.ArrowHelper(
         createMapYawDirection(waypoint.yaw),
-        new THREE.Vector3(pos.x, pos.y + WAYPOINT_RADIUS + 0.12, pos.z),
+        new THREE.Vector3(0, WAYPOINT_RADIUS, 0),
         WAYPOINT_ARROW_LENGTH,
         WAYPOINT_COLOR,
         WAYPOINT_ARROW_HEAD_LENGTH,
         WAYPOINT_ARROW_HEAD_WIDTH,
       )
       arrow.renderOrder = 43
-      arrow.userData.adaptiveScale = {
-        pixels: WAYPOINT_ARROW_SCREEN_LENGTH_PX,
-        baseSize: WAYPOINT_ARROW_LENGTH,
-        minScale: 0.05,
-        maxScale: 120,
-      }
-      group.add(arrow)
+      marker.add(arrow)
+      group.add(marker)
 
       const label = createWaypointLabelSprite(waypoint.name)
       if (label) {
-        label.position.set(pos.x, pos.y + 0.58, pos.z)
+        label.position.set(pos.x, pos.y + WAYPOINT_RADIUS * 2.15, pos.z)
         label.renderOrder = 38
         label.userData.adaptiveSprite = {
           pixels: WAYPOINT_LABEL_SCREEN_WIDTH_PX,
@@ -766,36 +834,35 @@ export function PointCloud3DViewer({
     if (!pendingTarget || mode === 'none') return
 
     const pos = mapToThree(pendingTarget.x, pendingTarget.y, pendingTarget.z)
-    const sphere = new THREE.Mesh(
-      new THREE.SphereGeometry(0.24, 22, 14),
-      new THREE.MeshBasicMaterial({ color: 0x22c55e }),
-    )
-    sphere.position.set(pos.x, pos.y + 0.2, pos.z)
-    sphere.renderOrder = 60
-    sphere.userData.adaptiveScale = {
+    const marker = new THREE.Group()
+    marker.position.set(pos.x, pos.y, pos.z)
+    marker.renderOrder = 60
+    marker.userData.adaptiveScale = {
       pixels: PENDING_TARGET_SCREEN_DIAMETER_PX,
       baseSize: 0.48,
       minScale: 0.05,
       maxScale: 120,
     }
-    group.add(sphere)
+
+    const sphere = new THREE.Mesh(
+      new THREE.SphereGeometry(0.24, 22, 14),
+      new THREE.MeshBasicMaterial({ color: 0x22c55e }),
+    )
+    sphere.position.set(0, 0.24, 0)
+    sphere.renderOrder = 60
+    marker.add(sphere)
 
     const arrow = new THREE.ArrowHelper(
       createMapYawDirection(pendingTarget.yaw),
-      new THREE.Vector3(pos.x, pos.y + 0.32, pos.z),
+      new THREE.Vector3(0, 0.24, 0),
       1.0,
       0x86efac,
       0.32,
       0.2,
     )
     arrow.renderOrder = 61
-    arrow.userData.adaptiveScale = {
-      pixels: WAYPOINT_ARROW_SCREEN_LENGTH_PX,
-      baseSize: 1.0,
-      minScale: 0.05,
-      maxScale: 120,
-    }
-    group.add(arrow)
+    marker.add(arrow)
+    group.add(marker)
   }, [mode, pendingTarget, webglSupported])
 
   useEffect(() => {

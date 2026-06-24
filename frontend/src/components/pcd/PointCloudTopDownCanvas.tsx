@@ -321,7 +321,7 @@ export function PointCloudTopDownCanvas({
         ctx.save()
         ctx.strokeStyle = pathColor
         ctx.fillStyle = pathColor
-        ctx.lineWidth = 3
+        ctx.lineWidth = 2
         ctx.lineJoin = 'round'
         ctx.lineCap = 'round'
         ctx.beginPath()
@@ -342,7 +342,7 @@ export function PointCloudTopDownCanvas({
           const basePos = mapToCanvas(point.x, point.y, bounds, width, height, PADDING)
           const pos = applyView(basePos.x, basePos.y, width, height)
           ctx.beginPath()
-          ctx.arc(pos.x, pos.y, 2.3, 0, Math.PI * 2)
+          ctx.arc(pos.x, pos.y, 1.7, 0, Math.PI * 2)
           ctx.fill()
         })
         ctx.restore()

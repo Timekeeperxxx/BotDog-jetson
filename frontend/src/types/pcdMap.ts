@@ -38,6 +38,7 @@ export type NavCurrentScene = {
   scene_dir: string
   map_pcd: string
   ground_pcd: string
+  planground_pcd: string | null
   updated_at: string
 }
 

@@ -23,6 +23,14 @@ mapping_logger = get_logger("建图服务")
 
 MAPS_ROOT = Path("/home/jetson/Project/BOTDOG/MAPS")
 START_MAPPING_SCRIPT = Path("/home/jetson/Project/BOTDOG/BotDog/scripts/start_mapping.sh")
+VIDEO_PIPELINE_SCRIPT = Path("/home/jetson/Project/BOTDOG/BotDog/scripts/run-pipeline.sh")
+VIDEO_PIPELINE_PID_FILES = (
+    Path("/home/jetson/Project/BOTDOG/BotDog/logs/mediamtx.pid"),
+    Path("/home/jetson/Project/BOTDOG/BotDog/logs/ffmpeg_cam1.pid"),
+    Path("/home/jetson/Project/BOTDOG/BotDog/logs/ffmpeg_cam2.pid"),
+    Path("/home/jetson/Project/BOTDOG/BotDog/logs/ffmpeg_cam3.pid"),
+    Path("/home/jetson/Project/BOTDOG/BotDog/logs/ffmpeg_cam4.pid"),
+)
 SCENE_DIR_PATTERN = re.compile(r"^Scene(\d+)_")
 MAPPING_READY_FLAG_NAME = ".ground_generation_started"
 MAPPING_START_READY_TIMEOUT_SECONDS = 60
@@ -274,6 +282,7 @@ class MappingService:
         state = {
             "auto_track_resume_needed": False,
             "guard_mission_restore_needed": False,
+            "video_pipeline_restore_needed": False,
         }
 
         try:
@@ -303,9 +312,74 @@ class MappingService:
         return state
 
     @staticmethod
+    def _is_pid_running(pid: int) -> bool:
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+
+    @classmethod
+    def _is_video_pipeline_running(cls) -> bool:
+        for pid_file in VIDEO_PIPELINE_PID_FILES:
+            try:
+                raw_pid = pid_file.read_text(encoding="utf-8").strip()
+                if raw_pid and cls._is_pid_running(int(raw_pid)):
+                    return True
+            except (FileNotFoundError, ValueError):
+                continue
+            except Exception as exc:
+                mapping_logger.debug("读取视频流水线 PID 文件失败：{}，原因={}", pid_file, exc)
+        return False
+
+    @classmethod
+    def _stop_video_pipeline_for_mapping(cls) -> bool:
+        if not VIDEO_PIPELINE_SCRIPT.exists():
+            return False
+        if not cls._is_video_pipeline_running():
+            return False
+
+        try:
+            subprocess.run(
+                ["bash", str(VIDEO_PIPELINE_SCRIPT), "stop"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+                check=False,
+            )
+            mapping_logger.info("建图开始前已停止视频流水线，降低 FFmpeg/MediaMTX 对 LIO 的 CPU 抢占")
+            return True
+        except Exception as exc:
+            mapping_logger.warning("停止视频流水线失败，继续建图：{}", exc)
+            return False
+
+    @staticmethod
+    def _restore_video_pipeline_after_mapping() -> None:
+        if not VIDEO_PIPELINE_SCRIPT.exists():
+            return
+
+        try:
+            subprocess.Popen(
+                ["bash", str(VIDEO_PIPELINE_SCRIPT)],
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            mapping_logger.info("建图结束后已恢复视频流水线")
+        except Exception as exc:
+            mapping_logger.warning("恢复视频流水线失败：{}", exc)
+
+    @staticmethod
     def _resume_runtime_interferers(state: dict[str, bool] | None) -> None:
         if not state:
             return
+
+        if state.get("video_pipeline_restore_needed"):
+            MappingService._restore_video_pipeline_after_mapping()
 
         if state.get("guard_mission_restore_needed"):
             try:
@@ -367,6 +441,7 @@ class MappingService:
             runtime_pause_state = {
                 "auto_track_resume_needed": False,
                 "guard_mission_restore_needed": False,
+                "video_pipeline_restore_needed": False,
             }
             mapping_logger.info("开始建图前，准备停止导航相关后台进程")
             nav_stop_result = stop_navigation_processes()
@@ -403,6 +478,15 @@ class MappingService:
             start_wait_deadline = time.monotonic() + MAPPING_START_READY_TIMEOUT_SECONDS
             while time.monotonic() < start_wait_deadline:
                 if ready_flag.exists():
+                    bridge = get_ros_nav_bridge()
+                    if bridge is not None:
+                        reset_cloud_subscription = getattr(bridge, "reset_mapping_cloud_subscription", None)
+                        if callable(reset_cloud_subscription):
+                            if reset_cloud_subscription():
+                                mapping_logger.info("建图低频累计点云订阅已重建")
+                            else:
+                                mapping_logger.warning("建图低频累计点云订阅重建失败，前端可能无实时点云")
+
                     initial_origin_pose = self._capture_initial_origin_pose()
                     self._session = MappingSession(
                         scene_name=map_dir.name,

@@ -1452,6 +1452,67 @@
   color: #ccfbf1;
 }
 
+.pcd-layer-control {
+  position: relative;
+  display: inline-flex;
+}
+
+.pcd-layer-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  display: grid;
+  gap: 7px;
+  min-width: 158px;
+  padding: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 7px;
+  background: rgba(7, 14, 20, 0.96);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.34);
+  z-index: 5;
+}
+
+.pcd-layer-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 31px;
+  padding: 0 9px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.55);
+  color: rgba(226, 232, 240, 0.64);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.pcd-layer-toggle.is-active {
+  border-color: rgba(45, 212, 191, 0.45);
+  background: rgba(13, 148, 136, 0.16);
+  color: #f8fafc;
+}
+
+.pcd-layer-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
+}
+
+.pcd-layer-swatch.is-map {
+  background: #166534;
+}
+
+.pcd-layer-swatch.is-ground {
+  background: #38bdf8;
+}
+
+.pcd-layer-swatch.is-footprint {
+  background: #ffffff;
+}
+
 .pcd-spin {
   animation: pcdSpin 0.8s linear infinite;
 }

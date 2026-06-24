@@ -6,10 +6,12 @@ import {
   ChevronUp,
   Crosshair,
   Keyboard,
+  Layers,
   Loader2,
   LocateFixed,
   Radar,
   Square,
+  UserSearch,
 } from 'lucide-react'
 import {
   createWaypoint,
@@ -21,12 +23,14 @@ import {
   deleteNavTask,
   executeNavTask,
   checkRadarHealth,
+  getNavAutoTrackMode,
   getMappingStatus,
   saveNavTask,
   stopNavTask,
   restartNavigationLocalization,
   setMappingEnabled,
   setLocalizationPose,
+  setNavAutoTrackMode,
   triggerNavEmergencyStop,
   waitInitialposeReady,
   waitNavigationRuntimeReady,
@@ -43,6 +47,7 @@ import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import { useMappingCloudWebSocket } from '../hooks/useMappingCloudWebSocket'
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
 import type { LocalizationPosePayload, NavWaypoint, PcdBounds, PcdSceneItem } from '../types/pcdMap'
+import type { GlobalPath, RobotPose } from '../types/navState'
 import type { TaskDefinition, TaskDraft, TaskDraftStep } from '../types/taskWorkflow'
 import { validateWaypointName } from '../utils/navWaypointValidation'
 import { useNavScenes } from './nav/useNavScenes'
@@ -141,10 +146,42 @@ function summarizeLocalizationStatus(status: string, message: string) {
   return compactRuntimeMessage(message)
 }
 
+function trimGlobalPathByRobotPose(globalPath: GlobalPath | null, robotPose: RobotPose | null): GlobalPath | null {
+  if (!globalPath || !robotPose) return globalPath
+  if (globalPath.frame_id !== 'map' || robotPose.frame_id !== 'map') return globalPath
+  if (globalPath.points.length < 2) return globalPath
+
+  let nearestIndex = 0
+  let nearestDistanceSq = Number.POSITIVE_INFINITY
+  globalPath.points.forEach((point, index) => {
+    const distanceSq = (point.x - robotPose.x) ** 2 + (point.y - robotPose.y) ** 2
+    if (distanceSq < nearestDistanceSq) {
+      nearestDistanceSq = distanceSq
+      nearestIndex = index
+    }
+  })
+
+  const nextIndex = Math.min(nearestIndex + 1, globalPath.points.length - 1)
+  return {
+    ...globalPath,
+    timestamp: Math.max(globalPath.timestamp || 0, robotPose.timestamp || 0),
+    points: [
+      { x: robotPose.x, y: robotPose.y, z: robotPose.z },
+      ...globalPath.points.slice(nextIndex),
+    ],
+  }
+}
+
 export function PcdMapDemoPage() {
   useAuthState()
   const canOperate = hasAuthSession() && hasRole('operator')
   const previewPointLimit = 100000
+  const [pcdLayerPanelOpen, setPcdLayerPanelOpen] = useState(false)
+  const [pcdLayerVisibility, setPcdLayerVisibility] = useState({
+    map: true,
+    ground: true,
+    footprint: true,
+  })
   const [waypoints, setWaypoints] = useState<NavWaypoint[]>([])
   const [addMode, setAddMode] = useState(false)
   const [tasks, setTasks] = useState<TaskDefinition[]>([])
@@ -166,6 +203,8 @@ export function PcdMapDemoPage() {
   const [mappingSceneError, setMappingSceneError] = useState<string | null>(null)
   const [mappingSessionInfo, setMappingSessionInfo] = useState<MappingSessionInfo | null>(null)
   const [radarChecking, setRadarChecking] = useState(false)
+  const [navAutoTrackEnabled, setNavAutoTrackEnabled] = useState(false)
+  const [navAutoTrackLoading, setNavAutoTrackLoading] = useState(false)
   const [relocationPrompt, setRelocationPrompt] = useState<RelocationPromptState>({
     status: 'idle',
     message: '',
@@ -207,7 +246,7 @@ export function PcdMapDemoPage() {
         ? 'waiting'
         : 'idle'
   const latestLog = logs[0] ?? null
-  const { mappingCloudPoints, liveMappingCloudPoints, clearMappingCloud } = useMappingCloudWebSocket(mappingActive)
+  const { mappingCloudPoints, liveMappingCloudPoints } = useMappingCloudWebSocket(mappingActive)
   const {
     startCommand,
     stopCommand,
@@ -217,15 +256,8 @@ export function PcdMapDemoPage() {
     resultMessage,
   } = useRobotControl()
 
-  const prevMappingActiveRef = useRef(mappingActive)
   const linearSpeedRef = useRef(DEFAULT_LINEAR_SPEED)
   const turnSpeedRef = useRef(DEFAULT_TURN_SPEED)
-  useEffect(() => {
-    if (prevMappingActiveRef.current !== mappingActive) {
-      prevMappingActiveRef.current = mappingActive
-      clearMappingCloud()
-    }
-  }, [mappingActive, clearMappingCloud])
 
   useEffect(() => {
     if (relocationPrompt.status === 'localized' && localizationStatus?.status === 'ok') {
@@ -239,6 +271,28 @@ export function PcdMapDemoPage() {
       ...items,
     ].slice(0, 30))
   }, [])
+
+  useEffect(() => {
+    if (!canOperate) return
+    let cancelled = false
+
+    const syncNavAutoTrackMode = async () => {
+      try {
+        const result = await getNavAutoTrackMode()
+        if (cancelled) return
+        setNavAutoTrackEnabled(result.enabled)
+      } catch (error) {
+        if (!cancelled) {
+          addLog(error instanceof Error ? error.message : '读取导航自动跟踪状态失败', 'error')
+        }
+      }
+    }
+
+    void syncNavAutoTrackMode()
+    return () => {
+      cancelled = true
+    }
+  }, [addLog, canOperate])
 
   useEffect(() => {
     if (!canOperate) return
@@ -795,7 +849,14 @@ export function PcdMapDemoPage() {
   const selectedTaskSceneNavigable = selectedTaskScene?.navigable ?? false
 
   const allLayers = useMemo(() => {
-    if (!mappingActive) return previewLayers ?? []
+    if (!mappingActive) {
+      return (previewLayers ?? []).filter((layer) => {
+        if (layer.role === 'wall') return pcdLayerVisibility.map
+        if (layer.role === 'ground') return pcdLayerVisibility.ground
+        if (layer.role === 'footprint_fill') return pcdLayerVisibility.footprint
+        return true
+      })
+    }
     if (mappingCloudPoints.length === 0 && liveMappingCloudPoints.length === 0) return []
     const layers = []
     if (mappingCloudPoints.length > 0) {
@@ -805,7 +866,7 @@ export function PcdMapDemoPage() {
       layers.push({ role: 'live' as const, points: liveMappingCloudPoints })
     }
     return layers
-  }, [previewLayers, mappingActive, mappingCloudPoints, liveMappingCloudPoints])
+  }, [previewLayers, mappingActive, mappingCloudPoints, liveMappingCloudPoints, pcdLayerVisibility])
   const pointCloudViewKey = mappingActive
     ? `mapping:${mappingSessionInfo?.sceneName || mappingSessionInfo?.mapDir || 'active'}`
     : `scene:${selectedSceneId || 'none'}`
@@ -846,6 +907,10 @@ export function PcdMapDemoPage() {
     const bounds = preview?.layers.ground?.bounds ?? metadata?.files.ground?.bounds ?? null
     return bounds ? (bounds.min_z + bounds.max_z) / 2 : null
   }, [metadata?.files.ground?.bounds, preview?.layers.ground?.bounds])
+  const displayedGlobalPath = useMemo(
+    () => trimGlobalPathByRobotPose(globalPath, robotPose),
+    [globalPath, robotPose],
+  )
 
   const mapOptions = useMemo(
     () => scenes.map((scene) => ({ id: scene.id, name: scene.name })),
@@ -1066,6 +1131,26 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, canOperate, radarChecking])
 
+  const handleToggleNavAutoTrack = useCallback(async () => {
+    if (!canOperate) {
+      addLog('当前无操作权限，无法切换导航自动跟踪', 'error')
+      return
+    }
+    if (navAutoTrackLoading) return
+
+    const nextEnabled = !navAutoTrackEnabled
+    setNavAutoTrackLoading(true)
+    try {
+      const result = await setNavAutoTrackMode(nextEnabled)
+      setNavAutoTrackEnabled(result.enabled)
+      addLog(result.message)
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '切换导航自动跟踪失败', 'error')
+    } finally {
+      setNavAutoTrackLoading(false)
+    }
+  }, [addLog, canOperate, navAutoTrackEnabled, navAutoTrackLoading])
+
   return (
     <main className="pcd-demo-page">
       <header className="pcd-demo-header">
@@ -1110,7 +1195,7 @@ export function PcdMapDemoPage() {
                 viewKey={pointCloudViewKey}
                 waypoints={waypoints}
                 robotPose={robotPose}
-                globalPath={globalPath}
+                globalPath={displayedGlobalPath}
                 mode={pointCloudMode}
                 followRobot={followRobot}
                 centerHeight={groundCenterHeight}
@@ -1301,6 +1386,45 @@ export function PcdMapDemoPage() {
               <LocateFixed size={15} />
               <span>{followRobot ? '解除跟随' : '视角跟随'}</span>
             </button>
+            <div className="pcd-layer-control">
+              <button
+                className={`pcd-tool-button ${pcdLayerPanelOpen || !pcdLayerVisibility.map || !pcdLayerVisibility.ground || !pcdLayerVisibility.footprint ? 'is-active' : ''}`}
+                onClick={() => setPcdLayerPanelOpen((value) => !value)}
+                disabled={mappingActive}
+                title={mappingActive ? '建图中显示实时点云，场景图层开关暂不可用' : '选择显示的 PCD 图层'}
+              >
+                <Layers size={15} />
+                <span>点云图层</span>
+              </button>
+              {pcdLayerPanelOpen && !mappingActive ? (
+                <div className="pcd-layer-popover" role="group" aria-label="PCD 图层显示开关">
+                  <button
+                    type="button"
+                    className={`pcd-layer-toggle ${pcdLayerVisibility.map ? 'is-active' : ''}`}
+                    onClick={() => setPcdLayerVisibility((value) => ({ ...value, map: !value.map }))}
+                  >
+                    <span className="pcd-layer-swatch is-map" />
+                    <span>map</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`pcd-layer-toggle ${pcdLayerVisibility.ground ? 'is-active' : ''}`}
+                    onClick={() => setPcdLayerVisibility((value) => ({ ...value, ground: !value.ground }))}
+                  >
+                    <span className="pcd-layer-swatch is-ground" />
+                    <span>ground</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`pcd-layer-toggle ${pcdLayerVisibility.footprint ? 'is-active' : ''}`}
+                    onClick={() => setPcdLayerVisibility((value) => ({ ...value, footprint: !value.footprint }))}
+                  >
+                    <span className="pcd-layer-swatch is-footprint" />
+                    <span>footprint</span>
+                  </button>
+                </div>
+              ) : null}
+            </div>
             <button
               className={`pcd-tool-button ${toolMode === 'obstacle' ? 'is-active' : ''}`}
               onClick={() => handleToolMode('obstacle')}
@@ -1365,6 +1489,15 @@ export function PcdMapDemoPage() {
               {radarChecking ? <Loader2 size={15} className="pcd-spin" /> : <Radar size={15} />}
               <span>{radarChecking ? '检查中' : '检查雷达'}</span>
             </button>
+            <button
+              className={`pcd-tool-button ${navAutoTrackEnabled ? 'is-active' : ''}`}
+              onClick={() => void handleToggleNavAutoTrack()}
+              disabled={!canOperate || navAutoTrackLoading}
+              title="导航任务中检测到陌生人时自动暂停导航并进入自动跟踪"
+            >
+              {navAutoTrackLoading ? <Loader2 size={15} className="pcd-spin" /> : <UserSearch size={15} />}
+              <span>{navAutoTrackEnabled ? '跟踪联动开' : '跟踪联动关'}</span>
+            </button>
             {keyboardControlEnabled && (
               <div className="pcd-keyboard-hint">
                 <span>
@@ -1394,7 +1527,7 @@ export function PcdMapDemoPage() {
             bounds={mappingActive ? liveMappingBounds : (preview?.bounds || metadata?.bounds || null)}
             waypoints={waypoints}
             robotPose={robotPose}
-            globalPath={globalPath}
+            globalPath={displayedGlobalPath}
             mode="none"
             waypointZ={0}
             onMouseMapPositionChange={setMouseMapPosition}

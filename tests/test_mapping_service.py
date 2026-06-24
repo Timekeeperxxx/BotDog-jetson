@@ -13,6 +13,12 @@ from backend.services_nav_waypoints import list_waypoints
 from backend.schemas import MappingControlRequest
 
 
+@pytest.fixture(autouse=True)
+def isolate_video_pipeline(monkeypatch, tmp_path):
+    monkeypatch.setattr(mapping_service_module, "VIDEO_PIPELINE_SCRIPT", tmp_path / "missing-run-pipeline.sh")
+    monkeypatch.setattr(mapping_service_module, "VIDEO_PIPELINE_PID_FILES", ())
+
+
 class DummyProcess:
     def __init__(self, pid: int = 4321) -> None:
         self.pid = pid
@@ -52,6 +58,42 @@ class TimeoutTwiceProcess(DummyProcess):
         return 0
 
 
+def test_runtime_interferers_keep_video_pipeline_running(monkeypatch, tmp_path):
+    pipeline_script = tmp_path / "run-pipeline.sh"
+    pipeline_script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    pid_file = tmp_path / "mediamtx.pid"
+    pid_file.write_text("12345\n", encoding="utf-8")
+    run_calls: list[list[str]] = []
+    popen_calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        run_calls.append(command)
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    def fake_popen(command, **kwargs):
+        popen_calls.append(command)
+        return DummyProcess()
+
+    monkeypatch.setattr(mapping_service_module, "VIDEO_PIPELINE_SCRIPT", pipeline_script)
+    monkeypatch.setattr(mapping_service_module, "VIDEO_PIPELINE_PID_FILES", (pid_file,))
+    monkeypatch.setattr(mapping_service_module.MappingService, "_is_pid_running", staticmethod(lambda pid: pid == 12345))
+    monkeypatch.setattr(mapping_service_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr("backend.auto_track_service.get_auto_track_service", lambda: None)
+    monkeypatch.setattr("backend.guard_mission_service.get_guard_mission_service", lambda: None)
+
+    state = mapping_service_module.MappingService._pause_runtime_interferers()
+    mapping_service_module.MappingService._resume_runtime_interferers(state)
+
+    assert state["video_pipeline_restore_needed"] is False
+    assert run_calls == []
+    assert popen_calls == []
+
+
 def test_start_mapping_creates_directory_and_launches_script(monkeypatch, tmp_path):
     script = tmp_path / "start_mapping.sh"
     script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
@@ -60,6 +102,14 @@ def test_start_mapping_creates_directory_and_launches_script(monkeypatch, tmp_pa
     calls: list[str] = []
     tracker_calls: list[str] = []
     guard_enabled_state = {"enabled": True}
+
+    class DummyBridge:
+        def clear_accumulated_cloud(self):
+            calls.append("clear_accumulated_cloud")
+
+        def reset_mapping_cloud_subscription(self):
+            calls.append("reset_mapping_cloud_subscription")
+            return True
 
     class DummyAutoTrackService:
         def get_status(self):
@@ -103,6 +153,7 @@ def test_start_mapping_creates_directory_and_launches_script(monkeypatch, tmp_pa
     monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(mapping_service_module, "stop_navigation_processes", fake_stop_navigation_processes)
     monkeypatch.setattr(mapping_service_module, "stop_cmd_vel_script", fake_stop_cmd_vel_script)
+    monkeypatch.setattr(mapping_service_module, "get_ros_nav_bridge", lambda: DummyBridge())
     monkeypatch.setattr(
         "backend.auto_track_service.get_auto_track_service",
         lambda: DummyAutoTrackService(),
@@ -122,7 +173,12 @@ def test_start_mapping_creates_directory_and_launches_script(monkeypatch, tmp_pa
     assert result["enabled"] is True
     assert result["pid"] == 4321
     assert result["message"] == "建图已进入 ground 生成阶段"
-    assert calls == ["stop_navigation_processes", "stop_cmd_vel_script"]
+    assert calls == [
+        "stop_navigation_processes",
+        "stop_cmd_vel_script",
+        "clear_accumulated_cloud",
+        "reset_mapping_cloud_subscription",
+    ]
     assert started == [(["bash", str(script), str(expected_dir)], True)]
     assert tracker_calls == ["auto_track.pause", "guard.enabled=False"]
     assert guard_enabled_state["enabled"] is False

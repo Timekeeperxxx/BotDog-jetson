@@ -273,6 +273,27 @@ def _cmd_vel_pid_path() -> Path:
     return _runtime_dir() / "cmd_vel.pid"
 
 
+def _cmd_vel_estop_path() -> Path:
+    return _runtime_dir() / "cmd_vel_estop.json"
+
+
+def set_cmd_vel_estop(active: bool, reason: str = "") -> dict[str, Any]:
+    path = _cmd_vel_estop_path()
+    payload = {
+        "active": bool(active),
+        "reason": reason,
+        "updated_at": _utc_now_iso(),
+    }
+    atomic_write_json(path, payload)
+    nav_logger.warning("cmd_vel 急停钳制状态更新：active={} reason={} path={}", active, reason, path)
+    return {
+        "success": True,
+        "active": bool(active),
+        "reason": reason,
+        "path": str(path),
+    }
+
+
 def _navigation_ready_path() -> Path:
     return _runtime_dir() / "navigation_ready.json"
 
@@ -335,6 +356,7 @@ def save_current_scene(scene_id: str) -> dict[str, Any]:
     files = find_scene_pcd_files(scene_path)
     map_pcd = files["wall"]
     ground_pcd = files["ground"]
+    planground_pcd = files["footprint_fill"]
 
     if map_pcd is None:
         nav_logger.error("场景缺少 map.pcd：{}", scene_path)
@@ -342,12 +364,12 @@ def save_current_scene(scene_id: str) -> dict[str, Any]:
     if ground_pcd is None:
         nav_logger.error("场景缺少 ground.pcd：{}", scene_path)
         raise FileNotFoundError(f"场景缺少 ground.pcd: {scene_id}")
-
     payload = {
         "scene_id": scene_path.name,
         "scene_dir": str(scene_path),
         "map_pcd": str(map_pcd),
         "ground_pcd": str(ground_pcd),
+        "planground_pcd": str(planground_pcd) if planground_pcd else None,
         "updated_at": _utc_now_iso(),
     }
 
@@ -357,6 +379,10 @@ def save_current_scene(scene_id: str) -> dict[str, Any]:
     nav_logger.info("当前选择导航场景：{}", payload["scene_id"])
     nav_logger.info("当前场景 map.pcd：{}", payload["map_pcd"])
     nav_logger.info("当前场景 ground.pcd：{}", payload["ground_pcd"])
+    if planground_pcd:
+        nav_logger.info("当前场景 footprint_fill.pcd：{}", payload["planground_pcd"])
+    else:
+        nav_logger.info("当前场景缺少 footprint_fill.pcd，已跳过该辅助图层：{}", scene_path)
 
     return payload
 
@@ -375,6 +401,7 @@ def load_current_scene(strict: bool = True) -> dict[str, Any]:
     scene_dir_raw = str(data.get("scene_dir") or "").strip()
     map_pcd_raw = str(data.get("map_pcd") or "").strip()
     ground_pcd_raw = str(data.get("ground_pcd") or "").strip()
+    planground_pcd_raw = str(data.get("planground_pcd") or data.get("footprint_fill_pcd") or "").strip()
 
     if not scene_id:
         raise ValueError("current_scene.json 缺少 scene_id")
@@ -384,10 +411,15 @@ def load_current_scene(strict: bool = True) -> dict[str, Any]:
         raise ValueError("current_scene.json 缺少 map_pcd")
     if not ground_pcd_raw:
         raise ValueError("current_scene.json 缺少 ground_pcd")
+    if not planground_pcd_raw:
+        inferred_files = find_scene_pcd_files(Path(scene_dir_raw).expanduser())
+        inferred_planground = inferred_files["footprint_fill"]
+        planground_pcd_raw = str(inferred_planground) if inferred_planground else ""
 
     scene_dir = Path(scene_dir_raw).expanduser()
     map_pcd = Path(map_pcd_raw).expanduser()
     ground_pcd = Path(ground_pcd_raw).expanduser()
+    planground_pcd = Path(planground_pcd_raw).expanduser() if planground_pcd_raw else None
 
     if strict:
         if not scene_dir.exists() or not scene_dir.is_dir():
@@ -396,16 +428,20 @@ def load_current_scene(strict: bool = True) -> dict[str, Any]:
             raise FileNotFoundError(f"场景缺少 map.pcd: {map_pcd}")
         if not ground_pcd.exists():
             raise FileNotFoundError(f"场景缺少 ground.pcd: {ground_pcd}")
+        if planground_pcd is not None and not planground_pcd.exists():
+            raise FileNotFoundError(f"场景缺少 footprint_fill.pcd: {planground_pcd}")
 
     return {
         "scene_id": scene_id,
         "scene_dir": str(scene_dir),
         "map_pcd": str(map_pcd),
         "ground_pcd": str(ground_pcd),
+        "planground_pcd": str(planground_pcd) if planground_pcd else None,
         "updated_at": str(data.get("updated_at") or ""),
         "scene_ok": scene_dir.exists() and scene_dir.is_dir(),
         "map_pcd_ok": map_pcd.exists(),
         "ground_pcd_ok": ground_pcd.exists(),
+        "planground_pcd_ok": bool(planground_pcd and planground_pcd.exists()),
     }
 
 
@@ -587,11 +623,15 @@ def _inspect_navigation_ready_marker(scene: dict[str, Any]) -> tuple[bool, list[
     if not isinstance(marker, dict) or marker.get("ready") is not True:
         return False, ["navigation_ready 标记格式非法"]
 
-    expected_fields = ("scene_dir", "map_pcd", "ground_pcd")
+    expected_fields = ("scene_dir", "map_pcd", "ground_pcd", "planground_pcd")
     for field in expected_fields:
         expected = str(scene.get(field) or "")
         actual = str(marker.get(field) or "")
-        if expected and actual and Path(actual).expanduser() != Path(expected).expanduser():
+        if not expected:
+            continue
+        if not actual:
+            errors.append(f"navigation_ready 标记缺少字段: {field}")
+        elif Path(actual).expanduser() != Path(expected).expanduser():
             errors.append(f"navigation_ready 标记与当前场景不一致: {field}")
 
     return len(errors) == 0, errors
@@ -601,10 +641,13 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
     scene_dir = Path(str(scene.get("scene_dir") or "")).expanduser()
     map_pcd = Path(str(scene.get("map_pcd") or "")).expanduser()
     ground_pcd = Path(str(scene.get("ground_pcd") or "")).expanduser()
+    planground_pcd_raw = str(scene.get("planground_pcd") or "").strip()
+    planground_pcd = Path(planground_pcd_raw).expanduser() if planground_pcd_raw else None
 
     scene_ok = scene_dir.exists() and scene_dir.is_dir()
     map_pcd_ok = map_pcd.exists()
     ground_pcd_ok = ground_pcd.exists()
+    planground_pcd_ok = bool(planground_pcd and planground_pcd.exists())
 
     livox_ok = _is_nav_process_alive("livox", child_pids.get("livox_pid"))
     relocation_ok = _is_nav_process_alive("relocation", child_pids.get("relocation_pid"))
@@ -624,6 +667,8 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
         errors.append("map.pcd 缺失")
     if not ground_pcd_ok:
         errors.append("ground.pcd 缺失")
+    if not planground_pcd_ok:
+        warnings.append("footprint_fill.pcd 缺失，已跳过该辅助图层")
     if not livox_ok:
         errors.append("livox 未就绪")
     if not relocation_ok:
@@ -662,6 +707,8 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
         "map_pcd": str(map_pcd),
         "ground_pcd_ok": ground_pcd_ok,
         "ground_pcd": str(ground_pcd),
+        "planground_pcd_ok": planground_pcd_ok,
+        "planground_pcd": str(planground_pcd) if planground_pcd else None,
         "livox_ok": livox_ok,
         "relocation_ok": relocation_ok,
         "global_planner_ok": global_planner_ok,
@@ -813,6 +860,7 @@ def start_cmd_vel_script() -> dict[str, Any]:
     pid_file = _cmd_vel_pid_path()
     log_file = _runtime_dir() / "cmd_vel.log"
     script_path = _cmd_vel_script_path()
+    estop_result = set_cmd_vel_estop(False, "start_cmd_vel_script")
 
     existing_pid = _read_cmd_vel_pid()
     if _is_pid_alive(existing_pid):
@@ -824,6 +872,7 @@ def start_cmd_vel_script() -> dict[str, Any]:
             "log_file": str(log_file),
             "ready": True,
             "ready_wait_s": 0.0,
+            "estop": estop_result,
             "message": "cmd_vel 桥接已在运行",
         }
 
@@ -837,6 +886,8 @@ def start_cmd_vel_script() -> dict[str, Any]:
         raise RuntimeError(f"cmd_vel 启动脚本不是文件: {script_path}")
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["BOTDOG_CMD_VEL_ESTOP_FILE"] = str(_cmd_vel_estop_path())
     with log_file.open("a", encoding="utf-8") as stdout:
         proc = subprocess.Popen(
             ["bash", str(script_path)],
@@ -844,6 +895,7 @@ def start_cmd_vel_script() -> dict[str, Any]:
             stderr=subprocess.STDOUT,
             start_new_session=True,
             cwd=str(_project_root().parent),
+            env=env,
         )
 
     wait_started_at = time.monotonic()
@@ -867,6 +919,7 @@ def start_cmd_vel_script() -> dict[str, Any]:
         "log_file": str(log_file),
         "ready": ready,
         "ready_wait_s": ready_wait_s,
+        "estop": estop_result,
         "message": f"cmd_vel 桥接已启动并等待 {ready_wait_s:.1f}s",
     }
 
@@ -975,9 +1028,10 @@ def restart_navigation_localization() -> dict[str, Any]:
         nav_logger.info("准备重启导航定位，脚本路径：{}，日志路径：{}", script_path, log_path)
         nav_logger.info("启动 relocation，map_file={}", scene["map_pcd"])
         nav_logger.info(
-            "启动 global_planner，map_dir={}，ground_dir={}",
+            "启动 global_planner，map_dir={}，ground_dir={}，planground_dir={}",
             scene["map_pcd"],
             scene["ground_pcd"],
+            scene.get("planground_pcd"),
         )
 
         try:
@@ -1028,6 +1082,7 @@ def restart_navigation_localization() -> dict[str, Any]:
             "scene_dir": scene["scene_dir"],
             "map_pcd": scene["map_pcd"],
             "ground_pcd": scene["ground_pcd"],
+            "planground_pcd": scene["planground_pcd"],
             **child_pids,
             "cmd_vel_running": health_result["health"]["cmd_vel_running"],
             "navigation_ready": navigation_ready,
