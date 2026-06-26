@@ -91,6 +91,7 @@ class _YoloDetector(_BaseDetector):
         target_classes: list[str],
         frame_width: int,
         frame_height: int,
+        use_bytetrack: bool,
     ) -> None:
         import numpy as np  # noqa: F811
         self._np = np
@@ -98,6 +99,7 @@ class _YoloDetector(_BaseDetector):
         self._frame_height = frame_height
         self._confidence = confidence
         self._target_classes = set(target_classes)
+        self._use_bytetrack = use_bytetrack
 
         try:
             from ultralytics import YOLO
@@ -122,9 +124,10 @@ class _YoloDetector(_BaseDetector):
         # 缓存模型类别名映射
         self._class_names: dict[int, str] = self._model.names
         model_logger.info(
-            "YOLO 模型已就绪：类别数={}，检测目标={}",
+            "YOLO 模型已就绪：类别数={}，检测目标={}，bytetrack={}",
             len(self._class_names),
             target_classes,
+            use_bytetrack,
         )
 
     def detect(self, frame_bytes: bytes) -> Optional[DetectionResult]:
@@ -137,18 +140,21 @@ class _YoloDetector(_BaseDetector):
         frame = self._np.frombuffer(frame_bytes, dtype=self._np.uint8)
         frame = frame.reshape((self._frame_height, self._frame_width, 3))
 
-        # 使用 YOLO 内置 ByteTrack，persist=True 保证跨帧 ID 稳定
-        try:
-            results = self._model.track(
-                frame,
-                conf=self._confidence,
-                persist=True,
-                tracker="bytetrack.yaml",
-                verbose=False,
-            )
-        except Exception as exc:
-            # tracker 不可用时降级到 predict
-            model_logger.warning("YOLO track() 调用失败，已降级到 predict()：{}", exc)
+        if self._use_bytetrack:
+            # 使用 YOLO 内置 ByteTrack，persist=True 保证跨帧 ID 稳定。
+            try:
+                results = self._model.track(
+                    frame,
+                    conf=self._confidence,
+                    persist=True,
+                    tracker="bytetrack.yaml",
+                    verbose=False,
+                )
+            except Exception as exc:
+                # tracker 不可用时降级到 predict
+                model_logger.warning("YOLO track() 调用失败，已降级到 predict()：{}", exc)
+                results = self._model.predict(frame, conf=self._confidence, verbose=False)
+        else:
             results = self._model.predict(frame, conf=self._confidence, verbose=False)
 
         if not results or len(results[0].boxes) == 0:
@@ -244,6 +250,7 @@ class AIWorker:
                     target_classes=settings.AI_TARGET_CLASSES,
                     frame_width=self._frame_width,
                     frame_height=self._frame_height,
+                    use_bytetrack=settings.AI_USE_BYTETRACK,
                 )
                 self._startup_status = "waiting"
                 self._startup_detail = (
@@ -277,6 +284,12 @@ class AIWorker:
         reset_threshold = 10.0
 
         while not stop_event.is_set():
+            await self._update_current_task_id()
+            if not self._is_mission_active():
+                self._reset_detection_state()
+                await asyncio.sleep(0.5)
+                continue
+
             loop_start = asyncio.get_event_loop().time()
             try:
                 await self._run_ffmpeg_loop(stop_event)
@@ -350,7 +363,7 @@ class AIWorker:
 
                 if not self._is_mission_active():
                     self._reset_detection_state()
-                    continue
+                    break
 
                 skip = self._suspect_skip if self._is_suspect_mode() else self._patrol_skip
                 if skip > 1 and (frame_index % skip) != 0:
@@ -385,20 +398,26 @@ class AIWorker:
 
     async def _start_ffmpeg(self) -> asyncio.subprocess.Process:
         command = [
+            "nice",
+            "-n", "10",
             "ffmpeg",
             "-hide_banner",
             "-nostats",
             "-loglevel", "warning",
+            "-fflags", "nobuffer+discardcorrupt",
+            "-flags", "low_delay",
+            "-probesize", "32",
+            "-analyzeduration", "0",
             "-rtsp_transport", "tcp",       # 用 TCP 代替 UDP，避免丢包导致 H.264 解码花屏
+            "-max_delay", "0",
             "-stimeout", "5000000",
             "-hwaccel", "auto",
             "-i", settings.AI_RTSP_URL,
-            "-fflags", "+discardcorrupt",   # 解码失败的帧直接丢弃，不输出马赛克帧
-            "-vf", f"scale={self._frame_width}:{self._frame_height}",
+            "-vf", f"fps={settings.AI_FPS},scale={self._frame_width}:{self._frame_height}:flags=fast_bilinear",
+            "-fps_mode", "passthrough",
             "-f", "image2pipe",
             "-vcodec", "rawvideo",
             "-pix_fmt", "bgr24",
-            "-r", str(settings.AI_FPS),
             "-",
         ]
 
@@ -574,8 +593,16 @@ class AIWorker:
         # 只要存在运行中的任务，且 RTSP 摄像头推流正常，AI 就会开始分析画面（即使底盘由于离线处于 DISCONNECTED）
         # 底盘失联时的移动指令丢弃由 ControlService 的 can_accept_control 代理把关。
         # 驱离模式启用时，即使没有巡检任务也需要保持 AI 检测
-        if self._current_task_id is not None:
+        if self._current_task_id is not None and settings.AI_PASSIVE_SESSION_DETECTION_ENABLED:
             return True
+        try:
+            from .auto_track_service import get_auto_track_service
+
+            auto_track = get_auto_track_service()
+            if auto_track is not None and auto_track._enabled:
+                return True
+        except Exception:
+            pass
         from .guard_mission_service import get_guard_mission_service
         guard_mission = get_guard_mission_service()
         return guard_mission is not None and guard_mission.enabled
@@ -669,7 +696,10 @@ class AIWorker:
             return
 
         # ── 兼容路径：原有「检测即告警」逻辑 ──────────────────────────────
-        detection = detections[0] if detections else None
+        # 多类别模型上线后，head/helmet 只作为前端叠框信息；旧告警路径仍只对 person 抓拍，
+        # 避免巡检但未开启自动跟踪时被头部/头盔框高频触发截图和数据库写入。
+        alert_detections = [d for d in detections if d.label == "person"]
+        detection = alert_detections[0] if alert_detections else None
 
         if detection:
             self._hits += 1

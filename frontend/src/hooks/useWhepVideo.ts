@@ -143,6 +143,10 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
 
       pc.ontrack = (event) => {
         if (connectSessionIdRef.current !== sessionId) return;
+        const receiver = event.receiver as RTCRtpReceiver & { playoutDelayHint?: number };
+        if ('playoutDelayHint' in receiver) {
+          receiver.playoutDelayHint = 0;
+        }
         if (videoRef.current) {
           videoRef.current.srcObject = event.streams[0];
         }

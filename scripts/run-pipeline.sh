@@ -18,11 +18,23 @@ MEDIAMTX="${MEDIAMTX_EXE:-$ROOT_DIR/scripts/mediamtx}"
 CAMERA_RTSP_URL="${CAMERA_RTSP_URL:-rtsp://192.168.144.25:8554/main.264}"
 CAMERA_RETRY_DELAY="${CAMERA_RETRY_DELAY:-10}"
 FFMPEG_LOGLEVEL="${FFMPEG_LOGLEVEL:-warning}"
-CAM1_FPS="${CAM1_FPS:-20}"
+CAM1_FPS="${CAM1_FPS:-30}"
 CAM1_THREADS="${CAM1_THREADS:-2}"
-CAM1_BITRATE="${CAM1_BITRATE:-1200k}"
-CAM1_MAXRATE="${CAM1_MAXRATE:-1600k}"
-CAM1_BUFSIZE="${CAM1_BUFSIZE:-200k}"
+CAM1_BITRATE="${CAM1_BITRATE:-8000k}"
+CAM1_GST_BITRATE="${CAM1_GST_BITRATE:-8000000}"
+CAM1_MAXRATE="${CAM1_MAXRATE:-10000k}"
+CAM1_BUFSIZE="${CAM1_BUFSIZE:-2000k}"
+CAM1_ALLOW_SOFTWARE_FALLBACK="${CAM1_ALLOW_SOFTWARE_FALLBACK:-0}"
+# cam1 转码器：
+#   gst-nvenc     GStreamer NVIDIA 硬解 HEVC + 硬编 H.264，主摄像头低延迟推荐
+#   auto          优先硬件 H.264 编码，失败再回退 libx264
+#   h264_v4l2m2m  V4L2 mem2mem 硬件编码，Jetson 上通常显著降低 CPU
+#   h264_omx      OpenMAX H.264 硬件编码，作为旧 Jetson/FFmpeg 备选
+#   libx264       原软件编码路径，兼容性最高但 CPU 占用高
+CAM1_ENCODER="${CAM1_ENCODER:-gst-nvenc}"
+# 可选强制硬件解码，例如 HEVC 摄像头可设 CAM1_DECODER=hevc_nvv4l2dec。
+# 默认 auto 交给 FFmpeg 探测，避免摄像头编码变化时拉流失败。
+CAM1_DECODER="${CAM1_DECODER:-auto}"
 # cam2/3/4：USB 摄像头设备节点（GS02 三路）
 CAM2_DEV="${CAM2_DEV:-/dev/video1}"
 CAM3_DEV="${CAM3_DEV:-/dev/video0}"
@@ -43,11 +55,16 @@ USB_DEWARP="${USB_DEWARP:-0}"
 USB_FPS="${USB_FPS:-10}"
 USB_THREADS="${USB_THREADS:-2}"
 USB_BITRATE="${USB_BITRATE:-1200k}"
+USB_GST_BITRATE="${USB_GST_BITRATE:-1200000}"
 USB_MAXRATE="${USB_MAXRATE:-1600k}"
 USB_BUFSIZE="${USB_BUFSIZE:-200k}"
 USB_IN_FOV="${USB_IN_FOV:-180}"
 USB_OUT_H_FOV="${USB_OUT_H_FOV:-120}"
 USB_OUT_V_FOV="${USB_OUT_V_FOV:-75}"
+# USB 摄像头编码器：
+#   gst-nvenc  GStreamer 采集 + NVIDIA H.264 硬编，FFmpeg 仅封装 RTSP
+#   ffmpeg     原 FFmpeg libx264 软件编码路径，兼容性最高但 CPU 占用高
+USB_ENCODER="${USB_ENCODER:-gst-nvenc}"
 
 mkdir -p "$PID_DIR"
 
@@ -189,20 +206,117 @@ setsid env \
   FFMPEG_LOGLEVEL="$FFMPEG_LOGLEVEL" \
   CAM1_THREADS="$CAM1_THREADS" \
   CAM1_BITRATE="$CAM1_BITRATE" \
+  CAM1_GST_BITRATE="$CAM1_GST_BITRATE" \
   CAM1_MAXRATE="$CAM1_MAXRATE" \
   CAM1_BUFSIZE="$CAM1_BUFSIZE" \
+  CAM1_ALLOW_SOFTWARE_FALLBACK="$CAM1_ALLOW_SOFTWARE_FALLBACK" \
   CAM1_FPS="$CAM1_FPS" \
+  CAM1_ENCODER="$CAM1_ENCODER" \
+  CAM1_DECODER="$CAM1_DECODER" \
   bash -c '
-  while true; do
-    echo "[$(date "+%F %T")] Starting FFmpeg cam1..." >> "$ROOT_DIR/logs/ffmpeg.log"
+  run_cam1_ffmpeg() {
+    local encoder="$1"
+    local decoder_args=()
+    local encoder_args=()
+
+    if [ "$CAM1_DECODER" != "auto" ] && [ -n "$CAM1_DECODER" ]; then
+      decoder_args=(-c:v "$CAM1_DECODER")
+    fi
+
+    case "$encoder" in
+      h264_v4l2m2m)
+        encoder_args=(
+          -c:v h264_v4l2m2m
+          -b:v "$CAM1_BITRATE" -maxrate "$CAM1_MAXRATE" -bufsize "$CAM1_BUFSIZE"
+          -g 10 -bf 0 -pix_fmt yuv420p
+          -r "$CAM1_FPS"
+        )
+        ;;
+      h264_omx)
+        encoder_args=(
+          -c:v h264_omx -profile baseline
+          -b:v "$CAM1_BITRATE" -bufsize "$CAM1_BUFSIZE"
+          -g 10 -bf 0 -pix_fmt yuv420p
+          -r "$CAM1_FPS"
+        )
+        ;;
+      libx264)
+        encoder_args=(
+          -c:v libx264 -preset ultrafast -tune zerolatency -threads "$CAM1_THREADS"
+          -b:v "$CAM1_BITRATE" -maxrate "$CAM1_MAXRATE" -bufsize "$CAM1_BUFSIZE"
+          -g 10 -bf 0 -pix_fmt yuv420p
+          -r "$CAM1_FPS"
+        )
+        ;;
+      *)
+        echo "[$(date "+%F %T")] Unsupported CAM1_ENCODER=${encoder}, fallback to libx264" >> "$ROOT_DIR/logs/ffmpeg.log"
+        run_cam1_ffmpeg libx264
+        return $?
+        ;;
+    esac
+
+    echo "[$(date "+%F %T")] Starting FFmpeg cam1 (encoder=${encoder}, decoder=${CAM1_DECODER})..." >> "$ROOT_DIR/logs/ffmpeg.log"
     ffmpeg -hide_banner -nostats -loglevel "$FFMPEG_LOGLEVEL" \
       -fflags nobuffer -flags low_delay -rtsp_transport tcp -stimeout 5000000 \
+      "${decoder_args[@]}" \
       -i "$CAMERA_RTSP_URL" \
-      -c:v libx264 -preset ultrafast -tune zerolatency -threads "$CAM1_THREADS" \
-      -b:v "$CAM1_BITRATE" -maxrate "$CAM1_MAXRATE" -bufsize "$CAM1_BUFSIZE" -g 10 -bf 0 -pix_fmt yuv420p \
-      -r "$CAM1_FPS" \
+      "${encoder_args[@]}" \
+      -muxdelay 0 -muxpreload 0 \
       -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam \
-      >> "$ROOT_DIR/logs/ffmpeg.log" 2>&1 || true
+      >> "$ROOT_DIR/logs/ffmpeg.log" 2>&1
+  }
+
+  run_cam1_gst_nvenc() {
+    if ! command -v gst-launch-1.0 >/dev/null 2>&1; then
+      echo "[$(date "+%F %T")] gst-launch-1.0 not found, fallback to FFmpeg" >> "$ROOT_DIR/logs/ffmpeg.log"
+      return 1
+    fi
+    if ! gst-inspect-1.0 nvv4l2decoder >/dev/null 2>&1; then
+      echo "[$(date "+%F %T")] nvv4l2decoder not found, fallback to FFmpeg" >> "$ROOT_DIR/logs/ffmpeg.log"
+      return 1
+    fi
+    if ! gst-inspect-1.0 nvv4l2h264enc >/dev/null 2>&1; then
+      echo "[$(date "+%F %T")] nvv4l2h264enc not found, fallback to FFmpeg" >> "$ROOT_DIR/logs/ffmpeg.log"
+      return 1
+    fi
+
+    echo "[$(date "+%F %T")] Starting FFmpeg cam1 (encoder=gst-nvenc, decoder=nvv4l2decoder)..." >> "$ROOT_DIR/logs/ffmpeg.log"
+    gst-launch-1.0 -q \
+      rtspsrc location="$CAMERA_RTSP_URL" protocols=tcp latency=0 drop-on-latency=true do-retransmission=false ! \
+      rtph265depay ! h265parse ! \
+      nvv4l2decoder enable-max-performance=true disable-dpb=true ! \
+      nvvidconv ! "video/x-raw(memory:NVMM),format=(string)NV12" ! \
+      nvv4l2h264enc bitrate="$CAM1_GST_BITRATE" iframeinterval=10 idrinterval=10 insert-sps-pps=true maxperf-enable=true preset-level=1 ! \
+      h264parse config-interval=1 ! fdsink fd=1 sync=false \
+      2>> "$ROOT_DIR/logs/ffmpeg.log" | \
+    ffmpeg -hide_banner -nostats -loglevel "$FFMPEG_LOGLEVEL" \
+      -fflags nobuffer -flags low_delay -f h264 -i pipe:0 \
+      -c:v copy -muxdelay 0 -muxpreload 0 \
+      -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam \
+      >> "$ROOT_DIR/logs/ffmpeg.log" 2>&1
+  }
+
+  run_cam1_gst_nvenc_with_optional_fallback() {
+    if run_cam1_gst_nvenc; then
+      return 0
+    fi
+    if [ "$CAM1_ALLOW_SOFTWARE_FALLBACK" = "1" ]; then
+      echo "[$(date "+%F %T")] gst-nvenc failed, software fallback enabled" >> "$ROOT_DIR/logs/ffmpeg.log"
+      run_cam1_ffmpeg libx264
+      return $?
+    fi
+    echo "[$(date "+%F %T")] gst-nvenc failed, software fallback disabled; retrying hardware path after delay" >> "$ROOT_DIR/logs/ffmpeg.log"
+    return 1
+  }
+
+  while true; do
+    if [ "$CAM1_ENCODER" = "auto" ]; then
+      run_cam1_gst_nvenc_with_optional_fallback || run_cam1_ffmpeg h264_v4l2m2m || run_cam1_ffmpeg h264_omx || true
+    elif [ "$CAM1_ENCODER" = "gst-nvenc" ]; then
+      run_cam1_gst_nvenc_with_optional_fallback || true
+    else
+      run_cam1_ffmpeg "$CAM1_ENCODER" || true
+    fi
     echo "[$(date "+%F %T")] FFmpeg cam1 exited, restarting in ${CAMERA_RETRY_DELAY}s..." >> "$ROOT_DIR/logs/ffmpeg.log"
     sleep "$CAMERA_RETRY_DELAY"
   done
@@ -236,16 +350,13 @@ start_usb_watchdog() {
     FFMPEG_LOGLEVEL="$FFMPEG_LOGLEVEL" \
     USB_THREADS="$USB_THREADS" \
     USB_BITRATE="$USB_BITRATE" \
+    USB_GST_BITRATE="$USB_GST_BITRATE" \
     USB_MAXRATE="$USB_MAXRATE" \
     USB_BUFSIZE="$USB_BUFSIZE" \
     USB_FPS="$USB_FPS" \
+    USB_ENCODER="$USB_ENCODER" \
     bash -c '
-    while true; do
-      if [ ! -e "$dev" ]; then
-        echo "[$(date "+%F %T")] ${label} ${dev} disconnected, waiting..." >> "$logfile"
-        sleep 5; continue
-      fi
-      echo "[$(date "+%F %T")] Starting FFmpeg ${label} (vf=${vf_args:-none})..." >> "$logfile"
+    run_usb_ffmpeg() {
       ffmpeg -hide_banner -nostats -loglevel "$FFMPEG_LOGLEVEL" \
         -fflags nobuffer -flags low_delay \
         -f v4l2 -input_format mjpeg -framerate "$USB_FPS" -video_size 1280x720 \
@@ -255,7 +366,51 @@ start_usb_watchdog() {
         -b:v "$USB_BITRATE" -maxrate "$USB_MAXRATE" -bufsize "$USB_BUFSIZE" -g 10 -bf 0 -pix_fmt yuv420p \
         -r "$USB_FPS" \
         -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/${rtsp_path}" \
-        >> "$logfile" 2>&1 || true
+        >> "$logfile" 2>&1
+    }
+
+    run_usb_gst_nvenc() {
+      if [ -n "$vf_args" ]; then
+        echo "[$(date "+%F %T")] ${label} USB_DEWARP requires FFmpeg filter, fallback to libx264" >> "$logfile"
+        return 1
+      fi
+      if ! command -v gst-launch-1.0 >/dev/null 2>&1; then
+        echo "[$(date "+%F %T")] gst-launch-1.0 not found, fallback to libx264" >> "$logfile"
+        return 1
+      fi
+      if ! gst-inspect-1.0 nvv4l2h264enc >/dev/null 2>&1; then
+        echo "[$(date "+%F %T")] nvv4l2h264enc not found, fallback to libx264" >> "$logfile"
+        return 1
+      fi
+
+      gst-launch-1.0 -q \
+        v4l2src device="$dev" do-timestamp=true ! \
+        "image/jpeg,width=(int)1280,height=(int)720,framerate=(fraction)30/1" ! \
+        jpegdec ! videorate drop-only=true ! "video/x-raw,framerate=(fraction)${USB_FPS}/1" ! \
+        videoconvert ! "video/x-raw,format=(string)I420" ! \
+        nvvidconv ! "video/x-raw(memory:NVMM),format=(string)NV12" ! \
+        nvv4l2h264enc bitrate="$USB_GST_BITRATE" iframeinterval=10 idrinterval=10 insert-sps-pps=true maxperf-enable=true preset-level=1 ! \
+        h264parse config-interval=1 ! fdsink fd=1 \
+        2>> "$logfile" | \
+      ffmpeg -hide_banner -nostats -loglevel "$FFMPEG_LOGLEVEL" \
+        -fflags nobuffer -flags low_delay \
+        -f h264 -i pipe:0 \
+        -c:v copy \
+        -f rtsp -rtsp_transport tcp "rtsp://127.0.0.1:8554/${rtsp_path}" \
+        >> "$logfile" 2>&1
+    }
+
+    while true; do
+      if [ ! -e "$dev" ]; then
+        echo "[$(date "+%F %T")] ${label} ${dev} disconnected, waiting..." >> "$logfile"
+        sleep 5; continue
+      fi
+      echo "[$(date "+%F %T")] Starting ${label} (encoder=${USB_ENCODER}, vf=${vf_args:-none})..." >> "$logfile"
+      if [ "$USB_ENCODER" = "gst-nvenc" ]; then
+        run_usb_gst_nvenc || run_usb_ffmpeg || true
+      else
+        run_usb_ffmpeg || true
+      fi
       echo "[$(date "+%F %T")] FFmpeg ${label} exited, restarting in ${CAMERA_RETRY_DELAY}s..." >> "$logfile"
       sleep "$CAMERA_RETRY_DELAY"
     done
