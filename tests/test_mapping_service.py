@@ -153,6 +153,13 @@ def test_start_mapping_creates_directory_and_launches_script(monkeypatch, tmp_pa
     monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(mapping_service_module, "stop_navigation_processes", fake_stop_navigation_processes)
     monkeypatch.setattr(mapping_service_module, "stop_cmd_vel_script", fake_stop_cmd_vel_script)
+    monkeypatch.setattr(mapping_service_module, "clear_robot_pose", lambda: calls.append("clear_robot_pose"))
+    monkeypatch.setattr(mapping_service_module, "clear_global_path", lambda: calls.append("clear_global_path"))
+    monkeypatch.setattr(
+        mapping_service_module,
+        "set_navigation_idle",
+        lambda message: calls.append(f"set_navigation_idle:{message}"),
+    )
     monkeypatch.setattr(mapping_service_module, "get_ros_nav_bridge", lambda: DummyBridge())
     monkeypatch.setattr(
         "backend.auto_track_service.get_auto_track_service",
@@ -176,6 +183,9 @@ def test_start_mapping_creates_directory_and_launches_script(monkeypatch, tmp_pa
     assert calls == [
         "stop_navigation_processes",
         "stop_cmd_vel_script",
+        "clear_robot_pose",
+        "clear_global_path",
+        "set_navigation_idle:开始建图，导航状态已重置",
         "clear_accumulated_cloud",
         "reset_mapping_cloud_subscription",
     ]

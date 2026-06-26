@@ -115,3 +115,25 @@ def delete_nav_task(task_id: str) -> dict[str, Any]:
     path = _task_store_path()
     atomic_write_json(path, next_tasks)
     return {"success": True, "task_id": normalized}
+
+
+def delete_nav_tasks_for_scene(scene_id: str) -> dict[str, Any]:
+    normalized = str(scene_id).strip()
+    if not normalized:
+        raise NavTaskError("scene_id 不能为空")
+
+    tasks = _load_raw_tasks()
+    removed_tasks = [
+        task for task in tasks
+        if str(task.get("sceneId") or task.get("mapId") or "").strip() == normalized
+        or str(task.get("mapId") or "").strip() == normalized
+    ]
+    if not removed_tasks:
+        return {"deleted_task_ids": [], "removed_count": 0}
+
+    next_tasks = [task for task in tasks if task not in removed_tasks]
+    atomic_write_json(_task_store_path(), next_tasks)
+    return {
+        "deleted_task_ids": [str(task.get("id")) for task in removed_tasks if task.get("id")],
+        "removed_count": len(removed_tasks),
+    }

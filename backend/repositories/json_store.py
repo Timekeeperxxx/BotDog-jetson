@@ -4,6 +4,7 @@ import json
 import os
 import re
 import threading
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -43,3 +44,9 @@ def safe_json_path_name(name: str) -> str:
     normalized = normalized.replace("/", "_").replace("\\", "_")
     normalized = _SAFE_NAME_RE.sub("_", normalized)
     return normalized.strip("._-") or "unnamed"
+
+
+def stable_json_path_name(name: str) -> str:
+    safe_name = safe_json_path_name(name)
+    digest = hashlib.sha1(str(name).encode("utf-8")).hexdigest()[:10]
+    return f"{safe_name}_{digest}"

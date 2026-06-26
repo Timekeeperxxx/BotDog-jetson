@@ -323,6 +323,8 @@ kill_needle_kill() {
 }
 
 NAV_NEEDLES=(
+  "/home/jetson/Project/BOTDOG/BotDog/scripts/restart_navigation_localization.sh"
+  "/home/jetson/Project/Navigation/scripts/restart_navigation_localization.sh"
   "ros2 launch livox_ros_driver2 msg_MID360_launch.py"
   "ros2 launch super_lio relocation.py"
   "ros2 launch super_lio Livox_mid360.py"

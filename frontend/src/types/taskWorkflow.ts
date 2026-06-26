@@ -23,6 +23,7 @@ export type TaskDefinition = {
   sceneId?: string | null
   mapName: string
   createdAt: string
+  autoTrackEnabled?: boolean | null
   steps: WorkflowStep[]
 }
 

@@ -230,6 +230,7 @@ class PcdSceneDeleteResponse(BaseModel):
     success: bool = Field(..., description="是否删除成功")
     scene_id: str = Field(..., description="场景 ID")
     deleted_path: str = Field(..., description="已删除的场景目录")
+    cleanup: dict[str, Any] | None = Field(default=None, description="关联 JSON 清理摘要")
     message: str = Field(..., description="响应消息")
 
 
@@ -449,6 +450,7 @@ class NavTaskDefinitionDTO(BaseModel):
     sceneId: str | None = Field(default=None, min_length=1)
     mapName: str = Field(..., min_length=1)
     createdAt: str = Field(..., min_length=1)
+    autoTrackEnabled: bool | None = None
     steps: list[NavTaskStepDTO] = Field(default_factory=list)
 
 
@@ -464,6 +466,13 @@ class NavTaskExecuteNavStartDTO(BaseModel):
     success: bool
     topic: str
     data: bool
+
+
+class NavTaskExecuteAutoTrackDTO(BaseModel):
+    requested: bool
+    enabled: bool
+    state: str | None = None
+    message: str | None = None
 
 
 class NavWaypointGoToGoalDTO(BaseModel):
@@ -496,6 +505,7 @@ class NavTaskExecuteResponse(BaseModel):
     data: bool
     nav_start: NavTaskExecuteNavStartDTO
     cmd_vel: dict[str, Any] | None = None
+    auto_track: NavTaskExecuteAutoTrackDTO | None = None
     message: str
     runtime_file: str | None = None
     runtime_task: dict[str, Any] | None = None

@@ -23,6 +23,7 @@ _ground_xyz_cache: dict[tuple[str, float], tuple[Any, Any, Any, dict[tuple[int, 
 
 from .config import settings
 from .logging_config import get_logger
+from .repositories.json_store import read_json
 
 
 pcd_logger = get_logger("场景点云服务")
@@ -261,6 +262,17 @@ def list_pcd_scenes() -> dict[str, Any]:
 
 def delete_pcd_scene(scene_id: str) -> dict[str, Any]:
     scene_path = resolve_scene_path(scene_id)
+    cleanup: dict[str, Any] = {}
+
+    from .services_nav_localization import delete_scene_localization_data
+    from .services_nav_tasks import delete_nav_tasks_for_scene
+    from .services_nav_waypoints import delete_scene_waypoint_data
+
+    cleanup["waypoints"] = delete_scene_waypoint_data(scene_id)
+    cleanup["localization"] = delete_scene_localization_data(scene_id)
+    cleanup["tasks"] = delete_nav_tasks_for_scene(scene_id)
+    cleanup["runtime"] = _delete_scene_runtime_json(scene_id)
+
     pcd_logger.info("准备删除场景目录：{}", scene_path)
     shutil.rmtree(scene_path)
     pcd_logger.info("场景目录已删除：{}", scene_path)
@@ -268,8 +280,30 @@ def delete_pcd_scene(scene_id: str) -> dict[str, Any]:
         "success": True,
         "scene_id": scene_id,
         "deleted_path": str(scene_path),
-        "message": "场景目录已删除",
+        "cleanup": cleanup,
+        "message": "场景目录及关联 JSON 已删除",
     }
+
+
+def _delete_scene_runtime_json(scene_id: str) -> dict[str, Any]:
+    runtime_dir = Path(settings.NAV_RUNTIME_DIR).resolve()
+    deleted_files: list[str] = []
+    runtime_files = {
+        "current_scene.json": ("scene_id",),
+        "current_task.json": ("scene_id", "map_id", "mapId", "sceneId"),
+        "current_goal.json": ("map_id", "mapId", "sceneId"),
+    }
+
+    for filename, fields in runtime_files.items():
+        path = runtime_dir / filename
+        data = read_json(path, None)
+        if not isinstance(data, dict):
+            continue
+        if any(str(data.get(field) or "").strip() == scene_id for field in fields):
+            path.unlink(missing_ok=True)
+            deleted_files.append(str(path))
+
+    return {"deleted_files": deleted_files}
 
 
 def parse_pcd_header(path: Path) -> tuple[dict[str, list[str]], int]:

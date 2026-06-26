@@ -73,6 +73,12 @@ export function executeNavTask(taskId: string): Promise<{
     ready_wait_s?: number
     message?: string
   }
+  auto_track?: {
+    requested: boolean
+    enabled: boolean
+    state: string | null
+    message?: string | null
+  } | null
   message: string
   runtime_file?: string | null
   runtime_task?: Record<string, unknown> | null
@@ -105,6 +111,12 @@ export function deletePcdScene(sceneId: string): Promise<{
   success: boolean
   scene_id: string
   deleted_path: string
+  cleanup?: {
+    waypoints?: { removed_items?: number; deleted_files?: string[]; updated_files?: string[] }
+    localization?: { deleted_files?: string[] }
+    tasks?: { deleted_task_ids?: string[]; removed_count?: number }
+    runtime?: { deleted_files?: string[] }
+  } | null
   message: string
 }> {
   return requestJson(

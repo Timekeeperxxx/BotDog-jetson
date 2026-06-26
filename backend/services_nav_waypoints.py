@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import settings
-from .repositories.json_store import atomic_write_json, read_json, safe_json_path_name
+from .repositories.json_store import atomic_write_json, read_json, safe_json_path_name, stable_json_path_name
 from .services_pcd_maps import resolve_scene_ground_path, snap_xy_to_ground
 
 
@@ -22,15 +22,42 @@ def _store_dir() -> Path:
 
 def _safe_waypoint_file(map_id: str) -> Path:
     resolve_scene_ground_path(map_id)
+    return _store_dir() / f"{stable_json_path_name(map_id)}.json"
+
+
+def _legacy_waypoint_file(map_id: str) -> Path:
     return _store_dir() / f"{safe_json_path_name(map_id)}.json"
 
 
+def _waypoint_files(map_id: str) -> list[Path]:
+    primary = _safe_waypoint_file(map_id)
+    legacy = _legacy_waypoint_file(map_id)
+    return [primary] if primary == legacy else [primary, legacy]
+
+
 def list_waypoints(map_id: str) -> dict[str, Any]:
-    path = _safe_waypoint_file(map_id)
-    data = read_json(path, {"map_id": map_id, "items": []})
-    if not isinstance(data, dict):
-        data = {"map_id": map_id, "items": []}
-    return {"items": data.get("items", [])}
+    items: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for path in _waypoint_files(map_id):
+        data = read_json(path, {"map_id": map_id, "items": []})
+        if not isinstance(data, dict):
+            continue
+        raw_items = data.get("items", [])
+        if not isinstance(raw_items, list):
+            continue
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            item_map_id = str(item.get("map_id") or data.get("map_id") or map_id)
+            if item_map_id != map_id:
+                continue
+            item_id = str(item.get("id") or "")
+            if item_id and item_id in seen_ids:
+                continue
+            if item_id:
+                seen_ids.add(item_id)
+            items.append(item)
+    return {"items": items}
 
 
 def get_waypoint(map_id: str, waypoint_id: str) -> dict[str, Any]:
@@ -45,6 +72,48 @@ def _write_waypoints(map_id: str, items: list[dict[str, Any]]) -> None:
     path = _safe_waypoint_file(map_id)
     payload = {"map_id": map_id, "items": items}
     atomic_write_json(path, payload)
+
+
+def delete_scene_waypoint_data(map_id: str) -> dict[str, Any]:
+    deleted_files: list[str] = []
+    updated_files: list[str] = []
+    removed_items = 0
+
+    for path in _waypoint_files(map_id):
+        if not path.exists():
+            continue
+        data = read_json(path, None)
+        if not isinstance(data, dict):
+            path.unlink(missing_ok=True)
+            deleted_files.append(str(path))
+            continue
+
+        raw_items = data.get("items", [])
+        if not isinstance(raw_items, list):
+            raw_items = []
+
+        keep_items: list[dict[str, Any]] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            item_map_id = str(item.get("map_id") or data.get("map_id") or "")
+            if item_map_id == map_id:
+                removed_items += 1
+            else:
+                keep_items.append(item)
+
+        if keep_items:
+            atomic_write_json(path, {"map_id": data.get("map_id") or map_id, "items": keep_items})
+            updated_files.append(str(path))
+        else:
+            path.unlink(missing_ok=True)
+            deleted_files.append(str(path))
+
+    return {
+        "deleted_files": deleted_files,
+        "updated_files": updated_files,
+        "removed_items": removed_items,
+    }
 
 
 def create_waypoint(map_id: str, payload: dict[str, Any]) -> dict[str, Any]:

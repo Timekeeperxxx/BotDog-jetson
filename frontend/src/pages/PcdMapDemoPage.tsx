@@ -587,8 +587,10 @@ export function PcdMapDemoPage() {
   const handleDeleteScene = useCallback(async () => {
     if (!sceneDeleteConfirm) return
     try {
-      await deletePcdScene(sceneDeleteConfirm.id)
-      addLog(`已删除场景文件夹 ${sceneDeleteConfirm.id}`)
+      const result = await deletePcdScene(sceneDeleteConfirm.id)
+      const removedTasks = result.cleanup?.tasks?.removed_count ?? 0
+      const removedWaypoints = result.cleanup?.waypoints?.removed_items ?? 0
+      addLog(`已删除场景文件夹 ${sceneDeleteConfirm.id}，清理导航点 ${removedWaypoints} 个，任务 ${removedTasks} 个`)
       setSceneDeleteConfirm(null)
       await refreshScenes()
     } catch (error) {
@@ -1076,7 +1078,12 @@ export function PcdMapDemoPage() {
           timestamp: Date.now() / 1000,
         },
       })
-      addLog(`已执行导航任务 ${task.name}，已发布 ${result.topic}=true`)
+      const autoTrackText = result.auto_track?.requested
+        ? result.auto_track.enabled
+          ? `AI跟踪=${result.auto_track.state || '已启动'}`
+          : `AI跟踪=未启动(${result.auto_track.message || '服务未启用'})`
+        : 'AI跟踪=未开启'
+      addLog(`已执行导航任务 ${task.name}，已发布 ${result.topic}=true，${autoTrackText}`)
     } catch (error) {
       addLog(error instanceof Error ? error.message : '执行导航任务失败', 'error')
     }

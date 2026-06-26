@@ -14,7 +14,7 @@ from typing import Any
 from .config import settings
 from .logging_config import get_logger
 from .nav_bridge_state import get_ros_nav_bridge
-from .services_nav_state import clear_robot_pose, get_robot_pose
+from .services_nav_state import clear_global_path, clear_robot_pose, get_robot_pose, set_navigation_idle
 from .services_nav_localization import stop_cmd_vel_script, stop_navigation_processes
 from .services_nav_waypoints import upsert_origin_waypoint
 
@@ -447,6 +447,8 @@ class MappingService:
             nav_stop_result = stop_navigation_processes()
             cmd_vel_stop_result = stop_cmd_vel_script()
             clear_robot_pose()
+            clear_global_path()
+            set_navigation_idle("开始建图，导航状态已重置")
             mapping_logger.info(
                 "导航后台进程停止结果：nav_pids={} cmd_vel_pid={}",
                 nav_stop_result.get("pids"),

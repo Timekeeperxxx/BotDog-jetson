@@ -12,7 +12,7 @@ from typing import Any
 
 from .config import settings
 from .logging_config import get_logger, trim_log_file_tail
-from .repositories.json_store import atomic_write_json, read_json, safe_json_path_name
+from .repositories.json_store import atomic_write_json, read_json, safe_json_path_name, stable_json_path_name
 from .services_pcd_maps import find_scene_pcd_files, resolve_scene_ground_path, resolve_scene_path, snap_xy_to_ground
 
 
@@ -318,7 +318,30 @@ def _pump_restart_output(proc: subprocess.Popen[str], log_path: Path) -> None:
 
 def _safe_pose_file(map_id: str) -> Path:
     resolve_scene_ground_path(map_id)
+    return _store_dir() / f"{stable_json_path_name(map_id)}.json"
+
+
+def _legacy_pose_file(map_id: str) -> Path:
     return _store_dir() / f"{safe_json_path_name(map_id)}.json"
+
+
+def _pose_files(map_id: str) -> list[Path]:
+    primary = _safe_pose_file(map_id)
+    legacy = _legacy_pose_file(map_id)
+    return [primary] if primary == legacy else [primary, legacy]
+
+
+def delete_scene_localization_data(map_id: str) -> dict[str, Any]:
+    deleted_files: list[str] = []
+    for path in _pose_files(map_id):
+        if not path.exists():
+            continue
+        data = read_json(path, None)
+        if not isinstance(data, dict) or str(data.get("map_id") or "") == map_id:
+            path.unlink(missing_ok=True)
+            deleted_files.append(str(path))
+
+    return {"deleted_files": deleted_files}
 
 
 def save_localization_pose(payload: dict[str, Any]) -> dict[str, Any]:

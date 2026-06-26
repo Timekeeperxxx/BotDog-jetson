@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import json
 import struct
 from pathlib import Path
 
 import pytest
 
 from backend import services_pcd_maps as pcd_services
+from backend.services_nav_localization import save_localization_pose
+from backend.services_nav_tasks import list_nav_tasks, save_nav_task
 from backend.services_nav_waypoints import create_waypoint
 
 
@@ -277,3 +280,81 @@ def test_create_waypoint_uses_payload_z_without_scanning_ground_file(monkeypatch
     assert waypoint["x"] == 1.0
     assert waypoint["y"] == 2.0
     assert waypoint["z"] == pytest.approx(9.87)
+
+
+def test_delete_scene_removes_related_json_without_deleting_collided_waypoints(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    waypoint_root = tmp_path / "waypoints"
+    localization_root = tmp_path / "localization"
+    task_root = tmp_path / "tasks"
+    runtime_root = tmp_path / "runtime"
+    scene_root.mkdir()
+
+    scene_id = "Scene20_楚峰国际"
+    other_scene_id = "Scene20_办公楼建图"
+    scene = scene_root / scene_id
+    scene.mkdir()
+    write_ascii_pcd(scene / "map.pcd", [(0.0, 0.0, 0.0)])
+    write_ascii_pcd(scene / "ground.pcd", [(0.0, 0.0, -0.8)])
+
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr(pcd_services.settings, "NAV_RUNTIME_DIR", str(runtime_root))
+    monkeypatch.setattr("backend.services_nav_waypoints.settings.SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr("backend.services_nav_waypoints.settings.NAV_WAYPOINT_STORE_DIR", str(waypoint_root))
+    monkeypatch.setattr("backend.services_nav_localization.settings.SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr("backend.services_nav_localization.settings.NAV_LOCALIZATION_STORE_DIR", str(localization_root))
+    monkeypatch.setattr("backend.services_nav_tasks.settings.NAV_TASK_STORE_DIR", str(task_root))
+
+    created_waypoint = create_waypoint(
+        scene_id,
+        {"name": "巡检点1", "x": 0.0, "y": 0.0, "z": -0.8, "yaw": 0.0, "frame_id": "map"},
+    )
+    save_localization_pose({"map_id": scene_id, "x": 0.0, "y": 0.0, "z": -0.8, "yaw": 0.0, "frame_id": "map"})
+    save_nav_task({
+        "id": "task-scene20-target",
+        "name": "目标场景任务",
+        "mapId": scene_id,
+        "sceneId": scene_id,
+        "mapName": scene_id,
+        "createdAt": "2026-06-25T00:00:00.000Z",
+        "steps": [{"type": "navigate_waypoint", "waypointId": created_waypoint["id"]}],
+    })
+    save_nav_task({
+        "id": "task-scene20-other",
+        "name": "其他场景任务",
+        "mapId": other_scene_id,
+        "sceneId": other_scene_id,
+        "mapName": other_scene_id,
+        "createdAt": "2026-06-25T00:00:00.000Z",
+        "steps": [],
+    })
+
+    waypoint_root.mkdir(parents=True, exist_ok=True)
+    legacy_waypoint_file = waypoint_root / "Scene20.json"
+    legacy_waypoint_file.write_text(json.dumps({
+        "map_id": scene_id,
+        "items": [
+            {"id": "legacy-target", "map_id": scene_id, "name": "旧目标点"},
+            {"id": "legacy-other", "map_id": other_scene_id, "name": "旧其他点"},
+        ],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    (runtime_root / "current_scene.json").write_text(json.dumps({"scene_id": scene_id}), encoding="utf-8")
+    (runtime_root / "current_goal.json").write_text(json.dumps({"map_id": scene_id}), encoding="utf-8")
+
+    result = pcd_services.delete_pcd_scene(scene_id)
+
+    assert result["success"] is True
+    assert not scene.exists()
+    assert result["cleanup"]["waypoints"]["removed_items"] == 2
+    assert result["cleanup"]["tasks"]["deleted_task_ids"] == ["task-scene20-target"]
+    assert len(result["cleanup"]["localization"]["deleted_files"]) == 1
+    assert sorted(Path(path).name for path in result["cleanup"]["runtime"]["deleted_files"]) == [
+        "current_goal.json",
+        "current_scene.json",
+    ]
+
+    legacy_data = json.loads(legacy_waypoint_file.read_text(encoding="utf-8"))
+    assert legacy_data["items"] == [{"id": "legacy-other", "map_id": other_scene_id, "name": "旧其他点"}]
+    assert [task["id"] for task in list_nav_tasks()["items"]] == ["task-scene20-other"]

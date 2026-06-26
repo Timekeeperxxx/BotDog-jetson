@@ -72,9 +72,21 @@ def _release_navigation_control() -> None:
         coordinator.release_navigation_control()
 
 
-def _ensure_auto_track_enabled_for_navigation() -> None:
-    if not settings.NAV_AUTO_TRACK_DURING_NAV_ENABLED or not settings.NAV_AUTO_TRACK_AUTO_ENABLE:
-        return
+def _task_auto_track_requested(task: dict) -> bool:
+    value = task.get("autoTrackEnabled")
+    if value is not None:
+        return bool(value)
+    return bool(settings.NAV_AUTO_TRACK_DURING_NAV_ENABLED and settings.NAV_AUTO_TRACK_AUTO_ENABLE)
+
+
+def _ensure_auto_track_enabled_for_navigation(task: dict) -> dict:
+    if not _task_auto_track_requested(task):
+        return {
+            "requested": False,
+            "enabled": False,
+            "state": None,
+            "message": "导航跟踪联动未开启",
+        }
 
     from ...auto_track_service import get_auto_track_service
     from ...control_arbiter import get_control_arbiter
@@ -89,11 +101,28 @@ def _ensure_auto_track_enabled_for_navigation() -> None:
         guard_mission.enabled = False
 
     auto_track = get_auto_track_service()
-    if auto_track is not None:
-        if not auto_track.get_status().get("enabled"):
-            auto_track.enable()
-        if hasattr(auto_track, "resume"):
-            auto_track.resume()
+    if auto_track is None:
+        return {
+            "requested": True,
+            "enabled": False,
+            "state": None,
+            "message": "自动跟踪服务未初始化",
+        }
+
+    if hasattr(auto_track, "enable_for_navigation"):
+        auto_track.enable_for_navigation()
+    else:
+        auto_track.enable()
+    if hasattr(auto_track, "resume"):
+        auto_track.resume()
+
+    status = auto_track.get_status()
+    return {
+        "requested": True,
+        "enabled": bool(status.get("enabled")),
+        "state": status.get("state"),
+        "message": "导航跟踪联动已启用，AI 检测将随任务启动",
+    }
 
 
 @router.get("/auto-track-mode")
@@ -156,7 +185,10 @@ async def nav_set_auto_track_mode(
             guard_mission = get_guard_mission_service()
             if guard_mission is not None and guard_mission.enabled:
                 guard_mission.enabled = False
-            auto_track.enable()
+            if hasattr(auto_track, "enable_for_navigation"):
+                auto_track.enable_for_navigation()
+            else:
+                auto_track.enable()
             if hasattr(auto_track, "resume"):
                 auto_track.resume()
         elif not body.enabled:
@@ -261,7 +293,7 @@ async def nav_execute_task(
         _ensure_localization_ready_for_navigation()
         _ensure_navigation_runtime_ready()
         cmd_vel_result = start_cmd_vel_script()
-        _ensure_auto_track_enabled_for_navigation()
+        auto_track_result = _ensure_auto_track_enabled_for_navigation(task)
         _request_navigation_control()
         try:
             nav_start_result = bridge.publish_navigation_start(True)
@@ -294,7 +326,9 @@ async def nav_execute_task(
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.task.execute "
             f"目标={task_id} 结果=success topic={nav_start_result['topic']} "
-            f"cmd_vel_pid={cmd_vel_result.get('pid')}"
+            f"cmd_vel_pid={cmd_vel_result.get('pid')} "
+            f"auto_track_requested={auto_track_result.get('requested')} "
+            f"auto_track_enabled={auto_track_result.get('enabled')}"
         ),
     )
     return {
@@ -307,6 +341,7 @@ async def nav_execute_task(
         "message": "已发布导航启动信号并生成任务运行时文件",
         "runtime_file": runtime_result["runtime_file"],
         "runtime_task": runtime_result["runtime_task"],
+        "auto_track": auto_track_result,
     }
 
 
