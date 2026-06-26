@@ -49,6 +49,7 @@ class FollowDecisionEngine:
         """
         self._yaw_deadband_px = yaw_deadband_px
         self._forward_area_ratio = forward_area_ratio
+        self._resume_area_ratio = forward_area_ratio * 0.85
         self._anchor_y_stop_ratio = anchor_y_stop_ratio
         self._command_interval_s = command_interval_ms / 1000.0
         self._direction_debounce_frames = direction_debounce_frames
@@ -58,6 +59,8 @@ class FollowDecisionEngine:
         self._last_sent_command: Optional[str] = None
         self._pending_command: Optional[str] = None
         self._pending_count: int = 0
+        self._distance_hold: bool = False
+        self._distance_stop_confirmed: bool = False
 
     def decide(
         self,
@@ -81,30 +84,43 @@ class FollowDecisionEngine:
         target_cy = (y1 + y2) // 2  # noqa: F841（暂未使用）
         image_cx = image_width // 2
 
-        anchor_y = y2  # 底部中心纵向坐标
-
         # ── 计算水平偏差 ──────────────────────────────────────────────────
         err_x = target_cx - image_cx
         bbox_area = (x2 - x1) * (y2 - y1)
         frame_area = image_width * image_height
         area_ratio = bbox_area / frame_area if frame_area > 0 else 0.0
+        if area_ratio >= self._forward_area_ratio:
+            self._distance_hold = True
+        elif self._distance_hold and area_ratio <= self._resume_area_ratio:
+            self._distance_hold = False
+            self._distance_stop_confirmed = False
 
         # ── 生成候选命令 ──────────────────────────────────────────────────
-        if abs(err_x) > self._yaw_deadband_px:
+        # 面积达到近距离阈值后，第一帧必须先 stop，确保前进速度归零。
+        # stop 生效后仍可继续 left/right 原地转向，让目标回到画面中心。
+        if self._distance_hold:
+            if area_ratio >= self._forward_area_ratio:
+                distance_reason = f"目标面积达标（{area_ratio:.3f} >= {self._forward_area_ratio}）"
+            else:
+                distance_reason = (
+                    f"目标处于近距离保持区（{area_ratio:.3f} > 恢复阈值 {self._resume_area_ratio:.3f}）"
+                )
+            if not self._distance_stop_confirmed:
+                raw_cmd = "stop"
+                reason = f"{distance_reason}，先停止前进"
+            elif abs(err_x) > self._yaw_deadband_px:
+                raw_cmd = "left" if err_x < 0 else "right"
+                reason = f"{distance_reason}，原地转向修正水平偏差 err_x={err_x}px"
+            else:
+                raw_cmd = "stop"
+                reason = f"{distance_reason}，保持停止"
+        elif abs(err_x) > self._yaw_deadband_px:
             # 目标偏左/右，转向
             raw_cmd = "left" if err_x < 0 else "right"
             reason = f"水平偏差 err_x={err_x}px（死区={self._yaw_deadband_px}px）"
-        elif area_ratio < self._forward_area_ratio:
-            # 只要面积不够，就强制向前走（无视底部锚点防撞线）
+        else:
             raw_cmd = "forward"
             reason = f"目标面积较小（{area_ratio:.3f} < {self._forward_area_ratio}），继续前进"
-        else:
-            # 目标面积达标后，再结合锚点检查
-            raw_cmd = "stop"
-            if anchor_y > image_height * self._anchor_y_stop_ratio:
-                reason = f"面积已达标（{area_ratio:.3f}），且锚点触底（{anchor_y} > 阈值），停止"
-            else:
-                reason = f"目标面积已达标（{area_ratio:.3f}），保持距离"
 
         # ── 方向防抖 ──────────────────────────────────────────────────────
         # 对于 left/right 切换，连续相同命令才真正下发
@@ -141,6 +157,8 @@ class FollowDecisionEngine:
         # ── 允许下发 ──────────────────────────────────────────────────────
         self._last_sent_time = now
         self._last_sent_command = raw_cmd
+        if self._distance_hold and raw_cmd == "stop":
+            self._distance_stop_confirmed = True
         return TrackDecision(command=raw_cmd, should_send=True, reason=reason)
 
     def reset(self) -> None:
@@ -149,3 +167,5 @@ class FollowDecisionEngine:
         self._last_sent_command = None
         self._pending_command = None
         self._pending_count = 0
+        self._distance_hold = False
+        self._distance_stop_confirmed = False

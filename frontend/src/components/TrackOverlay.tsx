@@ -1,11 +1,21 @@
 import { useEffect, useRef, useCallback } from 'react';
 
 export interface TrackOverlayData {
+  detections?: {
+    bbox: number[];
+    conf: number;
+    class_name?: string;
+    track_id?: number;
+    is_stranger?: boolean | null;
+    safety_status?: string | null;
+  }[];
   persons: {
     bbox: number[]; // [x1, y1, x2, y2]
     conf: number;
+    class_name?: string;
     track_id?: number;
     is_stranger?: boolean;
+    safety_status?: string | null;
   }[];
   active_bbox: number[] | null;
   zone_bbox?: number[] | null; // 防区 bounding box [x1,y1,x2,y2]
@@ -122,36 +132,67 @@ export function TrackOverlay({ data, videoRef }: Props) {
     ctx.fillText(`停止线 y=${Math.round(stopY)}`, 6, stopY - 4);
     ctx.restore();
 
-    // ─── 3. 所有检测到的 person ─────────────────────────────
-    for (const p of data.persons) {
+    const overlayDetections = data.detections?.length
+      ? data.detections
+      : data.persons.map((p) => ({ ...p, class_name: p.class_name || 'person' }));
+
+    const colorForClass = (className: string, isStranger?: boolean | null, safetyStatus?: string | null) => {
+      if (className === 'person') {
+        if (safetyStatus === 'no_helmet') {
+          return {
+            box: 'rgba(255,45,45,0.95)',
+            label: 'rgba(160,20,20,0.94)',
+          };
+        }
+        const isKnown = isStranger === false;
+        return {
+          box: isKnown ? 'rgba(0,220,120,0.85)' : 'rgba(255,100,0,0.9)',
+          label: isKnown ? 'rgba(0,100,50,0.9)' : 'rgba(150,40,0,0.9)',
+        };
+      }
+      if (className === 'head') {
+        return { box: 'rgba(70,170,255,0.9)', label: 'rgba(20,80,150,0.92)' };
+      }
+      if (className === 'helmet') {
+        return { box: 'rgba(255,220,40,0.95)', label: 'rgba(150,120,0,0.92)' };
+      }
+      return { box: 'rgba(220,220,220,0.85)', label: 'rgba(80,80,80,0.92)' };
+    };
+
+    // ─── 3. 所有 YOLO 检测框：person / head / helmet ───────────────
+    for (const p of overlayDetections) {
       if (!Array.isArray(p.bbox) || p.bbox.length !== 4) continue;
 
       const { rx, ry, rw, rh, y2 } = mapRect(p.bbox);
       const bottomY = mapY(y2);
-
-      const isKnown = p.is_stranger === false;
-      const boxColor = isKnown ? 'rgba(0,220,120,0.8)' : 'rgba(255,100,0,0.8)';
-      const labelColor = isKnown ? 'rgba(0,100,50,0.8)' : 'rgba(150,40,0,0.8)';
+      const className = p.class_name || 'person';
+      const colors = colorForClass(className, p.is_stranger, p.safety_status);
 
       ctx.save();
 
-      ctx.strokeStyle = boxColor;
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = colors.box;
+      ctx.lineWidth = className === 'person' ? 1.8 : 1.5;
       ctx.strokeRect(rx, ry, rw, rh);
 
-      const headerText = `ID:${p.track_id !== undefined ? p.track_id : '?'} | ${(p.conf * 100).toFixed(0)}%`;
-      ctx.fillStyle = labelColor;
-      ctx.fillRect(rx, ry - 14, 88, 14);
-      ctx.fillStyle = '#fff';
+      const idPart = p.track_id !== undefined && p.track_id >= 0 ? ` #${p.track_id}` : '';
+      const headerText = `${className}${idPart} ${(p.conf * 100).toFixed(0)}%`;
       ctx.font = 'bold 10px monospace';
-      ctx.fillText(headerText, rx + 4, ry - 3);
+      const headerWidth = Math.max(ctx.measureText(headerText).width + 10, 64);
+      ctx.fillStyle = colors.label;
+      ctx.fillRect(rx, ry - 16, headerWidth, 16);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(headerText, rx + 5, ry - 4);
 
-      if (p.is_stranger !== undefined) {
-        const tagText = p.is_stranger ? 'STRANGER' : 'KNOWN';
+      if (className === 'person' && (p.safety_status === 'no_helmet' || (p.is_stranger !== undefined && p.is_stranger !== null))) {
+        const tagText = p.safety_status === 'no_helmet'
+          ? 'NO_HELMET'
+          : (p.is_stranger ? 'STRANGER' : 'KNOWN');
         const w = ctx.measureText(tagText).width + 8;
-        ctx.fillStyle = p.is_stranger
+        ctx.fillStyle = p.safety_status === 'no_helmet'
+          ? 'rgba(230,0,0,0.9)'
+          : (p.is_stranger
           ? 'rgba(220,0,0,0.85)'
-          : 'rgba(0,180,80,0.85)';
+          : 'rgba(0,180,80,0.85)');
         ctx.fillRect(rx, bottomY, w, 14);
         ctx.fillStyle = '#fff';
         ctx.fillText(tagText, rx + 4, bottomY + 10);
@@ -315,7 +356,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
 
       ctx.fillStyle = '#aaa';
       ctx.font = '10px monospace';
-      ctx.fillText(`状态: ${stateText} | 人数: ${data.persons.length}`, 10, ch - 36);
+      ctx.fillText(`状态: ${stateText} | 目标: ${overlayDetections.length} 人: ${data.persons.length}`, 10, ch - 36);
 
       if (cmdText) {
         ctx.fillStyle = '#fff';

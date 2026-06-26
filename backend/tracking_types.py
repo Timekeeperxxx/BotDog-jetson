@@ -55,6 +55,7 @@ class TrackStopReason(str, Enum):
     E_STOP         = "E_STOP"         # 急停
     VIDEO_LOST     = "VIDEO_LOST"     # 视频流断开
     MARKED_KNOWN   = "MARKED_KNOWN"   # 目标被标记为已知人员
+    HELMET_CONFIRMED = "HELMET_CONFIRMED"  # 跟踪目标连续识别到安全帽
 
 
 class ControlOwner(str, Enum):
@@ -143,6 +144,7 @@ class ActiveTarget:
     lost_count: int = 0                           # 连续未检测到帧数
     follow_started_at: Optional[float] = None     # 开始跟踪的时刻（与 locked_at 相同）
     out_of_zone_count: int = 0                    # 连续出区帧计数
+    helmet_hits: int = 0                          # 连续识别到 helmet+person 的帧数
 
 
 @dataclass

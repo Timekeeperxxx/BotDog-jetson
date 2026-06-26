@@ -594,13 +594,23 @@ class GuardMissionService:
                 "msg_type": "TRACK_OVERLAY",
                 "timestamp": utc_now_iso(),
                 "payload": {
+                    "detections": [
+                        {
+                            "bbox": list(d.bbox),
+                            "conf": round(d.confidence, 2),
+                            "class_name": d.class_name,
+                            "track_id": d.track_id,
+                        }
+                        for d in detections
+                    ],
                     "persons": [
                         {
                             "bbox": list(d.bbox),
                             "conf": round(d.confidence, 2),
+                            "class_name": d.class_name,
                             "track_id": d.track_id
                         }
-                        for d in detections
+                        for d in persons
                     ],
                     "active_bbox": active_bbox,
                     "zone_bbox": zone_bbox,

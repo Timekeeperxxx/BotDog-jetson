@@ -23,22 +23,22 @@ class Settings(BaseSettings):
     """
 
     # 基础网络配置
-    BACKEND_HOST: str = "0.0.0.0"
+    BACKEND_HOST: str = '0.0.0.0'
     BACKEND_PORT: int = 8000
 
     # MAVLink / 数据库
-    MAVLINK_ENDPOINT: str = "udp:127.0.0.1:14550"
-    DATABASE_URL: AnyUrl | str = "sqlite+aiosqlite:///./data/botdog.db"
+    MAVLINK_ENDPOINT: str = 'udp:127.0.0.1:14550'
+    DATABASE_URL: AnyUrl | str = 'sqlite+aiosqlite:///./data/botdog.db'
 
     # 安全配置
-    JWT_SECRET: str = "please_change_me"
+    JWT_SECRET: str = 'please_change_me_to_a_random_string'
     AUTH_ENABLED: bool = True
-    AUTH_ADMIN_USERNAME: str = "admin"
-    AUTH_ADMIN_PASSWORD: str = "please_change_me"
+    AUTH_ADMIN_USERNAME: str = 'admin'
+    AUTH_ADMIN_PASSWORD: str = 'admin123'
     JWT_EXPIRE_MINUTES: int = 720
 
     # CORS 配置
-    CORS_ALLOW_ORIGINS: list[str] = ["*"]
+    CORS_ALLOW_ORIGINS: list[str] = ['*']
     CORS_ALLOW_CREDENTIALS: bool = False
 
     # 本地模拟数据 Worker 控制（默认保持当前启用行为）
@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # MAVLink 数据源选择（mavlink|simulation）
     # - mavlink: 使用真实 MAVLink 端口
     # - simulation: 使用模拟数据生成器
-    MAVLINK_SOURCE: str = "simulation"
+    MAVLINK_SOURCE: str = 'simulation'
 
     # 配置矩阵中的关键参数（只列当前阶段会用到的）
     HEARTBEAT_TIMEOUT: float = 3.0  # heartbeat_timeout
@@ -55,85 +55,88 @@ class Settings(BaseSettings):
     TELEMETRY_BROADCAST_HZ: float = 15.0  # 遥测广播频率（Hz）
 
     # 阶段 4：AI 告警配置
-    THERMAL_THRESHOLD: float = 60.0  # 温度阈值（°C）
+    THERMAL_THRESHOLD: float = 80.0  # 温度阈值（°C）
 
     # 阶段 5：旁路 AI 识别与抓拍
     AI_ENABLED: bool = True
-    AI_RTSP_URL: str = "rtsp://127.0.0.1:8554/cam"
-    AI_FRAME_WIDTH: int = 1920
-    AI_FRAME_HEIGHT: int = 1080
+    AI_RTSP_URL: str = 'rtsp://127.0.0.1:8554/cam'
+    AI_FRAME_WIDTH: int = 1280
+    AI_FRAME_HEIGHT: int = 720
     AI_FPS: int = 10
     AI_FFMPEG_RETRY_MIN_SECONDS: float = 1.0
     AI_FFMPEG_RETRY_MAX_SECONDS: float = 3.0
-    AI_PATROL_SKIP: int = 5  # 巡逻态跳帧（10fps / 5 = 2fps 推理）
+    AI_PATROL_SKIP: int = 2  # 巡逻态跳帧（10fps / 5 = 2fps 推理）
     AI_SUSPECT_SKIP: int = 1  # 疑似目标全速推理
-    AI_STABLE_HITS: int = 3  # 连续命中阈值
-    AI_RESET_MISSES: int = 3  # 连续未命中重置阈值
-    AI_COOLDOWN_SECONDS: float = 30.0  # 冷却时间
+    AI_STABLE_HITS: int = 5  # 连续命中阈值
+    AI_RESET_MISSES: int = 20  # 连续未命中重置阈值
+    AI_COOLDOWN_SECONDS: float = 5.0  # 冷却时间
     AI_SIMULATE_DETECTION: bool = False
     AI_SIMULATE_PROB: float = 0.02
-    AI_DEVICE: str = "auto"  # auto / cpu / cuda / cuda:0
-    AI_MODEL_PATH: str = "models/yolov8n.pt"  # YOLO 模型路径
-    AI_CONFIDENCE_THRESHOLD: float = 0.5  # 推理置信度阈值
-    AI_TARGET_CLASSES: list[str] = ["person"]  # 目标类别
-    AI_USE_BYTETRACK: bool = True
+    AI_DEVICE: str = 'auto'  # auto / cpu / cuda / cuda:0
+    AI_MODEL_PATH: str = 'models/helmet.engine'  # YOLO 模型路径
+    AI_CONFIDENCE_THRESHOLD: float = 0.4  # 推理置信度阈值
+    AI_TARGET_CLASSES: list[str] = ['person', 'head', 'helmet']  # 目标类别
+    AI_USE_BYTETRACK: bool = False
+    # 是否在普通巡检/session 运行时启用旧的被动 AI 告警。
+    # 关闭后，AI 只在自动跟踪或驱离模式需要视觉结果时拉流推理，避免抢占主视频链路。
+    AI_PASSIVE_SESSION_DETECTION_ENABLED: bool = False
 
     # 抓拍存储目录（用于 /api/v1/static）
-    SNAPSHOT_DIR: str = "data/snapshots"
+    SNAPSHOT_DIR: str = 'data/snapshots'
 
     # 录像存储目录（用于 /api/v1/static/recordings）
     RECORDING_DIR: str = "data/recordings"
 
     # ==================== 导航巡逻 / PCD 点云地图 Demo ====================
-    PCD_MAP_ROOT: str = "/home/jetson/superlio/Super-LIO/src/super_lio/map"
-    SCENE_MAP_ROOT: str = "/home/jetson/Project/BOTDOG/MAPS"
-    PCD_FRAME_ID: str = "map"
+    PCD_MAP_ROOT: str = '/home/jetson/superlio/Super-LIO/src/super_lio/map'
+    SCENE_MAP_ROOT: str = '/home/jetson/Project/BOTDOG/MAPS'
+    PCD_FRAME_ID: str = 'map'
     PCD_PREVIEW_DEFAULT_POINTS: int = 100000
     PCD_PREVIEW_MAX_POINTS: int = 200000
-    NAV_WAYPOINT_STORE_DIR: str = "./data/nav_waypoints"
-    NAV_LOCALIZATION_STORE_DIR: str = "./data/nav_localization"
-    NAV_RUNTIME_DIR: str = "./data/nav_runtime"
-    NAV_TASK_STORE_DIR: str = "./data/nav_tasks"
+    NAV_WAYPOINT_STORE_DIR: str = './data/nav_waypoints'
+    NAV_LOCALIZATION_STORE_DIR: str = './data/nav_localization'
+    NAV_RUNTIME_DIR: str = './data/nav_runtime'
+    NAV_TASK_STORE_DIR: str = './data/nav_tasks'
     NAV_WAYPOINT_GROUND_SNAP_MAX_DISTANCE_M: float = 1.0
     NAV_WAYPOINT_GROUND_SNAP_NEIGHBORS: int = 24
     # 建图保存成功后自动创建/更新“原点”导航点。
     # 优先使用建图启动后捕获到的初始 TF/位姿；读不到时用这里的 z/yaw 兜底。
     NAV_ORIGIN_WAYPOINT_Z: float = -0.83
     NAV_ORIGIN_WAYPOINT_YAW: float = 0.0
-    NAV_AUTO_TRACK_DURING_NAV_ENABLED: bool = True
-    NAV_AUTO_TRACK_AUTO_ENABLE: bool = True
+    NAV_AUTO_TRACK_DURING_NAV_ENABLED: bool = False
+    NAV_AUTO_TRACK_AUTO_ENABLE: bool = False
     NAV_AUTO_TRACK_RESUME_TIMEOUT_S: float = 3.0
     NAV_AUTO_TRACK_REQUIRE_FRESH_TF: bool = True
     NAV_CONTROL_GATEWAY_ENABLED: bool = True
 
     # ==================== ROS2 导航状态订阅转发 ====================
     ROS_NAV_ENABLED: bool = True
-    ROS_NAV_POSE_TOPIC: str = "/amcl_pose"
-    ROS_NAV_POSE_TYPE: str = "TF"
-    ROS_NAV_FRAME_ID: str = "map"
-    ROS_NAV_BASE_FRAME_ID: str = "base_footprint"
+    ROS_NAV_POSE_TOPIC: str = '/amcl_pose'
+    ROS_NAV_POSE_TYPE: str = 'TF'
+    ROS_NAV_FRAME_ID: str = 'map'
+    ROS_NAV_BASE_FRAME_ID: str = 'base_footprint'
     ROS_NAV_BROADCAST_HZ: float = 10.0
-    ROS_NAV_PAGE_OPEN_TOPIC: str = "/lidar_start"
-    ROS_NAV_START_TOPIC: str = "/nav_start"
-    ROS_NAV_GOAL_TOPIC: str = "/goal_pose"
-    ROS_NAV_GOAL_XYZ_TOPIC: str = "/clicked_point"
-    ROS_NAV_GOAL_YAW_TOPIC: str = "goal_yaw"
+    ROS_NAV_PAGE_OPEN_TOPIC: str = '/lidar_start'
+    ROS_NAV_START_TOPIC: str = '/nav_start'
+    ROS_NAV_GOAL_TOPIC: str = '/goal_pose'
+    ROS_NAV_GOAL_XYZ_TOPIC: str = '/clicked_point'
+    ROS_NAV_GOAL_YAW_TOPIC: str = 'goal_yaw'
     # global_planner 对 clicked_point 先做 3D 半径搜索；当前源码中的向下搜索不会产出有效目标。
     # 默认保持真实 ground z，不抬高目标点，避免把原本可规划的点排除在 0.5m 搜索半径外。
     ROS_NAV_GOAL_Z_SEARCH_OFFSET_M: float = 0.0
-    ROS_NAV_GLOBAL_PATH_TOPIC: str = "/global_path"
-    ROS_NAV_STOP_TOPIC: str = "/nav_stop"
-    ROS_NAV_INITIAL_POSE_TOPIC: str = "/initialpose"
+    ROS_NAV_GLOBAL_PATH_TOPIC: str = '/global_path'
+    ROS_NAV_STOP_TOPIC: str = '/nav_stop'
+    ROS_NAV_INITIAL_POSE_TOPIC: str = '/initialpose'
     ROS_NAV_MAPPING_CLOUD_FORWARD_ENABLED: bool = True
-    ROS_NAV_MAPPING_CLOUD_TOPIC: str = "/cloud_world"
-    ROS_NAV_MAPPING_TOPIC: str = "/mapping_start"
-    ROS_NAV_STATUS_TOPIC: str = "/nav_status"
+    ROS_NAV_MAPPING_CLOUD_TOPIC: str = '/lio/cloud_world'
+    ROS_NAV_MAPPING_TOPIC: str = '/mapping_start'
+    ROS_NAV_STATUS_TOPIC: str = '/nav_status'
 
     # 阶段 6：网页控制服务配置
     # 适配器类型：simulation（仅打印日志）| mavlink（真实硬件）
-    CONTROL_ADAPTER_TYPE: str = "simulation"
+    CONTROL_ADAPTER_TYPE: str = 'unitree_b2'
     # Watchdog 超时（ms）：超过此时间未收到命令自动执行 stop
-    CONTROL_WATCHDOG_TIMEOUT_MS: int = 500
+    CONTROL_WATCHDOG_TIMEOUT_MS: int = 1500
     # 最小命令间隔（ms）：防止前端过快发命令（stop 命令跳过此限制）
     CONTROL_CMD_RATE_LIMIT_MS: int = 50
     # SafetySupervisor 是否在底层 DISCONNECTED 时阻止运动命令。
@@ -142,41 +145,41 @@ class Settings(BaseSettings):
 
     # ==================== 黄色区域识别参数 ====================
     # HSV 色调范围（OpenCV H: 0-180，纯黄约 25-35）
-    ZONE_YELLOW_H_LOW: int = 15
-    ZONE_YELLOW_H_HIGH: int = 40
+    ZONE_YELLOW_H_LOW: int = 14
+    ZONE_YELLOW_H_HIGH: int = 42
     # 饱和度范围（越高越排除灰白色）
-    ZONE_YELLOW_S_LOW: int = 80
-    ZONE_YELLOW_S_HIGH: int = 255
+    ZONE_YELLOW_S_LOW: int = 25
+    ZONE_YELLOW_S_HIGH: int = 220
     # 亮度范围（越高越排除暗色/阴影）
-    ZONE_YELLOW_V_LOW: int = 120
+    ZONE_YELLOW_V_LOW: int = 95
     ZONE_YELLOW_V_HIGH: int = 255
     # 黑边验证：外扩环形区域 V 通道 10th percentile 低于此值才算有黑边
-    ZONE_BORDER_V_THRESHOLD: int = 40
+    ZONE_BORDER_V_THRESHOLD: int = 70
     # 外扩采样像素宽度（只采紧邻黄色区域的黑边本身，不延伸到地毯）
-    ZONE_BORDER_EXPAND_PX: int = 3
+    ZONE_BORDER_EXPAND_PX: int = 1
     # 面积约束
-    ZONE_MIN_AREA_PX: int = 800
-    ZONE_MAX_AREA_RATIO: float = 0.50
+    ZONE_MIN_AREA_PX: int = 600
+    ZONE_MAX_AREA_RATIO: float = 0.25
     # 形状约束
     ZONE_MIN_ASPECT: float = 1.5
-    ZONE_MAX_ASPECT: float = 15.0
-    ZONE_MIN_SOLIDITY: float = 0.60
+    ZONE_MAX_ASPECT: float = 30.0
+    ZONE_MIN_SOLIDITY: float = 0.45
     # ROI：跳过画面顶部此比例，只处理含地面的下部（0.35 = 跳过顶 35%）
-    ZONE_ROI_TOP_RATIO: float = 0.35
+    ZONE_ROI_TOP_RATIO: float = 0.55
     # 形态学核大小（越大填孔越强，也越慢）
-    ZONE_MORPH_KERNEL_SIZE: int = 7
+    ZONE_MORPH_KERNEL_SIZE: int = 32
     # quality 权重（三者之和建议为 1.0）
-    ZONE_W_AREA: float = 0.30
-    ZONE_W_SOLID: float = 0.30
-    ZONE_W_BORDER: float = 0.40
+    ZONE_W_AREA: float = 0.25
+    ZONE_W_SOLID: float = 0.2
+    ZONE_W_BORDER: float = 0.55
     # 中心黑色汉字检测：中心区裁剪比例（0.5 = 取四边形内接矩形的中心 50% 面积）
-    ZONE_CENTER_CROP_RATIO: float = 0.50
+    ZONE_CENTER_CROP_RATIO: float = 0.55
     # 汉字像素暗度阈值：V 通道低于此值才算黑色像素
-    ZONE_CENTER_BLACK_V_THRESHOLD: int = 60
+    ZONE_CENTER_BLACK_V_THRESHOLD: int = 85
     # 中心区内暗像素占比下限，超过此比例认为有汉字
-    ZONE_CENTER_BLACK_MIN_RATIO: float = 0.05
+    ZONE_CENTER_BLACK_MIN_RATIO: float = 0.08
     # 检测到汉字时的 quality 奖励分（叠加在 0-1 质量分之上）
-    ZONE_CENTER_TEXT_BONUS: float = 0.50
+    ZONE_CENTER_TEXT_BONUS: float = 0.2
 
     # ==================== Canvas 区域绘制配置 ====================
     ZONE_DRAW_SAVED_FILL_RGBA: str = "rgba(220,40,40,0.18)"
@@ -194,15 +197,15 @@ class Settings(BaseSettings):
     # 驱离任务配置
     GUARD_MISSION_ENABLED: bool = False
     GUARD_CONFIRM_TIME_S: float = 1.5           # 入侵确认时间（秒）
-    GUARD_CLEAR_TIME_S: float = 5.0             # 清空确认时间（秒）
+    GUARD_CLEAR_TIME_S: float = 3.0             # 清空确认时间（秒）
     GUARD_MIN_DURATION_S: float = 3.0           # 最短驱离持续时间
     GUARD_DEPLOY_DURATION_S: float = 10.0       # 前往驱离点的前进时间（秒），独立于返回时长
     GUARD_RETURN_DURATION_S: float = 10.0       # 返回起点的后退时间（秒），独立于前往时长
-    GUARD_COOLDOWN_S: float = 30.0             # 两次出动间的冷却时间
+    GUARD_COOLDOWN_S: float = 5.0             # 两次出动间的冷却时间
     GUARD_MAX_DURATION_S: float = 120.0        # 单次驱离最大持续时间
     GUARD_DEPLOY_SETTLE_S: float = 2.0         # 起立后稳定等待时间
     GUARD_RETURN_SETTLE_S: float = 2.0         # 蹲坐后稳定等待时间
-    GUARD_ALERT_AUDIO_PATH: str = "assets/13282.wav"   # 警告音频文件路径
+    GUARD_ALERT_AUDIO_PATH: str = 'assets/13282.wav'   # 警告音频文件路径
     GUARD_CLEAR_MIN_CONF: float = 0.4          # 清空判定最小有效置信度
     GUARD_CLEAR_MIN_AREA: int = 2000           # 清空判定最小有效目标面积（px）
     GUARD_VISUAL_TIMEOUT_S: float = 5.0        # 视觉链路健康超时（秒）
@@ -214,16 +217,16 @@ class Settings(BaseSettings):
     GUARD_ANCHOR_MIN_QUALITY: float = 0.6        # 锚点跟踪最小稳定质量限度（部分 Tracker 需要）
     GUARD_ANCHOR_LOST_TIMEOUT_S: float = 2.0     # 连续追踪丢失多少秒则认为完全跟丢
     GUARD_MAX_ADVANCE_TIME_S: float = 15.0       # 最大推进保护时间（撞墙防止）
-    GUARD_MAX_VIEW_RATIO: float = 0.90           # 前进贴脸保护率（目标宽/高到达屏幕尺寸90%则急刹）
+    GUARD_MAX_VIEW_RATIO: float = 0.9           # 前进贴脸保护率（目标宽/高到达屏幕尺寸90%则急刹）
     GUARD_ZONE_EDGE_MARGIN_RATIO: float = 0.08   # 区域边缘裕量：bbox 任意边距屏幕边缘小于此比例时禁止前进
-    GUARD_OVERLAP_CLEAR_RATIO: float = 0.10      # 人大面积离开锚点框判定的人框在锚点里的重叠比例上限
+    GUARD_OVERLAP_CLEAR_RATIO: float = 0.1      # 人大面积离开锚点框判定的人框在锚点里的重叠比例上限
     
     GUARD_RETURN_POS_TOLERANCE_PX: int = 60      # 退时允许的 X 位移中心误差 (px)
-    GUARD_RETURN_AREA_TOLERANCE_RATIO: float = 0.15 # 退时允许的物理纵深面积误差 (0.15 代表返回到了起始大小的 115% 以内)
+    GUARD_RETURN_AREA_TOLERANCE_RATIO: float = 0.5 # 退时允许的物理纵深面积误差 (0.15 代表返回到了起始大小的 115% 以内)
     GUARD_RETURN_STABLE_FRAMES: int = 15         # 返航完成需连续满足条件的帧数
-    GUARD_RETURN_AREA_STOP_RATIO: float = 0.10   # 区域面积占屏幕比例低于此值触发停止（0.10 = 10%）
+    GUARD_RETURN_AREA_STOP_RATIO: float = 0.02   # 区域面积占屏幕比例低于此值触发停止（0.10 = 10%）
     GUARD_RETURN_AREA_STABLE_FRAMES: int = 10    # 面积 < 阈值需连续满足的帧数才停止（防单帧误判，建议 5~20）
-    GUARD_YAW_DEADBAND_PX: int = 40              # 驱离视觉伺服偏航死区（像素）
+    GUARD_YAW_DEADBAND_PX: int = 120              # 驱离视觉伺服偏航死区（像素）
     GUARD_COMMAND_RATE_LIMIT_MS: int = 100       # 驱离命令发送最小间隔（ms）
 
     # 阶段 7：自动跟踪配置
@@ -233,21 +236,21 @@ class Settings(BaseSettings):
     AUTO_TRACK_TARGET_HOLD_SECONDS: float = 3.0   # 目标最短保持时间（s）
     AUTO_TRACK_OUT_OF_ZONE_FRAMES: int = 10       # 连续出区帧数触发停止阈值
     AUTO_TRACK_LOST_TIMEOUT_FRAMES: int = 30      # 目标丢失超时帧数
-    AUTO_TRACK_YAW_DEADBAND_PX: int = 40          # 水平偏航死区（像素），从80缩短到40提升转向灵敏度
-    AUTO_TRACK_FORWARD_AREA_RATIO: float = 0.15   # 前进触发的面积比阈值
+    AUTO_TRACK_YAW_DEADBAND_PX: int = 100          # 水平偏航死区（像素），从80缩短到40提升转向灵敏度
+    AUTO_TRACK_FORWARD_AREA_RATIO: float = 0.3   # 面积达到该比例后先停止前进
     AUTO_TRACK_ANCHOR_Y_STOP_RATIO: float = 0.95  # 锚点纵向停止比（0.90 即留出底部 10% 作为停止区）
     AUTO_TRACK_STOP_SNAPSHOT_ENABLED: bool = True  # 跟踪停止时是否补拍终止证据图
     AUTO_TRACK_YAW_PULSE_MS: float = 0.0           # 脉冲转向时长（ms），0=禁用，推荐80~150ms
-    AUTO_TRACK_VX: float = 0.40                    # 自动跟踪前进/后退速度（m/s）
+    AUTO_TRACK_VX: float = 0.4                    # 自动跟踪前进/后退速度（m/s）
     AUTO_TRACK_VYAW: float = 0.22                  # 自动跟踪偏航转速（rad/s），低于手动控制以减少过冲
 
     # 宇树 B2 硬件适配器配置
-    UNITREE_NETWORK_IFACE: str = "eth0"       # 连接 B2 的网卡名（eth0/enp2s0/Ethernet）
+    UNITREE_NETWORK_IFACE: str = 'eno1'       # 连接 B2 的网卡名（eth0/enp2s0/Ethernet）
     UNITREE_B2_VX: float = 0.3                # 前进/后退速度（m/s）
     UNITREE_B2_VYAW: float = 0.5              # 偏航转速（rad/s）
 
     # 驱离模式专用速度（独立于手动遥控速度，降低以提高稳定性）
-    GUARD_VX: float = 0.15                    # 驱离前进/后退速度（m/s），默认 0.15
+    GUARD_VX: float = 0.3                    # 驱离前进/后退速度（m/s），默认 0.15
     GUARD_VYAW: float = 0.25                  # 驱离偏航转速（rad/s），默认 0.25
 
 

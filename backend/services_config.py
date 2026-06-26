@@ -381,7 +381,7 @@ class ConfigService:
 
         # 自动跟踪配置 (AutoTrack)
         "auto_track_stable_hits": {
-            "value": "3",
+            "value": "5",
             "value_type": "int",
             "category": "auto_track",
             "description": "确定目标的防抖识别帧数",
@@ -402,10 +402,10 @@ class ConfigService:
             "is_hot_reloadable": True,
         },
         "auto_track_forward_area_ratio": {
-            "value": "0.15",
+            "value": "0.30",
             "value_type": "float",
             "category": "auto_track",
-            "description": "开始前进的目标面积比例上限",
+            "description": "停止前进的目标面积比例阈值",
             "is_hot_reloadable": True,
         },
         "auto_track_anchor_y_stop_ratio": {
@@ -459,7 +459,7 @@ class ConfigService:
         "snapshot_retention_days": {"min": 7, "max": 365},
         "max_snapshot_disk_usage_gb": {"min": 10, "max": 500},
         "telemetry_retention_days": {"min": 30, "max": 365},
-        "auto_track_stable_hits": {"min": 1, "max": 30},
+        "auto_track_stable_hits": {"min": 5, "max": 30},
         "auto_track_lost_timeout_frames": {"min": 5, "max": 300},
         "auto_track_yaw_deadband_px": {"min": 10, "max": 640},
         "auto_track_forward_area_ratio": {"min": 0.01, "max": 1.0},
