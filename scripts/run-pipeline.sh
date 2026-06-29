@@ -43,6 +43,20 @@ CAM1_ENCODER="${CAM1_ENCODER:-auto}"
 # 可选强制硬件解码，例如 HEVC 摄像头可设 CAM1_DECODER=hevc_nvv4l2dec。
 # 默认 auto 交给 FFmpeg 探测，避免摄像头编码变化时拉流失败。
 CAM1_DECODER="${CAM1_DECODER:-auto}"
+# cam_remote：从 cam 派生的远程低延迟 WHEP 档位，远端 Tailscale/WAN 访问优先使用。
+CAM_REMOTE_ENABLED="${CAM_REMOTE_ENABLED:-1}"
+CAM_REMOTE_SOURCE="${CAM_REMOTE_SOURCE:-rtsp://127.0.0.1:8554/cam}"
+CAM_REMOTE_WIDTH="${CAM_REMOTE_WIDTH:-854}"
+CAM_REMOTE_HEIGHT="${CAM_REMOTE_HEIGHT:-480}"
+CAM_REMOTE_FPS="${CAM_REMOTE_FPS:-10}"
+CAM_REMOTE_THREADS="${CAM_REMOTE_THREADS:-2}"
+CAM_REMOTE_BITRATE="${CAM_REMOTE_BITRATE:-1200k}"
+CAM_REMOTE_GST_BITRATE="${CAM_REMOTE_GST_BITRATE:-1200000}"
+CAM_REMOTE_GST_VBV_SIZE="${CAM_REMOTE_GST_VBV_SIZE:-250000}"
+CAM_REMOTE_MAXRATE="${CAM_REMOTE_MAXRATE:-1400k}"
+CAM_REMOTE_BUFSIZE="${CAM_REMOTE_BUFSIZE:-250k}"
+CAM_REMOTE_GOP="${CAM_REMOTE_GOP:-10}"
+CAM_REMOTE_ENCODER="${CAM_REMOTE_ENCODER:-gst-nvenc}"
 # cam2/3/4：USB 摄像头设备节点（GS02 三路）
 CAM2_DEV="${CAM2_DEV:-/dev/video1}"
 CAM3_DEV="${CAM3_DEV:-/dev/video0}"
@@ -78,7 +92,7 @@ mkdir -p "$PID_DIR"
 
 # ── 停止旧进程 ──────────────────────────────────────────────────────────────
 stop_pipeline() {
-  for pidfile in "$PID_DIR"/{mediamtx,ffmpeg_cam1,ffmpeg_cam2,ffmpeg_cam3,ffmpeg_cam4}.pid; do
+  for pidfile in "$PID_DIR"/{mediamtx,ffmpeg_cam1,ffmpeg_cam_remote,ffmpeg_cam2,ffmpeg_cam3,ffmpeg_cam4}.pid; do
     if [ -f "$pidfile" ]; then
       local pid
       pid=$(cat "$pidfile")
@@ -91,6 +105,7 @@ stop_pipeline() {
   # ffmpeg process that reads rtsp://127.0.0.1:8554/cam; killing it makes AI
   # tracking drop frames until the worker reconnects.
   pkill -f "ffmpeg .* -f rtsp .*rtsp://127\\.0\\.0\\.1:8554/cam([[:space:]]|$)" 2>/dev/null || true
+  pkill -f "ffmpeg .* -f rtsp .*rtsp://127\\.0\\.0\\.1:8554/cam_remote([[:space:]]|$)" 2>/dev/null || true
   pkill -f "ffmpeg .* -f rtsp .*rtsp://127\\.0\\.0\\.1:8554/cam2([[:space:]]|$)" 2>/dev/null || true
   pkill -f "ffmpeg .* -f rtsp .*rtsp://127\\.0\\.0\\.1:8554/cam3([[:space:]]|$)" 2>/dev/null || true
   pkill -f "ffmpeg .* -f rtsp .*rtsp://127\\.0\\.0\\.1:8554/cam4([[:space:]]|$)" 2>/dev/null || true
@@ -336,6 +351,88 @@ setsid env \
 echo $! > "$PID_DIR/ffmpeg_cam1.pid"
 echo "FFmpeg cam1 watchdog PID: $(cat "$PID_DIR/ffmpeg_cam1.pid")"
 
+# ── cam_remote 看门狗（cam → 远程低延迟转码流）───────────────────────────────
+if [ "$CAM_REMOTE_ENABLED" = "1" ]; then
+  echo "Starting FFmpeg watchdog cam_remote..."
+  setsid env \
+    ROOT_DIR="$ROOT_DIR" \
+    CAM_REMOTE_SOURCE="$CAM_REMOTE_SOURCE" \
+    CAMERA_RETRY_DELAY="$CAMERA_RETRY_DELAY" \
+    FFMPEG_LOGLEVEL="$FFMPEG_LOGLEVEL" \
+    CAM_REMOTE_WIDTH="$CAM_REMOTE_WIDTH" \
+    CAM_REMOTE_HEIGHT="$CAM_REMOTE_HEIGHT" \
+    CAM_REMOTE_FPS="$CAM_REMOTE_FPS" \
+    CAM_REMOTE_THREADS="$CAM_REMOTE_THREADS" \
+    CAM_REMOTE_BITRATE="$CAM_REMOTE_BITRATE" \
+    CAM_REMOTE_GST_BITRATE="$CAM_REMOTE_GST_BITRATE" \
+    CAM_REMOTE_GST_VBV_SIZE="$CAM_REMOTE_GST_VBV_SIZE" \
+    CAM_REMOTE_MAXRATE="$CAM_REMOTE_MAXRATE" \
+    CAM_REMOTE_BUFSIZE="$CAM_REMOTE_BUFSIZE" \
+    CAM_REMOTE_GOP="$CAM_REMOTE_GOP" \
+    CAM_REMOTE_ENCODER="$CAM_REMOTE_ENCODER" \
+    bash -c '
+    run_cam_remote_ffmpeg() {
+      ffmpeg -hide_banner -nostats -loglevel "$FFMPEG_LOGLEVEL" \
+        -fflags nobuffer -flags low_delay -rtsp_transport tcp -stimeout 5000000 \
+        -i "$CAM_REMOTE_SOURCE" \
+        -an -vf "fps=${CAM_REMOTE_FPS},scale=${CAM_REMOTE_WIDTH}:${CAM_REMOTE_HEIGHT}:flags=fast_bilinear" \
+        -c:v libx264 -preset ultrafast -tune zerolatency -threads "$CAM_REMOTE_THREADS" \
+        -b:v "$CAM_REMOTE_BITRATE" -maxrate "$CAM_REMOTE_MAXRATE" -bufsize "$CAM_REMOTE_BUFSIZE" \
+        -g "$CAM_REMOTE_GOP" -keyint_min "$CAM_REMOTE_GOP" -bf 0 -pix_fmt yuv420p \
+        -r "$CAM_REMOTE_FPS" \
+        -muxdelay 0 -muxpreload 0 \
+        -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam_remote \
+        >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log" 2>&1
+    }
+
+    run_cam_remote_gst_nvenc() {
+      if ! command -v gst-launch-1.0 >/dev/null 2>&1; then
+        echo "[$(date "+%F %T")] gst-launch-1.0 not found, fallback to libx264" >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log"
+        return 1
+      fi
+      if ! gst-inspect-1.0 nvv4l2decoder >/dev/null 2>&1; then
+        echo "[$(date "+%F %T")] nvv4l2decoder not found, fallback to libx264" >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log"
+        return 1
+      fi
+      if ! gst-inspect-1.0 nvv4l2h264enc >/dev/null 2>&1; then
+        echo "[$(date "+%F %T")] nvv4l2h264enc not found, fallback to libx264" >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log"
+        return 1
+      fi
+
+      gst-launch-1.0 -q \
+        rtspsrc location="$CAM_REMOTE_SOURCE" protocols=tcp latency=30 drop-on-latency=true do-retransmission=false tcp-timeout=5000000 ! \
+        rtph264depay ! h264parse ! \
+        nvv4l2decoder enable-max-performance=true disable-dpb=true ! \
+        nvvidconv ! "video/x-raw(memory:NVMM),width=(int)${CAM_REMOTE_WIDTH},height=(int)${CAM_REMOTE_HEIGHT},format=(string)NV12" ! \
+        nvv4l2h264enc bitrate="$CAM_REMOTE_GST_BITRATE" vbv-size="$CAM_REMOTE_GST_VBV_SIZE" control-rate=1 num-B-Frames=0 num-Ref-Frames=1 poc-type=2 iframeinterval="$CAM_REMOTE_GOP" idrinterval="$CAM_REMOTE_GOP" insert-sps-pps=true maxperf-enable=true preset-level=1 ! \
+        h264parse config-interval=-1 ! "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au" ! \
+        fdsink fd=1 sync=false async=false \
+        2>> "$ROOT_DIR/logs/ffmpeg_cam_remote.log" | \
+      ffmpeg -hide_banner -nostats -loglevel "$FFMPEG_LOGLEVEL" \
+        -fflags nobuffer -flags low_delay -use_wallclock_as_timestamps 1 \
+        -probesize 1000000 -analyzeduration 1000000 -f h264 -i pipe:0 \
+        -c:v copy -muxdelay 0 -muxpreload 0 -flush_packets 1 \
+        -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam_remote \
+        >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log" 2>&1
+    }
+
+    while true; do
+      echo "[$(date "+%F %T")] Starting cam_remote (encoder=${CAM_REMOTE_ENCODER}, ${CAM_REMOTE_WIDTH}x${CAM_REMOTE_HEIGHT}@${CAM_REMOTE_FPS}, ${CAM_REMOTE_BITRATE})..." >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log"
+      if [ "$CAM_REMOTE_ENCODER" = "gst-nvenc" ]; then
+        run_cam_remote_gst_nvenc || run_cam_remote_ffmpeg || true
+      else
+        run_cam_remote_ffmpeg || true
+      fi
+      echo "[$(date "+%F %T")] FFmpeg cam_remote exited, restarting in ${CAMERA_RETRY_DELAY}s..." >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log"
+      sleep "$CAMERA_RETRY_DELAY"
+    done
+  ' &
+  echo $! > "$PID_DIR/ffmpeg_cam_remote.pid"
+  echo "FFmpeg cam_remote watchdog PID: $(cat "$PID_DIR/ffmpeg_cam_remote.pid")"
+else
+  echo "cam_remote disabled (CAM_REMOTE_ENABLED=$CAM_REMOTE_ENABLED)."
+fi
+
 # ── USB 摄像头看门狗（cam2/cam3/cam4）─────────────────────────────────────
 # 默认启用 v360 鱼眼矫正：fisheye -> flat，可通过 USB_DEWARP=0 关闭
 if [ "$USB_DEWARP" = "1" ]; then
@@ -467,6 +564,7 @@ echo "  cam2 (后):   $([ "$CAM2_DETECTED" -eq 1 ] && echo "OK  已连接 ($CAM2
 echo "  cam3 (左):   $([ "$CAM3_DETECTED" -eq 1 ] && echo "OK  已连接 ($CAM3_DEV)" || echo "N/A 未连接，已跳过")"
 echo "  cam4 (右):   $([ "$CAM4_DETECTED" -eq 1 ] && echo "OK  已连接 ($CAM4_DEV)" || echo "N/A 未连接，已跳过")"
 echo "  WHEP cam:    http://127.0.0.1:8889/cam/whep"
+echo "  WHEP remote: http://127.0.0.1:8889/cam_remote/whep"
 echo "  WHEP cam2:   http://127.0.0.1:8889/cam2/whep"
 echo "  WHEP cam3:   http://127.0.0.1:8889/cam3/whep"
 echo "  WHEP cam4:   http://127.0.0.1:8889/cam4/whep"

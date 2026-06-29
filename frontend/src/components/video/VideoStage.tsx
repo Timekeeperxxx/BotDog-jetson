@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Camera, Maximize2, Minimize2, Play, Square, Video, VideoOff } from 'lucide-react';
+import { Camera, Gauge, Maximize2, Minimize2, Play, Square, Video, VideoOff } from 'lucide-react';
 import { TrackOverlay } from '../TrackOverlay1';
 import { CameraVideo } from './CameraVideo';
 import { OmniMonitorEntry } from './OmniMonitorEntry';
@@ -34,6 +34,8 @@ export function VideoStage({
   omniUrls,
   isRecording,
   onToggleRecording,
+  videoProfile,
+  onVideoProfileChange,
 }: VideoStageProps) {
   const [isOmniOpen, setIsOmniOpen] = useState(false);
 
@@ -126,6 +128,18 @@ export function VideoStage({
                   )}
                 </button>
               )}
+              <button
+                onClick={() => onVideoProfileChange(videoProfile === 'remote' ? 'main' : 'remote')}
+                className={`min-w-[88px] px-2 py-2 rounded-lg transition-all flex items-center justify-center gap-2 ${
+                  videoProfile === 'remote'
+                    ? 'bg-cyan-400 text-black'
+                    : 'hover:bg-white hover:text-black'
+                }`}
+                title={videoProfile === 'remote' ? '切换到高清主流' : '切换到低延迟远程流'}
+              >
+                <Gauge size={22} />
+                <span className="text-[10px] font-black">{videoProfile === 'remote' ? '低延迟' : '高清'}</span>
+              </button>
             </div>
             <div className="flex items-center space-x-3">
               <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded border ${

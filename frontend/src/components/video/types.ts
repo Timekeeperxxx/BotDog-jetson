@@ -11,6 +11,8 @@ export interface CurrentWhepInfo {
   text: string;
 }
 
+export type VideoProfile = 'main' | 'remote';
+
 export interface CameraVideoProps {
   videoRef: RefObject<HTMLVideoElement | null>;
 }
@@ -59,4 +61,6 @@ export interface VideoStageProps {
   omniUrls: OmniCameraUrls;
   isRecording?: boolean;
   onToggleRecording?: () => void;
+  videoProfile: VideoProfile;
+  onVideoProfileChange: (profile: VideoProfile) => void;
 }

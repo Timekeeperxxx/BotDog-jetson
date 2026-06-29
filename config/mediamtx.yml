@@ -29,6 +29,9 @@ webrtcAdditionalHosts: []
 paths:
   cam:
     source: publisher
+  cam_remote:
+    # 主摄像头远程低延迟转码流；由 run-pipeline.sh 从 cam 派生，给远端 Tailscale/WAN 观看使用。
+    source: publisher
   cam2:
     # USB 摄像头（后视），由 run-pipeline.sh 中的 FFmpeg 看门狗负责推流
     source: publisher

@@ -68,6 +68,17 @@ class VideoSourceService:
                 "sort_order": 1,
             },
             {
+                "name": "cam_remote",
+                "label": "主摄像头低延迟",
+                "source_type": "whep",
+                "whep_url": f"http://{whep_host}:8889/cam_remote/whep",
+                "rtsp_url": "rtsp://127.0.0.1:8554/cam_remote",
+                "enabled": 1,
+                "is_primary": 0,
+                "is_ai_source": 0,
+                "sort_order": 2,
+            },
+            {
                 "name": "cam3",
                 "label": "左视摄像头",
                 "source_type": "whep",
@@ -76,7 +87,7 @@ class VideoSourceService:
                 "enabled": 1,
                 "is_primary": 0,
                 "is_ai_source": 0,
-                "sort_order": 2,
+                "sort_order": 3,
             },
             {
                 "name": "cam4",
@@ -87,7 +98,7 @@ class VideoSourceService:
                 "enabled": 1,
                 "is_primary": 0,
                 "is_ai_source": 0,
-                "sort_order": 3,
+                "sort_order": 4,
             },
         ]
 

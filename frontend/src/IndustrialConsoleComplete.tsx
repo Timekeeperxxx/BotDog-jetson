@@ -4,7 +4,7 @@
  * 采用新布局：左侧导航 + 顶部状态栏 + 中央视频(HUD) + 右侧栏(日志+AI)
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useBotDogWebSocket } from './hooks/useBotDogWebSocket';
 import { useWhepVideo } from './hooks/useWhepVideo';
 import { useEventWebSocket } from './hooks/useEventWebSocket';
@@ -27,6 +27,23 @@ import { EvidencePanel } from './components/evidence/EvidencePanel';
 import { ConsolePage } from './components/pages/ConsolePage';
 import { GuardPage } from './components/pages/GuardPage';
 import { ConfigModal } from './components/modals/ConfigModal';
+import type { VideoProfile } from './components/video/types';
+
+function isTailscaleHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (host.endsWith('.ts.net')) return true;
+
+  const match = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
+  if (!match) return false;
+
+  const first = Number(match[1]);
+  const second = Number(match[2]);
+  return first === 100 && second >= 64 && second <= 127;
+}
+
+function buildLocalWhepUrl(path: string): string {
+  return `http://${window.location.hostname}:8889/${path}/whep`;
+}
 
 // ==================== 主应用 ====================
 export default function IndustrialConsoleComplete() {
@@ -47,6 +64,13 @@ export default function IndustrialConsoleComplete() {
 
   const sidebarLogEndRef = useRef<HTMLDivElement | null>(null);
 
+  const { frontWhepUrl, omniUrls } = useCameraSources();
+  const remoteWhepUrl = useMemo(() => buildLocalWhepUrl('cam_remote'), []);
+  const [videoProfile, setVideoProfile] = useState<VideoProfile>(() => (
+    isTailscaleHostname(window.location.hostname) ? 'remote' : 'main'
+  ));
+  const selectedWhepUrl = videoProfile === 'remote' ? remoteWhepUrl : frontWhepUrl;
+
   const {
     status: whepStatus,
     videoRef,
@@ -55,8 +79,7 @@ export default function IndustrialConsoleComplete() {
     videoResolution,
     connect: connectWhep,
     disconnect: disconnectWhep,
-  } = useWhepVideo();
-  const { frontWhepUrl, omniUrls } = useCameraSources();
+  } = useWhepVideo(selectedWhepUrl);
 
   const [showConfigPanel, setShowConfigPanel] = useState(false);
   const [activeTab, setActiveTab] = useState<SidebarTab>('console');
@@ -198,6 +221,8 @@ export default function IndustrialConsoleComplete() {
               omniUrls,
               isRecording,
               onToggleRecording: toggleRecording,
+              videoProfile,
+              onVideoProfileChange: setVideoProfile,
             }}
             rightPanelProps={{
               logs,
