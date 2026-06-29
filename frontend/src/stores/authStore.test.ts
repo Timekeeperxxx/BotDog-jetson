@@ -115,6 +115,46 @@ describe('authStore', () => {
     expect(getAuthState().role).toBeNull()
   })
 
+  it('keeps a newer stored token when an older in-memory token receives API 401', async () => {
+    const { getAuthState, installAuthFetchInterceptor, setAuthState } = await loadStore({
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ detail: 'token 已过期' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    })
+
+    installAuthFetchInterceptor()
+    setAuthState({
+      accessToken: 'old-token',
+      id: 1,
+      username: 'admin',
+      role: 'admin',
+      must_change_password: false,
+    })
+    window.localStorage.setItem(
+      'botdog-auth',
+      JSON.stringify({
+        accessToken: 'new-token',
+        id: 1,
+        username: 'admin',
+        role: 'admin',
+        must_change_password: false,
+      }),
+    )
+
+    await window.fetch('http://localhost/api/v1/control/command', { method: 'POST' })
+
+    expect(getAuthState()).toMatchObject({
+      accessToken: 'new-token',
+      username: 'admin',
+      role: 'admin',
+      ready: true,
+      validating: false,
+    })
+    expect(window.localStorage.getItem('botdog-auth')).toContain('new-token')
+  })
+
   it('bootstraps auth bypass when backend auth is disabled', async () => {
     const { bootstrapAuthState, getAuthState } = await loadStore({
       fetchImpl: async () =>

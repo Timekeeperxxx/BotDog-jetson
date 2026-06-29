@@ -1,14 +1,15 @@
 import { getApiUrl } from '../config/api'
-import { getAuthState, clearAuthState } from '../stores/authStore'
+import { getAuthState, clearAuthStateForToken } from '../stores/authStore'
 
 export async function apiFetch<T = any>(path: string, init?: RequestInit): Promise<T> {
   const url = getApiUrl(path)
   
   const headers = new Headers(init?.headers)
   const authState = getAuthState()
+  const accessToken = authState.accessToken
   
-  if (authState.accessToken && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${authState.accessToken}`)
+  if (accessToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${accessToken}`)
   }
 
   const response = await fetch(url, {
@@ -18,9 +19,9 @@ export async function apiFetch<T = any>(path: string, init?: RequestInit): Promi
 
   const contentType = response.headers.get('content-type') || ''
 
-  if (response.status === 401 && authState.accessToken && !path.startsWith('/api/v1/auth/')) {
-    clearAuthState('登录已过期，请重新登录')
-    if (typeof window !== 'undefined') {
+  if (response.status === 401 && accessToken && !path.startsWith('/api/v1/auth/')) {
+    const cleared = clearAuthStateForToken(accessToken, '登录已过期，请重新登录')
+    if (cleared && typeof window !== 'undefined') {
       window.location.assign('/login')
     }
   }

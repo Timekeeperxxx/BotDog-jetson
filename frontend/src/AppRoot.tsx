@@ -2,9 +2,10 @@ import { useEffect } from 'react'
 import IndustrialConsoleComplete from './IndustrialConsoleComplete'
 import { AdminApp } from './admin/AdminApp'
 import { LoginPage } from './pages/LoginPage'
-import { bootstrapAuthState, hasAuthSession, installAuthFetchInterceptor, useAuthState } from './stores/authStore'
+import { bootstrapAuthState, hasAuthSession, installAuthFetchInterceptor, installAuthStorageSync, useAuthState } from './stores/authStore'
 
 installAuthFetchInterceptor()
+installAuthStorageSync()
 
 function getNormalizedPathname() {
   const pathname = window.location.pathname || '/'

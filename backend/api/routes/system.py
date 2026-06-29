@@ -41,6 +41,25 @@ def _pipeline_restart_running() -> bool:
     return _pipeline_restart_proc is not None and _pipeline_restart_proc.poll() is None
 
 
+def _without_proxy_env() -> dict[str, str]:
+    """视频 pipeline 是机载本地链路，重启时也不能继承桌面代理。"""
+    import os
+
+    env = os.environ.copy()
+    for key in (
+        "http_proxy",
+        "https_proxy",
+        "ftp_proxy",
+        "all_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "FTP_PROXY",
+        "ALL_PROXY",
+    ):
+        env.pop(key, None)
+    return env
+
+
 @router.get("/api/v1/system/health", response_model=SystemHealthResponse)
 async def system_health() -> SystemHealthResponse:
     """
@@ -155,6 +174,7 @@ async def restart_pipeline(
                     stdout=log_file,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    env=_without_proxy_env(),
                     start_new_session=True,
                 )
         except OSError as exc:

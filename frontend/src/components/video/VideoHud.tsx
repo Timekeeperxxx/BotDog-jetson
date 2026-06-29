@@ -11,6 +11,7 @@ export function VideoHud({
   autoTrackFrames,
   isConnected,
   videoLatencyMs,
+  videoLatencyStats,
   autoTrack,
   connectWs,
   connectWhep,
@@ -56,6 +57,18 @@ export function VideoHud({
             <span className="text-white/40 uppercase">跟踪帧</span>
             <span className="font-black text-cyan-400">{autoTrackFrames}</span>
           </div>
+          <div className="flex items-center gap-2">
+            <span className="text-white/40 uppercase">AI延迟</span>
+            <span className="font-black text-sky-300">
+              {typeof aiStatus?.end_to_end_ms === 'number' ? `${Math.round(aiStatus.end_to_end_ms)}ms` : '--'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-white/40 uppercase">累计丢帧</span>
+            <span className="font-black text-rose-300">
+              {(aiStatus?.queued_frames_dropped ?? 0) + (aiStatus?.stale_frames_dropped ?? 0)}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -74,6 +87,13 @@ export function VideoHud({
             )}
           </div>
           <div className="mt-1 text-white/50">延迟: {videoLatencyMs !== null ? `${videoLatencyMs}ms` : '--'}</div>
+          {videoLatencyStats && (
+            <div className="mt-1 grid grid-cols-3 gap-1 text-[9px] text-white/40">
+              <span>网 {videoLatencyStats.networkMs}</span>
+              <span>缓 {videoLatencyStats.jitterBufferMs}</span>
+              <span>解 {videoLatencyStats.decodeMs}</span>
+            </div>
+          )}
         </div>
         <div className="pointer-events-auto">
           <AutoTrackPanel {...autoTrack} isMissionRunning={isMissionRunning} />

@@ -33,6 +33,10 @@ class EventBroadcaster:
         self._connections: Set[WebSocket] = set()
         self._lock = asyncio.Lock()
 
+    def has_connections(self) -> bool:
+        """Return whether any client is currently subscribed."""
+        return bool(self._connections)
+
     async def connect(self, websocket: WebSocket) -> None:
         """
         接受新的 WebSocket 连接。

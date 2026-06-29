@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import random
 import time
 from dataclasses import dataclass
@@ -44,6 +45,10 @@ class AIWorkerError(RuntimeError):
     """AI Worker 运行时错误。"""
 
 
+class AIWorkerFrameTimeout(AIWorkerError):
+    """单帧 AI 处理超时。"""
+
+
 @dataclass
 class DetectionResult:
     """AIWorker 内部检测结果（兼容老路径用）。"""
@@ -51,6 +56,13 @@ class DetectionResult:
     confidence: float
     bbox: Optional[tuple[int, int, int, int]] = None
     track_id: int = -1  # YOLO ByteTrack 分配的跨帧 ID
+
+
+@dataclass(frozen=True)
+class _AIFrame:
+    data: bytes
+    index: int
+    read_at: float
 
 
 class _BaseDetector:
@@ -91,12 +103,14 @@ class _YoloDetector(_BaseDetector):
         target_classes: list[str],
         frame_width: int,
         frame_height: int,
+        inference_imgsz: int,
         use_bytetrack: bool,
     ) -> None:
         import numpy as np  # noqa: F811
         self._np = np
         self._frame_width = frame_width
         self._frame_height = frame_height
+        self._inference_imgsz = max(32, int(inference_imgsz))
         self._confidence = confidence
         self._target_classes = set(target_classes)
         self._use_bytetrack = use_bytetrack
@@ -146,6 +160,7 @@ class _YoloDetector(_BaseDetector):
                 results = self._model.track(
                     frame,
                     conf=self._confidence,
+                    imgsz=self._inference_imgsz,
                     persist=True,
                     tracker="bytetrack.yaml",
                     verbose=False,
@@ -153,9 +168,19 @@ class _YoloDetector(_BaseDetector):
             except Exception as exc:
                 # tracker 不可用时降级到 predict
                 model_logger.warning("YOLO track() 调用失败，已降级到 predict()：{}", exc)
-                results = self._model.predict(frame, conf=self._confidence, verbose=False)
+                results = self._model.predict(
+                    frame,
+                    conf=self._confidence,
+                    imgsz=self._inference_imgsz,
+                    verbose=False,
+                )
         else:
-            results = self._model.predict(frame, conf=self._confidence, verbose=False)
+            results = self._model.predict(
+                frame,
+                conf=self._confidence,
+                imgsz=self._inference_imgsz,
+                verbose=False,
+            )
 
         if not results or len(results[0].boxes) == 0:
             return []
@@ -205,6 +230,7 @@ class AIWorker:
         self._frame_size = self._frame_width * self._frame_height * 3
 
         self._patrol_skip = max(1, settings.AI_PATROL_SKIP)
+        self._auto_track_skip = max(1, settings.AI_AUTO_TRACK_SKIP)
         self._suspect_skip = max(1, settings.AI_SUSPECT_SKIP)
         self._stable_hits = max(1, settings.AI_STABLE_HITS)
         self._reset_misses = max(1, settings.AI_RESET_MISSES)
@@ -231,9 +257,26 @@ class AIWorker:
         self._stream_restored_logged = False
         self._last_ffmpeg_start_log_at = 0.0
         self._last_retry_log_at = 0.0
+        self._rtsp_urls = self._build_rtsp_urls()
+        self._rtsp_url_index = 0
+        self._frame_process_timeout_s = max(1.0, float(settings.AI_FRAME_PROCESS_TIMEOUT_SECONDS))
+        self._max_frame_age_s = max(0.05, float(settings.AI_MAX_FRAME_AGE_SECONDS))
+        self._event_send_timeout_s = max(0.005, float(settings.AI_EVENT_SEND_TIMEOUT_SECONDS))
+        self._last_frame_started_at = 0.0
+        self._last_frame_completed_at = 0.0
+        self._last_frame_timeout_reason: str | None = None
+        self._latest_frame_index = 0
+        self._last_processed_frame_index = 0
+        self._queued_frames_dropped = 0
+        self._stale_frames_dropped = 0
+        self._last_frame_age_ms = 0.0
+        self._last_processing_ms = 0.0
+        self._last_detect_ms = 0.0
+        self._last_postprocess_ms = 0.0
+        self._last_end_to_end_ms = 0.0
         self._startup_status = "waiting"
         self._startup_detail = (
-            f"等待 RTSP 连接：rtsp={settings.AI_RTSP_URL}，fps={settings.AI_FPS}，"
+            f"等待 RTSP 连接：rtsp={self._current_rtsp_url}，fps={settings.AI_FPS}，"
             f"分辨率={self._frame_width}x{self._frame_height}"
         )
 
@@ -250,11 +293,12 @@ class AIWorker:
                     target_classes=settings.AI_TARGET_CLASSES,
                     frame_width=self._frame_width,
                     frame_height=self._frame_height,
+                    inference_imgsz=settings.AI_INFERENCE_IMGSZ,
                     use_bytetrack=settings.AI_USE_BYTETRACK,
                 )
                 self._startup_status = "waiting"
                 self._startup_detail = (
-                    f"模型已加载，等待 RTSP 连接：rtsp={settings.AI_RTSP_URL}，"
+                    f"模型已加载，等待 RTSP 连接：rtsp={self._current_rtsp_url}，"
                     f"device={settings.AI_DEVICE}"
                 )
             except Exception as exc:
@@ -273,11 +317,11 @@ class AIWorker:
 
     async def start(self, stop_event: asyncio.Event) -> None:
         ai_logger.info(
-            "AI Worker 已启动：fps={}，分辨率={}x{}，rtsp={}",
+            "AI Worker 已启动：fps={}，分辨率={}x{}，rtsp_sources={}",
             settings.AI_FPS,
             self._frame_width,
             self._frame_height,
-            settings.AI_RTSP_URL,
+            self._rtsp_urls,
         )
         retry_delay = max(0.5, settings.AI_FFMPEG_RETRY_MIN_SECONDS)
         max_retry_delay = max(retry_delay, settings.AI_FFMPEG_RETRY_MAX_SECONDS)
@@ -295,11 +339,23 @@ class AIWorker:
                 await self._run_ffmpeg_loop(stop_event)
             except asyncio.CancelledError:
                 break
+            except AIWorkerFrameTimeout as exc:
+                ai_logger.critical("AI 单帧处理超时：{}", exc)
+                if settings.AI_EXIT_ON_FRAME_TIMEOUT:
+                    ai_logger.critical(
+                        "AI 推理线程可能已卡死，后端将退出并交给 systemd 自动重启"
+                    )
+                    os._exit(75)
             except Exception as exc:  # noqa: BLE001
                 ai_logger.exception("AI Worker 运行异常：{}", exc)
 
             if stop_event.is_set():
                 break
+
+            await self._update_current_task_id()
+            if not self._is_mission_active():
+                retry_delay = max(0.5, settings.AI_FFMPEG_RETRY_MIN_SECONDS)
+                continue
 
             ran_seconds = asyncio.get_event_loop().time() - loop_start
             if ran_seconds >= reset_threshold:
@@ -307,6 +363,7 @@ class AIWorker:
             else:
                 retry_delay = min(retry_delay * 2, max_retry_delay)
 
+            self._rotate_rtsp_url_after_failure()
             self._log_retry_scheduled(retry_delay)
             await asyncio.sleep(retry_delay)
 
@@ -318,7 +375,7 @@ class AIWorker:
             raise AIWorkerError("FFmpeg stdout 未初始化")
         stderr_task = asyncio.create_task(self._drain_stderr(process))
 
-        frame_queue = asyncio.Queue(maxsize=1)
+        frame_queue: asyncio.Queue[_AIFrame] = asyncio.Queue(maxsize=1)
 
         async def reader_task() -> None:
             frame_index = 0
@@ -329,29 +386,31 @@ class AIWorker:
                         self._stream_restored_logged = True
                         self._ffmpeg_stream_unavailable = False
                         self._ffmpeg_last_exit_reason = "stream_restored"
+                        await self._notify_auto_track_video_restored()
                         video_logger.info(
                             "RTSP 流已恢复，AI 识别恢复运行：rtsp={}",
-                            settings.AI_RTSP_URL,
+                            self._current_rtsp_url,
                         )
                     frame_index += 1
-                    # 保持队列里始终只有一帧最新鲜的首帧，丢弃堆积的旧帧避免延迟累加
-                    if frame_queue.full():
-                        try:
-                            frame_queue.get_nowait()
-                        except asyncio.QueueEmpty:
-                            pass
-                    await frame_queue.put((frame, frame_index))
+                    self._latest_frame_index = frame_index
+                    self._queued_frames_dropped += await self._put_latest_frame(
+                        frame_queue,
+                        _AIFrame(data=frame, index=frame_index, read_at=time.monotonic()),
+                    )
             except asyncio.IncompleteReadError:
                 if self._ffmpeg_last_exit_reason == "unknown":
                     self._ffmpeg_last_exit_reason = "stdout_closed"
 
         reader = asyncio.create_task(reader_task())
+        mission_watchdog = asyncio.create_task(
+            self._stop_ffmpeg_when_mission_inactive(process, stop_event)
+        )
 
         try:
             while not stop_event.is_set():
                 try:
                     # 使用 timeout 定期唤醒检测 stop_event
-                    frame, frame_index = await asyncio.wait_for(frame_queue.get(), timeout=0.1)
+                    ai_frame = await asyncio.wait_for(frame_queue.get(), timeout=0.1)
                 except asyncio.TimeoutError:
                     if reader.done():
                         if self._ffmpeg_last_exit_reason == "unknown":
@@ -365,36 +424,162 @@ class AIWorker:
                     self._reset_detection_state()
                     break
 
-                skip = self._suspect_skip if self._is_suspect_mode() else self._patrol_skip
-                if skip > 1 and (frame_index % skip) != 0:
+                frame_age_s = time.monotonic() - ai_frame.read_at
+                self._last_frame_age_ms = round(frame_age_s * 1000, 1)
+                if frame_age_s > self._max_frame_age_s:
+                    self._stale_frames_dropped += 1
+                    self._queued_frames_dropped += 1
                     continue
 
-                # 调用 detect_many 返回所有候选结果
-                t_start = time.monotonic()
-                if hasattr(self._detector, 'detect_many'):
-                    detections = await asyncio.to_thread(self._detector.detect_many, frame)
-                else:
-                    # _SimulatedDetector/_NullDetector 回退到 detect() 兼容
-                    single = await asyncio.to_thread(self._detector.detect, frame)
-                    detections = [single] if single else []
-                t_detect_end = time.monotonic()
+                skip = self._get_frame_skip()
+                if skip > 1 and (ai_frame.index % skip) != 0:
+                    continue
 
-                await self._process_detection(detections, frame, t_start, t_detect_end)
-                self._frames_processed += 1
-                if detections:
-                    self._detections_count += 1
-                await self._maybe_broadcast_status()
+                await self._process_frame_with_timeout(
+                    ai_frame.data,
+                    ai_frame.index,
+                    frame_read_at=ai_frame.read_at,
+                )
         finally:
+            mission_watchdog.cancel()
             stderr_task.cancel()
             reader.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await mission_watchdog
+            with contextlib.suppress(asyncio.CancelledError):
+                await reader
             with contextlib.suppress(asyncio.CancelledError):  # CancelledError 不是 Exception，须单独捕获
                 await stderr_task
-                await reader
 
-            with contextlib.suppress(ProcessLookupError, OSError):
-                process.terminate()
-            with contextlib.suppress(Exception):
-                await process.wait()
+            await self._terminate_ffmpeg_process(process, reason="loop_stopped")
+            if (
+                not stop_event.is_set()
+                and self._ffmpeg_last_exit_reason != "stream_restored"
+                and self._is_mission_active()
+            ):
+                await self._notify_auto_track_video_lost(self._ffmpeg_last_exit_reason)
+
+    async def _stop_ffmpeg_when_mission_inactive(
+        self,
+        process: asyncio.subprocess.Process,
+        stop_event: asyncio.Event,
+    ) -> None:
+        while not stop_event.is_set():
+            await asyncio.sleep(0.2)
+            await self._update_current_task_id()
+            if self._is_mission_active():
+                continue
+            await self._terminate_ffmpeg_process(process, reason="mission_inactive")
+            return
+
+    async def _terminate_ffmpeg_process(
+        self,
+        process: asyncio.subprocess.Process,
+        *,
+        reason: str,
+        terminate_timeout_s: float = 0.8,
+    ) -> None:
+        if process.returncode is not None:
+            return
+
+        if self._ffmpeg_last_exit_reason == "unknown":
+            self._ffmpeg_last_exit_reason = reason
+
+        with contextlib.suppress(ProcessLookupError, OSError):
+            process.terminate()
+
+        try:
+            await asyncio.wait_for(process.wait(), timeout=terminate_timeout_s)
+            return
+        except asyncio.TimeoutError:
+            pass
+        except ProcessLookupError:
+            return
+
+        with contextlib.suppress(ProcessLookupError, OSError):
+            process.kill()
+        with contextlib.suppress(Exception):
+            await process.wait()
+
+    @staticmethod
+    async def _put_latest_frame(
+        frame_queue: asyncio.Queue[_AIFrame],
+        frame: _AIFrame,
+    ) -> int:
+        dropped = 0
+        while frame_queue.full():
+            try:
+                frame_queue.get_nowait()
+                dropped += 1
+            except asyncio.QueueEmpty:
+                break
+        await frame_queue.put(frame)
+        return dropped
+
+    async def _process_frame_with_timeout(
+        self,
+        frame: bytes,
+        frame_index: int,
+        frame_read_at: float | None = None,
+    ) -> None:
+        self._last_frame_started_at = time.monotonic()
+        if frame_read_at is not None:
+            self._last_frame_age_ms = round(
+                (self._last_frame_started_at - frame_read_at) * 1000,
+                1,
+            )
+        try:
+            await asyncio.wait_for(
+                self._detect_and_process_frame(frame),
+                timeout=self._frame_process_timeout_s,
+            )
+        except asyncio.TimeoutError as exc:
+            reason = (
+                f"frame_index={frame_index} timeout={self._frame_process_timeout_s:.1f}s "
+                f"frames_processed={self._frames_processed}"
+            )
+            self._last_frame_timeout_reason = reason
+            self._ffmpeg_last_exit_reason = f"AI_Frame_Process_Timeout({reason})"
+            await self._notify_auto_track_video_lost(self._ffmpeg_last_exit_reason)
+            video_logger.error(
+                "AI 单帧处理超时，准备恢复：{}。"
+                "若卡在 YOLO/TensorRT/CUDA 推理线程，当前进程需要重启才能释放底层状态。",
+                reason,
+            )
+            raise AIWorkerFrameTimeout(reason) from exc
+        else:
+            self._last_frame_completed_at = time.monotonic()
+            self._last_processing_ms = round(
+                (self._last_frame_completed_at - self._last_frame_started_at) * 1000,
+                1,
+            )
+            if frame_read_at is not None:
+                self._last_end_to_end_ms = round(
+                    (self._last_frame_completed_at - frame_read_at) * 1000,
+                    1,
+                )
+            self._last_processed_frame_index = frame_index
+            self._last_frame_timeout_reason = None
+            await self._maybe_broadcast_status()
+
+    async def _detect_and_process_frame(self, frame: bytes) -> None:
+        # 调用 detect_many 返回所有候选结果
+        t_start = time.monotonic()
+        if hasattr(self._detector, 'detect_many'):
+            detections = await asyncio.to_thread(self._detector.detect_many, frame)
+        else:
+            # _SimulatedDetector/_NullDetector 回退到 detect() 兼容
+            single = await asyncio.to_thread(self._detector.detect, frame)
+            detections = [single] if single else []
+        t_detect_end = time.monotonic()
+        self._last_detect_ms = round((t_detect_end - t_start) * 1000, 1)
+
+        await self._process_detection(detections, frame, t_start, t_detect_end)
+        t_done = time.monotonic()
+        self._last_postprocess_ms = round((t_done - t_detect_end) * 1000, 1)
+        self._frames_processed += 1
+        if detections:
+            self._detections_count += 1
 
     async def _start_ffmpeg(self) -> asyncio.subprocess.Process:
         command = [
@@ -405,16 +590,22 @@ class AIWorker:
             "-nostats",
             "-loglevel", "warning",
             "-fflags", "nobuffer+discardcorrupt",
+            "-avioflags", "direct",
             "-flags", "low_delay",
             "-probesize", "32",
             "-analyzeduration", "0",
             "-rtsp_transport", "tcp",       # 用 TCP 代替 UDP，避免丢包导致 H.264 解码花屏
+            "-rtsp_flags", "prefer_tcp",
+            "-reorder_queue_size", "0",
             "-max_delay", "0",
+            "-use_wallclock_as_timestamps", "1",
             "-stimeout", "5000000",
             "-hwaccel", "auto",
-            "-i", settings.AI_RTSP_URL,
+            "-i", self._current_rtsp_url,
+            "-an",
+            "-sn",
+            "-dn",
             "-vf", f"fps={settings.AI_FPS},scale={self._frame_width}:{self._frame_height}:flags=fast_bilinear",
-            "-fps_mode", "passthrough",
             "-f", "image2pipe",
             "-vcodec", "rawvideo",
             "-pix_fmt", "bgr24",
@@ -430,6 +621,7 @@ class AIWorker:
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=self._ffmpeg_env_without_proxy(),
         )
 
     def _log_ffmpeg_start(self) -> None:
@@ -437,7 +629,7 @@ class AIWorker:
         if self._last_ffmpeg_start_log_at and now - self._last_ffmpeg_start_log_at < 30.0:
             video_logger.debug(
                 "启动 FFmpeg 拉流：rtsp={}，fps={}，分辨率={}x{}",
-                settings.AI_RTSP_URL,
+                self._current_rtsp_url,
                 settings.AI_FPS,
                 self._frame_width,
                 self._frame_height,
@@ -447,7 +639,7 @@ class AIWorker:
         self._last_ffmpeg_start_log_at = now
         video_logger.info(
             "启动 FFmpeg 拉流：rtsp={}，fps={}，分辨率={}x{}",
-            settings.AI_RTSP_URL,
+            self._current_rtsp_url,
             settings.AI_FPS,
             self._frame_width,
             self._frame_height,
@@ -510,11 +702,74 @@ class AIWorker:
                 if not self._ffmpeg_stream_unavailable:
                     self._ffmpeg_stream_unavailable = True
                     self._ffmpeg_unavailable_reason = reason
+                    await self._notify_auto_track_video_lost(reason)
                     video_logger.warning(
                         "RTSP 流不可用，AI 识别暂时降级：rtsp={}，原因={}，3.0 秒后重试",
-                        settings.AI_RTSP_URL,
+                        self._current_rtsp_url,
                         reason,
                     )
+
+    @property
+    def _current_rtsp_url(self) -> str:
+        return self._rtsp_urls[self._rtsp_url_index]
+
+    @staticmethod
+    def _split_rtsp_urls(raw: str) -> list[str]:
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
+    def _build_rtsp_urls(self) -> list[str]:
+        urls: list[str] = []
+        for url in [settings.AI_RTSP_URL] + self._split_rtsp_urls(settings.AI_RTSP_FALLBACK_URLS):
+            if url and url not in urls:
+                urls.append(url)
+        return urls or [settings.AI_RTSP_URL]
+
+    def _rotate_rtsp_url_after_failure(self) -> None:
+        if len(self._rtsp_urls) <= 1:
+            return
+        previous = self._current_rtsp_url
+        self._rtsp_url_index = (self._rtsp_url_index + 1) % len(self._rtsp_urls)
+        video_logger.warning(
+            "切换 AI RTSP 拉流地址：{} -> {}",
+            previous,
+            self._current_rtsp_url,
+        )
+
+    @staticmethod
+    def _ffmpeg_env_without_proxy() -> dict[str, str]:
+        env = os.environ.copy()
+        for key in (
+            "http_proxy",
+            "https_proxy",
+            "ftp_proxy",
+            "all_proxy",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "FTP_PROXY",
+            "ALL_PROXY",
+        ):
+            env.pop(key, None)
+        return env
+
+    async def _notify_auto_track_video_lost(self, reason: str) -> None:
+        try:
+            from .auto_track_service import get_auto_track_service
+
+            auto_track = get_auto_track_service()
+            if auto_track is not None:
+                await auto_track.notify_video_lost(reason)
+        except Exception as exc:  # noqa: BLE001
+            video_logger.debug("通知自动跟踪视频断流失败：{}", exc)
+
+    async def _notify_auto_track_video_restored(self) -> None:
+        try:
+            from .auto_track_service import get_auto_track_service
+
+            auto_track = get_auto_track_service()
+            if auto_track is not None:
+                await auto_track.notify_video_restored()
+        except Exception as exc:  # noqa: BLE001
+            video_logger.debug("通知自动跟踪视频恢复失败：{}", exc)
 
     @staticmethod
     def _is_ffmpeg_banner_line(text: str) -> bool:
@@ -629,6 +884,31 @@ class AIWorker:
             )
         return False
 
+    def _get_frame_skip(self) -> int:
+        """
+        Decide how aggressively to sample frames for inference.
+
+        Patrol can skip frames to save load. Once automatic tracking is enabled,
+        even before a candidate is locked, keep a higher cadence so no-helmet
+        confirmation and target reacquisition do not miss every other frame.
+        """
+        from .guard_mission_service import get_guard_mission_service
+
+        guard_mission = get_guard_mission_service()
+        if guard_mission is not None and guard_mission.enabled:
+            return self._suspect_skip
+
+        try:
+            from .auto_track_service import get_auto_track_service
+
+            auto_track = get_auto_track_service()
+            if auto_track is not None and auto_track._enabled and not auto_track._paused:
+                return self._auto_track_skip
+        except Exception:
+            pass
+
+        return self._suspect_skip if self._is_suspect_mode() else self._patrol_skip
+
     def _reset_detection_state(self) -> None:
         self._hits = 0
         self._misses = 0
@@ -654,7 +934,7 @@ class AIWorker:
         guard_mission = get_guard_mission_service()
 
         # 计算实际的等效帧率
-        skip = self._suspect_skip if self._is_suspect_mode() else self._patrol_skip
+        skip = self._get_frame_skip()
         effective_fps = settings.AI_FPS / skip if skip > 0 else settings.AI_FPS
 
         if guard_mission is not None and guard_mission.enabled:
@@ -762,6 +1042,9 @@ class AIWorker:
             )
 
     async def _save_snapshot(self, frame: bytes) -> tuple[Path, str]:
+        return await asyncio.to_thread(self._save_snapshot_sync, frame)
+
+    def _save_snapshot_sync(self, frame: bytes) -> tuple[Path, str]:
         try:
             import numpy as np
             from PIL import Image
@@ -822,6 +1105,16 @@ class AIWorker:
                     "mode": self._get_mode(),
                     "hits": self._hits,
                     "stable_hits": self._stable_hits,
+                    "latest_frame_index": self._latest_frame_index,
+                    "last_processed_frame_index": self._last_processed_frame_index,
+                    "queued_frames_dropped": self._queued_frames_dropped,
+                    "stale_frames_dropped": self._stale_frames_dropped,
+                    "frame_age_ms": self._last_frame_age_ms,
+                    "processing_ms": self._last_processing_ms,
+                    "detect_ms": self._last_detect_ms,
+                    "postprocess_ms": self._last_postprocess_ms,
+                    "end_to_end_ms": self._last_end_to_end_ms,
+                    "frame_timeout_reason": self._last_frame_timeout_reason,
                 },
             }
 
@@ -829,7 +1122,10 @@ class AIWorker:
                 failed = []
                 for conn in broadcaster._connections:
                     try:
-                        await conn.send_json(msg)
+                        await asyncio.wait_for(
+                            conn.send_json(msg),
+                            timeout=self._event_send_timeout_s,
+                        )
                     except Exception:
                         failed.append(conn)
                 for c in failed:

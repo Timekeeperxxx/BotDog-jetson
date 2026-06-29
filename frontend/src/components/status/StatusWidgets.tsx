@@ -60,6 +60,18 @@ export function StatusWidgets({
             <span className="text-white/40 uppercase">跟踪帧</span>
             <span className="font-black text-cyan-400">{autoTrackFrames}</span>
           </div>
+          <div className="flex items-center gap-2">
+            <span className="text-white/40 uppercase">AI延迟</span>
+            <span className="font-black text-sky-300">
+              {typeof aiStatus?.end_to_end_ms === 'number' ? `${Math.round(aiStatus.end_to_end_ms)}ms` : '--'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-white/40 uppercase">累计丢帧</span>
+            <span className="font-black text-rose-300">
+              {(aiStatus?.queued_frames_dropped ?? 0) + (aiStatus?.stale_frames_dropped ?? 0)}
+            </span>
+          </div>
         </div>
       </div>
     </>

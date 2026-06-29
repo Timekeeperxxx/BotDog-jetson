@@ -3,7 +3,7 @@ import type { AIStatus } from '../../types/event';
 import type { AutoTrackHookState } from '../../hooks/useAutoTrack';
 import type { TelemetryData } from '../../hooks/useBotDogWebSocket';
 import type { TrackOverlayData } from '../TrackOverlay1';
-import type { WhepState } from '../../hooks/useWhepVideo';
+import type { WhepLatencyStats, WhepState } from '../../hooks/useWhepVideo';
 import type { OmniCameraUrls } from '../../hooks/useCameraSources';
 
 export interface CurrentWhepInfo {
@@ -25,6 +25,7 @@ export interface VideoHudProps {
   autoTrackFrames: number;
   isConnected: boolean;
   videoLatencyMs: number | null;
+  videoLatencyStats: WhepLatencyStats | null;
   autoTrack: AutoTrackHookState;
   connectWs: () => void;
   connectWhep: () => void;
@@ -47,6 +48,7 @@ export interface VideoStageProps {
   isConnected: boolean;
   aiStatus: AIStatus | null;
   autoTrackFrames: number;
+  videoLatencyStats: WhepLatencyStats | null;
   autoTrack: AutoTrackHookState;
   connectWs: () => void;
   connectWhep: () => void;

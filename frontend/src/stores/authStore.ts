@@ -25,6 +25,7 @@ const ROLE_LEVELS: Record<Exclude<AuthRole, null>, number> = {
 }
 
 let fetchInterceptorInstalled = false
+let storageSyncInstalled = false
 let authBootstrapPromise: Promise<void> | null = null
 
 function getGuestState(): AuthState {
@@ -65,6 +66,19 @@ function readStoredState(): AuthState {
 }
 
 let authState: AuthState = readStoredState()
+
+function readStoredAccessToken(): string | null {
+  if (typeof window === 'undefined') return null
+
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    const data = JSON.parse(raw) as Partial<AuthState>
+    return typeof data.accessToken === 'string' ? data.accessToken : null
+  } catch {
+    return null
+  }
+}
 
 function emit() {
   listeners.forEach((listener) => listener())
@@ -149,6 +163,20 @@ export function clearAuthState(reason?: string) {
   writeState(next)
 }
 
+export function clearAuthStateForToken(accessToken: string, reason?: string): boolean {
+  const storedAccessToken = readStoredAccessToken()
+  if (storedAccessToken && storedAccessToken !== accessToken) {
+    authState = readStoredState()
+    authState.ready = true
+    authState.validating = false
+    emit()
+    return false
+  }
+
+  clearAuthState(reason)
+  return true
+}
+
 export function getAuthState() {
   return authState
 }
@@ -231,17 +259,32 @@ export function installAuthFetchInterceptor() {
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init)
     const isApiRequest = isApiRequestUrl(input, request)
+    const accessToken = authState.accessToken
 
-    if (isApiRequest && authState.accessToken && !request.headers.has('Authorization')) {
-      request.headers.set('Authorization', `Bearer ${authState.accessToken}`)
+    if (isApiRequest && accessToken && !request.headers.has('Authorization')) {
+      request.headers.set('Authorization', `Bearer ${accessToken}`)
     }
 
-    const hadToken = Boolean(authState.accessToken)
     const response = await originalFetch(request)
-    if (isApiRequest && response.status === 401 && hadToken && !isAuthRoute(new URL(request.url, window.location.origin).pathname)) {
-      clearAuthState('登录已过期，请重新登录')
-      redirectToLogin()
+    if (isApiRequest && response.status === 401 && accessToken && !isAuthRoute(new URL(request.url, window.location.origin).pathname)) {
+      const cleared = clearAuthStateForToken(accessToken, '登录已过期，请重新登录')
+      if (cleared) {
+        redirectToLogin()
+      }
     }
     return response
   }
+}
+
+export function installAuthStorageSync() {
+  if (storageSyncInstalled || typeof window === 'undefined') return
+  storageSyncInstalled = true
+
+  window.addEventListener('storage', (event) => {
+    if (event.key !== STORAGE_KEY) return
+    authState = readStoredState()
+    authState.ready = true
+    authState.validating = false
+    emit()
+  })
 }

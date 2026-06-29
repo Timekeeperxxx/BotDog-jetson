@@ -17,6 +17,7 @@ export function VideoStage({
   whepStatus,
   currentWhep,
   videoLatencyMs,
+  videoLatencyStats,
   videoResolution,
   resolutionChip,
   telemetry,
@@ -95,6 +96,7 @@ export function VideoStage({
           autoTrackFrames={autoTrackFrames}
           isConnected={isConnected}
           videoLatencyMs={videoLatencyMs}
+          videoLatencyStats={videoLatencyStats}
           autoTrack={autoTrack}
           connectWs={connectWs}
           connectWhep={connectWhep}

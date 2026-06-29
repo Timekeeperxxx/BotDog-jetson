@@ -23,6 +23,8 @@ class NavAutoTrackCoordinator:
         self._interrupted_at: float | None = None
         self._last_reason: str | None = None
         self._user_intervened = False
+        self._resume_retry_task: asyncio.Task[None] | None = None
+        self._resume_retry_reason: str | None = None
 
     def get_status(self) -> dict[str, Any]:
         return {
@@ -34,6 +36,8 @@ class NavAutoTrackCoordinator:
             "interrupted_at": self._interrupted_at,
             "last_reason": self._last_reason,
             "user_intervened": self._user_intervened,
+            "resume_retry_scheduled": self._resume_retry_task is not None and not self._resume_retry_task.done(),
+            "resume_retry_reason": self._resume_retry_reason,
         }
 
     def is_navigation_context_active(self) -> bool:
@@ -112,7 +116,12 @@ class NavAutoTrackCoordinator:
                 **self.get_status(),
             }
 
-    async def resume_navigation_after_tracking(self, *, reason: str) -> dict[str, Any]:
+    async def resume_navigation_after_tracking(
+        self,
+        *,
+        reason: str,
+        apply_delay: bool = True,
+    ) -> dict[str, Any]:
         async with self._lock:
             if not self._interrupted_task_id:
                 self._release_auto_track_control()
@@ -121,7 +130,7 @@ class NavAutoTrackCoordinator:
             from .config import settings
 
             resume_delay_s = max(0.0, float(settings.NAV_AUTO_TRACK_RESUME_TIMEOUT_S))
-            if resume_delay_s > 0:
+            if apply_delay and resume_delay_s > 0:
                 task_id_for_log = self._interrupted_task_id
                 nav_track_logger.info(
                     "自动跟踪结束，等待恢复确认窗口：task_id={} reason={} delay_s={}",
@@ -141,6 +150,22 @@ class NavAutoTrackCoordinator:
 
             resume_blocker = self._resume_blocker()
             if resume_blocker is not None:
+                if resume_blocker == "robot_pose_unavailable":
+                    self._last_reason = resume_blocker
+                    self._schedule_resume_retry_locked(reason=f"{reason}:{resume_blocker}")
+                    self._release_auto_track_control()
+                    nav_track_logger.warning(
+                        "自动跟踪结束但暂时无法恢复导航，保留任务等待重试：task_id={} reason={}",
+                        self._interrupted_task_id,
+                        resume_blocker,
+                    )
+                    return {
+                        "success": False,
+                        "skipped": True,
+                        "reason": resume_blocker,
+                        "retry_scheduled": True,
+                        **self.get_status(),
+                    }
                 self._clear_interrupted_state(resume_blocker)
                 self._release_auto_track_control()
                 return {"success": False, "skipped": True, "reason": resume_blocker}
@@ -212,9 +237,10 @@ class NavAutoTrackCoordinator:
 
     def _resume_blocker(self) -> str | None:
         try:
+            from .config import settings
             from .services_nav_state import get_robot_pose
 
-            if get_robot_pose() is None:
+            if settings.NAV_AUTO_TRACK_REQUIRE_FRESH_TF and get_robot_pose() is None:
                 return "robot_pose_unavailable"
         except Exception:
             return "robot_pose_unavailable"
@@ -229,6 +255,47 @@ class NavAutoTrackCoordinator:
         ):
             return "scene_changed"
         return None
+
+    def _schedule_resume_retry_locked(self, *, reason: str) -> None:
+        try:
+            current_task = asyncio.current_task()
+        except RuntimeError:
+            current_task = None
+        if (
+            self._resume_retry_task is not None
+            and not self._resume_retry_task.done()
+            and self._resume_retry_task is not current_task
+        ):
+            return
+
+        from .config import settings
+
+        delay_s = max(1.0, min(3.0, float(settings.NAV_AUTO_TRACK_RESUME_TIMEOUT_S)))
+        self._resume_retry_reason = reason
+        self._resume_retry_task = asyncio.create_task(
+            self._resume_retry_after_delay(reason=reason, delay_s=delay_s)
+        )
+
+    async def _resume_retry_after_delay(self, *, reason: str, delay_s: float) -> None:
+        await asyncio.sleep(delay_s)
+        try:
+            await self.resume_navigation_after_tracking(reason=reason, apply_delay=False)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            nav_track_logger.warning("自动跟踪后导航恢复重试失败：reason={} error={}", reason, exc)
+
+    def _cancel_resume_retry_locked(self) -> None:
+        task = self._resume_retry_task
+        if task is not None and not task.done():
+            try:
+                current_task = asyncio.current_task()
+            except RuntimeError:
+                current_task = None
+            if task is not current_task:
+                task.cancel()
+        self._resume_retry_task = None
+        self._resume_retry_reason = None
 
     def _current_scene_snapshot(self) -> dict[str, str | None]:
         try:
@@ -274,6 +341,7 @@ class NavAutoTrackCoordinator:
             nav_track_logger.debug("申请导航控制权失败：{}", exc)
 
     def _clear_interrupted_state(self, reason: str) -> None:
+        self._cancel_resume_retry_locked()
         self._interrupted_task_id = None
         self._interrupted_target_name = None
         self._interrupted_target_waypoint_id = None

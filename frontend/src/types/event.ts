@@ -38,6 +38,16 @@ export interface AIStatus {
   mode: 'idle' | 'patrol' | 'suspect' | 'alert';
   hits: number;
   stable_hits: number;
+  latest_frame_index?: number;
+  last_processed_frame_index?: number;
+  queued_frames_dropped?: number;
+  stale_frames_dropped?: number;
+  frame_age_ms?: number;
+  processing_ms?: number;
+  detect_ms?: number;
+  postprocess_ms?: number;
+  end_to_end_ms?: number;
+  frame_timeout_reason?: string | null;
 }
 
 // ──── 自动跟踪相关类型 ────────────────────────────────────────────────────────
@@ -87,4 +97,3 @@ export interface AutoTrackStatus {
 export interface KnownTarget {
   track_id: number;
 }
-

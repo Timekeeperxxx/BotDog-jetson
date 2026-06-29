@@ -12,6 +12,7 @@ import {
   Radar,
   Square,
   UserSearch,
+  Battery,
 } from 'lucide-react'
 import {
   createWaypoint,
@@ -43,6 +44,7 @@ import { detectWebGLSupport } from '../components/pcd/webglSupport'
 import { TaskCreatorDrawer } from '../components/pcd/TaskCreatorDrawer'
 import { TaskDrawerPanel } from '../components/pcd/TaskDrawerPanel'
 import { useRobotControl } from '../hooks/useRobotControl'
+import { useBotDogWebSocket } from '../hooks/useBotDogWebSocket'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import { useMappingCloudWebSocket } from '../hooks/useMappingCloudWebSocket'
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
@@ -221,6 +223,7 @@ export function PcdMapDemoPage() {
   const [sceneDeleteConfirm, setSceneDeleteConfirm] = useState<PcdSceneItem | null>(null)
   // ── 高危操作确认 ──
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
+  const { telemetry } = useBotDogWebSocket()
   const navWs = useNavWebSocket()
   const { robotPose, globalPath, localizationStatus, navigationStatus, setInitialState } = navWs
   const relocationNotice = getRelocationNotice(relocationPrompt)
@@ -1168,6 +1171,11 @@ export function PcdMapDemoPage() {
           </div>
         </div>
         <div className="pcd-header-actions">
+          <div className="pcd-battery-status" title="机器狗剩余电量">
+            <Battery size={16} />
+            <span>电量</span>
+            <strong>{telemetry?.battery_pct != null ? `${telemetry.battery_pct.toFixed(0)}%` : '--'}</strong>
+          </div>
           {loading ? (
             <span className="pcd-loading">
               <Loader2 size={16} /> 加载中

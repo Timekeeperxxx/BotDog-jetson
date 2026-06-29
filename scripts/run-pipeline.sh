@@ -13,25 +13,33 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 PID_DIR="$ROOT_DIR/logs"
 
+# RTSP/MediaMTX 是机载本地链路，禁止继承桌面代理。
+# 否则 GStreamer 可能把 rtsp://192.168.144.25 发到 ALL_PROXY/HTTP_PROXY，
+# 地面端代理或网络一抖就会让本机 cam publisher 掉线。
+unset http_proxy https_proxy ftp_proxy all_proxy
+unset HTTP_PROXY HTTPS_PROXY FTP_PROXY ALL_PROXY
+
 MEDIAMTX="${MEDIAMTX_EXE:-$ROOT_DIR/scripts/mediamtx}"
 # cam1：HM30 IP 摄像头 RTSP 地址
 CAMERA_RTSP_URL="${CAMERA_RTSP_URL:-rtsp://192.168.144.25:8554/main.264}"
-CAMERA_RETRY_DELAY="${CAMERA_RETRY_DELAY:-10}"
+CAMERA_RETRY_DELAY="${CAMERA_RETRY_DELAY:-2}"
 FFMPEG_LOGLEVEL="${FFMPEG_LOGLEVEL:-warning}"
 CAM1_FPS="${CAM1_FPS:-30}"
 CAM1_THREADS="${CAM1_THREADS:-2}"
-CAM1_BITRATE="${CAM1_BITRATE:-8000k}"
-CAM1_GST_BITRATE="${CAM1_GST_BITRATE:-8000000}"
-CAM1_MAXRATE="${CAM1_MAXRATE:-10000k}"
-CAM1_BUFSIZE="${CAM1_BUFSIZE:-2000k}"
+CAM1_BITRATE="${CAM1_BITRATE:-6000k}"
+CAM1_GST_BITRATE="${CAM1_GST_BITRATE:-6000000}"
+CAM1_GST_VBV_SIZE="${CAM1_GST_VBV_SIZE:-600000}"
+CAM1_MAXRATE="${CAM1_MAXRATE:-7000k}"
+CAM1_BUFSIZE="${CAM1_BUFSIZE:-1000k}"
 CAM1_ALLOW_SOFTWARE_FALLBACK="${CAM1_ALLOW_SOFTWARE_FALLBACK:-0}"
+CAM1_GST_LATENCY="${CAM1_GST_LATENCY:-30}"
 # cam1 转码器：
 #   gst-nvenc     GStreamer NVIDIA 硬解 HEVC + 硬编 H.264，主摄像头低延迟推荐
 #   auto          优先硬件 H.264 编码，失败再回退 libx264
 #   h264_v4l2m2m  V4L2 mem2mem 硬件编码，Jetson 上通常显著降低 CPU
 #   h264_omx      OpenMAX H.264 硬件编码，作为旧 Jetson/FFmpeg 备选
 #   libx264       原软件编码路径，兼容性最高但 CPU 占用高
-CAM1_ENCODER="${CAM1_ENCODER:-gst-nvenc}"
+CAM1_ENCODER="${CAM1_ENCODER:-auto}"
 # 可选强制硬件解码，例如 HEVC 摄像头可设 CAM1_DECODER=hevc_nvv4l2dec。
 # 默认 auto 交给 FFmpeg 探测，避免摄像头编码变化时拉流失败。
 CAM1_DECODER="${CAM1_DECODER:-auto}"
@@ -207,9 +215,11 @@ setsid env \
   CAM1_THREADS="$CAM1_THREADS" \
   CAM1_BITRATE="$CAM1_BITRATE" \
   CAM1_GST_BITRATE="$CAM1_GST_BITRATE" \
+  CAM1_GST_VBV_SIZE="$CAM1_GST_VBV_SIZE" \
   CAM1_MAXRATE="$CAM1_MAXRATE" \
   CAM1_BUFSIZE="$CAM1_BUFSIZE" \
   CAM1_ALLOW_SOFTWARE_FALLBACK="$CAM1_ALLOW_SOFTWARE_FALLBACK" \
+  CAM1_GST_LATENCY="$CAM1_GST_LATENCY" \
   CAM1_FPS="$CAM1_FPS" \
   CAM1_ENCODER="$CAM1_ENCODER" \
   CAM1_DECODER="$CAM1_DECODER" \
@@ -282,16 +292,18 @@ setsid env \
 
     echo "[$(date "+%F %T")] Starting FFmpeg cam1 (encoder=gst-nvenc, decoder=nvv4l2decoder)..." >> "$ROOT_DIR/logs/ffmpeg.log"
     gst-launch-1.0 -q \
-      rtspsrc location="$CAMERA_RTSP_URL" protocols=tcp latency=0 drop-on-latency=true do-retransmission=false ! \
+      rtspsrc location="$CAMERA_RTSP_URL" protocols=tcp latency="$CAM1_GST_LATENCY" drop-on-latency=true do-retransmission=false tcp-timeout=5000000 ! \
       rtph265depay ! h265parse ! \
       nvv4l2decoder enable-max-performance=true disable-dpb=true ! \
       nvvidconv ! "video/x-raw(memory:NVMM),format=(string)NV12" ! \
-      nvv4l2h264enc bitrate="$CAM1_GST_BITRATE" iframeinterval=10 idrinterval=10 insert-sps-pps=true maxperf-enable=true preset-level=1 ! \
-      h264parse config-interval=1 ! fdsink fd=1 sync=false \
+      nvv4l2h264enc bitrate="$CAM1_GST_BITRATE" vbv-size="$CAM1_GST_VBV_SIZE" control-rate=1 num-B-Frames=0 num-Ref-Frames=1 poc-type=2 iframeinterval=10 idrinterval=10 insert-sps-pps=true maxperf-enable=true preset-level=1 ! \
+      h264parse config-interval=-1 ! "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au" ! \
+      fdsink fd=1 sync=false async=false \
       2>> "$ROOT_DIR/logs/ffmpeg.log" | \
     ffmpeg -hide_banner -nostats -loglevel "$FFMPEG_LOGLEVEL" \
-      -fflags nobuffer -flags low_delay -f h264 -i pipe:0 \
-      -c:v copy -muxdelay 0 -muxpreload 0 \
+      -fflags nobuffer -flags low_delay -use_wallclock_as_timestamps 1 \
+      -probesize 1000000 -analyzeduration 1000000 -f h264 -i pipe:0 \
+      -c:v copy -muxdelay 0 -muxpreload 0 -flush_packets 1 \
       -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam \
       >> "$ROOT_DIR/logs/ffmpeg.log" 2>&1
   }

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from backend.api.routes import nav as nav_routes
 from backend.auth.schemas import AuthUserInternal
 from backend.config import settings
 from backend.control_arbiter import ControlArbiter, set_control_arbiter
 from backend.nav_auto_track_coordinator import NavAutoTrackCoordinator
-from backend.services_nav_state import get_nav_state, set_navigation_idle, update_navigation_status, update_robot_pose
+from backend.services_nav_state import clear_robot_pose, get_nav_state, set_navigation_idle, update_navigation_status, update_robot_pose
 from backend.tracking_types import ControlOwner
 
 
@@ -23,13 +25,18 @@ class DummyBridge:
 def setup_function() -> None:
     set_navigation_idle("测试初始化")
     set_control_arbiter(None)
+    settings.NAV_AUTO_TRACK_RESUME_TIMEOUT_S = 0
+    settings.NAV_AUTO_TRACK_REQUIRE_FRESH_TF = True
 
 
 def teardown_function() -> None:
     set_navigation_idle("测试结束")
     set_control_arbiter(None)
-    settings.NAV_AUTO_TRACK_DURING_NAV_ENABLED = True
-    settings.NAV_AUTO_TRACK_AUTO_ENABLE = True
+    clear_robot_pose()
+    settings.NAV_AUTO_TRACK_DURING_NAV_ENABLED = False
+    settings.NAV_AUTO_TRACK_AUTO_ENABLE = False
+    settings.NAV_AUTO_TRACK_RESUME_TIMEOUT_S = 3.0
+    settings.NAV_AUTO_TRACK_REQUIRE_FRESH_TF = True
 
 
 def test_control_arbiter_auto_track_preempts_navigation() -> None:
@@ -111,6 +118,53 @@ def test_coordinator_does_not_resume_after_user_intervention(monkeypatch) -> Non
 
     assert resume_result["skipped"] is True
     assert bridge.nav_start_calls == [False]
+
+
+@pytest.mark.asyncio
+async def test_coordinator_keeps_interrupted_navigation_when_tf_temporarily_unavailable(monkeypatch) -> None:
+    bridge = DummyBridge()
+    monkeypatch.setattr("backend.nav_bridge_state.get_ros_nav_bridge", lambda: bridge)
+    arbiter = ControlArbiter()
+    set_control_arbiter(arbiter)
+
+    update_navigation_status(
+        {
+            "status": "navigating",
+            "task_id": "task_001",
+            "target_waypoint_id": "wp_001",
+            "target_name": "巡检点1",
+            "message": "导航中",
+        }
+    )
+
+    coordinator = NavAutoTrackCoordinator()
+    pause_result = await coordinator.pause_navigation_for_tracking(track_id=7)
+    assert pause_result["success"] is True
+    assert bridge.nav_start_calls == [False]
+
+    clear_robot_pose()
+    resume_result = await coordinator.resume_navigation_after_tracking(reason="TARGET_LOST")
+
+    assert resume_result["success"] is False
+    assert resume_result["reason"] == "robot_pose_unavailable"
+    assert resume_result["retry_scheduled"] is True
+    assert bridge.nav_start_calls == [False]
+    status = coordinator.get_status()
+    assert status["interrupted_task_id"] == "task_001"
+    assert status["resume_retry_scheduled"] is True
+
+    update_robot_pose({"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.0, "timestamp": 9999999999.0})
+    retry_result = await coordinator.resume_navigation_after_tracking(
+        reason="TARGET_LOST:robot_pose_unavailable",
+        apply_delay=False,
+    )
+
+    assert retry_result["success"] is True
+    assert bridge.nav_start_calls == [False, True]
+    assert arbiter.owner == ControlOwner.NAVIGATION
+    status = coordinator.get_status()
+    assert status["interrupted_task_id"] is None
+    assert status["resume_retry_scheduled"] is False
 
 
 def test_nav_auto_track_mode_endpoint_enables_tracking_during_active_navigation(monkeypatch) -> None:

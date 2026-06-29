@@ -789,6 +789,12 @@ class RosNavBridge:
 
     def _handle_cloud_message(self, msg: Any) -> None:
         now = time.monotonic()
+        if not self._mapping_cloud_broadcaster.has_connections():
+            has_voxel_cloud = bool(getattr(self, "_accumulated_cloud_voxels", None))
+            if len(self._accumulated_cloud) > 0 or has_voxel_cloud:
+                self.clear_accumulated_cloud()
+            return
+
         if self._is_navigation_active():
             has_voxel_cloud = bool(getattr(self, "_accumulated_cloud_voxels", None))
             if len(self._accumulated_cloud) > 0 or has_voxel_cloud:

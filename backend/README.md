@@ -336,6 +336,21 @@ curl http://127.0.0.1:8889/v3/paths/list | python3 -m json.tool
 # http://<ARM64_HOST>:8889/cam2/whep
 ```
 
+### 远程访问 WHEP
+
+MediaMTX 默认从本机网卡公布 WebRTC 候选地址，因此同一套服务可以通过 `.144`、Wi-Fi 或 Tailscale 地址访问：
+
+```text
+http://192.168.144.104:8000
+http://100.x.y.z:8000
+```
+
+Tailscale 访问时，客户端必须能访问 Jetson 的 `8000`、`8889`，以及 MediaMTX WebRTC 媒体端口（默认 UDP `8189`）。如果使用公网域名或公网 IP，经 NAT/端口转发访问，还需要在 [config/mediamtx.yml](/home/jetson/Project/BOTDOG/BotDog/config/mediamtx.yml) 的 `webrtcAdditionalHosts` 中加入该公网域名或公网 IP，例如：
+
+```yaml
+webrtcAdditionalHosts: [botdog.example.com]
+```
+
 ## 开发调试
 
 ### API 文档

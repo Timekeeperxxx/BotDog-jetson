@@ -60,12 +60,22 @@ class Settings(BaseSettings):
     # 阶段 5：旁路 AI 识别与抓拍
     AI_ENABLED: bool = True
     AI_RTSP_URL: str = 'rtsp://127.0.0.1:8554/cam'
-    AI_FRAME_WIDTH: int = 1280
-    AI_FRAME_HEIGHT: int = 720
-    AI_FPS: int = 10
+    # AI 备用 RTSP 地址，逗号分隔；默认不拉原始摄像头，避免源端被多客户端并发拉流拖慢。
+    AI_RTSP_FALLBACK_URLS: str = ''
+    AI_FRAME_WIDTH: int = 640
+    AI_FRAME_HEIGHT: int = 360
+    AI_FPS: int = 5
+    AI_INFERENCE_IMGSZ: int = 640
     AI_FFMPEG_RETRY_MIN_SECONDS: float = 1.0
     AI_FFMPEG_RETRY_MAX_SECONDS: float = 3.0
-    AI_PATROL_SKIP: int = 2  # 巡逻态跳帧（10fps / 5 = 2fps 推理）
+    # 单帧 AI 处理超时保护。YOLO/TensorRT/CUDA 偶发卡死时，线程无法被 Python 安全杀掉；
+    # 默认让后端失败退出，交给 systemd Restart=on-failure 自动重启，避免 AI 帧永久停住。
+    AI_FRAME_PROCESS_TIMEOUT_SECONDS: float = 15.0
+    AI_EXIT_ON_FRAME_TIMEOUT: bool = True
+    AI_EVENT_SEND_TIMEOUT_SECONDS: float = 0.03
+    AI_MAX_FRAME_AGE_SECONDS: float = 0.35
+    AI_PATROL_SKIP: int = 2  # 巡逻态跳帧（5fps / 2 = 2.5fps 推理）
+    AI_AUTO_TRACK_SKIP: int = 1  # 自动跟踪启用时全速检测，提高锁定/重发现稳定性
     AI_SUSPECT_SKIP: int = 1  # 疑似目标全速推理
     AI_STABLE_HITS: int = 5  # 连续命中阈值
     AI_RESET_MISSES: int = 20  # 连续未命中重置阈值
@@ -79,7 +89,7 @@ class Settings(BaseSettings):
     AI_USE_BYTETRACK: bool = False
     # 是否在普通巡检/session 运行时启用旧的被动 AI 告警。
     # 关闭后，AI 只在自动跟踪或驱离模式需要视觉结果时拉流推理，避免抢占主视频链路。
-    AI_PASSIVE_SESSION_DETECTION_ENABLED: bool = False
+    AI_PASSIVE_SESSION_DETECTION_ENABLED: bool = True
 
     # 抓拍存储目录（用于 /api/v1/static）
     SNAPSHOT_DIR: str = 'data/snapshots'
@@ -236,6 +246,8 @@ class Settings(BaseSettings):
     AUTO_TRACK_TARGET_HOLD_SECONDS: float = 3.0   # 目标最短保持时间（s）
     AUTO_TRACK_OUT_OF_ZONE_FRAMES: int = 10       # 连续出区帧数触发停止阈值
     AUTO_TRACK_LOST_TIMEOUT_FRAMES: int = 30      # 目标丢失超时帧数
+    AUTO_TRACK_VIDEO_LOST_GRACE_SECONDS: float = 8.0  # 视频流短断宽限时间，期间不释放跟踪/导航联动
+    AUTO_TRACK_OVERLAY_INTERVAL_SECONDS: float = 0.1  # TRACK_OVERLAY 广播限频，避免慢前端反压 AI 拉流
     AUTO_TRACK_YAW_DEADBAND_PX: int = 100          # 水平偏航死区（像素），从80缩短到40提升转向灵敏度
     AUTO_TRACK_FORWARD_AREA_RATIO: float = 0.3   # 面积达到该比例后先停止前进
     AUTO_TRACK_ANCHOR_Y_STOP_RATIO: float = 0.95  # 锚点纵向停止比（0.90 即留出底部 10% 作为停止区）

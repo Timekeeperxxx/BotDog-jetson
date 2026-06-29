@@ -84,6 +84,31 @@
   gap: 10px;
 }
 
+.pcd-battery-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  border-radius: 6px;
+  background: rgba(8, 15, 19, 0.88);
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pcd-battery-status svg {
+  color: #5eead4;
+}
+
+.pcd-battery-status strong {
+  color: #f8fafc;
+  font-size: 14px;
+}
+
 .pcd-loading,
 .pcd-primary-button,
 .pcd-secondary-button,

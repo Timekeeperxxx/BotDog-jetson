@@ -2,24 +2,29 @@
 # Docs: https://github.com/bluenviron/mediamtx
 
 logLevel: info
+# 低延迟优先：队列过大会把观看端短时拥塞变成 1s+ 的累计延迟。
+writeQueueSize: 256
 
 # RTSP server (ingest)
 rtsp: yes
 rtspAddress: :8554
-# avoid UDP ports that conflict with backend on 8000
-# rtspTransports:
-#   - tcp
+# MediaMTX v1.9.3 默认还会监听 RTSP UDP/RTP 端口；本项目 FFmpeg 推流命令使用 RTSP over TCP。
 
 # WHEP server
 webrtc: yes
 webrtcAddress: :8889
+# 固定 WebRTC 媒体 UDP 端口，公网/Tailscale 防火墙只需额外放行这一项。
+webrtcLocalUDPAddress: :8189
 webrtcEncryption: false
 
 
 # WHEP paths (explicit for clarity)
-# 填写 OrangePi 对外可达的 IP（交换机/HM30 侧），供地面端浏览器 ICE 协商使用
-webrtcAdditionalHosts:
-  - 192.168.144.104
+# 公布本机所有可用地址，让浏览器可通过 .144、Wi-Fi、Tailscale 等入口协商到可达链路。
+# 公网/NAT 场景还需要在 webrtcAdditionalHosts 里增加公网 IP 或域名。
+webrtcIPsFromInterfaces: true
+# 例如公网访问使用固定域名时可改为：
+# webrtcAdditionalHosts: [botdog.example.com]
+webrtcAdditionalHosts: []
 
 paths:
   cam:
@@ -33,4 +38,3 @@ paths:
   cam4:
     # USB 摄像头（右视），由 run-pipeline.sh 中的 FFmpeg 看门狗负责推流
     source: publisher
-

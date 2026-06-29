@@ -178,6 +178,31 @@ async def test_transient_lost_does_not_send_stop_until_timeout(
 
 
 @pytest.mark.asyncio
+async def test_video_lost_freezes_target_without_releasing_tracking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _service(tmp_path, monkeypatch)
+
+    await _feed_head_person_frames(service, start_frame=1, count=5)
+    assert service.get_status()["state"] == AutoTrackState.FOLLOWING.value
+
+    await service.notify_video_lost("publisher_disconnected")
+    status = service.get_status()
+    assert status["state"] == AutoTrackState.LOST.value
+    assert status["active_target"]["bbox"] == (100, 80, 300, 460)
+    assert status["video_lost"] is True
+    assert not any(msg == TrackStopReason.VIDEO_LOST.value for msg, _ in service._control_service.commands)
+    assert any(cmd == "stop" for cmd, _ in service._control_service.commands)
+
+    await service.process_frame([_person(bbox=(110, 80, 310, 460))], b"", frame_index=6, current_task_id="task")
+    status = service.get_status()
+    assert status["state"] == AutoTrackState.FOLLOWING.value
+    assert status["video_lost"] is False
+    assert status["active_target"]["bbox"] == (110, 80, 310, 460)
+
+
+@pytest.mark.asyncio
 async def test_manual_auto_track_enable_works_without_running_task(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

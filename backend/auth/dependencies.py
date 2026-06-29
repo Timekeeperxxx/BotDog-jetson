@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from sqlalchemy import select
@@ -20,7 +20,23 @@ _auth_disabled_warning_emitted = False
 def get_dev_user() -> AuthUserInternal:
     return AuthUserInternal(id=0, username="dev", role="admin", token_version=0)
 
+
+def _raise_unauthorized(request: Request, detail: str) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    auth_logger.warning(
+        "鉴权失败：path={} source={} reason={}",
+        request.url.path,
+        client_host,
+        detail,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+    )
+
+
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> AuthUserInternal:
@@ -32,36 +48,30 @@ async def get_current_user(
         return get_dev_user()
 
     if credentials is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="缺少访问令牌",
-        )
+        _raise_unauthorized(request, "缺少访问令牌")
 
     try:
         token_data = decode_access_token(credentials.credentials)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
-        ) from exc
+        _raise_unauthorized(request, str(exc))
 
     user_id = token_data.get("user_id")
     if not isinstance(user_id, int):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="token 载荷无效")
+        _raise_unauthorized(request, "token 载荷无效")
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
     if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在")
+        _raise_unauthorized(request, "用户不存在")
     if user.username != token_data.get("sub"):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 用户不匹配")
+        _raise_unauthorized(request, "Token 用户不匹配")
     if not user.enabled:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户已被禁用")
+        _raise_unauthorized(request, "用户已被禁用")
     if user.deleted_at is not None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户已删除")
+        _raise_unauthorized(request, "用户已删除")
     if user.token_version != token_data.get("token_version", 0):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token 已失效，请重新登录")
+        _raise_unauthorized(request, "Token 已失效，请重新登录")
 
     return AuthUserInternal(
         id=user.id,

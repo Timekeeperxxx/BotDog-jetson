@@ -51,6 +51,7 @@ export default function IndustrialConsoleComplete() {
     status: whepStatus,
     videoRef,
     videoLatencyMs,
+    videoLatencyStats,
     videoResolution,
     connect: connectWhep,
     disconnect: disconnectWhep,
@@ -119,7 +120,6 @@ export default function IndustrialConsoleComplete() {
 
   // WebSocket 连接
   useEffect(() => { connectWs(); return () => { disconnectWs(); }; }, []);
-  useEffect(() => { connectWhep(); return () => { disconnectWhep(); }; }, []);
 
   useEffect(() => {
     if (activeTab !== 'history') return;
@@ -181,6 +181,7 @@ export default function IndustrialConsoleComplete() {
               whepStatus,
               currentWhep,
               videoLatencyMs,
+              videoLatencyStats,
               videoResolution,
               resolutionChip,
               telemetry,

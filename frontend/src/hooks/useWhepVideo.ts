@@ -7,12 +7,23 @@ export interface WhepState {
   error: string | null;
 }
 
+export interface WhepLatencyStats {
+  totalMs: number;
+  networkMs: number;
+  jitterBufferMs: number;
+  decodeMs: number;
+}
+
 // 未设置 VITE_WHEP_URL 时，自动使用当前页面的 hostname 拼接 MediaMTX 地址，
 // 兼容后端托管 SPA 的场景（ARM64 部署无需写死 IP）。
 const DEFAULT_WHEP_URL = `http://${window.location.hostname}:8889/cam/whep`;
 
 // 重试退避阶梯（ms）
 const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000];
+const HIGH_BUFFER_RECONNECT_MS = 1200;
+const FORCE_BUFFER_RECONNECT_MS = 2500;
+const HIGH_BUFFER_SAMPLE_LIMIT = 5;
+const MIN_LATENCY_RECONNECT_INTERVAL_MS = 30000;
 
 // TypeScript DOM lib 中无 RTCRemoteInboundRtpStreamStats，按需声明
 interface RemoteInboundRtpStats {
@@ -40,6 +51,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
     framesDecoded: number;
   } | null>(null);
   const [videoLatencyMs, setVideoLatencyMs] = useState<number | null>(null);
+  const [videoLatencyStats, setVideoLatencyStats] = useState<WhepLatencyStats | null>(null);
   const [videoResolution, setVideoResolution] = useState<{ width: number | null; height: number | null }>({
     width: null,
     height: null,
@@ -47,6 +59,8 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
   const connectSessionIdRef = useRef(0);
   const shouldRetryRef = useRef(false);
   const retryAttemptsRef = useRef(0);
+  const highLatencySamplesRef = useRef(0);
+  const lastLatencyReconnectAtRef = useRef(0);
   // statusRef 与 React state 保持同步，用于同步判断当前连接状态
   const statusRef = useRef<WhepStatus>('disconnected');
   // 最新 connect 函数引用，供 retry timer 调用，避免 stale closure
@@ -89,7 +103,9 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
     }
 
     prevInboundRef.current = null;
+    highLatencySamplesRef.current = 0;
     setVideoLatencyMs(null);
+    setVideoLatencyStats(null);
     setVideoResolution({ width: null, height: null });
 
     if (videoRef.current) {
@@ -135,7 +151,10 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
 
     try {
       const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        iceServers: [],
+        iceCandidatePoolSize: 0,
+        bundlePolicy: 'max-bundle',
+        rtcpMuxPolicy: 'require',
       });
       pcRef.current = pc;
 
@@ -169,6 +188,13 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
               const currentPc = pcRef.current;
               if (!currentPc) return;
               try {
+                currentPc.getReceivers().forEach((receiver) => {
+                  const lowLatencyReceiver = receiver as RTCRtpReceiver & { playoutDelayHint?: number };
+                  if ('playoutDelayHint' in lowLatencyReceiver) {
+                    lowLatencyReceiver.playoutDelayHint = 0;
+                  }
+                });
+
                 const stats = await currentPc.getStats();
                 let rttSeconds: number | null = null;
                 let curInbound: {
@@ -249,6 +275,37 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
                   const networkMs = rttSeconds !== null ? (rttSeconds * 1000) / 2 : 0;
                   const totalMs = Math.round(networkMs + jitterBufferMs + decodeMs);
                   setVideoLatencyMs(totalMs);
+                  setVideoLatencyStats({
+                    totalMs,
+                    networkMs: Math.round(networkMs),
+                    jitterBufferMs: Math.round(jitterBufferMs),
+                    decodeMs: Math.round(decodeMs),
+                  });
+                  if (!options?.skipStats) {
+                    const now = Date.now();
+                    const bufferMs = Math.round(jitterBufferMs);
+                    if (bufferMs >= HIGH_BUFFER_RECONNECT_MS) {
+                      highLatencySamplesRef.current += 1;
+                    } else {
+                      highLatencySamplesRef.current = 0;
+                    }
+                    const shouldReconnect =
+                      bufferMs >= FORCE_BUFFER_RECONNECT_MS
+                      || highLatencySamplesRef.current >= HIGH_BUFFER_SAMPLE_LIMIT;
+                    if (
+                      shouldReconnect
+                      && now - lastLatencyReconnectAtRef.current >= MIN_LATENCY_RECONNECT_INTERVAL_MS
+                    ) {
+                      lastLatencyReconnectAtRef.current = now;
+                      highLatencySamplesRef.current = 0;
+                      void (async () => {
+                        await cleanup();
+                        window.setTimeout(() => {
+                          void connectFnRef.current?.();
+                        }, 250);
+                      })();
+                    }
+                  }
                 }
               } catch {
                 // ignore stats errors
@@ -261,6 +318,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
             statsTimerRef.current = null;
           }
           setVideoLatencyMs(null);
+          setVideoLatencyStats(null);
           if (shouldRetryRef.current) {
             scheduleRetry('WHEP 连接失败');
           } else {
@@ -390,6 +448,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
     status: state,
     videoRef,
     videoLatencyMs,
+    videoLatencyStats,
     videoResolution,
     connect,
     disconnect,

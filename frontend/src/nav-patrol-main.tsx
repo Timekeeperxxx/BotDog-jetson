@@ -9,11 +9,13 @@ import {
   bootstrapAuthState,
   hasAuthSession,
   installAuthFetchInterceptor,
+  installAuthStorageSync,
   useAuthState,
 } from './stores/authStore'
 
 // 在模块加载时立即安装 fetch 拦截器，确保所有 /api/ 请求都携带 Authorization
 installAuthFetchInterceptor()
+installAuthStorageSync()
 
 function NavPatrolAuthRoot() {
   const auth = useAuthState()

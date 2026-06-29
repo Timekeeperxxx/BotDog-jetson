@@ -194,6 +194,7 @@ async def initialize_runtime_services(
         reset_misses=settings.AI_RESET_MISSES,
         out_of_zone_frames=settings.AUTO_TRACK_OUT_OF_ZONE_FRAMES,
         lost_timeout_frames=settings.AUTO_TRACK_LOST_TIMEOUT_FRAMES,
+        video_lost_grace_seconds=settings.AUTO_TRACK_VIDEO_LOST_GRACE_SECONDS,
         command_interval_ms=settings.AUTO_TRACK_COMMAND_INTERVAL_MS,
         yaw_deadband_px=settings.AUTO_TRACK_YAW_DEADBAND_PX,
         forward_area_ratio=settings.AUTO_TRACK_FORWARD_AREA_RATIO,

@@ -2,6 +2,7 @@
 宇树 B2 遥测 Worker。
 
 订阅 DDS 话题 rt/sportmodestate，获取 B2 的位置、速度、姿态等状态，
+并订阅 rt/lowstate 获取 BMS 电池状态，
 并转换为项目内部 TelemetrySnapshotDTO 推送至遥测队列。
 
 话题频率：500Hz（rt/sportmodestate）或 50Hz（rt/lf/sportmodestate）
@@ -29,6 +30,19 @@ if TYPE_CHECKING:
 
 # DDS 话题（低频 50Hz 版本，减少 CPU 占用）
 TOPIC_SPORT_STATE = "rt/lf/sportmodestate"
+TOPIC_LOW_STATE = "rt/lowstate"
+
+
+def _extract_battery_from_low_state(msg: object) -> Optional[BatteryDTO]:
+    """从 Unitree LowState_ 中提取电压和 BMS SOC。"""
+    bms_state = getattr(msg, "bms_state", None)
+    soc = getattr(bms_state, "soc", None)
+    if soc is None:
+        return None
+
+    voltage = float(getattr(msg, "power_v", 0.0) or 0.0)
+    remaining_pct = max(0, min(100, int(round(float(soc)))))
+    return BatteryDTO(voltage=voltage, remaining_pct=remaining_pct)
 
 
 class UnitreeTelemetryWorker:
@@ -49,14 +63,16 @@ class UnitreeTelemetryWorker:
         self._state_machine = state_machine
         self._network_interface = network_interface
         self._latest_state: Optional[dict] = None
+        self._latest_battery: Optional[BatteryDTO] = None
         self._last_update_time: float = 0.0
+        self._last_battery_update_time: float = 0.0
         self._initialized: bool = False
 
     async def start(self, stop_event: asyncio.Event) -> None:
         """启动遥测 Worker。"""
         try:
             from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
-            from unitree_sdk2py.idl.unitree_go.msg.dds_ import SportModeState_
+            from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_, SportModeState_
 
             logger.info(f"[UnitreeTelemetry] 初始化 DDS，网卡={self._network_interface}")
 
@@ -108,6 +124,26 @@ class UnitreeTelemetryWorker:
                     logger.debug(f"[UnitreeTelemetry] 状态解析异常: {exc}")
 
             subscriber.Init(on_state_message, 1)  # Python SDK 用 .Init() 而非 .InitChannel()
+
+            def on_low_state_message(msg: LowState_) -> None:
+                """DDS 回调：接收低层状态中的 BMS 电池数据。"""
+                try:
+                    battery = _extract_battery_from_low_state(msg)
+                    if battery is None:
+                        return
+                    self._latest_battery = battery
+                    self._last_battery_update_time = time.time()
+                except Exception as exc:
+                    logger.debug(f"[UnitreeTelemetry] 电池状态解析异常: {exc}")
+
+            low_state_subscriber = None
+            try:
+                low_state_subscriber = ChannelSubscriber(TOPIC_LOW_STATE, LowState_)
+                low_state_subscriber.Init(on_low_state_message, 10)
+                logger.info(f"[UnitreeTelemetry] 已订阅电池低层状态: {TOPIC_LOW_STATE}")
+            except Exception as exc:
+                logger.warning(f"[UnitreeTelemetry] 电池低层状态订阅失败，电量将暂不可用: {exc}")
+
             self._initialized = True
             logger.info("[UnitreeTelemetry] DDS 订阅者已启动，等待 B2 状态数据...")
 
@@ -130,6 +166,13 @@ class UnitreeTelemetryWorker:
                         self._state_machine.update_heartbeat(0)  # 触发断连检测
                         continue
 
+                    battery = self._latest_battery
+                    if (
+                        battery is not None
+                        and time.time() - self._last_battery_update_time > 5.0
+                    ):
+                        battery = None
+
                     # 构造遥测快照
                     snapshot = TelemetrySnapshotDTO(
                         attitude=AttitudeDTO(
@@ -144,10 +187,7 @@ class UnitreeTelemetryWorker:
                             alt=state["pos_z"],   # 高度（m）
                             hdg=state["yaw"],     # 朝向（rad）
                         ),
-                        battery=BatteryDTO(
-                            voltage=0.0,          # 单独从 robot_state 获取
-                            remaining_pct=100,
-                        ),
+                        battery=battery,
                         system_status=SystemStatusDTO(
                             armed=state["mode"] not in (0, 7),  # 非 idle/damping 视为激活
                             mode=f"B2_MODE_{state['mode']}",

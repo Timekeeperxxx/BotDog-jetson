@@ -82,6 +82,7 @@ class AutoTrackService:
         reset_misses: int = 3,
         out_of_zone_frames: int = 10,
         lost_timeout_frames: int = 30,
+        video_lost_grace_seconds: float = 8.0,
         command_interval_ms: float = 200.0,
         yaw_deadband_px: int = 80,
         forward_area_ratio: float = 0.15,
@@ -107,6 +108,7 @@ class AutoTrackService:
         self._reset_misses = reset_misses
         self._out_of_zone_frames = out_of_zone_frames
         self._lost_timeout_frames = lost_timeout_frames
+        self._video_lost_grace_seconds = max(0.0, float(video_lost_grace_seconds))
         self._stop_snapshot_enabled = stop_snapshot_enabled
 
         # 运行时开关
@@ -152,6 +154,11 @@ class AutoTrackService:
         self._last_command: Optional[str] = None
         self._last_decision_reason: Optional[str] = None
         self._frames_processed: int = 0
+        self._video_lost_since: Optional[float] = None
+        self._video_lost_reason: Optional[str] = None
+        self._event_send_timeout_s = max(0.005, float(settings.AI_EVENT_SEND_TIMEOUT_SECONDS))
+        self._overlay_interval_s = max(0.05, float(settings.AUTO_TRACK_OVERLAY_INTERVAL_SECONDS))
+        self._last_overlay_broadcast: float = 0.0
 
         # 决策日志
         self._decision_log_file = None
@@ -224,6 +231,9 @@ class AutoTrackService:
             elif key == "auto_track_lost_timeout_frames":
                 self._lost_timeout_frames = int(value)
                 logger.info(f"[AutoTrackService] 热更新 lost_timeout_frames={self._lost_timeout_frames}")
+            elif key == "auto_track_video_lost_grace_seconds":
+                self._video_lost_grace_seconds = max(0.0, float(value))
+                logger.info(f"[AutoTrackService] 热更新 video_lost_grace_seconds={self._video_lost_grace_seconds}")
             elif key == "auto_track_yaw_deadband_px":
                 self._yaw_deadband_px = int(value)
                 self._decision_engine._yaw_deadband_px = self._yaw_deadband_px
@@ -269,8 +279,63 @@ class AutoTrackService:
             "frames_processed": self._frames_processed,
             "candidate_count": len(self._candidates),
             "stable_hits_threshold": self._stable_hits,
+            "video_lost": self._video_lost_since is not None,
+            "video_lost_reason": self._video_lost_reason,
             "control_arbiter": arbiter_status,
         }
+
+    async def notify_video_lost(self, reason: str = "unknown") -> None:
+        """
+        RTSP/解码链路短暂断流。
+
+        这里不能按“目标丢失”处理：目标没变，只是没有新画面。
+        因此先停住底盘并冻结当前跟踪状态；超过宽限时间才释放导航联动。
+        """
+        if not self._enabled or self._paused or self._active_target is None:
+            return
+
+        now = time.monotonic()
+        if self._video_lost_since is None:
+            self._video_lost_since = now
+            self._video_lost_reason = reason
+            self._state = AutoTrackState.LOST
+            self._last_decision_reason = f"VIDEO_LOST: {reason}"
+            await self._send_command_safe("stop")
+            await self._broadcast_event("AUTO_TRACK_VIDEO_LOST", {
+                "track_id": self._active_target.track_id,
+                "reason": reason,
+                "grace_seconds": self._video_lost_grace_seconds,
+            })
+            logger.warning(
+                f"[AutoTrackService] 视频流断开，冻结自动跟踪：track_id={self._active_target.track_id} "
+                f"reason={reason} grace={self._video_lost_grace_seconds:.1f}s"
+            )
+            return
+
+        if now - self._video_lost_since < self._video_lost_grace_seconds:
+            return
+
+        logger.warning(
+            f"[AutoTrackService] 视频流断开超过宽限时间，停止跟踪："
+            f"elapsed={now - self._video_lost_since:.1f}s"
+        )
+        await self._stop_without_snapshot(TrackStopReason.VIDEO_LOST, reason)
+
+    async def notify_video_restored(self) -> None:
+        """视频流恢复：保留目标状态，交给后续检测帧重新匹配。"""
+        if self._video_lost_since is None:
+            return
+        elapsed = time.monotonic() - self._video_lost_since
+        self._video_lost_since = None
+        reason = self._video_lost_reason
+        self._video_lost_reason = None
+        await self._broadcast_event("AUTO_TRACK_VIDEO_RESTORED", {
+            "elapsed_seconds": round(elapsed, 2),
+            "reason": reason,
+        })
+        logger.info(
+            f"[AutoTrackService] 视频流恢复，继续自动跟踪匹配：elapsed={elapsed:.1f}s reason={reason}"
+        )
 
     # ─── 核心处理入口 ────────────────────────────────────────────────────────
 
@@ -288,6 +353,8 @@ class AutoTrackService:
         由 AIWorker 在每帧推理后调用。
         """
         self._frames_processed += 1
+        if self._video_lost_since is not None:
+            await self.notify_video_restored()
 
         # ── 仲裁器自动恢复：若控制权已归还给 AUTO_TRACK，自动解除 PAUSED ──────
         if (
@@ -335,47 +402,50 @@ class AutoTrackService:
                     self._reset_tracking_state()
                     self._state = AutoTrackState.IDLE
 
-        # 叠层广播（每帧）
+        # 叠层广播（限频）。前端事件是旁路，不能反压 AI 拉流/推理。
         # 即使不开跟踪，你也可以在前端看到绿色/灰色的框
         # 注意：只有 FOLLOWING 状态才显示红框；LOST 状态目标已消失，不显示幽灵框
-        active_bbox = (
-            list(self._active_target.bbox)
-            if self._active_target and self._state == AutoTrackState.FOLLOWING
-            else None
-        )
-        await self._broadcast_event("TRACK_OVERLAY", {
-            "detections": [
-                {
-                    "bbox": list(d.bbox),
-                    "conf": round(d.confidence, 2),
-                    "class_name": d.class_name,
-                    "track_id": d.track_id,
-                    "is_stranger": self._is_stranger(d.track_id) if d.class_name == "person" else None,
-                    "safety_status": "no_helmet" if d.class_name == "person" and d.track_id in no_helmet_ids else None,
-                }
-                for d in detections
-            ],
-            "persons": [
-                {
-                    "bbox": list(d.bbox),
-                    "conf": round(d.confidence, 2),
-                    "class_name": d.class_name,
-                    "track_id": d.track_id,
-                    "is_stranger": self._is_stranger(d.track_id),
-                    "safety_status": "no_helmet" if d.track_id in no_helmet_ids else None,
-                }
-                for d in persons
-            ],
-            "active_bbox": active_bbox,
-            "command": self._last_command,
-            "reason": self._last_decision_reason or "",
-            "state": self._state.value,
-            "frame_w": self._frame_width,
-            "frame_h": self._frame_height,
-            "deadband_px": self._yaw_deadband_px,
-            "anchor_y_stop_ratio": self._anchor_y_stop_ratio,
-            "forward_area_ratio": self._forward_area_ratio,
-        })
+        now = time.monotonic()
+        if now - self._last_overlay_broadcast >= self._overlay_interval_s:
+            self._last_overlay_broadcast = now
+            active_bbox = (
+                list(self._active_target.bbox)
+                if self._active_target and self._state == AutoTrackState.FOLLOWING
+                else None
+            )
+            await self._broadcast_event("TRACK_OVERLAY", {
+                "detections": [
+                    {
+                        "bbox": list(d.bbox),
+                        "conf": round(d.confidence, 2),
+                        "class_name": d.class_name,
+                        "track_id": d.track_id,
+                        "is_stranger": self._is_stranger(d.track_id) if d.class_name == "person" else None,
+                        "safety_status": "no_helmet" if d.class_name == "person" and d.track_id in no_helmet_ids else None,
+                    }
+                    for d in detections
+                ],
+                "persons": [
+                    {
+                        "bbox": list(d.bbox),
+                        "conf": round(d.confidence, 2),
+                        "class_name": d.class_name,
+                        "track_id": d.track_id,
+                        "is_stranger": self._is_stranger(d.track_id),
+                        "safety_status": "no_helmet" if d.track_id in no_helmet_ids else None,
+                    }
+                    for d in persons
+                ],
+                "active_bbox": active_bbox,
+                "command": self._last_command,
+                "reason": self._last_decision_reason or "",
+                "state": self._state.value,
+                "frame_w": self._frame_width,
+                "frame_h": self._frame_height,
+                "deadband_px": self._yaw_deadband_px,
+                "anchor_y_stop_ratio": self._anchor_y_stop_ratio,
+                "forward_area_ratio": self._forward_area_ratio,
+            })
 
         await self._maybe_broadcast_debug_status()
 
@@ -953,6 +1023,22 @@ class AutoTrackService:
         await self._resume_navigation_after_tracking(reason.value)
         # STOPPED 将在下一帧 process_frame 自动回到 IDLE
 
+    async def _stop_without_snapshot(
+        self,
+        reason: TrackStopReason,
+        detail: str = "",
+    ) -> None:
+        await self._broadcast_event("AUTO_TRACK_STOPPED", {
+            "track_id": self._active_target.track_id if self._active_target else None,
+            "reason": reason.value,
+            "detail": detail,
+        })
+        self._video_lost_since = None
+        self._video_lost_reason = None
+        self._do_stop(reason, send_stop_command=True)
+        self._state = AutoTrackState.STOPPED
+        await self._resume_navigation_after_tracking(reason.value)
+
     async def _send_stop_after(self, delay_s: float) -> None:
         """延迟 delay_s 秒后发 stop，用于脉冲式转向截断。"""
         await asyncio.sleep(delay_s)
@@ -1065,7 +1151,10 @@ class AutoTrackService:
                     failed = []
                     for conn in broadcaster._connections:
                         try:
-                            await conn.send_json(msg)
+                            await asyncio.wait_for(
+                                conn.send_json(msg),
+                                timeout=self._event_send_timeout_s,
+                            )
                         except Exception:
                             failed.append(conn)
                     for c in failed:
