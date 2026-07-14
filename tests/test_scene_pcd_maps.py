@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from backend import pcd_reader
+from backend import pcd_ground
 from backend import services_pcd_maps as pcd_services
 from backend.services_nav_localization import save_localization_pose
 from backend.services_nav_tasks import list_nav_tasks, save_nav_task
@@ -56,6 +58,62 @@ DATA binary
         f.write(header.encode("utf-8"))
         for x, y, z, histogram in points:
             f.write(struct.pack("<ffffff", x, y, z, *histogram))
+
+
+def test_pcd_reader_handles_binary_count_fields_and_bounds(tmp_path):
+    pcd_path = tmp_path / "histogram.pcd"
+    write_binary_pcd_with_histogram(
+        pcd_path,
+        [
+            (1.0, 2.0, 3.0, (10.0, 11.0, 12.0)),
+            (-4.0, 5.0, -6.0, (13.0, 14.0, 15.0)),
+        ],
+    )
+
+    header, data_start_offset = pcd_reader.parse_pcd_header(pcd_path)
+    normalized = pcd_reader.normalize_pcd_header(header)
+    point_struct, value_offsets = pcd_reader.binary_layout(header)
+    points, bounds = pcd_reader.read_pcd_preview(pcd_path, header, data_start_offset, max_points=1000)
+
+    assert normalized["data_type"] == "binary"
+    assert normalized["point_count"] == 2
+    assert point_struct.size == 24
+    assert value_offsets == {"x": 0, "y": 1, "z": 2, "histogram": 3}
+    assert points == [[1.0, 2.0, 3.0], [-4.0, 5.0, -6.0]]
+    assert bounds == {
+        "min_x": -4.0,
+        "max_x": 1.0,
+        "min_y": 2.0,
+        "max_y": 5.0,
+        "min_z": -6.0,
+        "max_z": 3.0,
+    }
+    assert pcd_reader.merge_bounds([None, bounds]) == bounds
+
+
+def test_pcd_ground_snaps_binary_count_fields_to_local_plane(tmp_path):
+    pcd_path = tmp_path / "ground.pcd"
+    write_binary_pcd_with_histogram(
+        pcd_path,
+        [
+            (0.0, 0.0, 1.0, (10.0, 11.0, 12.0)),
+            (2.0, 0.0, 1.2, (13.0, 14.0, 15.0)),
+            (0.0, 2.0, 1.4, (16.0, 17.0, 18.0)),
+            (2.0, 2.0, 1.6, (19.0, 20.0, 21.0)),
+        ],
+    )
+
+    snapped = pcd_ground.snap_xy_to_ground_file(
+        pcd_path,
+        1.0,
+        1.0,
+        max_distance_m=2.0,
+        neighbor_count=4,
+    )
+
+    assert snapped["source_file"] == "ground.pcd"
+    assert snapped["method"] == "plane"
+    assert snapped["z"] == pytest.approx(1.3)
 
 
 def test_list_pcd_scenes_and_find_layer_files(monkeypatch, tmp_path):
@@ -184,6 +242,32 @@ def test_scene_preview_binary_pcd_with_count_fields_reads_xyz_correctly(monkeypa
     assert preview["bounds"]["max_y"] == 8.0
     assert preview["bounds"]["min_z"] == -3.0
     assert preview["bounds"]["max_z"] == 9.0
+
+
+def test_scene_binary_wire_format_preserves_all_preview_points(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    scene_root.mkdir()
+    scene = scene_root / "Scene9_二进制传输"
+    scene.mkdir()
+
+    write_ascii_pcd(scene / "map.pcd", [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)])
+    write_ascii_pcd(scene / "ground.pcd", [(-1.0, -2.0, -3.0), (7.0, 8.0, 9.0)])
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+
+    preview = pcd_services.get_scene_preview("Scene9_二进制传输", max_points=1000)
+    payload = pcd_services.get_scene_preview_binary("Scene9_二进制传输", max_points=1000)
+    header_size = struct.unpack_from("<I", payload, len(pcd_services.PCD_SCENE_BINARY_MAGIC))[0]
+    header_start = len(pcd_services.PCD_SCENE_BINARY_MAGIC) + 4
+    header = json.loads(payload[header_start:header_start + header_size])
+
+    assert payload.startswith(pcd_services.PCD_SCENE_BINARY_MAGIC)
+    assert (header_start + header_size) % 4 == 0
+    assert header["layers"]["wall"]["point_count"] == len(preview["layers"]["wall"]["points"])
+    assert header["layers"]["ground"]["point_count"] == len(preview["layers"]["ground"]["points"])
+    assert header["layers"]["footprint_fill"] is None
+    assert sum(
+        layer["byte_length"] for layer in header["layers"].values() if layer is not None
+    ) == 4 * 3 * 4
 
 
 def test_snap_xy_to_ground_fits_local_ground_plane(monkeypatch, tmp_path):

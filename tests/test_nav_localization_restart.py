@@ -4,8 +4,10 @@ import asyncio
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -16,6 +18,7 @@ from backend.api.routes import nav as nav_routes
 from backend.auth.schemas import AuthUserInternal
 from backend.repositories.json_store import atomic_write_json
 from backend.schemas import LocalizationRestartResponse
+from backend.services_nav_state import get_nav_state
 from backend.services_ros_nav import RosNavBridge
 
 
@@ -34,6 +37,7 @@ def _write_navigation_ready_marker(runtime_root: Path, scene_dir: Path) -> None:
         runtime_root / "navigation_ready.json",
         {
             "ready": True,
+            "stage": "running",
             "scene_dir": str(scene_dir),
             "map_pcd": str(scene_dir / "map.pcd"),
             "ground_pcd": str(scene_dir / "ground.pcd"),
@@ -437,6 +441,50 @@ def test_ros_nav_pause_clears_node_and_publishers(monkeypatch):
     assert bridge._initial_pose_publisher is None
 
 
+def test_ros_nav_resume_recreates_node_and_resets_tf_state(monkeypatch):
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._paused = True
+    bridge._node = None
+    bridge._rclpy = object()
+    bridge._pause_event = threading.Event()
+    bridge._pause_event.set()
+    bridge._tf_available = True
+    bridge._tf_wait_started_at = 123.0
+    bridge._last_tf_lookup_at = 456.0
+    monkeypatch.setattr(bridge, "_create_ros_node", lambda: "tf:map->base_footprint")
+
+    bridge._resume_ros_node_after_mapping()
+
+    assert bridge._paused is False
+    assert not bridge._pause_event.is_set()
+    assert bridge._tf_available is False
+    assert bridge._tf_wait_started_at == 0.0
+    assert bridge._last_tf_lookup_at == 0.0
+    localization_status = get_nav_state()["localization_status"]
+    assert localization_status["status"] == "initializing"
+    assert localization_status["source"] == "tf:map->base_footprint"
+    assert localization_status["message"] == "建图已结束，导航定位恢复中"
+
+
+def test_ros_nav_resume_without_rclpy_unpauses_and_raises():
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._paused = True
+    bridge._node = None
+    bridge._rclpy = None
+
+    with pytest.raises(RuntimeError, match="rclpy 未初始化"):
+        bridge._resume_ros_node_after_mapping()
+
+    assert bridge._paused is False
+
+
+def test_ros_nav_lifecycle_rejects_unknown_command():
+    bridge = RosNavBridge.__new__(RosNavBridge)
+
+    with pytest.raises(ValueError, match="未知 ROS2 导航节点生命周期操作"):
+        bridge._handle_lifecycle_command("restart")
+
+
 def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeypatch, tmp_path):
     scene_root = tmp_path / "MAPS"
     scene_dir = scene_root / "Scene1_测试"
@@ -735,6 +783,101 @@ def test_restart_navigation_localization_marks_missing_pid_false(monkeypatch, tm
     assert any("global_planner 未就绪" in error for error in result["errors"])
 
 
+def test_unified_navigation_scan_health_requires_complete_control_chain(monkeypatch, tmp_path):
+    scene_dir = tmp_path / "Scene23_多楼层"
+    runtime_root = tmp_path / "runtime"
+    scene_dir.mkdir()
+    runtime_root.mkdir()
+    for name in ("map.pcd", "ground.pcd", "footprint_fill.pcd"):
+        (scene_dir / name).write_bytes(b"pcd")
+
+    scene = {
+        "scene_id": scene_dir.name,
+        "scene_dir": str(scene_dir),
+        "map_pcd": str(scene_dir / "map.pcd"),
+        "ground_pcd": str(scene_dir / "ground.pcd"),
+        "planground_pcd": str(scene_dir / "footprint_fill.pcd"),
+    }
+    atomic_write_json(
+        runtime_root / "navigation_ready.json",
+        {
+            "ready": True,
+            "stage": "running",
+            **{key: scene[key] for key in ("scene_dir", "map_pcd", "ground_pcd", "planground_pcd")},
+        },
+    )
+    monkeypatch.setattr(services_nav_localization.settings, "NAV_RUNTIME_DIR", str(runtime_root))
+    monkeypatch.setattr(services_nav_localization, "_is_nav_process_alive", lambda name, pid: pid is not None)
+    monkeypatch.setattr(services_nav_localization, "_find_cmd_vel_test_publisher_pids", lambda: [])
+    monkeypatch.setattr(services_nav_localization, "_inspect_tf_health", lambda: (True, [], []))
+
+    pids = {
+        "navigation_pid": 100,
+        "livox_pid": 101,
+        "relocation_pid": 102,
+        "global_planner_pid": 103,
+        "scan_planner_pid": 104,
+        "scan_controller_pid": 105,
+        "dynamic_avoidance_pid": 106,
+        "nav_status_monitor_pid": 107,
+        "cmd_vel_pid": None,
+    }
+    result = services_nav_localization._build_restart_health(scene, pids)
+
+    assert result["navigation_ready"] is True
+    assert result["health"]["runtime_mode"] == "navigation_scan"
+    assert result["health"]["p2p_move_base_ok"] is None
+    assert result["errors"] == []
+
+    marker = services_nav_localization.read_json(runtime_root / "navigation_ready.json", {})
+    marker["stage"] = "awaiting_initialpose"
+    atomic_write_json(runtime_root / "navigation_ready.json", marker)
+    result = services_nav_localization._build_restart_health(scene, pids)
+
+    assert result["startup_ready"] is True
+    assert result["navigation_ready"] is False
+    assert result["health"]["navigation_runtime_marker_ok"] is False
+    assert "定位进程已启动，等待 initialpose" in result["warnings"]
+
+    marker["stage"] = "running"
+    atomic_write_json(runtime_root / "navigation_ready.json", marker)
+
+    pids["scan_controller_pid"] = None
+    result = services_nav_localization._build_restart_health(scene, pids)
+
+    assert result["navigation_ready"] is False
+    assert result["health"]["scan_controller_ok"] is False
+    assert "SCAN controller 未就绪" in result["errors"]
+
+
+def test_navigation_ready_marker_rejects_previous_scene(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    current_scene = tmp_path / "current"
+    current_scene.mkdir()
+    scene = {
+        "scene_dir": str(current_scene),
+        "map_pcd": str(current_scene / "map.pcd"),
+        "ground_pcd": str(current_scene / "ground.pcd"),
+        "planground_pcd": "",
+    }
+    atomic_write_json(
+        runtime_root / "navigation_ready.json",
+        {
+            "ready": True,
+            "scene_dir": str(tmp_path / "old"),
+            "map_pcd": str(tmp_path / "old" / "map.pcd"),
+            "ground_pcd": str(tmp_path / "old" / "ground.pcd"),
+        },
+    )
+    monkeypatch.setattr(services_nav_localization.settings, "NAV_RUNTIME_DIR", str(runtime_root))
+
+    ready, errors = services_nav_localization._inspect_navigation_ready_marker(scene)
+
+    assert ready is False
+    assert any("当前场景不一致" in error for error in errors)
+
+
 def test_global_planner_health_falls_back_to_node_process_when_launch_pid_exited(monkeypatch, tmp_path):
     scene_dir = tmp_path / "Scene1_测试"
     runtime_root = tmp_path / "data" / "nav_runtime"
@@ -824,203 +967,185 @@ def test_wait_navigation_runtime_ready_raises_last_error_after_timeout(monkeypat
     assert calls["count"] >= 2
 
 
-def test_restart_script_prefers_exact_scene_pcd_files(tmp_path):
-    real_repo_root = Path(__file__).resolve().parents[1]
-    project_root = tmp_path / "Project" / "BOTDOG"
-    botdog_root = project_root / "BotDog"
-    script_dir = botdog_root / "scripts"
-    runtime_dir = botdog_root / "data" / "nav_runtime"
-    fake_home = tmp_path / "home" / "jetson"
-    fake_bin = tmp_path / "bin"
-    scene_dir = tmp_path / "Scene1_测试"
-    script_path = script_dir / "restart_navigation_localization.sh"
+def _navigation_adapter_sources() -> tuple[str, str, str]:
+    botdog_root = Path(__file__).resolve().parents[1]
+    project_root = botdog_root.parent
+    wrapper = (botdog_root / "scripts" / "restart_navigation_localization.sh").read_text(encoding="utf-8")
+    wrapper_common = (botdog_root / "scripts" / "navigation_adapter_common.sh").read_text(encoding="utf-8")
+    adapter = (
+        project_root / "Navigation" / "adapters" / "legacy_scripts" / "restart_navigation_localization.sh"
+    ).read_text(encoding="utf-8")
+    return wrapper, wrapper_common, adapter
 
-    script_dir.mkdir(parents=True)
-    runtime_dir.mkdir(parents=True, exist_ok=True)
-    scene_dir.mkdir(parents=True)
-    fake_bin.mkdir(parents=True)
-    (scene_dir / "map.pcd").write_text("", encoding="utf-8")
-    (scene_dir / "ground.pcd").write_text("", encoding="utf-8")
-    (scene_dir / "Scene1_half_map.pcd").write_text("", encoding="utf-8")
-    (scene_dir / "Scene1_half_ground.pcd").write_text("", encoding="utf-8")
-    (scene_dir / "Scene1_base_footprint_fill.pcd").write_text("", encoding="utf-8")
-    script_path.write_text(
-        (real_repo_root / "scripts" / "restart_navigation_localization.sh").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    script_path.chmod(0o755)
 
-    superlio_setup = fake_home / "superlio" / "install" / "setup.bash"
-    navigation_setup = fake_home / "dddmr_navigation_new_local" / "install" / "setup.bash"
-    ros2_setup = tmp_path / "opt" / "ros" / "humble" / "setup.bash"
-    superlio_root = fake_home / "superlio" / "Super-LIO-ros2" / "src" / "super_lio"
-    superlio_setup.parent.mkdir(parents=True, exist_ok=True)
-    navigation_setup.parent.mkdir(parents=True, exist_ok=True)
-    ros2_setup.parent.mkdir(parents=True, exist_ok=True)
-    superlio_root.mkdir(parents=True, exist_ok=True)
-    superlio_setup.write_text("", encoding="utf-8")
-    navigation_setup.write_text("", encoding="utf-8")
-    ros2_setup.write_text("", encoding="utf-8")
+def test_restart_script_prefers_exact_scene_pcd_files():
+    wrapper, wrapper_common, adapter = _navigation_adapter_sources()
 
-    fake_ros2 = fake_bin / "ros2"
-    fake_ros2.write_text(
-        "#!/usr/bin/env bash\n"
-        "if [ \"${1:-}\" = \"topic\" ] && [ \"${2:-}\" = \"info\" ]; then\n"
-        "  echo 'Type: sensor_msgs/msg/PointCloud2'\n"
-        "  echo 'Publisher count: 1'\n"
-        "  echo 'Subscription count: 1'\n"
-        "  exit 0\n"
-        "fi\n"
-        "if [ \"${1:-}\" = \"topic\" ] && [ \"${2:-}\" = \"echo\" ]; then\n"
-        "  echo 'data: ok'\n"
-        "  exit 0\n"
-        "fi\n"
-        "tail -f /dev/null\n",
-        encoding="utf-8",
-    )
-    fake_ros2.chmod(0o755)
-
-    fake_sleep = fake_bin / "sleep"
-    fake_sleep.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    fake_sleep.chmod(0o755)
-
-    fake_cmd_vel_bootstrap = project_root / "test_cmd_vel_fixed.sh"
-    fake_cmd_vel_bootstrap.write_text(
-        "#!/usr/bin/env bash\n"
-        "exec python -c 'import time; time.sleep(60)'\n",
-        encoding="utf-8",
-    )
-    fake_cmd_vel_bootstrap.chmod(0o755)
-
-    env = os.environ.copy()
-    env["HOME"] = str(fake_home)
-    env["PATH"] = f"{fake_bin}:{env['PATH']}"
-    env["ROS2_SETUP_FILE"] = str(ros2_setup)
-
-    proc = subprocess.Popen(
-        ["bash", str(script_path), str(scene_dir)],
-        cwd=str(project_root),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        preexec_fn=os.setsid,
-    )
-
-    try:
-        deadline = time.time() + 15.0
-        expected_pid_files = [
-            runtime_dir / "livox.pid",
-            runtime_dir / "relocation.pid",
-            runtime_dir / "global_planner.pid",
-            runtime_dir / "p2p_move_base.pid",
-        ]
-        ready_file = runtime_dir / "navigation_ready.json"
-
-        while time.time() < deadline:
-            if all(path.exists() for path in expected_pid_files) and ready_file.exists():
-                break
-            if proc.poll() is not None:
-                break
-            time.sleep(0.1)
-
-        output = ""
-        try:
-            proc_group = os.getpgid(proc.pid)
-            os.killpg(proc_group, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except Exception:
-            pass
-
-        try:
-            output, _ = proc.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except Exception:
-                pass
-            output, _ = proc.communicate(timeout=5)
-
-        assert "当前 map.pcd: " in output
-        assert str(scene_dir / "map.pcd") in output
-        assert "当前 ground.pcd: " in output
-        assert str(scene_dir / "ground.pcd") in output
-        assert "当前 footprint_fill.pcd: " in output
-        assert str(scene_dir / "Scene1_base_footprint_fill.pcd") in output
-        for path in expected_pid_files:
-            assert path.exists()
-        assert ready_file.exists()
-        assert not (runtime_dir / "cmd_vel.pid").exists()
-        assert "跳过 cmd_vel 硬件桥接启动" in output
-    finally:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except Exception:
-            pass
-        for path in (
-            fake_cmd_vel_bootstrap,
-            fake_ros2,
-            fake_sleep,
-        ):
-            try:
-                path.unlink()
-            except FileNotFoundError:
-                pass
+    assert 'source "$SCRIPT_DIR/navigation_adapter_common.sh"' in wrapper
+    assert "run_navigation_adapter restart_navigation_localization.sh" in wrapper
+    assert 'BOTDOG_NAV_WS="${BOTDOG_NAV_WS:-$PROJECT_ROOT/Navigation}"' in wrapper_common
+    assert 'find_scene_pcd_file "$SCENE_DIR" "map.pcd" "map.pcd"' in adapter
+    assert 'find_scene_pcd_file "$SCENE_DIR" "ground.pcd" "*ground.pcd"' in adapter
+    assert '"footprint_fill.pcd|fill_footpoint.pcd"' in adapter
 
 
 def test_restart_navigation_script_resets_backend_python_and_qt_env():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "restart_navigation_localization.sh"
-    content = script_path.read_text(encoding="utf-8")
+    botdog_root = Path(__file__).resolve().parents[1]
+    common = (
+        botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "common.sh"
+    ).read_text(encoding="utf-8")
 
-    assert 'ROS2_SETUP_FILE="${ROS2_SETUP_FILE:-/opt/ros/humble/setup.bash}"' in content
-    assert 'source_ros_setup "$ROS2_SETUP_FILE"' in content
-    assert "unset QT_PLUGIN_PATH" in content
-    assert "unset QT_QPA_PLATFORM_PLUGIN_PATH" in content
-    assert "unset QT_QPA_PLATFORM" in content
-    assert "unset CYCLONEDDS_HOME" in content
-    assert "unset CYCLONEDDS_URI" in content
-    assert 'export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"' in content
-    assert 'export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"' in content
-    assert 'FASTRTPS_DEFAULT_PROFILES_FILE="/home/jetson/fastdds_wired.xml"' in content
-    assert '_remove_path_segment LD_LIBRARY_PATH "/home/jetson/cyclonedds-0.10x/install/lib"' in content
-    assert '_remove_path_segment LD_LIBRARY_PATH "/home/jetson/Project/BOTDOG/BotDog/.venv/lib/python3.10/site-packages/cv2/../../lib64"' in content
-    assert '_remove_path_segment PYTHONPATH "/home/jetson/Project/BOTDOG/BotDog"' in content
-    assert '_prepend_path_segment PYTHONPATH "/usr/local/lib/python3.10/site-packages/"' in content
+    assert "reset_navigation_overlay_env" in common
+    assert "unset VIRTUAL_ENV PYTHONHOME" in common
+    assert "unset PYTHONPATH LD_LIBRARY_PATH PKG_CONFIG_PATH CPATH CPLUS_INCLUDE_PATH" in common
+    assert 'source "$ROS2_SETUP_FILE"' in common
+    assert 'source "$ROBOT_NAV_WS/install/setup.bash"' in common
+    assert 'LIVOX_LIDAR_IP="${LIVOX_LIDAR_IP:-192.168.123.179}"' in common
+    assert 'RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"' in common
 
 
-def test_restart_navigation_script_uses_real_time_and_cleans_local_navigation_nodes():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "restart_navigation_localization.sh"
-    content = script_path.read_text(encoding="utf-8")
+def test_restart_navigation_script_uses_single_instance_and_unified_nodes():
+    _, _, adapter = _navigation_adapter_sources()
 
-    assert '"local_map_builder"' in content
-    assert '"/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/p2p_move_base_node"' in content
-    assert '"/home/jetson/dddmr_navigation_new_local/install/dddmr_local_map/lib/dddmr_local_map/local_map_builder"' in content
-    assert "ros2 run super_lio relocation_node" in content
-    assert '-p "lio.map.save_map_dir:=$relative_map_dir"' in content
-    assert '-p "lio.map.map_name:=$map_name"' in content
-    assert "wait_for_navigation_maps" in content
-    assert "navigation_ready.json" in content
-    assert 'GLOBAL_PLANNER_ARGS=("map_dir:=$MAP_PCD" "ground_dir:=$GROUND_PCD")' in content
-    assert 'GLOBAL_PLANNER_ARGS+=("planground_dir:=$PLANGROUND_PCD")' in content
-    assert '"${GLOBAL_PLANNER_ARGS[@]}"' in content
-    assert 'p2p_move_base go2_localization_launch.py "启动 P2P move base 定位导航..." P2P_MOVE_BASE_PID p2p_move_base.pid "use_sim:=false"' in content
+    assert 'flock -n 9' in adapter
+    assert 'navigation_adapter.pid' in adapter
+    assert 'stop_pid_file "$PID_FILE" "旧导航定位链路"' in adapter
+    assert 'rm -f "$READY_FILE" "$ROBOT_NAV_RUNTIME_ROOT/p2p_move_base.pid"' in adapter
+    assert "ros2 launch nav_bringup navigation.launch.py" in adapter
+    assert '"/scan_planner/scan_planner_node"' in adapter
+    assert '"/scan_planner/closed_loop_controller"' in adapter
+    assert '"/nav_planner/dynamic_avoidance_monitor.py"' in adapter
+    assert "p2p_move_base go2_localization_launch.py" not in adapter
 
 
-def test_restart_navigation_script_retries_livox_topic_waits():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "restart_navigation_localization.sh"
-    content = script_path.read_text(encoding="utf-8")
+def test_restart_navigation_script_scopes_ready_and_guards_pcd_capacity():
+    _, wrapper_common, adapter = _navigation_adapter_sources()
+    botdog_root = Path(__file__).resolve().parents[1]
+    common = (
+        botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "common.sh"
+    ).read_text(encoding="utf-8")
 
-    assert 'timeout 5s ros2 topic echo "$topic" --once "$@"' in content
-    assert 'grep -Fq "$marker" "$SCRIPT_LOG_FILE" "$ROOT_LOG_FILE"' in content
-    assert '仍在等待 $label 数据：$topic' in content
-    assert 'wait_for_log_marker "Map pointcloud size after down size" "$timeout_s" "global planner mapcloud"' in content
-    assert 'if [ -n "$PLANGROUND_PCD" ]; then' in content
-    assert 'wait_for_log_marker "Planground pointcloud size after down size" "$timeout_s" "global planner planground"' in content
-    assert '跳过 global planner planground 等待：未提供 footprint_fill.pcd' in content
-    assert 'wait_for_log_marker "Publish weighted ground point cloud." "$timeout_s" "global planner weighted_ground"' in content
-    assert 'warn_for_topic_once /livox/imu "${NAV_LIVOX_IMU_WAIT_TIMEOUT_S:-5}" "Livox IMU" --qos-reliability best_effort' in content
-    assert 'warn_for_topic_once /livox/lidar "${NAV_LIVOX_LIDAR_WAIT_TIMEOUT_S:-5}" "Livox LiDAR" --qos-reliability best_effort' in content
-    assert 'warn_for_topic_once /tf_static "${NAV_TF_STATIC_WAIT_TIMEOUT_S:-10}" "base 静态 TF" --qos-durability transient_local' in content
-    assert 'Super-LIO relocation 已启动，等待前端发送 /initialpose' in content
-    assert 'wait_for_lio_odom_sane "${NAV_LIO_ODOM_WAIT_TIMEOUT_S:-300}"' not in content
+    assert "RUN_LOG_MARKER" in adapter
+    assert "run_log_has" in adapter
+    assert 'index($0, marker) { in_current_run = 1; next }' in adapter
+    assert "RUN_LOG_OFFSET" not in adapter
+    assert "Published static graph with" in adapter
+    assert '\\"run_id\\":\\"$RUN_ID\\"' in adapter
+    assert 'validate_navigation_pcd_input "$MAP_PCD" "map.pcd"' in adapter
+    assert 'validate_navigation_pcd_input "$GROUND_PCD" "ground.pcd"' in adapter
+    assert "NAV_MAX_RAW_PCD_BYTES" in common
+    assert "NAV_MAX_RAW_PCD_POINTS" in common
+    assert 'NAV_ENABLE_SCAN_PLANNER="${NAV_ENABLE_SCAN_PLANNER:-true}"' in wrapper_common
+    assert 'NAV_ENABLE_DYNAMIC_AVOIDANCE="${NAV_ENABLE_DYNAMIC_AVOIDANCE:-true}"' in wrapper_common
+
+
+def test_global_planner_start_connection_matches_hybrid_cloud_resolution():
+    botdog_root = Path(__file__).resolve().parents[1]
+    planner_config = (
+        botdog_root.parent
+        / "Navigation"
+        / "src"
+        / "nav_bringup"
+        / "config"
+        / "global_planner.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "ground_down_sample: 0.3" in planner_config
+    assert "a_star_expanding_radius: 0.2" in planner_config
+    assert "planground_search_radius: 0.2" in planner_config
+    assert "hybrid_max_ground_bridge_length: 0.25" in planner_config
+
+
+def test_hybrid_astar_maps_planning_indices_to_perception_ground():
+    botdog_root = Path(__file__).resolve().parents[1]
+    planner_source = botdog_root.parent / "Navigation" / "src" / "nav_planner"
+    astar = (planner_source / "src" / "a_star_on_pc.cpp").read_text(encoding="utf-8")
+    hybrid = (planner_source / "src" / "hybrid_a_star.cpp").read_text(encoding="utf-8")
+
+    assert "getPerceptionGroundIndex" in astar
+    assert "get_min_dGraphValue(perception_ground_index)" in astar
+    assert "getNodeWeight(perception_ground_index)" in astar
+    assert "get_min_dGraphValue(current_expanding_index)" not in astar
+    assert "if (start_neighbors.empty())" in hybrid
+    assert "using connected planground fallback" in hybrid
+
+
+def test_restart_navigation_script_exposes_initialpose_stage_before_runtime_tf():
+    _, _, adapter = _navigation_adapter_sources()
+
+    startup_section = adapter.split("ready_waited=0", 1)[1].split(
+        "# global planner 静态图", 1
+    )[0]
+    runtime_section = adapter.split("# global planner 静态图", 1)[1]
+
+    assert '\\"stage\\":\\"awaiting_initialpose\\"' in startup_section
+    assert "global_planner_map_ready" not in startup_section
+    assert "scan_body_pose_ready" not in startup_section
+    assert "global_planner_map_ready && scan_body_pose_ready" in runtime_section
+    assert '\\"stage\\":\\"running\\"' in runtime_section
+
+
+def test_restart_navigation_script_does_not_leak_lock_to_ros_children():
+    _, _, adapter = _navigation_adapter_sources()
+
+    assert "setsid ros2 launch nav_bringup navigation.launch.py" in adapter
+    assert '"${launch_args[@]}" 9>&-' in adapter
+    assert "trap - INT TERM EXIT" in adapter
+    assert 'stop_pid_file "$PID_FILE" "导航定位链路" 10' in adapter
+
+
+def test_restart_navigation_script_omits_empty_optional_go2_launch_args():
+    _, _, adapter = _navigation_adapter_sources()
+
+    launch_array = adapter.split("launch_args=(", 1)[1].split("\n)", 1)[0]
+    assert '"go2_connection_method:=$NAV_GO2_CONNECTION_METHOD"' not in launch_array
+    assert '"go2_ip:=$NAV_GO2_IP"' not in launch_array
+    assert '"go2_serial_number:=$NAV_GO2_SERIAL_NUMBER"' not in launch_array
+    assert '"go2_aes_128_key:=$NAV_GO2_AES_128_KEY"' not in launch_array
+    assert 'if [ "$NAV_ROBOT_MODEL" = "go2_webrtc" ]; then' in adapter
+    assert '"go2_connection_method:=$NAV_GO2_CONNECTION_METHOD"' in adapter
+    assert 'if [ -n "$NAV_GO2_IP" ]; then' in adapter
+    assert 'launch_args+=("go2_ip:=$NAV_GO2_IP")' in adapter
+    assert 'if [ -n "$NAV_GO2_SERIAL_NUMBER" ]; then' in adapter
+    assert 'launch_args+=("go2_serial_number:=$NAV_GO2_SERIAL_NUMBER")' in adapter
+    assert 'if [ -n "$NAV_GO2_AES_128_KEY" ]; then' in adapter
+    assert 'launch_args+=("go2_aes_128_key:=$NAV_GO2_AES_128_KEY")' in adapter
+
+
+def test_start_cmd_vel_rejects_persistent_estop_without_clearing_it(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "nav_runtime"
+    monkeypatch.setattr(services_nav_localization.settings, "NAV_RUNTIME_DIR", str(runtime_root))
+
+    services_nav_localization.set_cmd_vel_estop(True, "test_estop")
+
+    with pytest.raises(RuntimeError, match="急停钳制仍处于激活状态"):
+        services_nav_localization.start_cmd_vel_script()
+
+    status = services_nav_localization.get_cmd_vel_estop_status()
+    assert status["active"] is True
+    assert status["reason"] == "test_estop"
+
+
+def test_ros_nav_bridge_does_not_install_process_signal_handlers(monkeypatch):
+    init_calls: list[dict[str, object]] = []
+    signal_options = types.SimpleNamespace(NO=object())
+    fake_rclpy = types.ModuleType("rclpy")
+    fake_rclpy.init = lambda **kwargs: init_calls.append(kwargs)
+    fake_rclpy.try_shutdown = lambda: None
+    fake_signals = types.ModuleType("rclpy.signals")
+    fake_signals.SignalHandlerOptions = signal_options
+    monkeypatch.setitem(sys.modules, "rclpy", fake_rclpy)
+    monkeypatch.setitem(sys.modules, "rclpy.signals", fake_signals)
+
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._rclpy = None
+    bridge._stop_event = threading.Event()
+    bridge._stop_event.set()
+    bridge._create_ros_node = lambda: None
+    bridge._destroy_ros_node = lambda _reason: None
+
+    bridge._run()
+
+    assert init_calls == [
+        {"args": None, "signal_handler_options": signal_options.NO},
+    ]

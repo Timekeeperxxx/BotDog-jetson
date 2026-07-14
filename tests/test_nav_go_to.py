@@ -26,11 +26,10 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
         def publish_navigation_start(self, enabled: bool = True) -> dict[str, object]:
             publish_order.append("nav_start")
             nav_start_calls.append(enabled)
-            assert enabled is False
             return {
                 "success": True,
                 "topic": "/nav_start",
-                "data": False,
+                "data": enabled,
             }
 
         def publish_goal_xyz_yaw(self, payload: dict[str, object]) -> dict[str, object]:
@@ -48,6 +47,10 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
                 "frame_id": str(payload["frame_id"]),
             }
 
+    class DummyControlService:
+        async def prepare_navigation_motion(self) -> dict[str, object]:
+            return {"success": True, "switch_move_mode_return": 0}
+
     async def fake_audit_log(*args, **kwargs):
         audit_messages.append(kwargs["message"])
 
@@ -56,6 +59,10 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
         return payload
 
     monkeypatch.setattr(nav_routes, "get_ros_nav_bridge", lambda: DummyBridge())
+    monkeypatch.setattr(
+        "backend.control_service.get_control_service",
+        lambda: DummyControlService(),
+    )
     monkeypatch.setattr("backend.services_nav_waypoints.get_waypoint", lambda map_id, waypoint_id: waypoint)
     monkeypatch.setattr(
         "backend.services_nav_localization.start_cmd_vel_script",
@@ -98,8 +105,10 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
     assert result["yaw_topic"] == "goal_yaw"
     assert result["goal"]["waypoint_id"] == "wp_001"
     assert result["stop_task_nav"]["data"] is False
-    assert publish_order == ["nav_start", "goal"]
-    assert nav_start_calls == [False]
+    assert result["nav_start"]["data"] is True
+    assert result["motion_prepare"]["switch_move_mode_return"] == 0
+    assert publish_order == ["nav_start", "goal", "nav_start"]
+    assert nav_start_calls == [False, True]
     assert audit_messages
     assert "clicked_point_topic=/clicked_point" in audit_messages[0]
     assert "yaw_topic=goal_yaw" in audit_messages[0]

@@ -7,8 +7,9 @@ import pytest
 
 from backend.api.routes import nav as nav_routes
 from backend.auth.schemas import AuthUserInternal
-from backend.repositories.json_store import read_json
-from backend.services_nav_tasks import save_nav_task
+from backend.repositories.json_store import atomic_write_json, read_json
+from backend.schemas import NavTaskDefinitionDTO
+from backend.services_nav_tasks import NavTaskError, save_nav_task
 from backend.services_nav_waypoints import create_waypoint
 
 
@@ -33,6 +34,23 @@ def write_ascii_pcd(path: Path, points: list[tuple[float, float, float]]) -> Non
         points="\n".join(f"{x} {y} {z}" for x, y, z in points),
     )
     path.write_text(content, encoding="utf-8")
+
+
+def test_nav_task_schema_accepts_posture_control_step():
+    task = NavTaskDefinitionDTO(
+        id="task_posture",
+        name="姿态任务",
+        mapId="Scene1",
+        mapName="Scene1",
+        createdAt="2026-05-11T10:00:00.000Z",
+        steps=[
+            {"type": "posture_control", "posture": "stand"},
+        ],
+    )
+
+    assert task.steps[0].type == "posture_control"
+    assert task.steps[0].posture == "stand"
+    assert task.steps[0].waypointId is None
 
 
 def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
@@ -109,6 +127,10 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
                 "type": "navigate_waypoint",
                 "waypointId": waypoint["id"],
             },
+            {
+                "type": "posture_control",
+                "posture": "stand",
+            },
         ],
     }
     save_nav_task(task)
@@ -155,8 +177,50 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
             "planner_goal_z_offset_m": 0.0,
             "yaw": waypoint["yaw"],
             "frame_id": waypoint["frame_id"],
-        }
+        },
+        {
+            "type": "posture_control",
+            "posture": "stand",
+        },
     ]
+
+
+def test_save_nav_task_rejects_unknown_step(monkeypatch, tmp_path):
+    monkeypatch.setattr("backend.services_nav_tasks.settings.NAV_TASK_STORE_DIR", str(tmp_path / "tasks"))
+
+    with pytest.raises(NavTaskError, match="不支持的任务步骤类型"):
+        save_nav_task(
+            {
+                "id": "task_unknown_step",
+                "name": "未知步骤任务",
+                "mapId": "Scene1",
+                "sceneId": "Scene1",
+                "mapName": "Scene1",
+                "createdAt": "2026-05-11T10:00:00.000Z",
+                "steps": [
+                    {"type": "wait_seconds", "seconds": 5},
+                ],
+            }
+        )
+
+
+def test_save_nav_task_rejects_invalid_posture(monkeypatch, tmp_path):
+    monkeypatch.setattr("backend.services_nav_tasks.settings.NAV_TASK_STORE_DIR", str(tmp_path / "tasks"))
+
+    with pytest.raises(NavTaskError, match="posture_control 步骤 posture 必须是 stand 或 crouch"):
+        save_nav_task(
+            {
+                "id": "task_bad_posture",
+                "name": "错误姿态任务",
+                "mapId": "Scene1",
+                "sceneId": "Scene1",
+                "mapName": "Scene1",
+                "createdAt": "2026-05-11T10:00:00.000Z",
+                "steps": [
+                    {"type": "posture_control", "posture": "sit"},
+                ],
+            }
+        )
 
 
 def test_nav_execute_task_missing_waypoint_returns_404(monkeypatch, tmp_path):
@@ -221,3 +285,62 @@ def test_nav_execute_task_missing_waypoint_returns_404(monkeypatch, tmp_path):
         )
 
     assert exc_info.value.status_code == 404
+
+
+def test_nav_execute_task_unknown_step_returns_400(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    task_root = tmp_path / "tasks"
+    waypoint_root = tmp_path / "waypoints"
+    runtime_root = tmp_path / "runtime"
+    scene_root.mkdir()
+
+    scene_id = "Scene3_未知步骤"
+    scene_path = scene_root / scene_id
+    scene_path.mkdir()
+    write_ascii_pcd(scene_path / "map.pcd", [(0.0, 0.0, 0.0)])
+    write_ascii_pcd(scene_path / "ground.pcd", [(1.0, 2.0, 3.0)])
+
+    monkeypatch.setattr("backend.services_pcd_maps.settings.SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr("backend.services_nav_tasks.settings.NAV_TASK_STORE_DIR", str(task_root))
+    monkeypatch.setattr("backend.services_nav_waypoints.settings.NAV_WAYPOINT_STORE_DIR", str(waypoint_root))
+    monkeypatch.setattr("backend.services_nav_localization.settings.NAV_RUNTIME_DIR", str(runtime_root))
+    monkeypatch.setattr("backend.services_nav_task_runtime.settings.NAV_RUNTIME_DIR", str(runtime_root))
+
+    atomic_write_json(
+        task_root / "workflows.json",
+        [
+            {
+                "id": "task_unknown_step",
+                "name": "未知步骤任务",
+                "mapId": scene_id,
+                "sceneId": scene_id,
+                "mapName": scene_id,
+                "createdAt": "2026-05-11T10:00:00.000Z",
+                "steps": [
+                    {"type": "wait_seconds", "seconds": 5},
+                ],
+            }
+        ],
+    )
+
+    class DummyBridge:
+        def publish_navigation_start(self, enabled: bool = True) -> dict[str, object]:
+            return {"success": True, "topic": "/nav_start", "data": enabled}
+
+    async def fake_audit_log(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(nav_routes, "get_ros_nav_bridge", lambda: DummyBridge())
+    monkeypatch.setattr(nav_routes, "safe_write_audit_log", fake_audit_log)
+
+    with pytest.raises(nav_routes.HTTPException) as exc_info:
+        asyncio.run(
+            nav_routes.nav_execute_task(
+                "task_unknown_step",
+                user=AuthUserInternal(id=1, username="admin", role="operator", token_version=1),
+                db=object(),
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "不支持的任务步骤类型" in str(exc_info.value.detail)

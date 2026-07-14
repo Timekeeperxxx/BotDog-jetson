@@ -248,11 +248,77 @@ def test_nav_status_invalid_json_is_ignored(monkeypatch):
     assert broadcast_calls == []
 
 
+def test_stale_idle_after_new_nav_start_does_not_release_navigation(monkeypatch):
+    broadcast_calls: list[tuple[str, dict[str, object]]] = []
+    bridge = _make_bridge(monkeypatch, broadcast_calls)
+    bridge._navigation_idle_release_blocked_until = time.monotonic() + 2.0
+    release_calls: list[str] = []
+
+    class DummyCoordinator:
+        def release_navigation_control(self) -> None:
+            release_calls.append("release")
+
+    monkeypatch.setattr(
+        "backend.nav_auto_track_coordinator.get_nav_auto_track_coordinator",
+        lambda: DummyCoordinator(),
+    )
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(
+            data=json.dumps(
+                {
+                    "status": "canceled",
+                    "message": "上一轮导航取消",
+                    "timestamp": 1770000003.0,
+                }
+            )
+        )
+    )
+
+    assert release_calls == []
+
+
+def test_idle_after_nav_start_grace_releases_navigation(monkeypatch):
+    broadcast_calls: list[tuple[str, dict[str, object]]] = []
+    bridge = _make_bridge(monkeypatch, broadcast_calls)
+    bridge._navigation_idle_release_blocked_until = time.monotonic() - 1.0
+    release_calls: list[str] = []
+
+    class DummyCoordinator:
+        def release_navigation_control(self) -> None:
+            release_calls.append("release")
+
+    monkeypatch.setattr(
+        "backend.nav_auto_track_coordinator.get_nav_auto_track_coordinator",
+        lambda: DummyCoordinator(),
+    )
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(
+            data=json.dumps(
+                {
+                    "status": "canceled",
+                    "message": "导航取消",
+                    "timestamp": 1770000004.0,
+                }
+            )
+        )
+    )
+
+    assert release_calls == ["release"]
+
+
 def test_tf_pose_uses_receive_time_for_freshness(monkeypatch):
+    ros_now = time.time()
     bridge = RosNavBridge.__new__(RosNavBridge)
     bridge._tf_buffer = SimpleNamespace(
         lookup_transform=lambda _target, _source, _time: SimpleNamespace(
-            header=SimpleNamespace(stamp=SimpleNamespace(sec=1, nanosec=500_000_000)),
+            header=SimpleNamespace(
+                stamp=SimpleNamespace(
+                    sec=int(ros_now),
+                    nanosec=int((ros_now % 1.0) * 1_000_000_000),
+                )
+            ),
             transform=SimpleNamespace(
                 translation=SimpleNamespace(x=1.0, y=2.0, z=0.0),
                 rotation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
@@ -262,6 +328,7 @@ def test_tf_pose_uses_receive_time_for_freshness(monkeypatch):
     bridge._rclpy = object()
     monkeypatch.setattr(settings, "ROS_NAV_FRAME_ID", "map")
     monkeypatch.setattr(settings, "ROS_NAV_BASE_FRAME_ID", "base_footprint")
+    monkeypatch.setattr(settings, "ROS_NAV_TF_MAX_AGE_SECONDS", 3.0)
 
     before = time.time()
     pose = bridge._lookup_tf_pose()
@@ -270,4 +337,24 @@ def test_tf_pose_uses_receive_time_for_freshness(monkeypatch):
     assert pose["x"] == 1.0
     assert pose["source_frame"] == "base_footprint"
     assert before <= pose["timestamp"] <= after
-    assert pose["ros_timestamp"] == pytest.approx(1.5)
+    assert pose["ros_timestamp"] == pytest.approx(ros_now, abs=1e-6)
+
+
+def test_tf_pose_rejects_cached_stale_transform(monkeypatch):
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._tf_buffer = SimpleNamespace(
+        lookup_transform=lambda _target, _source, _time: SimpleNamespace(
+            header=SimpleNamespace(stamp=SimpleNamespace(sec=1, nanosec=0)),
+            transform=SimpleNamespace(
+                translation=SimpleNamespace(x=1.0, y=2.0, z=0.0),
+                rotation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
+            ),
+        )
+    )
+    bridge._rclpy = object()
+    monkeypatch.setattr(settings, "ROS_NAV_FRAME_ID", "map")
+    monkeypatch.setattr(settings, "ROS_NAV_BASE_FRAME_ID", "base_footprint")
+    monkeypatch.setattr(settings, "ROS_NAV_TF_MAX_AGE_SECONDS", 3.0)
+
+    with pytest.raises(RuntimeError, match="TF 时间戳已过期"):
+        bridge._lookup_tf_pose()

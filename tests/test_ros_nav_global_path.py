@@ -6,6 +6,12 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from backend.ros_nav_cloud import (
+    extract_cloud_xyz_np,
+    limit_cloud_points,
+    mapping_cloud_voxel_preview,
+    merge_mapping_cloud_voxels,
+)
 from backend.services_ros_nav import RosNavBridge
 
 
@@ -88,7 +94,7 @@ def test_global_path_broadcast_throttles_changed_paths(monkeypatch):
 def test_mapping_cloud_points_are_limited():
     points = np.arange(30, dtype=np.float32).reshape((10, 3))
 
-    limited = RosNavBridge._limit_cloud_points(points, 3)
+    limited = limit_cloud_points(points, 3)
 
     assert limited.shape == (3, 3)
     assert limited.tolist() == [
@@ -101,9 +107,54 @@ def test_mapping_cloud_points_are_limited():
 def test_mapping_cloud_points_under_limit_are_unchanged():
     points = np.arange(9, dtype=np.float32).reshape((3, 3))
 
-    limited = RosNavBridge._limit_cloud_points(points, 3)
+    limited = limit_cloud_points(points, 3)
 
     assert limited is points
+
+
+def test_extract_cloud_xyz_np_filters_invalid_points():
+    values = [
+        (1.0, 2.0, 3.0),
+        (float("nan"), 2.0, 3.0),
+        (4.0, float("inf"), 6.0),
+        (7.0, 8.0, 9.0),
+    ]
+    msg = SimpleNamespace(
+        point_step=12,
+        width=len(values),
+        height=1,
+        fields=[
+            SimpleNamespace(name="x", offset=0),
+            SimpleNamespace(name="y", offset=4),
+            SimpleNamespace(name="z", offset=8),
+        ],
+        data=b"".join(struct.pack("<fff", *point) for point in values),
+    )
+
+    points = extract_cloud_xyz_np(msg)
+
+    assert points is not None
+    assert points.tolist() == [[1.0, 2.0, 3.0], [7.0, 8.0, 9.0]]
+
+
+def test_mapping_cloud_voxel_preview_deduplicates_voxels():
+    voxels = {}
+    merge_mapping_cloud_voxels(
+        voxels,
+        np.array(
+            [
+                [0.01, 0.01, 0.01],
+                [0.02, 0.02, 0.02],
+                [0.20, 0.20, 0.20],
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+    preview = mapping_cloud_voxel_preview(voxels)
+
+    assert preview.shape == (2, 3)
+    assert preview == pytest.approx(np.array([[0.02, 0.02, 0.02], [0.20, 0.20, 0.20]], dtype=np.float32))
 
 
 def test_mapping_cloud_accumulated_payload_keeps_all_points(monkeypatch):
@@ -125,8 +176,8 @@ def test_mapping_cloud_accumulated_payload_keeps_all_points(monkeypatch):
         data=b"".join(struct.pack("<fff", *point) for point in points),
     )
 
-    monkeypatch.setattr("backend.services_ros_nav.time.monotonic", lambda: 100.0)
-    monkeypatch.setattr("backend.services_ros_nav.time.time", lambda: 123.0)
+    monkeypatch.setattr("backend.ros_nav_cloud_bridge.time.monotonic", lambda: 100.0)
+    monkeypatch.setattr("backend.ros_nav_cloud_bridge.time.time", lambda: 123.0)
     monkeypatch.setattr(RosNavBridge, "_is_navigation_active", staticmethod(lambda: False))
 
     bridge = RosNavBridge.__new__(RosNavBridge)

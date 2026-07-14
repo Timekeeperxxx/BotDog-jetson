@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
+import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -590,57 +593,204 @@ def test_start_mapping_fails_if_ground_never_starts(monkeypatch, tmp_path):
     assert set(sleep_calls) == {0.5}
 
 
-def test_start_mapping_script_waits_for_superlio_before_terrain_analysis():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "start_mapping.sh"
-    content = script_path.read_text(encoding="utf-8")
+def test_start_mapping_wrapper_waits_for_unified_runtime_readiness():
+    botdog_root = Path(__file__).resolve().parents[1]
+    wrapper = (botdog_root / "scripts" / "start_mapping.sh").read_text(encoding="utf-8")
+    adapter = (
+        botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "start_mapping.sh"
+    ).read_text(encoding="utf-8")
+    launch = (
+        botdog_root.parent / "Navigation" / "src" / "nav_bringup" / "launch" / "mapping.launch.py"
+    ).read_text(encoding="utf-8")
 
-    superlio_line = 'start_isolated_process ros2 launch super_lio Livox_mid360.py rviz:=false enable_pgo:=false save_map_dir:="$SUPERLIO_SAVE_MAP_DIR" map_name:="map.pcd"'
-    livox_line = 'start_isolated_process ros2 launch livox_ros_driver2 msg_MID360_launch.py'
-    terrain_line = 'start_isolated_process ros2 launch terrain_analysis terrain_analysis_with_save.launch map_dir:="$MAP_DIR"'
-
-    assert "start_isolated_process() {" in content
-    assert superlio_line in content
-    assert livox_line in content
-    assert terrain_line in content
-    assert 'setsid "$@" >> "$DEBUG_LOG" 2>&1 &' in content
-    assert 'MAPPING_READY_FLAG="$MAP_DIR/.ground_generation_started"' in content
-    assert 'wait_for_log_pattern "livox/lidar publish use livox custom format" 30 "$LIVOX_PID" "Livox 开始发布点云/IMU"' in content
-    assert 'wait_with_abort 5 "$LIVOX_PID" "IMU 静止预热"' in content
-    assert 'wait_for_log_pattern "Map init done" 60 "$SUPERLIO_PID" "SuperLIO 完成地图初始化"' in content
-    assert content.index(livox_line) < content.index('wait_for_log_pattern "livox/lidar publish use livox custom format" 30 "$LIVOX_PID" "Livox 开始发布点云/IMU"')
-    assert content.index('wait_for_log_pattern "livox/lidar publish use livox custom format" 30 "$LIVOX_PID" "Livox 开始发布点云/IMU"') < content.index('wait_with_abort 5 "$LIVOX_PID" "IMU 静止预热"')
-    assert content.index('wait_with_abort 5 "$LIVOX_PID" "IMU 静止预热"') < content.index(superlio_line)
-    assert content.index(superlio_line) < content.index('wait_for_log_pattern "Map init done" 60 "$SUPERLIO_PID" "SuperLIO 完成地图初始化"')
-    assert content.index('wait_for_log_pattern "Map init done" 60 "$SUPERLIO_PID" "SuperLIO 完成地图初始化"') < content.index(terrain_line)
-    assert 'printf \'%s\\n\' "$(date \'+%Y-%m-%d %H:%M:%S\')" > "$MAPPING_READY_FLAG"' in content
-    assert 'wait_for_log_pattern() {' in content
-    assert 'wait_with_abort() {' in content
+    assert 'source "$SCRIPT_DIR/navigation_adapter_common.sh"' in wrapper
+    assert "run_navigation_adapter start_mapping.sh" in wrapper
+    assert "ros2 launch nav_bringup mapping.launch.py" in adapter
+    assert 'READY_FILE="$MAP_DIR/.ground_generation_started"' in adapter
+    assert "RUN_LOG_OFFSET" in adapter
+    assert 'mapping_log_has "publish use livox custom format"' in adapter
+    assert 'mapping_log_has "Map init done"' in adapter
+    assert "ros2 service type /save_terrain_map" in adapter
+    assert 'date \'+%Y-%m-%d %H:%M:%S\' > "$READY_FILE"' in adapter
+    assert 'package="livox_ros_driver2"' in launch
+    assert 'executable="super_lio_node"' in launch
+    assert 'executable="nav_terrain_analysis"' in launch
+    assert 'executable="nav_save_terrain_map"' in launch
 
 
-def test_start_mapping_script_uses_superlio_relative_save_dir():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "start_mapping.sh"
-    content = script_path.read_text(encoding="utf-8")
+def test_start_mapping_adapter_uses_current_workspace_and_absolute_map_dir():
+    botdog_root = Path(__file__).resolve().parents[1]
+    navigation_root = botdog_root.parent / "Navigation"
+    adapter = (navigation_root / "adapters" / "legacy_scripts" / "start_mapping.sh").read_text(encoding="utf-8")
+    common = (navigation_root / "adapters" / "legacy_scripts" / "common.sh").read_text(encoding="utf-8")
+    launch = (navigation_root / "src" / "nav_bringup" / "launch" / "mapping.launch.py").read_text(encoding="utf-8")
 
-    assert 'SUPERLIO_ROOT_DIR="${SUPERLIO_ROOT_DIR:-$HOME/superlio/Super-LIO-ros2/src/super_lio}"' in content
-    assert 'RELATIVE_MAP_DIR="$(realpath --relative-to="$SUPERLIO_ROOT_DIR" "$MAP_DIR" 2>/dev/null || true)"' in content
-    assert 'echo "SuperLIO 保存目录参数：$SUPERLIO_SAVE_MAP_DIR"' in content
-    assert 'source install/setup.bash' in content
-    assert "unset CYCLONEDDS_HOME" in content
-    assert "unset CYCLONEDDS_URI" in content
-    assert "export ROS_DOMAIN_ID=0" in content
-    assert '_remove_path_segment LD_LIBRARY_PATH "/home/jetson/cyclonedds-0.10x/install/lib"' in content
-    assert '_remove_path_segment LD_LIBRARY_PATH "/home/jetson/Project/BOTDOG/BotDog/.venv/lib/python3.10/site-packages/cv2/../../lib64"' in content
-    assert '_remove_path_segment PYTHONPATH "/home/jetson/Project/BOTDOG/BotDog"' in content
-    assert '_prepend_path_segment LD_LIBRARY_PATH "/usr/local/cuda-12.6/lib64"' in content
-    assert '_prepend_path_segment LD_LIBRARY_PATH "/usr/local/lib"' in content
-    assert '_prepend_path_segment PYTHONPATH "/usr/local/lib/python3.10/site-packages/"' in content
+    assert "source_navigation_env" in adapter
+    assert '"map_dir:=$MAP_DIR"' in adapter
+    assert '"livox_config_path:=$LIVOX_CONFIG_PATH"' in adapter
+    assert 'ROBOT_NAV_WS="${ROBOT_NAV_WS:-$(cd "$SCRIPT_DIR/../.." && pwd)}"' in common
+    assert 'source "$ROBOT_NAV_WS/install/setup.bash"' in common
+    assert '"lio.map.save_map_dir": map_dir' in launch
 
 
-def test_start_mapping_script_waits_for_superlio_save_on_shutdown():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "start_mapping.sh"
-    content = script_path.read_text(encoding="utf-8")
+def test_start_mapping_adapter_requests_save_before_stopping_launch():
+    botdog_root = Path(__file__).resolve().parents[1]
+    navigation_root = botdog_root.parent / "Navigation"
+    adapter = (navigation_root / "adapters" / "legacy_scripts" / "start_mapping.sh").read_text(encoding="utf-8")
+    common = (navigation_root / "adapters" / "legacy_scripts" / "common.sh").read_text(encoding="utf-8")
 
-    assert "SIGINT super_lio_node" in content
-    assert "SIGINT super_lio 进程组" in content
-    assert 'while [ $waited -lt 2000 ] && kill -0 "$superlio_node_pid" 2>/dev/null; do' in content
-    assert "super_lio_node 2000s 未退出，SIGKILL" in content
+    save_call = 'request_save_terrain_map "$LOG_FILE"'
+    superlio_stop_call = 'kill -INT "$superlio_pid"'
+    launch_stop_call = 'signal_launch_tree INT'
+    assert save_call in adapter
+    assert superlio_stop_call in adapter
+    assert launch_stop_call in adapter
+    assert adapter.index(save_call) < adapter.index(superlio_stop_call)
+    assert adapter.index(superlio_stop_call) < adapter.index(launch_stop_call)
+    assert 'timeout 45s ros2 service call /save_terrain_map' in common
+    assert 'setsid ros2 launch nav_bringup mapping.launch.py' in adapter
+    assert 'find_launch_descendant "super_lio_node"' in adapter
+    assert 'wait_for_process_exit "$superlio_pid" "$SUPERLIO_SAVE_TIMEOUT_SECONDS"' in adapter
+    assert "CLEANING_UP=1" in adapter
+    assert "trap - INT TERM EXIT" in adapter
+    assert 'wait "$LAUNCH_PID"' in adapter
+
+
+def test_start_mapping_adapter_gracefully_saves_map_on_sigint(tmp_path):
+    botdog_root = Path(__file__).resolve().parents[1]
+    adapter = botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "start_mapping.sh"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    map_dir = tmp_path / "maps" / "Scene1_test"
+    log_dir = tmp_path / "logs"
+    runtime_dir = tmp_path / "runtime"
+    fake_workspace = tmp_path / "navigation"
+    fake_workspace.mkdir()
+    setup_file = tmp_path / "setup.bash"
+    setup_file.write_text("true\n", encoding="utf-8")
+
+    superlio_node = fake_bin / "super_lio_node"
+    superlio_node.write_text(
+        """#!/usr/bin/python3
+import signal
+import sys
+import time
+from pathlib import Path
+
+map_dir = Path(sys.argv[1])
+
+def save_map(signum, frame):
+    (map_dir / "map.pcd").write_text("FAKE_PCD\\n", encoding="utf-8")
+    raise SystemExit(0)
+
+signal.signal(signal.SIGINT, save_map)
+signal.signal(signal.SIGTERM, save_map)
+while True:
+    time.sleep(0.1)
+""",
+        encoding="utf-8",
+    )
+    worker_node = fake_bin / "mapping_worker"
+    worker_node.write_text(
+        """#!/usr/bin/python3
+import signal
+import time
+
+def stop(signum, frame):
+    raise SystemExit(0)
+
+signal.signal(signal.SIGINT, stop)
+signal.signal(signal.SIGTERM, stop)
+while True:
+    time.sleep(0.1)
+""",
+        encoding="utf-8",
+    )
+    fake_ros2 = fake_bin / "ros2"
+    fake_ros2.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-} ${2:-}" in
+  "service type")
+    printf 'std_srvs/srv/Trigger\n'
+    ;;
+  "service call")
+    printf 'FAKE_GROUND_PCD\n' > "$FAKE_MAP_DIR/terrain_map_test_ground.pcd"
+    printf 'response: success=True\n'
+    ;;
+  "launch nav_bringup")
+    printf 'livox/lidar publish use livox custom format\n'
+    printf '[SuperLIO]: Map init done\n'
+    "$FAKE_SUPERLIO_NODE" "$FAKE_MAP_DIR" &
+    superlio_pid=$!
+    "$FAKE_MAPPING_WORKER" &
+    worker_pid=$!
+    wait "$superlio_pid"
+    wait "$worker_pid"
+    ;;
+  *)
+    printf 'unexpected fake ros2 call: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+""",
+        encoding="utf-8",
+    )
+    for executable in (superlio_node, worker_node, fake_ros2):
+        executable.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "NAV_ENV_FILE": "/dev/null",
+            "ROS2_SETUP_FILE": str(setup_file),
+            "ROBOT_NAV_WS": str(fake_workspace),
+            "ROBOT_NAV_MAP_ROOT": str(tmp_path / "maps"),
+            "ROBOT_NAV_LOG_ROOT": str(log_dir),
+            "ROBOT_NAV_RUNTIME_ROOT": str(runtime_dir),
+            "NAV_FASTDDS_PROFILE": str(tmp_path / "missing-fastdds.xml"),
+            "LIVOX_HOST_IP": "192.168.123.222",
+            "FAKE_MAP_DIR": str(map_dir),
+            "FAKE_SUPERLIO_NODE": str(superlio_node),
+            "FAKE_MAPPING_WORKER": str(worker_node),
+            "MAPPING_READY_TIMEOUT_SECONDS": "5",
+            "SUPERLIO_SAVE_TIMEOUT_SECONDS": "5",
+            "LAUNCH_STOP_TIMEOUT_SECONDS": "3",
+            "LAUNCH_TERM_TIMEOUT_SECONDS": "1",
+        }
+    )
+
+    process = subprocess.Popen(
+        ["bash", str(adapter), str(map_dir)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        start_new_session=True,
+    )
+    ready_file = map_dir / ".ground_generation_started"
+    deadline = time.monotonic() + 8
+    while not ready_file.exists() and process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+    try:
+        assert ready_file.exists(), process.communicate(timeout=1)[0]
+        stop_started_at = time.monotonic()
+        process.send_signal(signal.SIGINT)
+        output, _ = process.communicate(timeout=10)
+        stop_elapsed = time.monotonic() - stop_started_at
+    finally:
+        if process.poll() is None:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            process.wait(timeout=2)
+
+    assert process.returncode == 0, output
+    assert stop_elapsed < 8, output
+    assert (map_dir / "map.pcd").read_text(encoding="utf-8") == "FAKE_PCD\n"
+    assert (map_dir / "terrain_map_test_ground.pcd").is_file()
+    assert output.count("正在按顺序保存 terrain_map 和 SuperLIO map.pcd") == 1
+    assert "请求 SuperLIO 优雅退出并保存 map.pcd" in output
+    assert "SuperLIO 地图已保存" in output
+    assert "发送 SIGTERM" not in output
+    assert "发送 SIGKILL" not in output

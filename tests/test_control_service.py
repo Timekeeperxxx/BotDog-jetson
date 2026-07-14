@@ -1,6 +1,7 @@
 import pytest
 import asyncio
 import queue
+import threading
 import time
 from unittest.mock import AsyncMock, MagicMock
 from backend.config import settings
@@ -195,3 +196,51 @@ async def test_unitree_velocity_override_keeps_forward_backward_yaw_zero():
 
     await adapter.send_command("backward", vx=0.2)
     assert adapter._cmd_queue.get_nowait() == ("velocity", -0.2, 0.0, 0.0)
+
+
+def test_unitree_close_stops_motion_in_worker_before_releasing_client():
+    class SportClient:
+        def __init__(self):
+            self.calls = []
+
+        def StopMove(self):
+            self.calls.append("stop")
+            return 0
+
+    adapter = UnitreeB2Adapter.__new__(UnitreeB2Adapter)
+    adapter._initialized = True
+    adapter._closed = False
+    adapter._close_lock = threading.Lock()
+    client = SportClient()
+    adapter._sport_client = client
+    adapter._busy_with_posture = False
+    adapter._cmd_queue = queue.Queue(maxsize=1)
+    adapter._worker_thread = threading.Thread(target=adapter._command_worker, daemon=True)
+    adapter._worker_thread.start()
+
+    adapter.close()
+
+    assert client.calls == ["stop"]
+    assert adapter._worker_thread.is_alive() is False
+    assert adapter._sport_client is None
+    adapter.close()
+    assert client.calls == ["stop"]
+
+
+@pytest.mark.asyncio
+async def test_prepare_navigation_motion_uses_adapter_hook():
+    class Adapter(MockAdapter):
+        def __init__(self):
+            self.prepared = []
+
+        async def prepare_navigation_motion(self):
+            self.prepared.append("prepare_navigation")
+            return {"success": True, "switch_move_mode_return": 0}
+
+    adapter = Adapter()
+    service = ControlService(adapter=adapter)
+
+    result = await service.prepare_navigation_motion()
+
+    assert result["success"] is True
+    assert adapter.prepared == ["prepare_navigation"]
