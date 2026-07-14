@@ -6,7 +6,7 @@ import {
   saveNavTask,
   stopNavTask,
 } from '../../api/pcdMapApi'
-import type { GlobalPath, LocalizationStatus, NavigationStatus, RobotPose } from '../../types/navState'
+import type { GlobalPath, LocalizationStatus, NavigationStatus, RobotPose, ScanExecutionPath } from '../../types/navState'
 import type { PcdSceneItem } from '../../types/pcdMap'
 import type { TaskDefinition, TaskDraft, TaskDraftStep } from '../../types/taskWorkflow'
 import {
@@ -28,6 +28,7 @@ import type { LogItem } from './navPageUtils'
 type InitialStatePayload = {
   robotPose?: RobotPose | null
   globalPath?: GlobalPath | null
+  scanExecutionPath?: ScanExecutionPath | null
   localizationStatus?: LocalizationStatus | null
   navigationStatus?: NavigationStatus | null
 }
@@ -244,6 +245,7 @@ export function useNavTasks({
       await selectScene(task.mapId)
     }
     try {
+      setInitialState({ scanExecutionPath: null })
       const result = await executeNavTask(task.id)
       setNavigatingWaypointId(null)
       setInitialState({
@@ -281,6 +283,7 @@ export function useNavTasks({
       setNavigatingWaypointId(null)
       setInitialState({
         globalPath: null,
+        scanExecutionPath: null,
         navigationStatus: {
           status: 'idle',
           target_waypoint_id: null,
