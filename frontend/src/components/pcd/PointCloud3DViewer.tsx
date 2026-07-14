@@ -3,7 +3,7 @@ import type { PointerEvent } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { NavWaypoint } from '../../types/pcdMap'
-import type { GlobalPath, RobotPose } from '../../types/navState'
+import type { GlobalPath, RobotPose, ScanExecutionPath } from '../../types/navState'
 import { mapToThree, threeToMap } from '../../utils/pointCloudTransform'
 import { detectWebGLSupport } from './webglSupport'
 import {
@@ -49,6 +49,7 @@ type Props = {
   waypoints: NavWaypoint[]
   robotPose: RobotPose | null
   globalPath: GlobalPath | null
+  scanExecutionPath: ScanExecutionPath | null
   mode?: 'none' | 'waypoint' | 'pose'
   followRobot?: boolean
   centerHeight?: number | null
@@ -64,6 +65,7 @@ export function PointCloud3DViewer({
   waypoints,
   robotPose,
   globalPath,
+  scanExecutionPath,
   mode = 'none',
   followRobot = false,
   centerHeight = null,
@@ -97,6 +99,12 @@ export function PointCloud3DViewer({
     z: number
     yaw: number
   } | null>(null)
+  const [pathClockMs, setPathClockMs] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setPathClockMs(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   const normalizedLayers: PointCloudLayer[] = useMemo(
     () => {
@@ -415,64 +423,103 @@ export function PointCloud3DViewer({
 
   useEffect(() => {
     if (!webglSupported) return
-    const scene = sceneRef.current
     const pathGroup = pathGroupRef.current
-    if (!scene || !pathGroup) return
+    if (!pathGroup) return
 
     pathGroup.children.forEach(disposeObject3D)
     pathGroup.clear()
 
-    if (!globalPath || globalPath.frame_id !== 'map' || globalPath.points.length < 2) {
-      return
+    const addPath = (
+      path: GlobalPath | ScanExecutionPath | null,
+      options: {
+        color: number
+        targetColor: number
+        radius: number
+        zLift: number
+        renderOrder: number
+        markerLimit: number
+      },
+    ) => {
+      if (!path || path.frame_id !== 'map' || path.points.length < 2) return
+
+      const pathPoints = path.points.map((point) => {
+        const converted = mapToThree(point.x, point.y, point.z)
+        return new THREE.Vector3(converted.x, converted.y + options.zLift, converted.z)
+      })
+      const curve = new THREE.CatmullRomCurve3(pathPoints, false, 'centripetal')
+      const tubularSegments = Math.max(8, Math.min(pathPoints.length * 2, 480))
+      const geometry = new THREE.TubeGeometry(
+        curve,
+        tubularSegments,
+        options.radius,
+        8,
+        false,
+      )
+      const material = new THREE.MeshBasicMaterial({
+        color: options.color,
+        transparent: true,
+        opacity: 0.96,
+        depthTest: true,
+        depthWrite: false,
+      })
+      const pathMesh = new THREE.Mesh(geometry, material)
+      pathMesh.renderOrder = options.renderOrder
+      pathGroup.add(pathMesh)
+
+      const markerStride = Math.max(1, Math.ceil(path.points.length / options.markerLimit))
+      path.points.forEach((point, index) => {
+        const isTarget = index === path.points.length - 1
+        if (!isTarget && index % markerStride !== 0) return
+
+        const converted = mapToThree(point.x, point.y, point.z)
+        const marker = new THREE.Mesh(
+          new THREE.SphereGeometry(
+            isTarget ? GLOBAL_PATH_NODE_RADIUS * 1.5 : GLOBAL_PATH_NODE_RADIUS,
+            16,
+            10,
+          ),
+          new THREE.MeshBasicMaterial({
+            color: isTarget ? options.targetColor : options.color,
+            transparent: true,
+            opacity: 0.98,
+            depthTest: true,
+            depthWrite: false,
+          }),
+        )
+        marker.position.set(
+          converted.x,
+          converted.y + options.zLift,
+          converted.z,
+        )
+        marker.renderOrder = options.renderOrder + 1
+        pathGroup.add(marker)
+      })
     }
 
-    const zLift = 0.03
-    const pathPoints = globalPath.points.map((point) => {
-      const converted = mapToThree(point.x, point.y, point.z)
-      return new THREE.Vector3(converted.x, converted.y + zLift, converted.z)
-    })
-
-    const curve = new THREE.CatmullRomCurve3(pathPoints, false, 'centripetal')
-    const tubularSegments = Math.max(8, Math.min(pathPoints.length * 2, 480))
-    const geometry = new THREE.TubeGeometry(curve, tubularSegments, GLOBAL_PATH_RADIUS, 8, false)
-    const material = new THREE.MeshBasicMaterial({
+    // Yellow: static-map Hybrid A* reference.
+    addPath(globalPath, {
       color: 0xfacc15,
-      transparent: true,
-      opacity: 0.96,
-      depthTest: true,
-      depthWrite: false,
+      targetColor: 0x22c55e,
+      radius: GLOBAL_PATH_RADIUS,
+      zLift: 0.03,
+      renderOrder: 12,
+      markerLimit: 80,
     })
-
-    const pathMesh = new THREE.Mesh(geometry, material)
-    pathMesh.renderOrder = 12
-    pathGroup.add(pathMesh)
-
-    const markerStride = Math.max(1, Math.ceil(globalPath.points.length / 80))
-    globalPath.points.forEach((point, index) => {
-      const isTarget = index === globalPath.points.length - 1
-      if (!isTarget && index % markerStride !== 0) return
-
-      const converted = mapToThree(point.x, point.y, point.z)
-      const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(isTarget ? GLOBAL_PATH_NODE_RADIUS * 1.5 : GLOBAL_PATH_NODE_RADIUS, 16, 10),
-        new THREE.MeshBasicMaterial({
-          color: isTarget ? 0x22c55e : 0xfacc15,
-          transparent: true,
-          opacity: 0.98,
-          depthTest: true,
-          depthWrite: false,
-        }),
-      )
-      marker.position.set(converted.x, converted.y + zLift, converted.z)
-      marker.renderOrder = 13
-      pathGroup.add(marker)
+    // Cyan: remaining SCAN body-centre B-spline, drawn above the reference.
+    addPath(scanExecutionPath, {
+      color: 0x22d3ee,
+      targetColor: 0xe879f9,
+      radius: GLOBAL_PATH_RADIUS * 1.2,
+      zLift: 0.07,
+      renderOrder: 16,
+      markerLimit: 60,
     })
 
     return () => {
       pathGroup.children.forEach(disposeObject3D)
       pathGroup.clear()
     }
-  }, [globalPath, webglSupported])
+  }, [globalPath, scanExecutionPath, webglSupported])
 
   useEffect(() => {
     if (!webglSupported) return
@@ -752,6 +799,11 @@ export function PointCloud3DViewer({
     setPendingTarget(null)
   }
 
+  const scanPathAgeSeconds = scanExecutionPath?.received_at
+    ? Math.max(0, pathClockMs / 1000 - scanExecutionPath.received_at)
+    : null
+  const scanPathFresh = scanPathAgeSeconds !== null && scanPathAgeSeconds <= 2.5
+
   if (!webglSupported) {
     return (
       <div className="pcd-viewer-shell">
@@ -775,6 +827,25 @@ export function PointCloud3DViewer({
   return (
     <div className="pcd-viewer-shell">
       <div className="pcd-viewer-label">3D 点云</div>
+      <div className="pcd-path-legend" aria-label="导航路径图例">
+        <div>
+          <span className="pcd-path-swatch is-global" />
+          <span>全局路径</span>
+          <strong>{globalPath?.points.length ?? 0} 点</strong>
+        </div>
+        <div>
+          <span className="pcd-path-swatch is-scan" />
+          <span>SCAN 机身轨迹</span>
+          <strong>{scanExecutionPath?.points.length ?? 0} 点</strong>
+          <em className={scanPathFresh ? 'is-fresh' : 'is-stale'}>
+            {scanPathFresh
+              ? '实时'
+              : scanPathAgeSeconds === null
+                ? '等待'
+                : `${scanPathAgeSeconds.toFixed(1)}s 未更新`}
+          </em>
+        </div>
+      </div>
       <div
         className={`pcd-three-host ${mode !== 'none' ? 'is-adding' : ''}`}
         ref={hostRef}
