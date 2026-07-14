@@ -243,3 +243,68 @@ def test_mapping_cloud_broadcast_drops_frame_when_previous_send_is_pending(monke
     bridge._submit_broadcast("nav.mapping_cloud", {"live_points": [[1.0, 1.0, 1.0]]})
 
     assert len(submitted) == 1
+
+
+def test_scan_execution_path_broadcast_includes_receipt_time(monkeypatch):
+    monkeypatch.setattr("backend.services_ros_nav.time.monotonic", lambda: 10.0)
+    monkeypatch.setattr("backend.services_ros_nav.time.time", lambda: 200.0)
+
+    stored_paths = []
+    broadcasts = []
+    monkeypatch.setattr(
+        "backend.services_ros_nav.update_scan_execution_path",
+        lambda path: stored_paths.append(path.copy()),
+    )
+
+    msg = SimpleNamespace(
+        header=SimpleNamespace(
+            frame_id="map",
+            stamp=SimpleNamespace(sec=123, nanosec=456_000_000),
+        ),
+        poses=[
+            SimpleNamespace(
+                pose=SimpleNamespace(
+                    position=SimpleNamespace(x=1.0, y=2.0, z=0.32),
+                )
+            ),
+            SimpleNamespace(
+                pose=SimpleNamespace(
+                    position=SimpleNamespace(x=0.5, y=1.5, z=0.32),
+                )
+            ),
+        ],
+    )
+
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._last_scan_execution_path_broadcast_at = 0.0
+    bridge._submit_broadcast = lambda event_type, payload: broadcasts.append(
+        (event_type, payload.copy())
+    )
+
+    bridge._handle_scan_execution_path_message(msg)
+
+    assert stored_paths == [
+        {
+            "frame_id": "map",
+            "timestamp": pytest.approx(123.456),
+            "received_at": 200.0,
+            "points": [
+                {"x": 1.0, "y": 2.0, "z": 0.32},
+                {"x": 0.5, "y": 1.5, "z": 0.32},
+            ],
+        }
+    ]
+    assert broadcasts == [
+        (
+            "nav.scan_execution_path",
+            {
+                "frame_id": "map",
+                "timestamp": pytest.approx(123.456),
+                "received_at": 200.0,
+                "points": [
+                    {"x": 1.0, "y": 2.0, "z": 0.32},
+                    {"x": 0.5, "y": 1.5, "z": 0.32},
+                ],
+            },
+        )
+    ]
