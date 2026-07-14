@@ -1,7 +1,7 @@
 import { Battery, Crosshair, Loader2 } from 'lucide-react'
 import { NavWaypointPanel } from '../../components/pcd/NavWaypointPanel'
 import { PointCloudTopDownCanvas } from '../../components/pcd/PointCloudTopDownCanvas'
-import type { GlobalPath, RobotPose } from '../../types/navState'
+import type { GlobalPath, RobotPose, ScanExecutionPath } from '../../types/navState'
 import type { NavWaypoint, PcdBounds, PcdSceneLayerRole } from '../../types/pcdMap'
 
 type NavPageHeaderProps = {
@@ -86,6 +86,7 @@ type NavRightRailProps = {
   canOperate: boolean
   estopSending: boolean
   globalPath: GlobalPath | null
+  scanExecutionPath: ScanExecutionPath | null
   layers: PointCloudLayer[]
   navigatingWaypointId: string | null
   robotPose: RobotPose | null
@@ -105,6 +106,7 @@ export function NavRightRail({
   canOperate,
   estopSending,
   globalPath,
+  scanExecutionPath,
   layers,
   navigatingWaypointId,
   robotPose,
@@ -127,6 +129,7 @@ export function NavRightRail({
         waypoints={waypoints}
         robotPose={robotPose}
         globalPath={globalPath}
+        scanExecutionPath={scanExecutionPath}
         mode="none"
         waypointZ={0}
         onMouseMapPositionChange={onMouseMapPositionChange}
