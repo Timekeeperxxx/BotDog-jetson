@@ -283,28 +283,16 @@ def test_scan_execution_path_broadcast_includes_receipt_time(monkeypatch):
 
     bridge._handle_scan_execution_path_message(msg)
 
-    assert stored_paths == [
-        {
-            "frame_id": "map",
-            "timestamp": pytest.approx(123.456),
-            "received_at": 200.0,
-            "points": [
-                {"x": 1.0, "y": 2.0, "z": 0.32},
-                {"x": 0.5, "y": 1.5, "z": 0.32},
-            ],
-        }
+    assert len(stored_paths) == 1
+    assert stored_paths[0]["frame_id"] == "map"
+    assert stored_paths[0]["timestamp"] == pytest.approx(123.456)
+    assert stored_paths[0]["received_at"] == 200.0
+    assert stored_paths[0]["points"] == [
+        {"x": 1.0, "y": 2.0, "z": 0.32},
+        {"x": 0.5, "y": 1.5, "z": 0.32},
     ]
-    assert broadcasts == [
-        (
-            "nav.scan_execution_path",
-            {
-                "frame_id": "map",
-                "timestamp": pytest.approx(123.456),
-                "received_at": 200.0,
-                "points": [
-                    {"x": 1.0, "y": 2.0, "z": 0.32},
-                    {"x": 0.5, "y": 1.5, "z": 0.32},
-                ],
-            },
-        )
-    ]
+
+    assert len(broadcasts) == 1
+    event_type, payload = broadcasts[0]
+    assert event_type == "nav.scan_execution_path"
+    assert payload == stored_paths[0]
