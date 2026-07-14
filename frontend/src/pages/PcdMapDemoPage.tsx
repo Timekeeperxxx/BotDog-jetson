@@ -289,6 +289,7 @@ export function PcdMapDemoPage() {
       setInitialState({
         robotPose: null,
         globalPath: null,
+        scanExecutionPath: null,
         localizationStatus: {
           status: 'initializing',
           frame_id: 'map',
@@ -359,6 +360,7 @@ export function PcdMapDemoPage() {
     }
 
     setNavigatingWaypointId(waypointId)
+    setInitialState({ scanExecutionPath: null })
     try {
       const result = await goToWaypoint(selectedSceneId, waypointId)
       const waypoint = waypoints.find((item) => item.id === waypointId)
@@ -368,7 +370,7 @@ export function PcdMapDemoPage() {
     } finally {
       setNavigatingWaypointId(null)
     }
-  }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable, waypoints])
+  }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable, setInitialState, waypoints])
 
   const handleEmergencyStop = useCallback(async () => {
     if (!canOperate) return
@@ -379,6 +381,7 @@ export function PcdMapDemoPage() {
       setNavigatingWaypointId(null)
       setInitialState({
         globalPath: null,
+        scanExecutionPath: null,
         navigationStatus: {
           status: 'idle',
           target_waypoint_id: null,
