@@ -573,6 +573,7 @@ class GlobalPathDTO(BaseModel):
     frame_id: str
     points: list[GlobalPathPointDTO]
     timestamp: float | None = None
+    received_at: float | None = None
 
 
 class NavStateResponse(BaseModel):
@@ -580,3 +581,4 @@ class NavStateResponse(BaseModel):
     navigation_status: NavigationStatusDTO
     localization_status: LocalizationStatusDTO
     global_path: GlobalPathDTO | None = None
+    scan_execution_path: GlobalPathDTO | None = None
