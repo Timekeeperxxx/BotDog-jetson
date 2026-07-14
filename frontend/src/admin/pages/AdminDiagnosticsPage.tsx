@@ -32,6 +32,13 @@ export function AdminDiagnosticsPage({
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <DiagTile
             icon={<ServerCog size={14} />}
+            title="一键系统诊断"
+            desc="聚合启动摘要、安全状态、关键路径和磁盘空间。"
+            onClick={() => void runDiagnostic('/api/v1/system/diagnostics')}
+            loading={loadingKey === '/api/v1/system/diagnostics'}
+          />
+          <DiagTile
+            icon={<ServerCog size={14} />}
             title="/api/v1/system/safety"
             desc="检查当前是否允许运动，以及阻止原因。"
             onClick={() => void runDiagnostic('/api/v1/system/safety')}
@@ -57,6 +64,7 @@ export function AdminDiagnosticsPage({
       <AdminCard title="快捷入口" subtitle="用于现场排障，不替代正式后台流程。">
         <div className="flex flex-wrap gap-3">
           <ToolbarButton onClick={onOpenPatrol}><ExternalLink size={14} className="inline-block" /> 打开导航页</ToolbarButton>
+          <ToolbarButton onClick={() => void runDiagnostic('/api/v1/system/diagnostics')}>一键系统诊断</ToolbarButton>
           <ToolbarButton onClick={() => void runDiagnostic('/api/v1/system/safety')}>检查安全接口</ToolbarButton>
           <ToolbarButton onClick={() => void runDiagnostic('/api/v1/auth/status')}>检查登录状态</ToolbarButton>
           <ToolbarButton onClick={() => void runDiagnostic('/api/v1/system/radar/health')}>
@@ -80,10 +88,10 @@ export function AdminDiagnosticsPage({
         ) : null}
       </AdminCard>
 
-      <AdminCard title="说明" subtitle="第三阶段先把壳拆清楚，后续再补更细的诊断能力。">
+      <AdminCard title="说明" subtitle="一键诊断覆盖基础排障，专项检查仍保留独立入口。">
         <EmptyState
-          title="暂未接入完整诊断面板"
-          description="如果后续要做网络、磁盘、进程和 ROS 通道健康检查，可以再补专门的诊断 API 和独立页面。"
+          title="诊断结果以接口原始 JSON 展示"
+          description="现场排障时优先运行一键系统诊断；雷达、登录态和运动安全可按需单独复查。"
         />
       </AdminCard>
     </div>

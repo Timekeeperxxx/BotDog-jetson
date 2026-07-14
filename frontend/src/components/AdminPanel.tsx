@@ -7,6 +7,15 @@ import { useState, useEffect } from 'react';
 import { useVideoSources } from '../hooks/useVideoSources';
 import type { VideoSource, VideoSourceRequest, NetworkInterface, NetworkInterfaceRequest } from '../types/admin';
 import { getApiUrl } from '../config/api';
+import { FormRow, TextInput, Toggle } from './AdminPanelControls';
+import {
+  emptyIfaceForm,
+  emptyVideoForm,
+  ifaceToForm,
+  sourceToForm,
+  type IfaceFormData,
+  type VideoFormData,
+} from './AdminPanelFormData';
 import {
   RefreshCw, Plus, Trash2, Edit3, CheckCircle2, AlertTriangle, X,
   Video, Wifi, Save, Camera, Network, Star, Cpu, Info, Lock,
@@ -32,111 +41,14 @@ interface SysInfoGroup {
   items: SysInfoItem[];
 }
 
-// ── 编辑表单（视频源）──────────────────────────────────────────
-interface VideoFormData {
-  name: string;
-  label: string;
-  source_type: string;
-  whep_url: string;
-  rtsp_url: string;
-  enabled: boolean;
-  is_primary: boolean;
-  is_ai_source: boolean;
-  sort_order: number;
-}
-
-function emptyVideoForm(): VideoFormData {
-  return {
-    name: '', label: '', source_type: 'whep',
-    whep_url: '', rtsp_url: '',
-    enabled: true, is_primary: false, is_ai_source: false, sort_order: 0,
-  };
-}
-
-function sourceToForm(src: VideoSource): VideoFormData {
-  return {
-    name: src.name, label: src.label, source_type: src.source_type,
-    whep_url: src.whep_url || '', rtsp_url: src.rtsp_url || '',
-    enabled: src.enabled, is_primary: src.is_primary, is_ai_source: src.is_ai_source,
-    sort_order: src.sort_order,
-  };
-}
-
-// ── 编辑表单（网口）────────────────────────────────────────────
-interface IfaceFormData {
-  name: string;
-  label: string;
-  iface_name: string;
-  ip_address: string;
-  purpose: string;
-  enabled: boolean;
-}
-
-function emptyIfaceForm(): IfaceFormData {
-  return { name: '', label: '', iface_name: '', ip_address: '', purpose: 'other', enabled: true };
-}
-
-function ifaceToForm(iface: NetworkInterface): IfaceFormData {
-  return {
-    name: iface.name, label: iface.label, iface_name: iface.iface_name,
-    ip_address: iface.ip_address || '', purpose: iface.purpose, enabled: iface.enabled,
-  };
-}
-
-// ── 通用输入行组件 ──────────────────────────────────────────────
-function FormRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label className="text-[9px] font-bold uppercase tracking-[0.2em] text-zinc-400">{label}</label>
-      {children}
-    </div>
-  );
-}
-
-function TextInput({ value, onChange, placeholder, disabled }: {
-  value: string; onChange: (v: string) => void; placeholder?: string; disabled?: boolean;
-}) {
-  return (
-    <input
-      type="text"
-      value={value}
-      onChange={e => onChange(e.target.value)}
-      placeholder={placeholder}
-      disabled={disabled}
-      className="bg-zinc-950 border border-zinc-700 px-3 py-2 text-xs text-white font-mono
-        focus:outline-none focus:border-white transition-all placeholder-zinc-600
-        disabled:opacity-40 disabled:cursor-not-allowed w-full"
-    />
-  );
-}
-
-function Toggle({ checked, onChange, label, disabled }: {
-  checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean;
-}) {
-  return (
-    <label className="flex items-center gap-3 cursor-pointer select-none">
-      <div className="relative" onClick={() => !disabled && onChange(!checked)}>
-        <div className={`w-9 h-[18px] border transition-all ${
-          checked ? 'bg-white border-white' : 'bg-zinc-900 border-zinc-600'
-        }`} />
-        <div className={`absolute top-[1px] w-4 h-4 transition-transform duration-200 ${
-          checked ? 'translate-x-[18px] bg-black' : 'translate-x-[1px] bg-zinc-500'
-        }`} />
-      </div>
-      <span className={`text-[10px] font-bold uppercase tracking-[0.15em] ${
-        checked ? 'text-white' : 'text-zinc-500'
-      }`}>{label}</span>
-    </label>
-  );
-}
-
 // ==================== 主面板 ====================
 export function AdminPanel({ onClose }: AdminPanelProps) {
   const admin = useVideoSources();
+  const { fetchSources, fetchInterfaces } = admin;
   const [activeTab, setActiveTab] = useState<AdminTab>('video');
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [sysInfo, setSysInfo] = useState<SysInfoGroup[]>([]);
-  const [sysInfoLoading, setSysInfoLoading] = useState(false);
+  const [sysInfoLoading, setSysInfoLoading] = useState(true);
 
   // 视频源编辑状态
   const [editingSourceId, setEditingSourceId] = useState<number | null>(null); // null=新增, number=编辑
@@ -151,16 +63,15 @@ export function AdminPanel({ onClose }: AdminPanelProps) {
   const [deletingIfaceId, setDeletingIfaceId] = useState<number | null>(null);
 
   useEffect(() => {
-    admin.fetchSources();
-    admin.fetchInterfaces();
+    fetchSources();
+    fetchInterfaces();
     // 拉取系统硬件信息
-    setSysInfoLoading(true);
     fetch(getApiUrl('/api/v1/system-info'))
       .then(r => r.json())
       .then(d => setSysInfo(d.groups || []))
       .catch(() => {})
       .finally(() => setSysInfoLoading(false));
-  }, []);
+  }, [fetchSources, fetchInterfaces]);
 
   const showSuccess = (msg: string) => {
     setSuccessMsg(msg);

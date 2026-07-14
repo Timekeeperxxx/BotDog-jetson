@@ -1,7 +1,7 @@
 import { getApiUrl } from '../config/api'
 import { getAuthState, clearAuthStateForToken } from '../stores/authStore'
 
-export async function apiFetch<T = any>(path: string, init?: RequestInit): Promise<T> {
+async function fetchWithAuth(path: string, init?: RequestInit): Promise<Response> {
   const url = getApiUrl(path)
   
   const headers = new Headers(init?.headers)
@@ -17,8 +17,6 @@ export async function apiFetch<T = any>(path: string, init?: RequestInit): Promi
     headers,
   })
 
-  const contentType = response.headers.get('content-type') || ''
-
   if (response.status === 401 && accessToken && !path.startsWith('/api/v1/auth/')) {
     const cleared = clearAuthStateForToken(accessToken, '登录已过期，请重新登录')
     if (cleared && typeof window !== 'undefined') {
@@ -26,18 +24,30 @@ export async function apiFetch<T = any>(path: string, init?: RequestInit): Promi
     }
   }
 
+  return response
+}
+
+async function readErrorMessage(response: Response) {
+  const contentType = response.headers.get('content-type') || ''
+  let message = `HTTP ${response.status}`
+  if (contentType.includes('application/json')) {
+    const data = await response.json().catch(() => ({})) as { detail?: unknown }
+    message = typeof data.detail === 'string' ? data.detail : message
+  }
+  return message
+}
+
+export async function apiFetch<T = unknown>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetchWithAuth(path, init)
+  const contentType = response.headers.get('content-type') || ''
+
   // 204 No Content
   if (response.status === 204) {
-    return null as any
+    return null as T
   }
 
   if (!response.ok) {
-    let message = `HTTP ${response.status}`
-    if (contentType.includes('application/json')) {
-      const data = await response.json().catch(() => ({}))
-      message = data.detail || message
-    }
-    throw new Error(message)
+    throw new Error(await readErrorMessage(response))
   }
 
   if (!contentType.includes('application/json')) {
@@ -45,4 +55,12 @@ export async function apiFetch<T = any>(path: string, init?: RequestInit): Promi
   }
 
   return response.json() as Promise<T>
+}
+
+export async function apiFetchArrayBuffer(path: string, init?: RequestInit): Promise<ArrayBuffer> {
+  const response = await fetchWithAuth(path, init)
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response))
+  }
+  return response.arrayBuffer()
 }

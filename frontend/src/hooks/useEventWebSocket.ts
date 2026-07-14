@@ -36,6 +36,7 @@ export function useEventWebSocket(): EventHookState {
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const connectionIdRef = useRef(0);
+  const connectRef = useRef<() => void>(() => {});
 
   const connect = useCallback(() => {
     const rs = wsRef.current?.readyState;
@@ -74,7 +75,7 @@ export function useEventWebSocket(): EventHookState {
           return;
         }
         try {
-          const message = JSON.parse(event.data) as { msg_type: string; timestamp: string; payload: Record<string, any> };
+          const message = JSON.parse(event.data) as { msg_type: string; timestamp: string; payload: Record<string, unknown> };
 
           if (message.msg_type === 'AI_STATUS' && message.payload) {
             setAiStatus(message.payload as unknown as AIStatus);
@@ -108,10 +109,11 @@ export function useEventWebSocket(): EventHookState {
             return;
           }
 
+          const payload = message.payload as Partial<AlertEvent>;
           const alert: AlertEvent = {
-            ...(message.payload as any),
-            timestamp: message.timestamp || (message.payload as any).timestamp,
-          };
+            ...payload,
+            timestamp: message.timestamp || payload.timestamp || '',
+          } as AlertEvent;
 
           setLatestAlert(alert);
           setAlerts((prev) => [alert, ...prev].slice(0, 10));
@@ -141,7 +143,7 @@ export function useEventWebSocket(): EventHookState {
           reconnectAttemptsRef.current += 1;
           const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current - 1), 10000);
           reconnectTimeoutRef.current = window.setTimeout(() => {
-            connect();
+            connectRef.current();
           }, delay);
         }
       };
@@ -150,6 +152,10 @@ export function useEventWebSocket(): EventHookState {
       setStatus({ status: 'error', error: 'create failed' });
     }
   }, []);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   const disconnect = useCallback(() => {
     connectionIdRef.current += 1;
@@ -165,8 +171,9 @@ export function useEventWebSocket(): EventHookState {
   }, []);
 
   useEffect(() => {
-    connect();
+    const timer = window.setTimeout(connect, 0);
     return () => {
+      window.clearTimeout(timer);
       disconnect();
     };
   }, [connect, disconnect]);

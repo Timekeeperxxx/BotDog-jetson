@@ -1,0 +1,225 @@
+import {
+  Boxes,
+  Crosshair,
+  Keyboard,
+  Layers,
+  Loader2,
+  LocateFixed,
+  Radar,
+  Square,
+  UserSearch,
+} from 'lucide-react'
+import { formatSpeed } from '../../utils/speedControl'
+import type { MappingSessionInfo } from './navPageUtils'
+
+export type PcdLayerVisibility = {
+  map: boolean
+  ground: boolean
+  footprint: boolean
+}
+
+type NavToolStripProps = {
+  canOperate: boolean
+  currentCmd: string | null
+  followRobot: boolean
+  isControlling: boolean
+  keyboardControlEnabled: boolean
+  lastResultText: string | null
+  linearSpeed: number
+  mappingActive: boolean
+  mappingSending: boolean
+  mappingSessionInfo: MappingSessionInfo | null
+  navAutoTrackEnabled: boolean
+  navAutoTrackLoading: boolean
+  pcdLayerPanelOpen: boolean
+  pcdLayerVisibility: PcdLayerVisibility
+  radarChecking: boolean
+  resultMessage: string | null
+  robotPoseAvailable: boolean
+  selectedSceneNavigable: boolean
+  selectedTaskId: string | null
+  toolMode: 'none' | 'obstacle' | 'pose'
+  turnSpeed: number
+  webglSupported: boolean
+  onCheckRadar: () => void
+  onStopSelectedTask: () => void
+  onToggleFollowRobot: () => void
+  onToggleKeyboardControl: () => void
+  onToggleLayer: (layer: keyof PcdLayerVisibility) => void
+  onToggleLayerPanel: () => void
+  onToggleMapping: () => void
+  onToggleNavAutoTrack: () => void
+  onToolMode: (mode: 'obstacle' | 'pose') => void
+}
+
+export function NavToolStrip({
+  canOperate,
+  currentCmd,
+  followRobot,
+  isControlling,
+  keyboardControlEnabled,
+  lastResultText,
+  linearSpeed,
+  mappingActive,
+  mappingSending,
+  mappingSessionInfo,
+  navAutoTrackEnabled,
+  navAutoTrackLoading,
+  pcdLayerPanelOpen,
+  pcdLayerVisibility,
+  radarChecking,
+  resultMessage,
+  robotPoseAvailable,
+  selectedSceneNavigable,
+  selectedTaskId,
+  toolMode,
+  turnSpeed,
+  webglSupported,
+  onCheckRadar,
+  onStopSelectedTask,
+  onToggleFollowRobot,
+  onToggleKeyboardControl,
+  onToggleLayer,
+  onToggleLayerPanel,
+  onToggleMapping,
+  onToggleNavAutoTrack,
+  onToolMode,
+}: NavToolStripProps) {
+  return (
+    <>
+      <section className="pcd-tool-strip">
+        <button
+          className={`pcd-tool-button ${followRobot ? 'is-active' : ''}`}
+          onClick={onToggleFollowRobot}
+          disabled={!robotPoseAvailable}
+          title={!robotPoseAvailable ? '等待机器狗定位数据' : undefined}
+        >
+          <LocateFixed size={15} />
+          <span>{followRobot ? '解除跟随' : '视角跟随'}</span>
+        </button>
+        <div className="pcd-layer-control">
+          <button
+            className={`pcd-tool-button ${pcdLayerPanelOpen || !pcdLayerVisibility.map || !pcdLayerVisibility.ground || !pcdLayerVisibility.footprint ? 'is-active' : ''}`}
+            onClick={onToggleLayerPanel}
+            disabled={mappingActive}
+            title={mappingActive ? '建图中显示实时点云，场景图层开关暂不可用' : '选择显示的 PCD 图层'}
+          >
+            <Layers size={15} />
+            <span>点云图层</span>
+          </button>
+          {pcdLayerPanelOpen && !mappingActive ? (
+            <div className="pcd-layer-popover" role="group" aria-label="PCD 图层显示开关">
+              <button
+                type="button"
+                className={`pcd-layer-toggle ${pcdLayerVisibility.map ? 'is-active' : ''}`}
+                onClick={() => onToggleLayer('map')}
+              >
+                <span className="pcd-layer-swatch is-map" />
+                <span>map</span>
+              </button>
+              <button
+                type="button"
+                className={`pcd-layer-toggle ${pcdLayerVisibility.ground ? 'is-active' : ''}`}
+                onClick={() => onToggleLayer('ground')}
+              >
+                <span className="pcd-layer-swatch is-ground" />
+                <span>ground</span>
+              </button>
+              <button
+                type="button"
+                className={`pcd-layer-toggle ${pcdLayerVisibility.footprint ? 'is-active' : ''}`}
+                onClick={() => onToggleLayer('footprint')}
+              >
+                <span className="pcd-layer-swatch is-footprint" />
+                <span>footprint</span>
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <button
+          className={`pcd-tool-button ${toolMode === 'obstacle' ? 'is-active' : ''}`}
+          onClick={() => onToolMode('obstacle')}
+        >
+          <Boxes size={15} />
+          <span>添加障碍物</span>
+        </button>
+        <button
+          className={`pcd-tool-button ${toolMode === 'pose' ? 'is-active' : ''}`}
+          onClick={() => onToolMode('pose')}
+          disabled={!canOperate || !selectedSceneNavigable || !webglSupported}
+          title={!webglSupported ? '当前浏览器无法使用 3D 点云标记' : !selectedSceneNavigable ? '当前场景缺少 ground.pcd' : undefined}
+        >
+          <Crosshair size={15} />
+          <span>重定位</span>
+        </button>
+        <button
+          className={`pcd-tool-button ${keyboardControlEnabled ? 'is-active' : ''}`}
+          onClick={onToggleKeyboardControl}
+          disabled={!canOperate}
+          title={keyboardControlEnabled ? '关闭键盘控制' : '开启键盘控制，方向键调节速度，W/S/Q/E 控制移动'}
+        >
+          <Keyboard size={15} />
+          <span>{keyboardControlEnabled ? '控制中' : '移动控制'}</span>
+        </button>
+        <button
+          className={`pcd-tool-button ${mappingActive ? 'is-active' : ''}`}
+          onClick={onToggleMapping}
+          disabled={mappingSending || !canOperate}
+        >
+          <Square size={15} />
+          <span>
+            {mappingSending
+              ? (mappingActive ? '正在保存地图...' : '开始建图中')
+              : (mappingActive ? '结束建图' : '开始建图')}
+          </span>
+        </button>
+        <button
+          className="pcd-tool-button"
+          onClick={onStopSelectedTask}
+          disabled={!canOperate || !selectedTaskId}
+          title={!selectedTaskId ? '先选择一个任务' : undefined}
+        >
+          <Square size={15} />
+          <span>停止任务</span>
+        </button>
+        <button
+          className="pcd-tool-button"
+          onClick={onCheckRadar}
+          disabled={!canOperate || radarChecking}
+          title="检查雷达 ROS2 topic、发布者和数据频率"
+        >
+          {radarChecking ? <Loader2 size={15} className="pcd-spin" /> : <Radar size={15} />}
+          <span>{radarChecking ? '检查中' : '检查雷达'}</span>
+        </button>
+        <button
+          className={`pcd-tool-button ${navAutoTrackEnabled ? 'is-active' : ''}`}
+          onClick={onToggleNavAutoTrack}
+          disabled={!canOperate || navAutoTrackLoading}
+          title="导航任务中检测到陌生人时自动暂停导航并进入自动跟踪"
+        >
+          {navAutoTrackLoading ? <Loader2 size={15} className="pcd-spin" /> : <UserSearch size={15} />}
+          <span>{navAutoTrackEnabled ? '跟踪联动开' : '跟踪联动关'}</span>
+        </button>
+        {keyboardControlEnabled && (
+          <div className="pcd-keyboard-hint">
+            <span>
+              {isControlling ? `控制中: ${currentCmd}` : '方向键调速'}
+              {' · '}
+              前后 {formatSpeed(linearSpeed)} m/s
+              {' · '}
+              转向 {formatSpeed(turnSpeed)} rad/s
+            </span>
+            {resultMessage ? <small>{resultMessage}</small> : null}
+            {!resultMessage && lastResultText ? <small>{lastResultText}</small> : null}
+          </div>
+        )}
+      </section>
+      {mappingSessionInfo ? (
+        <section className="pcd-mapping-session">
+          <strong>当前建图场景：{mappingSessionInfo.sceneName}</strong>
+          <span>场景保存路径：{mappingSessionInfo.mapDir}</span>
+        </section>
+      ) : null}
+    </>
+  )
+}

@@ -75,11 +75,12 @@ function MirrorCell({ label, sourceRef, active }: {
         }
       }
     };
+    const video = videoRef.current;
     sync();
     const timer = setInterval(sync, 500);
     return () => {
       clearInterval(timer);
-      if (videoRef.current) videoRef.current.srcObject = null;
+      if (video) video.srcObject = null;
     };
   }, [active, sourceRef]);
 

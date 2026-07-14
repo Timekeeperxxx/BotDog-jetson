@@ -33,10 +33,20 @@ export default defineConfig(({ mode }) => {
       force: true // 强制重新预构建依赖
     },
     build: {
+      chunkSizeWarningLimit: 600,
       rollupOptions: {
         input: {
           main: resolve(__dirname, 'index.html'),
           navPatrol: resolve(__dirname, 'nav-patrol.html'),
+        },
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined
+            if (id.includes('/three/')) return 'three'
+            if (id.includes('/lucide-react/')) return 'icons'
+            if (id.includes('/react/') || id.includes('/react-dom/')) return 'react'
+            return 'vendor'
+          },
         },
       },
     },

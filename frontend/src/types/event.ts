@@ -18,13 +18,13 @@ export interface AlertEvent {
   timestamp: string;
   temperature?: number;
   threshold?: number;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 export interface EventMessage {
   msg_type: string;
   timestamp: string;
-  payload: Record<string, any>;
+  payload: Record<string, unknown>;
 }
 
 export interface EventWebSocketStatus {

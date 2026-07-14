@@ -2,11 +2,11 @@ import { useMemo, useState } from 'react'
 import { Camera, RefreshCw, Save } from 'lucide-react'
 import type { SystemConfig } from '../../types/config'
 import type { VideoSource } from '../../types/admin'
-import type { AiConfigGroup } from '../adminTypes'
+import type { AiConfigGroup, ModuleHealthState } from '../adminTypes'
 import { AdminCard, EmptyState, SearchInput, StatusBadge, TableCell, TableHead, ToolbarButton } from '../AdminUi'
 import { hasAuthSession, hasRole, useAuthState } from '../../stores/authStore'
 
-function inferSourceStatus(source: VideoSource) {
+function inferSourceStatus(source: VideoSource): ModuleHealthState {
   if (!source.enabled) return 'degraded'
   if (source.whep_url || source.rtsp_url) return 'normal'
   return 'waiting'
@@ -109,7 +109,7 @@ export function AdminVideoAiPage({
                         {!source.is_primary && !source.is_ai_source ? <span className="text-xs text-zinc-500">普通源</span> : null}
                       </div>
                     </TableCell>
-                    <TableCell><StatusBadge status={inferSourceStatus(source) as any} /></TableCell>
+                    <TableCell><StatusBadge status={inferSourceStatus(source)} /></TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-2">
                         <ToolbarButton onClick={() => onEditSource(source)} disabled={!canAdmin} title={!canAdmin ? '需要 admin 权限' : undefined}>编辑</ToolbarButton>

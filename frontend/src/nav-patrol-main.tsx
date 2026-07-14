@@ -17,7 +17,7 @@ import {
 installAuthFetchInterceptor()
 installAuthStorageSync()
 
-function NavPatrolAuthRoot() {
+export function NavPatrolAuthRoot() {
   const auth = useAuthState()
 
   useEffect(() => {

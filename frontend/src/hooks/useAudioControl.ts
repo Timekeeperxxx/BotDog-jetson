@@ -17,7 +17,9 @@ export function useAudioControl(): UseAudioControlState {
           const data = await res.json();
           setIsAudioPlaying(data.playing);
         }
-      } catch {}
+      } catch {
+        // Polling status is best-effort; keep the previous UI state on transient failures.
+      }
     };
     fetchAudioStatus();
     const timer = setInterval(fetchAudioStatus, 2000);

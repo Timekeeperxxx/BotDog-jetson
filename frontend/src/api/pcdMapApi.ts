@@ -1,5 +1,5 @@
 import { getApiUrl } from '../config/api'
-import { apiFetch } from './apiFetch'
+import { apiFetch, apiFetchArrayBuffer } from './apiFetch'
 import type {
   LocalizationPose,
   LocalizationPosePayload,
@@ -9,8 +9,10 @@ import type {
   RadarHealthResponse,
   PcdSceneListResponse,
   NavCurrentScene,
+  PcdBounds,
   PcdSceneMetadata,
   PcdScenePreview,
+  PcdSceneLayerRole,
   PcdMapListResponse,
   PcdMetadata,
   PcdPreview,
@@ -23,6 +25,84 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     : url
 
   return apiFetch<T>(path, init)
+}
+
+const PCD_SCENE_BINARY_MAGIC = 'BDPCD001'
+
+type PcdSceneBinaryLayerHeader = {
+  role: PcdSceneLayerRole
+  file_name: string
+  bounds: PcdBounds
+  point_count: number
+  byte_offset: number
+  byte_length: number
+}
+
+type PcdSceneBinaryHeader = {
+  scene_id: string
+  frame_id: string
+  layers: Record<'ground' | 'wall' | 'footprint_fill', PcdSceneBinaryLayerHeader | null>
+  bounds: PcdBounds
+}
+
+function decodePcdScenePreviewBinary(buffer: ArrayBuffer): PcdScenePreview {
+  if (buffer.byteLength < 12) throw new Error('无效的点云二进制响应')
+
+  const magic = new TextDecoder().decode(new Uint8Array(buffer, 0, 8))
+  if (magic !== PCD_SCENE_BINARY_MAGIC) throw new Error('无效的点云二进制响应')
+
+  const headerLength = new DataView(buffer, 8, 4).getUint32(0, true)
+  const pointDataOffset = 12 + headerLength
+  if (headerLength <= 0 || pointDataOffset > buffer.byteLength || pointDataOffset % 4 !== 0) {
+    throw new Error('无效的点云二进制响应')
+  }
+
+  let header: PcdSceneBinaryHeader
+  try {
+    const headerText = new TextDecoder().decode(new Uint8Array(buffer, 12, headerLength))
+    header = JSON.parse(headerText) as PcdSceneBinaryHeader
+  } catch {
+    throw new Error('无效的点云二进制响应')
+  }
+
+  const decodeLayer = (role: 'ground' | 'wall' | 'footprint_fill') => {
+    const layer = header.layers[role]
+    if (!layer) return null
+    const { byte_length: byteLength, byte_offset: byteOffset, point_count: pointCount } = layer
+    const absoluteOffset = pointDataOffset + byteOffset
+    if (
+      !Number.isSafeInteger(pointCount) || pointCount < 0 ||
+      !Number.isSafeInteger(byteOffset) || byteOffset < 0 ||
+      byteLength !== pointCount * 3 * Float32Array.BYTES_PER_ELEMENT ||
+      absoluteOffset % 4 !== 0 || absoluteOffset + byteLength > buffer.byteLength
+    ) {
+      throw new Error('无效的点云二进制响应')
+    }
+
+    const values = new Float32Array(buffer, absoluteOffset, pointCount * 3)
+    const points = new Array<[number, number, number]>(pointCount)
+    for (let index = 0; index < pointCount; index += 1) {
+      const valueIndex = index * 3
+      points[index] = [values[valueIndex], values[valueIndex + 1], values[valueIndex + 2]]
+    }
+    return {
+      role: layer.role,
+      file_name: layer.file_name,
+      points,
+      bounds: layer.bounds,
+    }
+  }
+
+  return {
+    scene_id: header.scene_id,
+    frame_id: header.frame_id,
+    layers: {
+      ground: decodeLayer('ground'),
+      wall: decodeLayer('wall'),
+      footprint_fill: decodeLayer('footprint_fill'),
+    },
+    bounds: header.bounds,
+  }
 }
 
 export function listPcdMaps(): Promise<PcdMapListResponse> {
@@ -153,11 +233,23 @@ export function getPcdPreview(mapId: string, maxPoints = 100000): Promise<PcdPre
 }
 
 export function getPcdScenePreview(sceneId: string, maxPoints = 15000): Promise<PcdScenePreview> {
-  return requestJson(
-    getApiUrl(
-      `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/preview?max_points=${maxPoints}`,
-    ),
-  )
+  const path = `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/preview.bin?max_points=${maxPoints}`
+  return apiFetchArrayBuffer(path).then(decodePcdScenePreviewBinary).catch((error: unknown) => {
+    // 兼容前端先于后端发布的短暂窗口；新后端的其他错误保持原样抛出。
+    if (
+      !(error instanceof Error) ||
+      (
+        error.message !== 'HTTP 404' &&
+        error.message !== 'Not Found' &&
+        error.message !== '无效的点云二进制响应'
+      )
+    ) throw error
+    return requestJson(
+      getApiUrl(
+        `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/preview?max_points=${maxPoints}`,
+      ),
+    )
+  })
 }
 
 export function listWaypoints(mapId: string): Promise<{ items: NavWaypoint[] }> {
@@ -256,6 +348,7 @@ export function triggerControlEmergencyStop(): Promise<{
 }
 
 export type LocalizationRestartHealth = {
+  runtime_mode?: 'navigation_scan' | 'legacy_p2p'
   scene_ok: boolean
   scene_id: string | null
   scene_dir: string | null
@@ -268,7 +361,12 @@ export type LocalizationRestartHealth = {
   livox_ok: boolean
   relocation_ok: boolean
   global_planner_ok: boolean
-  p2p_move_base_ok: boolean
+  navigation_ok?: boolean | null
+  p2p_move_base_ok: boolean | null
+  scan_planner_ok?: boolean | null
+  scan_controller_ok?: boolean | null
+  dynamic_avoidance_ok?: boolean | null
+  nav_status_monitor_ok?: boolean | null
   cmd_vel_test_publisher_running: boolean
   cmd_vel_running?: boolean | null
   cmd_vel_pid?: number | null
@@ -289,9 +387,15 @@ export type LocalizationRestartResponse = {
   livox_pid: number | null
   relocation_pid: number | null
   global_planner_pid: number | null
-  p2p_move_base_pid: number | null
+  p2p_move_base_pid?: number | null
+  navigation_pid?: number | null
+  scan_planner_pid?: number | null
+  scan_controller_pid?: number | null
+  dynamic_avoidance_pid?: number | null
+  nav_status_monitor_pid?: number | null
   cmd_vel_pid: number | null
   cmd_vel_running?: boolean | null
+  startup_ready?: boolean | null
   navigation_ready?: boolean | null
   process_pids?: Record<string, number | null> | null
   health?: LocalizationRestartHealth | null
@@ -341,7 +445,7 @@ export function waitInitialposeReady(
   )
 }
 
-export function waitNavigationRuntimeReady(timeoutSeconds = 45): Promise<{
+export function waitNavigationRuntimeReady(timeoutSeconds = 600): Promise<{
   ready: boolean
   navigation_ready: boolean
   health?: LocalizationRestartHealth | null

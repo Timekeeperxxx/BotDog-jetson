@@ -21,6 +21,16 @@ import {
 } from 'lucide-react';
 import { useRobotControl, type RobotCommand, type RobotCommandOptions } from '../hooks/useRobotControl';
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore';
+import {
+  DEFAULT_LINEAR_SPEED,
+  DEFAULT_TURN_SPEED,
+  MAX_LINEAR_SPEED,
+  MAX_TURN_SPEED,
+  SPEED_STEP,
+  clampSpeed,
+  formatSpeed,
+  isArrowSpeedKey,
+} from '../utils/speedControl';
 
 interface ControlPadProps {
   isDisabled?: boolean;
@@ -48,24 +58,6 @@ const BUTTONS: ButtonConfig[] = [
   { cmd: null,           label: '',       icon: null },
   { cmd: 'sit',          label: '下蹲',   icon: <ChevronsDown size={14} /> },
 ];
-
-const DEFAULT_LINEAR_SPEED = 0.3;
-const DEFAULT_TURN_SPEED = 0.5;
-const SPEED_STEP = 0.1;
-const MAX_LINEAR_SPEED = 0.6;
-const MAX_TURN_SPEED = 0.8;
-
-function clampSpeed(value: number, limit: number) {
-  return Math.max(0, Math.min(limit, Number(value.toFixed(1))));
-}
-
-function isArrowSpeedKey(key: string) {
-  return ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key);
-}
-
-function formatSpeed(value: number) {
-  return value.toFixed(1);
-}
 
 export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadProps) {
   useAuthState();

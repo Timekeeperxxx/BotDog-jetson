@@ -142,7 +142,7 @@ export default function IndustrialConsoleComplete() {
   }, [isRecording, addLog]);
 
   // WebSocket 连接
-  useEffect(() => { connectWs(); return () => { disconnectWs(); }; }, []);
+  useEffect(() => { connectWs(); return () => { disconnectWs(); }; }, [connectWs, disconnectWs]);
 
   useEffect(() => {
     if (activeTab !== 'history') return;

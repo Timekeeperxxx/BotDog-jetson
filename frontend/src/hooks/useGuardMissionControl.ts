@@ -16,7 +16,9 @@ export function useGuardMissionControl(): UseGuardMissionControlState {
       try {
         const res = await fetch(getApiUrl('/api/v1/guard-mission/status'));
         if (res.ok) setGuardStatus(await res.json());
-      } catch {}
+      } catch {
+        // Polling status is best-effort; keep the previous UI state on transient failures.
+      }
     };
     fetchGuardStatus();
     const timer = setInterval(fetchGuardStatus, 1500);
@@ -30,7 +32,7 @@ export function useGuardMissionControl(): UseGuardMissionControlState {
     } catch (err) {
       console.error('切换自动驱离失败:', err);
     }
-  }, [guardStatus?.enabled]);
+  }, [guardStatus]);
 
   const abortGuardMission = useCallback(async () => {
     try {

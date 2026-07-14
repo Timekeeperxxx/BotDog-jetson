@@ -32,6 +32,7 @@ interface RemoteInboundRtpStats {
 }
 
 export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boolean }) {
+  const skipStats = options?.skipStats;
   const [state, setState] = useState<WhepState>({
     status: 'disconnected',
     error: null,
@@ -177,7 +178,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
           retryAttemptsRef.current = 0;
           connectingRef.current = false;
           setWhepStatus('connected');
-          if (!statsTimerRef.current && !options?.skipStats) {
+          if (!statsTimerRef.current && !skipStats) {
             statsTimerRef.current = window.setInterval(async () => {
               // 旧 session 的定时器自我清除
               if (connectSessionIdRef.current !== sessionId) {
@@ -281,7 +282,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
                     jitterBufferMs: Math.round(jitterBufferMs),
                     decodeMs: Math.round(decodeMs),
                   });
-                  if (!options?.skipStats) {
+                  if (!skipStats) {
                     const now = Date.now();
                     const bufferMs = Math.round(jitterBufferMs);
                     if (bufferMs >= HIGH_BUFFER_RECONNECT_MS) {
@@ -368,7 +369,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
         setWhepStatus('error', String(error));
       }
     }
-  }, [cleanup, customWhepUrl, setWhepStatus]);
+  }, [cleanup, customWhepUrl, setWhepStatus, skipStats]);
 
   // 每次渲染同步更新 connectFnRef，让 retry timer 始终调用最新的 connect
   connectFnRef.current = connect;

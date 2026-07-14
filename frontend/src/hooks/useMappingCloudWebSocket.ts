@@ -126,8 +126,8 @@ export function useMappingCloudWebSocket(active: boolean) {
 
   useEffect(() => {
     if (!active) {
-      disconnect()
-      return
+      const timer = window.setTimeout(disconnect, 0)
+      return () => window.clearTimeout(timer)
     }
 
     connect()

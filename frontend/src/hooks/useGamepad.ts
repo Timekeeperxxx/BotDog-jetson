@@ -35,6 +35,7 @@ export function useGamepad(gamepadIndex: number = 0): GamepadState {
 
   const requestRef = useRef<number | null>(null);
   const gamepadRef = useRef<Gamepad | null>(null);
+  const pollGamepadRef = useRef<() => void>(() => {});
 
   /**
    * 轮询游戏手柄状态
@@ -90,8 +91,12 @@ export function useGamepad(gamepadIndex: number = 0): GamepadState {
     }
 
     // 继续下一帧轮询
-    requestRef.current = requestAnimationFrame(pollGamepad);
+    requestRef.current = requestAnimationFrame(() => pollGamepadRef.current());
   }, [gamepadIndex, state.connected]);
+
+  useEffect(() => {
+    pollGamepadRef.current = pollGamepad;
+  }, [pollGamepad]);
 
   /**
    * 启动轮询循环
@@ -100,7 +105,7 @@ export function useGamepad(gamepadIndex: number = 0): GamepadState {
    */
   useEffect(() => {
     // 开始轮询
-    pollGamepad();
+    requestRef.current = requestAnimationFrame(() => pollGamepadRef.current());
 
     // 清理函数：取消动画帧请求
     return () => {

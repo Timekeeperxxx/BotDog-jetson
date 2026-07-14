@@ -3,7 +3,7 @@
  * 用于查看和筛选历史告警记录
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertEvent } from '../types/event';
 import { getApiUrl } from '../config/api';
 
@@ -36,7 +36,7 @@ export function EvidenceHistory() {
   const [deleting, setDeleting] = useState(false);
 
   // 获取证据列表
-  const fetchEvidence = async () => {
+  const fetchEvidence = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -63,7 +63,7 @@ export function EvidenceHistory() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filterTaskId]);
 
   const filteredList = useMemo(() => {
     return evidenceList.filter((item) => {
@@ -137,7 +137,7 @@ export function EvidenceHistory() {
   // 加载数据
   useEffect(() => {
     fetchEvidence();
-  }, [filterTaskId]);
+  }, [fetchEvidence]);
 
   // 获取严重程度颜色
   const getSeverityColor = (severity: string) => {

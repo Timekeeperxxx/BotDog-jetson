@@ -55,8 +55,7 @@ export interface SystemStatus {
 // ==================== WebSocket连接Hook ====================
 export function useBotDogWebSocket() {
   const [telemetry, setTelemetry] = useState<TelemetryData | null>(null);
-  // setSnapshots 暂留但不调用——等待后端实现抓拍功能
-  const [snapshots, _setSnapshots] = useState<SnapshotData[]>([]);
+  const [snapshots] = useState<SnapshotData[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [systemStatus, setSystemStatus] = useState<SystemStatus>({
     status: 'DISCONNECTED',
@@ -69,8 +68,9 @@ export function useBotDogWebSocket() {
   const telemetryWsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
-  const startTimeRef = useRef<number>(Date.now());
+  const startTimeRef = useRef<number>(0);
   const connectionIdRef = useRef(0); // 连接实例ID，防止旧连接回调干扰
+  const connectRef = useRef<() => void>(() => {});
   // Ref 版 lastTelemetryAt，供 stale 检测 interval 使用（避免 stale closure）
   const lastTelemetryAtRef = useRef<number | null>(null);
 
@@ -210,7 +210,7 @@ export function useBotDogWebSocket() {
         console.log(`⏳ 将在 ${delay}ms 后重连 (尝试 ${reconnectAttemptsRef.current})`);
 
         reconnectTimeoutRef.current = window.setTimeout(() => {
-          connect();
+          connectRef.current();
         }, delay);
       };
     } catch (error) {
@@ -218,6 +218,10 @@ export function useBotDogWebSocket() {
       setIsConnected(false);
     }
   }, []);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   // 断开连接
   const disconnect = useCallback(() => {
@@ -275,6 +279,7 @@ export function useBotDogWebSocket() {
 
   // 计算运行时间
   useEffect(() => {
+    startTimeRef.current = Date.now();
     const interval = setInterval(() => {
       const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000);
       const hours = Math.floor(elapsed / 3600).toString().padStart(2, '0');
@@ -288,9 +293,10 @@ export function useBotDogWebSocket() {
 
   // 组件挂载时连接WebSocket
   useEffect(() => {
-    connect();
+    const timer = window.setTimeout(connect, 0);
 
     return () => {
+      window.clearTimeout(timer);
       disconnect();
     };
   }, [connect, disconnect]);

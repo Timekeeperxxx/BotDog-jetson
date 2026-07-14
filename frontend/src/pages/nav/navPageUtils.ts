@@ -1,6 +1,17 @@
 import type { LocalizationRestartResponse } from '../../api/pcdMapApi'
-import type { RobotCommand } from '../../hooks/useRobotControl'
+import type { GlobalPath, RobotPose } from '../../types/navState'
 import type { PcdSceneItem } from '../../types/pcdMap'
+export {
+  DEFAULT_LINEAR_SPEED,
+  DEFAULT_TURN_SPEED,
+  MAX_LINEAR_SPEED,
+  MAX_TURN_SPEED,
+  SPEED_STEP,
+  clampSpeed,
+  formatSpeed,
+  isArrowSpeedKey,
+} from '../../utils/speedControl'
+export { resolveRobotCommandFromKey } from '../../utils/keyboardRobotControl'
 import type {
   TaskDefinition,
   TaskDraft,
@@ -14,6 +25,21 @@ type WaypointOption = {
   id: string
   name: string
 }
+
+export type LogItem = {
+  id: number
+  level: 'info' | 'error'
+  message: string
+}
+
+export type MappingSessionInfo = {
+  sceneName: string
+  mapDir: string
+}
+
+export type RelocationPromptState =
+  | { status: 'idle'; message: string }
+  | { status: 'restarting' | 'waiting' | 'ready' | 'localized' | 'nav-waiting' | 'nav-ready' | 'error'; message: string }
 
 export const emptyTaskDraft: TaskDraft = {
   name: '',
@@ -139,6 +165,74 @@ export function nowText() {
   return new Date().toLocaleTimeString()
 }
 
+export function compactRuntimeMessage(message: string) {
+  if (message.includes('relocation 进程未运行')) {
+    return 'Super-LIO 已退出，请重新重启导航定位。'
+  }
+  if (message.includes('/initialpose 暂无订阅者')) {
+    return '还没有接收端，请稍后或重新重启导航定位。'
+  }
+  if (message.includes('target_frame does not exist') || message.includes('map') && message.includes('TF')) {
+    return '等待 map TF 恢复。'
+  }
+  if (message.includes('超时')) {
+    return '等待超时，请查看日志后重试。'
+  }
+  return message.length > 56 ? `${message.slice(0, 56)}...` : message
+}
+
+export function getRelocationNotice(prompt: RelocationPromptState) {
+  switch (prompt.status) {
+    case 'restarting':
+      return { title: '正在重启定位', message: '请稍候，暂时不要标点。' }
+    case 'waiting':
+      return { title: '等待 Super-LIO', message: '正在确认重定位接收端。' }
+    case 'ready':
+      return { title: '现在标记重定位点', message: '在 3D 蓝色 ground.pcd 上按住当前位置，拖动确定朝向。' }
+    case 'localized':
+      return { title: '重定位已发送', message: '正在等待位姿恢复。' }
+    case 'nav-waiting':
+      return { title: '导航控制链路恢复中', message: compactRuntimeMessage(prompt.message) }
+    case 'nav-ready':
+      return { title: '导航和任务可用', message: prompt.message || 'global_planner 已加载完成。' }
+    case 'error':
+      return { title: '重定位未就绪', message: compactRuntimeMessage(prompt.message) }
+    case 'idle':
+      return null
+  }
+}
+
+export function summarizeLocalizationStatus(status: string, message: string) {
+  if (status === 'ok') return message
+  return compactRuntimeMessage(message)
+}
+
+export function trimGlobalPathByRobotPose(globalPath: GlobalPath | null, robotPose: RobotPose | null): GlobalPath | null {
+  if (!globalPath || !robotPose) return globalPath
+  if (globalPath.frame_id !== 'map' || robotPose.frame_id !== 'map') return globalPath
+  if (globalPath.points.length < 2) return globalPath
+
+  let nearestIndex = 0
+  let nearestDistanceSq = Number.POSITIVE_INFINITY
+  globalPath.points.forEach((point, index) => {
+    const distanceSq = (point.x - robotPose.x) ** 2 + (point.y - robotPose.y) ** 2
+    if (distanceSq < nearestDistanceSq) {
+      nearestDistanceSq = distanceSq
+      nearestIndex = index
+    }
+  })
+
+  const nextIndex = Math.min(nearestIndex + 1, globalPath.points.length - 1)
+  return {
+    ...globalPath,
+    timestamp: Math.max(globalPath.timestamp || 0, robotPose.timestamp || 0),
+    points: [
+      { x: robotPose.x, y: robotPose.y, z: robotPose.z },
+      ...globalPath.points.slice(nextIndex),
+    ],
+  }
+}
+
 export function validateMappingSceneName(
   rawValue: string,
 ): { ok: false; message: string } | { ok: true; value: string } {
@@ -199,22 +293,36 @@ export function formatRestartHealthLog(result: LocalizationRestartResponse) {
     okParts.push('TF：未确认')
   }
 
-  const processOk = [
-    health.livox_ok,
-    health.relocation_ok,
-    health.global_planner_ok,
-    health.p2p_move_base_ok,
-  ].every(Boolean)
+  const scanRuntime = health.runtime_mode === 'navigation_scan'
+  const processChecks = scanRuntime
+    ? [
+        ['Navigation', health.navigation_ok],
+        ['livox', health.livox_ok],
+        ['relocation', health.relocation_ok],
+        ['global_planner', health.global_planner_ok],
+        ['SCAN planner', health.scan_planner_ok],
+        ['SCAN controller', health.scan_controller_ok],
+        ['dynamic avoidance', health.dynamic_avoidance_ok],
+        ['nav status', health.nav_status_monitor_ok],
+      ] as const
+    : [
+        ['livox', health.livox_ok],
+        ['relocation', health.relocation_ok],
+        ['global_planner', health.global_planner_ok],
+        ['p2p_move_base', health.p2p_move_base_ok],
+      ] as const
+  const processOk = processChecks.every(([, ok]) => Boolean(ok))
 
   if (processOk) {
-    okParts.push('进程：livox / relocation / global_planner / p2p_move_base 正常')
+    okParts.push(
+      scanRuntime
+        ? '进程：定位 / 全局规划 / SCAN 避障控制 / 状态闭环正常'
+        : '进程：livox / relocation / global_planner / p2p_move_base 正常',
+    )
   } else {
-    const processIssues = [
-      health.livox_ok ? null : 'livox',
-      health.relocation_ok ? null : 'relocation',
-      health.global_planner_ok ? null : 'global_planner',
-      health.p2p_move_base_ok ? null : 'p2p_move_base',
-    ].filter(Boolean)
+    const processIssues = processChecks
+      .filter(([, ok]) => !ok)
+      .map(([name]) => name)
     if (processIssues.length > 0) {
       badParts.push(`进程异常：${processIssues.join(' / ')}`)
     }
@@ -237,31 +345,12 @@ export function formatRestartHealthLog(result: LocalizationRestartResponse) {
     return `导航定位已重启：导航可用${okParts.length > 0 ? `；${okParts.join('；')}` : ''}`
   }
 
+  if (result.startup_ready) {
+    return `导航定位进程已启动，等待标记初始位姿${okParts.length > 0 ? `；${okParts.join('；')}` : ''}`
+  }
+
   const nextReasons = reasons.length > 0 ? reasons : ['健康检查未通过']
   return `导航定位已重启，但导航不可用：${nextReasons.join('；')}`
-}
-
-export function resolveRobotCommandFromKey(key: string): RobotCommand | null {
-  switch (key.toLowerCase()) {
-    case 'w':
-      return 'forward'
-    case 's':
-      return 'backward'
-    case 'a':
-      return 'strafe_left'
-    case 'd':
-      return 'strafe_right'
-    case 'q':
-      return 'left'
-    case 'e':
-      return 'right'
-    case 'control':
-      return 'sit'
-    case 'shift':
-      return 'stand'
-    default:
-      return null
-  }
 }
 
 export function buildTaskDraftFromTask(task: TaskDefinition): TaskDraft {

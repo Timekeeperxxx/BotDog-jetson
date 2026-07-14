@@ -1,31 +1,102 @@
 import { describe, expect, it } from 'vitest'
+import type { PcdSceneItem } from '../../types/pcdMap'
 import {
   applyTaskDraftPatch,
   appendTaskDraftStep,
   buildTaskDefinitionFromDraft,
   buildWorkflowStepsFromDraft,
+  clampSpeed,
+  compactRuntimeMessage,
   findSceneById,
   findTaskById,
+  formatSpeed,
   formatRestartHealthLog,
+  getRelocationNotice,
   getWorkflowStepTargetLabel,
   getWorkflowStepTypeLabel,
   insertTaskDraftStep,
+  isArrowSpeedKey,
   summarizeWorkflowSteps,
+  summarizeLocalizationStatus,
   taskContainsPostureControl,
   resolveRobotCommandFromKey,
   resolveInitialTaskMapId,
   resolveTaskSceneId,
   removeTaskDraftStep,
   patchTaskDraftStep,
+  trimGlobalPathByRobotPose,
   validateWorkflowStepsFromDraft,
   validateMappingSceneName,
 } from './navPageUtils'
 
 describe('navPageUtils', () => {
+  const sceneA: PcdSceneItem = {
+    id: 'scene-a',
+    name: '实验室一楼',
+    path: '/tmp/scene-a',
+    modified_at: '2026-01-01T00:00:00',
+    wall: null,
+    ground: null,
+    footprint_fill: null,
+    ready: true,
+    navigable: true,
+    message: null,
+  }
+
   it('validates mapping scene names', () => {
     expect(validateMappingSceneName('')).toEqual({ ok: false, message: '请输入场景名称' })
     expect(validateMappingSceneName('  实验室一楼  ')).toEqual({ ok: true, value: '实验室一楼' })
     expect(validateMappingSceneName('../bad')).toEqual({ ok: false, message: '场景名称不能包含 / 或 \\' })
+  })
+
+  it('formats and clamps keyboard speed controls', () => {
+    expect(clampSpeed(0.65, 0.6)).toBe(0.6)
+    expect(clampSpeed(-0.1, 0.6)).toBe(0)
+    expect(clampSpeed(0.24, 0.6)).toBe(0.2)
+    expect(isArrowSpeedKey('ArrowUp')).toBe(true)
+    expect(isArrowSpeedKey('KeyW')).toBe(false)
+    expect(formatSpeed(0.3)).toBe('0.3')
+  })
+
+  it('compacts runtime and relocation status messages', () => {
+    expect(compactRuntimeMessage('relocation 进程未运行')).toBe('Super-LIO 已退出，请重新重启导航定位。')
+    expect(compactRuntimeMessage('/initialpose 暂无订阅者')).toBe('还没有接收端，请稍后或重新重启导航定位。')
+    expect(summarizeLocalizationStatus('ok', '定位正常')).toBe('定位正常')
+    expect(summarizeLocalizationStatus('waiting', '等待 TF 超时')).toBe('等待超时，请查看日志后重试。')
+    expect(getRelocationNotice({ status: 'idle', message: '' })).toBeNull()
+    expect(getRelocationNotice({ status: 'nav-ready', message: '' })).toEqual({
+      title: '导航和任务可用',
+      message: 'global_planner 已加载完成。',
+    })
+  })
+
+  it('trims global path from current robot pose', () => {
+    const trimmed = trimGlobalPathByRobotPose(
+      {
+        frame_id: 'map',
+        timestamp: 10,
+        points: [
+          { x: 0, y: 0, z: 0 },
+          { x: 1, y: 0, z: 0 },
+          { x: 2, y: 0, z: 0 },
+        ],
+      },
+      {
+        x: 0.9,
+        y: 0,
+        z: 0.2,
+        yaw: 0,
+        frame_id: 'map',
+        source: 'test',
+        timestamp: 12,
+      },
+    )
+
+    expect(trimmed?.timestamp).toBe(12)
+    expect(trimmed?.points).toEqual([
+      { x: 0.9, y: 0, z: 0.2 },
+      { x: 2, y: 0, z: 0 },
+    ])
   })
 
   it('formats restart health logs', () => {
@@ -92,7 +163,7 @@ describe('navPageUtils', () => {
     ).toBe('导航到巡检点1 -> 站立 -> 蹲下')
     expect(getWorkflowStepTypeLabel('navigate_waypoint')).toBe('导航到定点')
     expect(getWorkflowStepTargetLabel({ type: 'posture_control', posture: 'stand' })).toBe('站立')
-    expect(taskContainsPostureControl({ steps: [{ type: 'posture_control', posture: 'stand' }] as any })).toBe(true)
+    expect(taskContainsPostureControl({ steps: [{ type: 'posture_control', posture: 'stand' }] })).toBe(true)
   })
 
   it('builds task definitions with mixed workflow steps', () => {
@@ -106,7 +177,7 @@ describe('navPageUtils', () => {
           { type: 'navigate_waypoint', waypointId: 'wp-2' },
         ],
       },
-      scenes: [{ id: 'scene-a', name: '实验室一楼', navigable: true } as any],
+      scenes: [sceneA],
       waypoints: [
         { id: 'wp-1', name: '巡检点1' },
         { id: 'wp-2', name: '巡检点2' },
