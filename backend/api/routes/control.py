@@ -1,5 +1,7 @@
 """真实控制路由。"""
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -14,7 +16,7 @@ from ...control_service import (
 from ...database import get_db
 from ...nav_bridge_state import get_ros_nav_bridge
 from ...schemas import ControlAckDTO, EStopResetResponse, EStopResponse, utc_now_iso
-from ...services_nav_localization import set_cmd_vel_estop
+from ...services_nav_localization import set_cmd_vel_estop, stop_cmd_vel_script
 from ...state_machine_state import get_state_machine
 
 router = APIRouter(prefix="/api/v1/control", tags=["control"])
@@ -47,7 +49,7 @@ async def control_command(
 
     - 按下时前端每 500ms 发一次，松手时立即发 stop
     - 非 stop 命令：自动向 ControlArbiter 申请 WEB_MANUAL 控制权（压制自动跟踪）
-    - stop 命令：自动释放 WEB_MANUAL 覆盖权（允许自动跟踪恢复）
+    - stop 命令：保持 WEB_MANUAL 覆盖，避免导航或自动跟踪立即重新驱动
     - E_STOP 状态下所有命令被拒绝（返回 REJECTED_E_STOP）
     - Watchdog 超时后自动执行 stop
     """
@@ -60,8 +62,7 @@ async def control_command(
 
     arbiter = get_control_arbiter()
     if arbiter is not None:
-        if body.cmd != "stop":
-            arbiter.request_control(ControlOwner.WEB_MANUAL)
+        arbiter.request_control(ControlOwner.WEB_MANUAL)
 
     ack = await svc.handle_command(
         body.cmd,
@@ -89,6 +90,12 @@ async def control_stop(
     if svc is None:
         raise HTTPException(status_code=503, detail="控制服务未就绪")
 
+    from ...control_arbiter import get_control_arbiter
+    from ...tracking_types import ControlOwner
+
+    arbiter = get_control_arbiter()
+    if arbiter is not None:
+        arbiter.request_control(ControlOwner.WEB_MANUAL)
     ack = await svc.force_stop()
     if ack.result != "ACCEPTED":
         await safe_write_audit_log(
@@ -119,14 +126,26 @@ async def emergency_stop(
             detail="状态机未初始化",
         )
 
+    from ...control_arbiter import get_control_arbiter
+    from ...control_service import get_control_service
     state_machine.trigger_emergency_stop()
     set_cmd_vel_estop(True, "control_e_stop")
+    arbiter = get_control_arbiter()
+    if arbiter is not None:
+        arbiter.activate_e_stop()
     bridge = get_ros_nav_bridge()
     if bridge is not None:
         try:
+            bridge.publish_navigation_start(False)
             bridge.publish_zero_cmd_vel(publish_count=20, interval_s=0.02)
         except RuntimeError:
             pass
+
+    await asyncio.to_thread(stop_cmd_vel_script)
+
+    control_service = get_control_service()
+    if control_service is not None:
+        await control_service.force_stop()
 
     await safe_write_audit_log(
         db,
@@ -165,6 +184,12 @@ async def emergency_stop_reset(
     old_state = state_machine.state
     state_machine.reset_emergency_stop()
     set_cmd_vel_estop(False, "control_e_stop_reset")
+    from ...control_arbiter import get_control_arbiter
+    from ...tracking_types import ControlOwner
+
+    arbiter = get_control_arbiter()
+    if arbiter is not None:
+        arbiter.release_control(ControlOwner.E_STOP)
 
     await safe_write_audit_log(
         db,

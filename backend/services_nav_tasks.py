@@ -21,7 +21,25 @@ def _task_store_path() -> Path:
     return _task_store_dir() / "workflows.json"
 
 
-def _validate_task_payload(task: dict[str, Any]) -> None:
+def _validate_task_step_payload(step: dict[str, Any]) -> None:
+    step_type = str(step.get("type") or "").strip()
+
+    if step_type == "navigate_waypoint":
+        waypoint_id = str(step.get("waypointId") or step.get("waypoint_id") or "").strip()
+        if not waypoint_id:
+            raise NavTaskError("navigate_waypoint 步骤缺少 waypointId")
+        return
+
+    if step_type == "posture_control":
+        posture = str(step.get("posture") or "").strip()
+        if posture not in {"stand", "crouch"}:
+            raise NavTaskError("posture_control 步骤 posture 必须是 stand 或 crouch")
+        return
+
+    raise NavTaskError(f"不支持的任务步骤类型: {step_type or '<empty>'}")
+
+
+def _validate_task_payload(task: dict[str, Any], *, strict_steps: bool = False) -> None:
     if not isinstance(task, dict):
         raise NavTaskError("任务必须是对象")
     if not str(task.get("id", "")).strip():
@@ -42,6 +60,8 @@ def _validate_task_payload(task: dict[str, Any]) -> None:
     for step in steps:
         if not isinstance(step, dict):
             raise NavTaskError("任务 steps 元素必须是对象")
+        if strict_steps:
+            _validate_task_step_payload(step)
 
 
 def _load_raw_tasks() -> list[dict[str, Any]]:
@@ -83,6 +103,7 @@ def save_nav_task(task: dict[str, Any]) -> dict[str, Any]:
         normalized["mapId"] = scene_id
     elif scene_id and map_id and scene_id != map_id:
         raise NavTaskError("任务 sceneId 与 mapId 不一致")
+    _validate_task_payload(normalized, strict_steps=True)
 
     tasks = _load_raw_tasks()
     task_id = str(normalized["id"])

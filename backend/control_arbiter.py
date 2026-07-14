@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import Optional
 
 from .tracking_types import ControlOwner
@@ -47,6 +48,9 @@ class ControlArbiter:
         # 当前激活的请求者集合（用于多方共存场景）
         self._active_requesters: set[ControlOwner] = set()
         self._on_owner_change_callback = None
+        self._owner_change_listeners: list[
+            Callable[[ControlOwner, ControlOwner], None]
+        ] = []
 
     # ─── 控制权申请 ──────────────────────────────────────────────────────────
 
@@ -68,6 +72,7 @@ class ControlArbiter:
                 f"[ControlArbiter] 控制权变更: {prev_owner.value} → {self._owner.value}"
                 f"（申请方: {requester.value}）"
             )
+            self._notify_owner_change_listeners(prev_owner, self._owner)
             if self._on_owner_change_callback:
                 asyncio.create_task(self._on_owner_change_callback(prev_owner, self._owner))
         return self._owner == requester
@@ -86,6 +91,22 @@ class ControlArbiter:
                 f"[ControlArbiter] 控制权变更: {prev_owner.value} → {self._owner.value}"
                 f"（{requester.value} 已释放）"
             )
+            self._notify_owner_change_listeners(prev_owner, self._owner)
+            if self._on_owner_change_callback:
+                asyncio.create_task(self._on_owner_change_callback(prev_owner, self._owner))
+
+    def activate_e_stop(self) -> None:
+        """Make E-stop the sole requester so reset cannot revive stale owners."""
+        prev_owner = self._owner
+        self._active_requesters.clear()
+        self._active_requesters.add(ControlOwner.E_STOP)
+        self._recalculate_owner()
+        if self._owner != prev_owner:
+            logger.warning(
+                f"[ControlArbiter] E_STOP acquired control: "
+                f"{prev_owner.value} -> {self._owner.value}"
+            )
+            self._notify_owner_change_listeners(prev_owner, self._owner)
             if self._on_owner_change_callback:
                 asyncio.create_task(self._on_owner_change_callback(prev_owner, self._owner))
 
@@ -159,6 +180,35 @@ class ControlArbiter:
     def set_on_owner_change(self, callback) -> None:
         """设置控制权变更回调（异步函数）。"""
         self._on_owner_change_callback = callback
+
+    def add_owner_change_listener(
+        self,
+        listener: Callable[[ControlOwner, ControlOwner], None],
+    ) -> None:
+        """Register a synchronous observer without replacing the async callback."""
+        if listener not in self._owner_change_listeners:
+            self._owner_change_listeners.append(listener)
+
+    def remove_owner_change_listener(
+        self,
+        listener: Callable[[ControlOwner, ControlOwner], None],
+    ) -> None:
+        """Remove a previously registered synchronous observer."""
+        try:
+            self._owner_change_listeners.remove(listener)
+        except ValueError:
+            pass
+
+    def _notify_owner_change_listeners(
+        self,
+        previous: ControlOwner,
+        current: ControlOwner,
+    ) -> None:
+        for listener in tuple(self._owner_change_listeners):
+            try:
+                listener(previous, current)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("[ControlArbiter] 控制权监听器异常: {}", exc)
 
 
 # ─── 全局单例 ────────────────────────────────────────────────────────────────

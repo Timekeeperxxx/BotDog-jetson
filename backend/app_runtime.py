@@ -14,6 +14,10 @@ from .guard_mission_service import GuardMissionService, set_guard_mission_servic
 from .logging_config import get_logger
 from .nav_auto_track_coordinator import NavAutoTrackCoordinator, set_nav_auto_track_coordinator
 from .nav_bridge_state import set_ros_nav_bridge
+from .navigation_velocity_udp import (
+    NavigationVelocityUdpService,
+    set_navigation_velocity_udp_service,
+)
 from .services_ros_nav import RosNavBridge
 from .state_machine import StateMachine
 from .stranger_policy import StrangerPolicy, set_stranger_policy
@@ -175,6 +179,47 @@ async def initialize_runtime_services(
     )
     _arbiter = ControlArbiter()
     set_control_arbiter(_arbiter)
+    set_navigation_velocity_udp_service(None)
+    if settings.CONTROL_ADAPTER_TYPE == "unitree_b2":
+        navigation_velocity_udp = NavigationVelocityUdpService(
+            control_service=control_service,
+            control_arbiter=_arbiter,
+        )
+        set_navigation_velocity_udp_service(navigation_velocity_udp)
+        try:
+            navigation_velocity_udp.bind()
+        except Exception as exc:
+            navigation_velocity_udp.close()
+            set_navigation_velocity_udp_service(None)
+            control_logger.critical(
+                "Navigation velocity UDP listener failed to bind: {}",
+                exc,
+            )
+            raise RuntimeError(
+                "failed to bind navigation velocity UDP listener on 127.0.0.1:52345"
+            ) from exc
+        navigation_velocity_task = asyncio.create_task(
+            navigation_velocity_udp.run(stop_event)
+        )
+        navigation_velocity_task.add_done_callback(
+            lambda _task: navigation_velocity_udp.close()
+        )
+        tasks.append(navigation_velocity_task)
+        startup_summary.set(
+            "Navigation velocity ingress",
+            "ready",
+            (
+                "UDP=127.0.0.1:52345, "
+                f"timeout={navigation_velocity_udp.get_status()['timeout_s'] * 1000:.0f}ms, "
+                "single UnitreeB2Adapter writer"
+            ),
+        )
+    else:
+        startup_summary.set(
+            "Navigation velocity ingress",
+            "disabled",
+            f"adapter={settings.CONTROL_ADAPTER_TYPE}",
+        )
     _nav_auto_track_coordinator = NavAutoTrackCoordinator()
     set_nav_auto_track_coordinator(_nav_auto_track_coordinator)
 

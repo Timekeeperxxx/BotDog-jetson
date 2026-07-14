@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from typing import Optional
 
@@ -31,6 +32,7 @@ RESULT_REJECTED_ADAPTER_ERROR = "REJECTED_ADAPTER_ERROR"
 RESULT_REJECTED_SAFETY_BLOCKED = "REJECTED_SAFETY_BLOCKED"
 
 UNITREE_B2_MAX_VX = 0.6
+UNITREE_B2_MAX_VY = 0.4
 UNITREE_B2_MAX_VYAW = 0.8
 
 
@@ -251,6 +253,80 @@ class ControlService:
             latency_ms=_elapsed_ms(start_ts),
         )
 
+    async def send_navigation_velocity(self, vx: float, vy: float, vyaw: float) -> bool:
+        """Validate and forward one navigation velocity sample to the active adapter."""
+        control_logger = get_logger("机器人控制")
+        values = (vx, vy, vyaw)
+        if not all(math.isfinite(value) for value in values):
+            control_logger.warning(
+                "拒绝非有限导航速度：vx={}，vy={}，vyaw={}",
+                vx,
+                vy,
+                vyaw,
+            )
+            return False
+
+        if self._is_e_stop_active():
+            control_logger.warning("E_STOP 已激活，拒绝导航速度")
+            return False
+
+        if any(abs(value) > 1e-9 for value in values):
+            try:
+                decision = get_safety_supervisor().get_motion_safety(
+                    adapter_status=self.get_adapter_status(),
+                )
+            except Exception as exc:  # noqa: BLE001
+                control_logger.exception("导航速度安全判定异常，拒绝非零速度：{}", exc)
+                return False
+            if not decision.allowed:
+                control_logger.warning(
+                    "SafetySupervisor 拒绝导航速度：reason={}，reasons={}",
+                    decision.reason,
+                    decision.reasons,
+                )
+                return False
+
+        adapter = self._adapter
+        if adapter is None:
+            control_logger.warning("控制适配器未配置，拒绝导航速度")
+            return False
+
+        try:
+            if not adapter.is_ready():
+                control_logger.warning("控制适配器未就绪，拒绝导航速度")
+                return False
+        except Exception as exc:  # noqa: BLE001
+            control_logger.warning("查询控制适配器状态失败，拒绝导航速度：{}", exc)
+            return False
+
+        send_velocity = getattr(adapter, "send_velocity", None)
+        if not callable(send_velocity):
+            control_logger.warning(
+                "控制适配器不支持连续速度：adapter={}",
+                type(adapter).__name__,
+            )
+            return False
+
+        clamped_vx = max(-UNITREE_B2_MAX_VX, min(UNITREE_B2_MAX_VX, vx))
+        clamped_vy = max(-UNITREE_B2_MAX_VY, min(UNITREE_B2_MAX_VY, vy))
+        clamped_vyaw = max(-UNITREE_B2_MAX_VYAW, min(UNITREE_B2_MAX_VYAW, vyaw))
+        try:
+            await send_velocity(clamped_vx, clamped_vy, clamped_vyaw)
+        except Exception as exc:  # noqa: BLE001
+            control_logger.exception("导航速度下发失败：{}", exc)
+            return False
+        return True
+
+    async def prepare_navigation_motion(self) -> dict:
+        """Prepare the active hardware adapter before a navigation goal is sent."""
+        adapter = self._adapter
+        if adapter is None or not adapter.is_ready():
+            raise RuntimeError("控制适配器未就绪")
+        prepare = getattr(adapter, "prepare_navigation_motion", None)
+        if not callable(prepare):
+            return {"success": True, "skipped": True}
+        return await prepare()
+
     async def run_watchdog(self, stop_event: asyncio.Event) -> None:
         """
         Watchdog 后台任务。
@@ -327,7 +403,29 @@ class ControlService:
             info["worker_thread_alive"] = self._adapter._worker_thread.is_alive()
         if hasattr(self._adapter, "_cmd_queue"):
             info["cmd_queue_size"] = self._adapter._cmd_queue.qsize()
+        for field in (
+            "_motion_mode_enabled",
+            "_last_motion_prepare_result",
+            "_last_velocity",
+            "_last_velocity_at",
+            "_last_move_return",
+            "_executed_velocity_count",
+            "_executed_nonzero_velocity_count",
+            "_last_nonzero_velocity",
+            "_last_nonzero_velocity_at",
+            "_last_worker_error",
+            "_sidecar_pid",
+        ):
+            if hasattr(self._adapter, field):
+                info[field.removeprefix("_")] = getattr(self._adapter, field)
+        sidecar_process = getattr(self._adapter, "_sidecar_process", None)
+        if sidecar_process is not None:
+            info["sidecar_process_alive"] = sidecar_process.is_alive()
         return info
+
+    def is_e_stop_active(self) -> bool:
+        """Return whether the state machine currently blocks motion for E-stop."""
+        return self._is_e_stop_active()
 
     def _is_e_stop_active(self) -> bool:
         """检查 E_STOP 是否激活。"""
@@ -357,7 +455,7 @@ def get_control_service() -> Optional[ControlService]:
     return _control_service
 
 
-def set_control_service(service: ControlService) -> None:
+def set_control_service(service: Optional[ControlService]) -> None:
     """注入控制服务实例（供初始化 and 测试使用）。"""
     global _control_service
     _control_service = service

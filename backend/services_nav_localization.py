@@ -6,14 +6,37 @@ import signal
 import subprocess
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from .config import settings
 from .logging_config import get_logger, trim_log_file_tail
-from .repositories.json_store import atomic_write_json, read_json, safe_json_path_name, stable_json_path_name
-from .services_pcd_maps import find_scene_pcd_files, resolve_scene_ground_path, resolve_scene_path, snap_xy_to_ground
+from .repositories.json_store import atomic_write_json, read_json
+from .services_nav_localization_process import (
+    _cmd_vel_estop_path,
+    _cmd_vel_pid_path,
+    _find_cmd_vel_pids,
+    _find_cmd_vel_test_publisher_pids,
+    _find_pids_by_needles,
+    _is_pid_alive,
+    _kill_pid_tree,
+    _named_pid_path,
+    _navigation_ready_path,
+    _read_cmd_vel_pid,
+    _read_pid_file,
+    _runtime_dir,
+    _wait_for_pid_file,
+    _wait_for_pid_files,
+    get_cmd_vel_estop_status,
+    get_relocation_process_status,
+    set_cmd_vel_estop,
+)
+from .services_nav_localization_scene import (
+    delete_scene_localization_data,
+    load_current_scene,
+    save_current_scene,
+    save_localization_pose,
+)
 
 
 nav_logger = get_logger("导航定位服务")
@@ -25,40 +48,42 @@ RELOCATION_DIRECT_POSE_MARKER = "Using initial pose from topic directly, skippin
 RELOCATION_ICP_SUCCESS_MARKER = "Global ICP Converged Succeed"
 RELOCATION_ICP_FAIL_MARKER = "Global ICP Converged Fail"
 NAV_PROCESS_NEEDLES: dict[str, list[str]] = {
+    "navigation": [
+        "ros2 launch nav_bringup navigation.launch.py",
+    ],
     "livox": [
         "ros2 launch livox_ros_driver2 msg_MID360_launch.py",
         "/home/jetson/superlio/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node",
+        "/Navigation/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node",
     ],
     "relocation": [
         "ros2 run super_lio relocation_node",
         "/home/jetson/superlio/install/super_lio/lib/super_lio/relocation_node",
+        "/Navigation/install/nav_lio/lib/nav_lio/relocation_node",
     ],
     "global_planner": [
         "ros2 launch global_planner path_planning_with_polygon.launch",
         "/home/jetson/dddmr_navigation_new_local/install/global_planner/lib/global_planner/global_planner_node",
+        "/Navigation/install/nav_planner/lib/nav_planner/global_planner_node",
     ],
     "p2p_move_base": [
         "ros2 launch p2p_move_base go2_localization_launch.py",
         "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/p2p_move_base_node",
         "/home/jetson/dddmr_navigation_new_local/install/p2p_move_base/lib/p2p_move_base/clicked2goal.py",
     ],
+    "scan_planner": [
+        "/Navigation/install/scan_planner/lib/scan_planner/scan_planner_node",
+    ],
+    "scan_controller": [
+        "/Navigation/install/scan_planner/lib/scan_planner/closed_loop_controller",
+    ],
+    "dynamic_avoidance": [
+        "/Navigation/install/nav_planner/lib/nav_planner/dynamic_avoidance_monitor.py",
+    ],
+    "nav_status_monitor": [
+        "/Navigation/install/nav_planner/lib/nav_planner/waypoint_progress_monitor.py",
+    ],
 }
-
-
-def _utc_now_iso() -> str:
-    return datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
-
-
-def _store_dir() -> Path:
-    path = Path(settings.NAV_LOCALIZATION_STORE_DIR).resolve()
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def _runtime_dir() -> Path:
-    path = Path(settings.NAV_RUNTIME_DIR).resolve()
-    path.mkdir(parents=True, exist_ok=True)
-    return path
 
 
 def _project_root() -> Path:
@@ -130,16 +155,6 @@ def wait_for_initialpose_log(offset: int = 0, timeout_s: float = 45.0) -> dict[s
         "marker": INITIALPOSE_WAIT_LOG_MARKER,
         "offset": get_restart_log_offset(),
         "message": "等待 Super-LIO initialpose 日志超时",
-    }
-
-
-def get_relocation_process_status() -> dict[str, Any]:
-    pid = _read_pid_file(_named_pid_path("relocation"))
-    running = _is_pid_alive(pid)
-    return {
-        "running": running,
-        "pid": pid,
-        "message": "Super-LIO relocation 进程运行中" if running else f"Super-LIO relocation 进程未运行，pid={pid}",
     }
 
 
@@ -265,43 +280,6 @@ def diagnose_recent_navigation_failure(max_log_age_s: float = 60.0) -> dict[str,
     }
 
 
-def _current_scene_path() -> Path:
-    return _runtime_dir() / "current_scene.json"
-
-
-def _cmd_vel_pid_path() -> Path:
-    return _runtime_dir() / "cmd_vel.pid"
-
-
-def _cmd_vel_estop_path() -> Path:
-    return _runtime_dir() / "cmd_vel_estop.json"
-
-
-def set_cmd_vel_estop(active: bool, reason: str = "") -> dict[str, Any]:
-    path = _cmd_vel_estop_path()
-    payload = {
-        "active": bool(active),
-        "reason": reason,
-        "updated_at": _utc_now_iso(),
-    }
-    atomic_write_json(path, payload)
-    nav_logger.warning("cmd_vel 急停钳制状态更新：active={} reason={} path={}", active, reason, path)
-    return {
-        "success": True,
-        "active": bool(active),
-        "reason": reason,
-        "path": str(path),
-    }
-
-
-def _navigation_ready_path() -> Path:
-    return _runtime_dir() / "navigation_ready.json"
-
-
-def _named_pid_path(name: str) -> Path:
-    return _runtime_dir() / f"{name}.pid"
-
-
 def _pump_restart_output(proc: subprocess.Popen[str], log_path: Path) -> None:
     with log_path.open("a", encoding="utf-8") as log_file:
         assert proc.stdout is not None
@@ -314,158 +292,6 @@ def _pump_restart_output(proc: subprocess.Popen[str], log_path: Path) -> None:
         proc.stdout.close()  # type: ignore[union-attr]
     except Exception:
         pass
-
-
-def _safe_pose_file(map_id: str) -> Path:
-    resolve_scene_ground_path(map_id)
-    return _store_dir() / f"{stable_json_path_name(map_id)}.json"
-
-
-def _legacy_pose_file(map_id: str) -> Path:
-    return _store_dir() / f"{safe_json_path_name(map_id)}.json"
-
-
-def _pose_files(map_id: str) -> list[Path]:
-    primary = _safe_pose_file(map_id)
-    legacy = _legacy_pose_file(map_id)
-    return [primary] if primary == legacy else [primary, legacy]
-
-
-def delete_scene_localization_data(map_id: str) -> dict[str, Any]:
-    deleted_files: list[str] = []
-    for path in _pose_files(map_id):
-        if not path.exists():
-            continue
-        data = read_json(path, None)
-        if not isinstance(data, dict) or str(data.get("map_id") or "") == map_id:
-            path.unlink(missing_ok=True)
-            deleted_files.append(str(path))
-
-    return {"deleted_files": deleted_files}
-
-
-def save_localization_pose(payload: dict[str, Any]) -> dict[str, Any]:
-    map_id = str(payload["map_id"])
-    path = _safe_pose_file(map_id)
-    snapped = snap_xy_to_ground(
-        map_id,
-        float(payload["x"]),
-        float(payload["y"]),
-        fallback_z=float(payload["z"]) if payload.get("z") is not None else None,
-    )
-
-    pose = {
-        "map_id": map_id,
-        "x": snapped["x"],
-        "y": snapped["y"],
-        "z": snapped["z"],
-        "roll": float(payload.get("roll", 0.0)),
-        "pitch": float(payload.get("pitch", 0.0)),
-        "yaw": float(payload.get("yaw", 0.0)),
-        "frame_id": str(payload.get("frame_id") or settings.PCD_FRAME_ID),
-        "updated_at": _utc_now_iso(),
-    }
-
-    if pose["frame_id"] != settings.PCD_FRAME_ID:
-        raise ValueError(f"frame_id 必须是 {settings.PCD_FRAME_ID}")
-
-    atomic_write_json(path, pose)
-
-    return pose
-
-
-def save_current_scene(scene_id: str) -> dict[str, Any]:
-    scene_path = resolve_scene_path(scene_id)
-    files = find_scene_pcd_files(scene_path)
-    map_pcd = files["wall"]
-    ground_pcd = files["ground"]
-    planground_pcd = files["footprint_fill"]
-
-    if map_pcd is None:
-        nav_logger.error("场景缺少 map.pcd：{}", scene_path)
-        raise FileNotFoundError(f"场景缺少 map.pcd: {scene_id}")
-    if ground_pcd is None:
-        nav_logger.error("场景缺少 ground.pcd：{}", scene_path)
-        raise FileNotFoundError(f"场景缺少 ground.pcd: {scene_id}")
-    payload = {
-        "scene_id": scene_path.name,
-        "scene_dir": str(scene_path),
-        "map_pcd": str(map_pcd),
-        "ground_pcd": str(ground_pcd),
-        "planground_pcd": str(planground_pcd) if planground_pcd else None,
-        "updated_at": _utc_now_iso(),
-    }
-
-    path = _current_scene_path()
-    atomic_write_json(path, payload)
-
-    nav_logger.info("当前选择导航场景：{}", payload["scene_id"])
-    nav_logger.info("当前场景 map.pcd：{}", payload["map_pcd"])
-    nav_logger.info("当前场景 ground.pcd：{}", payload["ground_pcd"])
-    if planground_pcd:
-        nav_logger.info("当前场景 footprint_fill.pcd：{}", payload["planground_pcd"])
-    else:
-        nav_logger.info("当前场景缺少 footprint_fill.pcd，已跳过该辅助图层：{}", scene_path)
-
-    return payload
-
-
-def load_current_scene(strict: bool = True) -> dict[str, Any]:
-    path = _current_scene_path()
-    if not path.exists():
-        raise FileNotFoundError(f"当前场景运行态文件不存在: {path}")
-
-    data = read_json(path, None)
-
-    if not isinstance(data, dict):
-        raise ValueError("current_scene.json 格式非法")
-
-    scene_id = str(data.get("scene_id") or "").strip()
-    scene_dir_raw = str(data.get("scene_dir") or "").strip()
-    map_pcd_raw = str(data.get("map_pcd") or "").strip()
-    ground_pcd_raw = str(data.get("ground_pcd") or "").strip()
-    planground_pcd_raw = str(data.get("planground_pcd") or data.get("footprint_fill_pcd") or "").strip()
-
-    if not scene_id:
-        raise ValueError("current_scene.json 缺少 scene_id")
-    if not scene_dir_raw:
-        raise ValueError("current_scene.json 缺少 scene_dir")
-    if not map_pcd_raw:
-        raise ValueError("current_scene.json 缺少 map_pcd")
-    if not ground_pcd_raw:
-        raise ValueError("current_scene.json 缺少 ground_pcd")
-    if not planground_pcd_raw:
-        inferred_files = find_scene_pcd_files(Path(scene_dir_raw).expanduser())
-        inferred_planground = inferred_files["footprint_fill"]
-        planground_pcd_raw = str(inferred_planground) if inferred_planground else ""
-
-    scene_dir = Path(scene_dir_raw).expanduser()
-    map_pcd = Path(map_pcd_raw).expanduser()
-    ground_pcd = Path(ground_pcd_raw).expanduser()
-    planground_pcd = Path(planground_pcd_raw).expanduser() if planground_pcd_raw else None
-
-    if strict:
-        if not scene_dir.exists() or not scene_dir.is_dir():
-            raise FileNotFoundError(f"场景目录不存在: {scene_dir}")
-        if not map_pcd.exists():
-            raise FileNotFoundError(f"场景缺少 map.pcd: {map_pcd}")
-        if not ground_pcd.exists():
-            raise FileNotFoundError(f"场景缺少 ground.pcd: {ground_pcd}")
-        if planground_pcd is not None and not planground_pcd.exists():
-            raise FileNotFoundError(f"场景缺少 footprint_fill.pcd: {planground_pcd}")
-
-    return {
-        "scene_id": scene_id,
-        "scene_dir": str(scene_dir),
-        "map_pcd": str(map_pcd),
-        "ground_pcd": str(ground_pcd),
-        "planground_pcd": str(planground_pcd) if planground_pcd else None,
-        "updated_at": str(data.get("updated_at") or ""),
-        "scene_ok": scene_dir.exists() and scene_dir.is_dir(),
-        "map_pcd_ok": map_pcd.exists(),
-        "ground_pcd_ok": ground_pcd.exists(),
-        "planground_pcd_ok": bool(planground_pcd and planground_pcd.exists()),
-    }
 
 
 def _stop_restart_proc(proc: subprocess.Popen[str] | None) -> None:
@@ -488,121 +314,27 @@ def _stop_restart_proc(proc: subprocess.Popen[str] | None) -> None:
         nav_logger.warning("终止旧的导航定位重启脚本失败：{}", exc)
 
 
-def _read_cmd_vel_pid() -> int | None:
-    path = _cmd_vel_pid_path()
-    if not path.exists():
-        return None
-
-    try:
-        raw = path.read_text(encoding="utf-8").strip()
-        pid = int(raw)
-        return pid if pid > 0 else None
-    except Exception as exc:
-        nav_logger.warning("读取 cmd_vel PID 文件失败：{}，path={}", exc, path)
-        return None
-
-
-def _read_pid_file(path: Path) -> int | None:
-    if not path.exists():
-        return None
-    try:
-        raw = path.read_text(encoding="utf-8").strip()
-        pid = int(raw)
-        return pid if pid > 0 else None
-    except Exception as exc:
-        nav_logger.warning("读取 PID 文件失败：{}，path={}", exc, path)
-        return None
-
-
-def _wait_for_pid_file(path: Path, timeout_s: float = 30.0) -> int | None:
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        pid = _read_pid_file(path)
-        if pid is not None:
-            return pid
-        time.sleep(0.2)
-    return None
-
-
-def _wait_for_pid_files(paths: dict[str, Path], timeout_s: float = 20.0) -> dict[str, int | None]:
-    deadline = time.time() + timeout_s
-    result: dict[str, int | None] = {name: None for name in paths}
-
-    while time.time() < deadline:
-        for name, path in paths.items():
-            if result[name] is None:
-                result[name] = _read_pid_file(path)
-
-        if all(pid is not None for pid in result.values()):
-            break
-
-        time.sleep(0.2)
-
-    return result
-
-
-def _is_pid_alive(pid: int | None) -> bool:
+def _pid_matches_needles(pid: int | None, needles: list[str]) -> bool | None:
     if pid is None or pid <= 0:
         return False
-
     try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
+        command = (Path("/proc") / str(pid) / "cmdline").read_bytes().replace(b"\0", b" ").decode(
+            "utf-8", errors="replace"
+        )
+    except FileNotFoundError:
+        return None
     except Exception:
-        return False
-
-
-def _find_pids_by_needles(needles: list[str]) -> list[int]:
-    pids: list[int] = []
-
-    for needle in needles:
-        try:
-            result = subprocess.run(
-                ["pgrep", "-af", needle],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except Exception as exc:
-            nav_logger.warning("搜索进程失败：needle={} err={}", needle, exc)
-            continue
-
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            pid_text = line.split(maxsplit=1)[0]
-            try:
-                pids.append(int(pid_text))
-            except ValueError:
-                continue
-
-    return sorted(set(pids))
-
-
-def _find_cmd_vel_pids() -> list[int]:
-    return _find_pids_by_needles([
-        "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py",
-        "/home/jetson/Project/BOTDOG/test_cmd_vel_fixed.sh",
-        "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel_udp_bridge.py",
-        "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel_ros2_udp_sender.py",
-    ])
-
-
-def _find_cmd_vel_test_publisher_pids() -> list[int]:
-    return _find_pids_by_needles([
-        "/home/jetson/Project/BOTDOG/backend/scripts/test_cmd_vel_publisher.py",
-        "test_cmd_vel_publisher.py",
-        "test_ros2_cmd_vel_bridge.py",
-    ])
+        return None
+    if not command.strip():
+        return None
+    return any(needle in command for needle in needles)
 
 
 def _is_nav_process_alive(name: str, pid: int | None) -> bool:
-    if _is_pid_alive(pid):
+    needles = NAV_PROCESS_NEEDLES.get(name, [])
+    if _is_pid_alive(pid) and _pid_matches_needles(pid, needles) is not False:
         return True
-    return len(_find_pids_by_needles(NAV_PROCESS_NEEDLES.get(name, []))) > 0
+    return len(_find_pids_by_needles(needles)) > 0
 
 
 def _inspect_tf_health() -> tuple[bool | None, list[str], list[str]]:
@@ -640,7 +372,7 @@ def _inspect_navigation_ready_marker(scene: dict[str, Any]) -> tuple[bool, list[
     errors: list[str] = []
 
     if not path.exists():
-        return False, ["navigation_ready 标记未生成，global planner 静态地图层尚未确认"]
+        return False, ["navigation_ready 标记未生成，导航定位子进程尚未全部启动"]
 
     marker = read_json(path, None)
     if not isinstance(marker, dict) or marker.get("ready") is not True:
@@ -672,10 +404,36 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
     ground_pcd_ok = ground_pcd.exists()
     planground_pcd_ok = bool(planground_pcd and planground_pcd.exists())
 
+    unified_mode = "navigation_pid" in child_pids or "scan_planner_pid" in child_pids
+    navigation_ok = _is_nav_process_alive("navigation", child_pids.get("navigation_pid")) if unified_mode else None
     livox_ok = _is_nav_process_alive("livox", child_pids.get("livox_pid"))
     relocation_ok = _is_nav_process_alive("relocation", child_pids.get("relocation_pid"))
     global_planner_ok = _is_nav_process_alive("global_planner", child_pids.get("global_planner_pid"))
-    p2p_move_base_ok = _is_nav_process_alive("p2p_move_base", child_pids.get("p2p_move_base_pid"))
+    p2p_move_base_ok = (
+        _is_nav_process_alive("p2p_move_base", child_pids.get("p2p_move_base_pid"))
+        if not unified_mode
+        else None
+    )
+    scan_planner_ok = (
+        _is_nav_process_alive("scan_planner", child_pids.get("scan_planner_pid"))
+        if unified_mode
+        else None
+    )
+    scan_controller_ok = (
+        _is_nav_process_alive("scan_controller", child_pids.get("scan_controller_pid"))
+        if unified_mode
+        else None
+    )
+    dynamic_avoidance_ok = (
+        _is_nav_process_alive("dynamic_avoidance", child_pids.get("dynamic_avoidance_pid"))
+        if unified_mode
+        else None
+    )
+    nav_status_monitor_ok = (
+        _is_nav_process_alive("nav_status_monitor", child_pids.get("nav_status_monitor_pid"))
+        if unified_mode
+        else None
+    )
     cmd_vel_pid = child_pids.get("cmd_vel_pid")
     cmd_vel_running = _is_pid_alive(cmd_vel_pid)
 
@@ -698,7 +456,18 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
         errors.append("relocation 未就绪")
     if not global_planner_ok:
         errors.append("global_planner 未就绪")
-    if not p2p_move_base_ok:
+    if unified_mode:
+        if not navigation_ok:
+            errors.append("Navigation 统一 launch 未就绪")
+        if not scan_planner_ok:
+            errors.append("SCAN planner 未就绪")
+        if not scan_controller_ok:
+            errors.append("SCAN controller 未就绪")
+        if not dynamic_avoidance_ok:
+            errors.append("动态避障安全监控未就绪")
+        if not nav_status_monitor_ok:
+            errors.append("导航状态监控未就绪")
+    elif not p2p_move_base_ok:
         errors.append("p2p_move_base 未就绪")
 
     cmd_vel_test_publisher_pids = _find_cmd_vel_test_publisher_pids()
@@ -709,17 +478,39 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
     navigation_ready_marker_ok, marker_errors = _inspect_navigation_ready_marker(scene)
     errors.extend(marker_errors)
 
-    navigation_ready = (
+    ready_marker = read_json(_navigation_ready_path(), {}) if navigation_ready_marker_ok else {}
+    navigation_runtime_marker_ok = bool(
+        isinstance(ready_marker, dict) and ready_marker.get("stage") == "running"
+    )
+    if navigation_ready_marker_ok and not navigation_runtime_marker_ok:
+        warnings.append("定位进程已启动，等待 initialpose")
+
+    startup_ready = (
         scene_ok
         and map_pcd_ok
         and ground_pcd_ok
         and livox_ok
         and relocation_ok
         and global_planner_ok
-        and p2p_move_base_ok
         and navigation_ready_marker_ok
         and not cmd_vel_test_publisher_running
-        and tf_ok is not False
+    )
+    if unified_mode:
+        startup_ready = bool(
+            startup_ready
+            and navigation_ok
+            and scan_planner_ok
+            and scan_controller_ok
+            and dynamic_avoidance_ok
+            and nav_status_monitor_ok
+        )
+    else:
+        startup_ready = bool(startup_ready and p2p_move_base_ok)
+
+    navigation_ready = bool(
+        startup_ready
+        and navigation_runtime_marker_ok
+        and tf_ok is True
     )
 
     health = {
@@ -732,14 +523,21 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
         "ground_pcd": str(ground_pcd),
         "planground_pcd_ok": planground_pcd_ok,
         "planground_pcd": str(planground_pcd) if planground_pcd else None,
+        "runtime_mode": "navigation_scan" if unified_mode else "legacy_p2p",
+        "navigation_ok": navigation_ok,
         "livox_ok": livox_ok,
         "relocation_ok": relocation_ok,
         "global_planner_ok": global_planner_ok,
         "p2p_move_base_ok": p2p_move_base_ok,
+        "scan_planner_ok": scan_planner_ok,
+        "scan_controller_ok": scan_controller_ok,
+        "dynamic_avoidance_ok": dynamic_avoidance_ok,
+        "nav_status_monitor_ok": nav_status_monitor_ok,
         "cmd_vel_test_publisher_running": cmd_vel_test_publisher_running,
         "cmd_vel_running": cmd_vel_running,
         "cmd_vel_pid": cmd_vel_pid,
         "navigation_ready_marker_ok": navigation_ready_marker_ok,
+        "navigation_runtime_marker_ok": navigation_runtime_marker_ok,
         "navigation_ready_marker": str(_navigation_ready_path()),
         "tf_ok": tf_ok,
         "warnings": warnings,
@@ -748,6 +546,7 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
 
     return {
         "health": health,
+        "startup_ready": startup_ready,
         "navigation_ready": navigation_ready,
         "warnings": warnings,
         "errors": errors,
@@ -757,10 +556,14 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
 def assert_navigation_runtime_ready() -> dict[str, Any]:
     scene = load_current_scene(strict=False)
     child_pids = {
+        "navigation_pid": _read_pid_file(_named_pid_path("navigation")),
         "livox_pid": _read_pid_file(_named_pid_path("livox")),
         "relocation_pid": _read_pid_file(_named_pid_path("relocation")),
         "global_planner_pid": _read_pid_file(_named_pid_path("global_planner")),
-        "p2p_move_base_pid": _read_pid_file(_named_pid_path("p2p_move_base")),
+        "scan_planner_pid": _read_pid_file(_named_pid_path("scan_planner")),
+        "scan_controller_pid": _read_pid_file(_named_pid_path("scan_controller")),
+        "dynamic_avoidance_pid": _read_pid_file(_named_pid_path("dynamic_avoidance")),
+        "nav_status_monitor_pid": _read_pid_file(_named_pid_path("nav_status_monitor")),
         "cmd_vel_pid": _read_cmd_vel_pid(),
     }
     health_result = _build_restart_health(scene, child_pids)
@@ -792,32 +595,6 @@ def wait_navigation_runtime_ready(timeout_s: float | None = None, poll_interval_
     if last_error is not None:
         raise last_error
     raise RuntimeError("导航链路未就绪，禁止发布目标点: readiness 检查未返回结果")
-
-
-def _kill_pid_tree(pid: int, sig: int) -> None:
-    try:
-        children = subprocess.run(
-            ["pgrep", "-P", str(pid)],
-            capture_output=True,
-            text=True,
-            check=False,
-        ).stdout.split()
-    except Exception:
-        children = []
-
-    for child in children:
-        try:
-            child_pid = int(child)
-        except ValueError:
-            continue
-        _kill_pid_tree(child_pid, sig)
-
-    try:
-        os.kill(pid, sig)
-    except ProcessLookupError:
-        pass
-    except Exception as exc:
-        nav_logger.warning("向 cmd_vel 进程发送信号失败：pid={} sig={} err={}", pid, sig, exc)
 
 
 def stop_cmd_vel_script() -> dict[str, Any]:
@@ -883,7 +660,25 @@ def start_cmd_vel_script() -> dict[str, Any]:
     pid_file = _cmd_vel_pid_path()
     log_file = _runtime_dir() / "cmd_vel.log"
     script_path = _cmd_vel_script_path()
-    estop_result = set_cmd_vel_estop(False, "start_cmd_vel_script")
+    estop_result = get_cmd_vel_estop_status()
+    if bool(estop_result.get("active")):
+        reason = str(estop_result.get("reason") or "未提供原因")
+        raise RuntimeError(f"急停钳制仍处于激活状态，拒绝启动导航速度桥：{reason}")
+
+    if settings.CONTROL_ADAPTER_TYPE == "unitree_b2":
+        from .control_service import get_control_service
+        from .navigation_velocity_udp import (
+            get_navigation_velocity_udp_status,
+            is_navigation_velocity_udp_ready,
+        )
+
+        control_service = get_control_service()
+        adapter_status = control_service.get_adapter_status() if control_service is not None else None
+        if not adapter_status or not bool(adapter_status.get("ready")):
+            raise RuntimeError(f"Unitree B2 单写入适配器未就绪：{adapter_status}")
+        if not is_navigation_velocity_udp_ready():
+            status = get_navigation_velocity_udp_status()
+            raise RuntimeError(f"BotDog 单写入速度接收器未就绪：{status}")
 
     existing_pid = _read_cmd_vel_pid()
     if _is_pid_alive(existing_pid):
@@ -949,19 +744,28 @@ def start_cmd_vel_script() -> dict[str, Any]:
 
 def stop_navigation_processes() -> dict[str, Any]:
     pid_specs = [
+        ("navigation", _named_pid_path("navigation"), ["ros2 launch nav_bringup navigation.launch.py"]),
         ("livox", _named_pid_path("livox"), ["ros2 launch livox_ros_driver2 msg_MID360_launch.py", "livox_ros_driver2_node"]),
         ("relocation", _named_pid_path("relocation"), ["ros2 launch super_lio relocation.py", "relocation_node"]),
         ("global_planner", _named_pid_path("global_planner"), ["ros2 launch global_planner path_planning_with_polygon.launch", "global_planner_node"]),
         ("p2p_move_base", _named_pid_path("p2p_move_base"), ["ros2 launch p2p_move_base go2_localization_launch.py", "clicked2goal.py", "p2p_move_base"]),
+        ("scan_planner", _named_pid_path("scan_planner"), ["scan_planner_node"]),
+        ("scan_controller", _named_pid_path("scan_controller"), ["closed_loop_controller"]),
+        ("dynamic_avoidance", _named_pid_path("dynamic_avoidance"), ["dynamic_avoidance_monitor.py"]),
+        ("nav_status_monitor", _named_pid_path("nav_status_monitor"), ["waypoint_progress_monitor.py"]),
     ]
 
     target_pids: list[int] = []
 
-    for _, pid_path, needles in pid_specs:
+    for process_name, pid_path, needles in pid_specs:
         pid = _read_pid_file(pid_path)
-        if pid is not None:
+        pid_matches = _pid_matches_needles(pid, needles)
+        if pid is not None and pid_matches is not False:
             target_pids.append(pid)
             continue
+        if pid is not None:
+            nav_logger.warning("忽略已复用的导航 PID：name={} pid={} path={}", process_name, pid, pid_path)
+            pid_path.unlink(missing_ok=True)
 
         for needle in needles:
             try:
@@ -1043,6 +847,7 @@ def restart_navigation_localization() -> dict[str, Any]:
     with _restart_lock:
         scene = load_current_scene(strict=False)
         log_offset = get_restart_log_offset()
+        previous_navigation_pid = _read_pid_file(_named_pid_path("navigation"))
         nav_logger.info("收到导航定位重启请求，准备清理旧进程并启动脚本")
         nav_logger.info("准备重启导航定位")
         _stop_restart_proc(_restart_proc)
@@ -1078,28 +883,68 @@ def restart_navigation_localization() -> dict[str, Any]:
                 name="restart-localization-log-pump",
             ).start()
 
+        # 上一轮 adapter/launch 可能仍在退出。若直接读取 PID 文件，会把旧 PID
+        # 和旧 navigation_ready.json 当成本轮结果返回给前端。等待 navigation.pid
+        # 完成轮换后，再收集本轮子进程 PID。
+        if previous_navigation_pid is not None:
+            rotation_deadline = time.monotonic() + 30.0
+            navigation_pid_path = _named_pid_path("navigation")
+            while time.monotonic() < rotation_deadline:
+                if _restart_proc.poll() is not None:
+                    break
+                current_navigation_pid = _read_pid_file(navigation_pid_path)
+                if (
+                    current_navigation_pid is not None
+                    and current_navigation_pid != previous_navigation_pid
+                ):
+                    break
+                time.sleep(0.2)
+
         pid_files = {
+            "navigation_pid": _named_pid_path("navigation"),
             "livox_pid": _named_pid_path("livox"),
             "relocation_pid": _named_pid_path("relocation"),
             "global_planner_pid": _named_pid_path("global_planner"),
-            "p2p_move_base_pid": _named_pid_path("p2p_move_base"),
+            "scan_planner_pid": _named_pid_path("scan_planner"),
+            "scan_controller_pid": _named_pid_path("scan_controller"),
+            "dynamic_avoidance_pid": _named_pid_path("dynamic_avoidance"),
+            "nav_status_monitor_pid": _named_pid_path("nav_status_monitor"),
         }
         child_pids = _wait_for_pid_files(pid_files, timeout_s=20.0)
+        unified_mode = "navigation_pid" in child_pids or "scan_planner_pid" in child_pids
+        if unified_mode:
+            ready_deadline = time.monotonic() + float(os.environ.get("NAV_RESTART_READY_WAIT_S", "540"))
+            while not _navigation_ready_path().exists() and time.monotonic() < ready_deadline:
+                if _restart_proc.poll() is not None:
+                    break
+                time.sleep(0.25)
+            for name, pid_path in pid_files.items():
+                child_pids[name] = _read_pid_file(pid_path)
         child_pids["cmd_vel_pid"] = _read_cmd_vel_pid()
         health_result = _build_restart_health(scene, child_pids)
+        startup_ready = bool(health_result["startup_ready"])
         navigation_ready = bool(health_result["navigation_ready"])
         warnings = list(health_result["warnings"] or [])
         errors = list(health_result["errors"] or [])
+        restart_running = _restart_proc.poll() is None
+        if not restart_running:
+            startup_ready = False
+            navigation_ready = False
+            errors.append("导航重启脚本已提前退出")
+        health_result["health"]["restart_running"] = restart_running
+        health_result["health"]["errors"] = errors
         if navigation_ready:
             message = "已启动重启脚本，导航可用"
+        elif startup_ready:
+            message = "导航定位进程已启动，等待 initialpose"
         else:
             details = errors or warnings or ["健康状态未确认"]
             message = "已启动重启脚本，但导航不可用：" + "；".join(details)
 
         nav_logger.info("已启动导航定位重启脚本：pid={}", _restart_proc.pid)
         return {
-            "success": True,
-            "running": True,
+            "success": restart_running,
+            "running": restart_running,
             "pid": _restart_proc.pid,
             "scene_id": scene["scene_id"],
             "scene_dir": scene["scene_dir"],
@@ -1108,12 +953,18 @@ def restart_navigation_localization() -> dict[str, Any]:
             "planground_pcd": scene["planground_pcd"],
             **child_pids,
             "cmd_vel_running": health_result["health"]["cmd_vel_running"],
+            "startup_ready": startup_ready,
             "navigation_ready": navigation_ready,
             "process_pids": {
+                "navigation": child_pids.get("navigation_pid"),
                 "livox": child_pids["livox_pid"],
                 "relocation": child_pids["relocation_pid"],
                 "global_planner": child_pids["global_planner_pid"],
-                "p2p_move_base": child_pids["p2p_move_base_pid"],
+                "p2p_move_base": child_pids.get("p2p_move_base_pid"),
+                "scan_planner": child_pids.get("scan_planner_pid"),
+                "scan_controller": child_pids.get("scan_controller_pid"),
+                "dynamic_avoidance": child_pids.get("dynamic_avoidance_pid"),
+                "nav_status_monitor": child_pids.get("nav_status_monitor_pid"),
                 "cmd_vel": child_pids["cmd_vel_pid"],
             },
             "health": health_result["health"],

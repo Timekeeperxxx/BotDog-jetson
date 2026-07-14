@@ -5,8 +5,13 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from .control_service import get_control_service, set_control_service
 from .logging_config import get_logger
 from .nav_bridge_state import set_ros_nav_bridge
+from .navigation_velocity_udp import (
+    get_navigation_velocity_udp_service,
+    set_navigation_velocity_udp_service,
+)
 from .services_mapping import get_mapping_service
 from .state_machine_state import set_state_machine
 from .ws_runtime_state import clear_ws_runtime
@@ -23,6 +28,11 @@ async def shutdown_runtime_services(
 
     set_state_machine(None)
     clear_ws_runtime()
+
+    navigation_velocity_udp = get_navigation_velocity_udp_service()
+    if navigation_velocity_udp is not None:
+        navigation_velocity_udp.close()
+        set_navigation_velocity_udp_service(None)
 
     try:
         mapping_service = get_mapping_service()
@@ -45,5 +55,14 @@ async def shutdown_runtime_services(
     for result in results:
         if isinstance(result, Exception):
             app_logger.warning("后台任务关闭时出现异常：{}", result)
+
+    control_service = get_control_service()
+    if control_service is not None:
+        try:
+            await control_service.force_stop()
+        except Exception as exc:
+            app_logger.warning("应用关闭时最终停车失败：{}", exc)
+        await asyncio.to_thread(control_service.set_adapter, None)
+        set_control_service(None)
 
     app_logger.info("所有后台任务已停止")

@@ -5,4 +5,4 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/navigation_adapter_common.sh"
 
-run_navigation_adapter restart_navigation_localization.sh "$@"
+run_navigation_adapter stop_navigation.sh "$@"

@@ -9,30 +9,18 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from ...auth.dependencies import require_admin, require_operator
+from ...auth.dependencies import require_operator
 from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
 from ...config import settings
 from ...database import get_db
 from ...schemas import (
-    DeleteWaypointResponse,
     LocalizationPoseDTO,
     LocalizationPoseSetRequest,
     LocalizationRestartResponse,
     MappingControlRequest,
     MappingControlResponse,
-    NavWaypointCreateRequest,
-    NavWaypointDTO,
-    NavWaypointListResponse,
     NavStateResponse,
-    PcdMapListResponse,
-    PcdMetadataResponse,
-    PcdPreviewResponse,
-    PcdSceneDeleteResponse,
-    PcdSceneListResponse,
-    PcdSceneMetadataResponse,
-    PcdScenePreviewResponse,
-    NavCurrentSceneResponse,
     NavTaskExecuteResponse,
     NavTaskListResponse,
     NavTaskUpsertRequest,
@@ -40,89 +28,53 @@ from ...schemas import (
     NavWaypointGoToResponse,
 )
 from ...nav_bridge_state import get_ros_nav_bridge
+from .nav_auto_track_helpers import (
+    cancel_pending_auto_track_resume as _cancel_pending_auto_track_resume,
+    ensure_auto_track_enabled_for_navigation as _ensure_auto_track_enabled_for_navigation,
+    release_navigation_control as _release_navigation_control,
+    request_navigation_control as _request_navigation_control,
+)
+from .nav_pcd_routes import (
+    nav_create_waypoint,
+    nav_delete_pcd_scene,
+    nav_delete_waypoint,
+    nav_get_pcd_metadata,
+    nav_get_pcd_preview,
+    nav_get_pcd_scene_metadata,
+    nav_get_pcd_scene_preview,
+    nav_list_pcd_maps,
+    nav_list_pcd_scenes,
+    nav_list_waypoints,
+    nav_select_pcd_scene,
+    router as pcd_router,
+)
 
 router = APIRouter(prefix="/api/v1/nav", tags=["nav"])
+router.include_router(pcd_router)
 
 
 class NavAutoTrackModeRequest(BaseModel):
     enabled: bool
 
 
-def _get_nav_auto_track_coordinator():
-    from ...nav_auto_track_coordinator import get_nav_auto_track_coordinator
-
-    return get_nav_auto_track_coordinator()
-
-
-def _cancel_pending_auto_track_resume(reason: str) -> None:
-    coordinator = _get_nav_auto_track_coordinator()
-    if coordinator is not None:
-        coordinator.cancel_pending_resume(reason)
-
-
-def _request_navigation_control() -> None:
-    coordinator = _get_nav_auto_track_coordinator()
-    if coordinator is not None:
-        coordinator.request_navigation_control()
-
-
-def _release_navigation_control() -> None:
-    coordinator = _get_nav_auto_track_coordinator()
-    if coordinator is not None:
-        coordinator.release_navigation_control()
-
-
-def _task_auto_track_requested(task: dict) -> bool:
-    value = task.get("autoTrackEnabled")
-    if value is not None:
-        return bool(value)
-    return bool(settings.NAV_AUTO_TRACK_DURING_NAV_ENABLED and settings.NAV_AUTO_TRACK_AUTO_ENABLE)
-
-
-def _ensure_auto_track_enabled_for_navigation(task: dict) -> dict:
-    if not _task_auto_track_requested(task):
-        return {
-            "requested": False,
-            "enabled": False,
-            "state": None,
-            "message": "导航跟踪联动未开启",
-        }
-
-    from ...auto_track_service import get_auto_track_service
+def _clear_e_stop_for_localization_restart() -> dict[str, object]:
+    """重启导航定位前解除所有会持续拦截运动指令的急停状态。"""
     from ...control_arbiter import get_control_arbiter
-    from ...guard_mission_service import get_guard_mission_service
+    from ...services_nav_localization import set_cmd_vel_estop
+    from ...state_machine_state import get_state_machine
+    from ...tracking_types import ControlOwner
+
+    cmd_vel_estop = set_cmd_vel_estop(False, "nav_localization_restart")
+
+    state_machine = get_state_machine()
+    if state_machine is not None:
+        state_machine.reset_emergency_stop()
 
     arbiter = get_control_arbiter()
     if arbiter is not None:
-        arbiter.release_manual_override()
+        arbiter.release_control(ControlOwner.E_STOP)
 
-    guard_mission = get_guard_mission_service()
-    if guard_mission is not None and guard_mission.enabled:
-        guard_mission.enabled = False
-
-    auto_track = get_auto_track_service()
-    if auto_track is None:
-        return {
-            "requested": True,
-            "enabled": False,
-            "state": None,
-            "message": "自动跟踪服务未初始化",
-        }
-
-    if hasattr(auto_track, "enable_for_navigation"):
-        auto_track.enable_for_navigation()
-    else:
-        auto_track.enable()
-    if hasattr(auto_track, "resume"):
-        auto_track.resume()
-
-    status = auto_track.get_status()
-    return {
-        "requested": True,
-        "enabled": bool(status.get("enabled")),
-        "state": status.get("state"),
-        "message": "导航跟踪联动已启用，AI 检测将随任务启动",
-    }
+    return cmd_vel_estop
 
 
 @router.get("/auto-track-mode")
@@ -430,92 +382,6 @@ async def nav_delete_task(
     return result
 
 
-@router.get("/pcd-maps", response_model=PcdMapListResponse)
-async def nav_list_pcd_maps():
-    from ...services_pcd_maps import PcdMapError, list_pcd_maps
-
-    try:
-        return list_pcd_maps()
-    except PcdMapError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.get("/pcd-scenes", response_model=PcdSceneListResponse)
-async def nav_list_pcd_scenes():
-    from ...services_pcd_maps import PcdMapError, list_pcd_scenes
-
-    try:
-        return list_pcd_scenes()
-    except PcdMapError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.delete("/pcd-scenes/{scene_id}", response_model=PcdSceneDeleteResponse)
-async def nav_delete_pcd_scene(
-    scene_id: str,
-    user: AuthUserInternal = Depends(require_admin),
-    db=Depends(get_db),
-):
-    from ...services_pcd_maps import PcdMapError, delete_pcd_scene
-
-    try:
-        result = delete_pcd_scene(scene_id)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"场景目录不存在: {scene_id}")
-    except PcdMapError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    await safe_write_audit_log(
-        db,
-        level="WARN",
-        module="BACKEND",
-        message=(
-            f"用户={user.username} 角色={user.role} 操作=nav.scene.delete "
-            f"目标={scene_id} 路径={result['deleted_path']} 结果=success"
-        ),
-    )
-    return result
-
-
-@router.post("/pcd-scenes/{scene_id}/select", response_model=NavCurrentSceneResponse)
-async def nav_select_pcd_scene(
-    scene_id: str,
-    user: AuthUserInternal = Depends(require_operator),
-    db=Depends(get_db),
-):
-    from ...services_nav_localization import save_current_scene
-    from ...services_nav_state import reset_localization_tracking
-    from ...services_pcd_maps import PcdMapError, find_scene_pcd_files, resolve_scene_path
-    from ...services_nav_task_runtime import clear_nav_task_runtime
-
-    try:
-        scene_path = resolve_scene_path(scene_id)
-        files = find_scene_pcd_files(scene_path)
-        if files["wall"] is None:
-            raise HTTPException(status_code=400, detail="场景缺少 map.pcd")
-        if files["ground"] is None:
-            raise HTTPException(status_code=400, detail="场景缺少 ground.pcd")
-        result = save_current_scene(scene_id)
-        _cancel_pending_auto_track_resume("nav_scene_select")
-        clear_nav_task_runtime()
-        reset_localization_tracking(f"已切换场景 {scene_id}，等待重新定位")
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except PcdMapError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    await safe_write_audit_log(
-        db,
-        level="INFO",
-        module="BACKEND",
-        message=(
-            f"用户={user.username} 角色={user.role} 操作=nav.scene.select "
-            f"目标={scene_id} 路径={scene_path} 结果=success"
-        ),
-    )
-    return result
-
-
 @router.get("/state", response_model=NavStateResponse)
 async def nav_get_state():
     from ...services_nav_state import get_nav_state
@@ -591,15 +457,17 @@ async def nav_restart_localization(
     db=Depends(get_db),
 ):
     from ...services_nav_localization import restart_navigation_localization
-    from ...services_nav_state import reset_localization_tracking
+    from ...services_nav_state import reset_localization_tracking, set_navigation_idle
     from ...services_nav_task_runtime import clear_nav_task_runtime
 
     try:
         _cancel_pending_auto_track_resume("nav_localization_restart")
+        cmd_vel_estop = _clear_e_stop_for_localization_restart()
         _release_navigation_control()
         clear_nav_task_runtime()
+        set_navigation_idle("导航定位已重启，等待新目标")
         reset_localization_tracking("正在重启导航定位，等待 initialpose")
-        result = restart_navigation_localization()
+        result = await asyncio.to_thread(restart_navigation_localization)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except RuntimeError as exc:
@@ -613,7 +481,8 @@ async def nav_restart_localization(
         module="BACKEND",
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.localization.restart "
-            f"结果=success pid={result['pid']}"
+            f"结果=success pid={result['pid']} "
+            f"自动解除急停={not bool(cmd_vel_estop.get('active'))}"
         ),
     )
     return result
@@ -665,7 +534,8 @@ async def nav_wait_navigation_ready(
 ):
     from ...services_nav_localization import wait_navigation_runtime_ready
 
-    timeout = min(max(timeout_s, 1.0), 90.0)
+    # 大场景首次构建 global planner 静态图时允许等待最多 10 分钟。
+    timeout = min(max(timeout_s, 1.0), 600.0)
     try:
         result = await asyncio.to_thread(wait_navigation_runtime_ready, timeout, 0.5)
     except RuntimeError as exc:
@@ -744,95 +614,6 @@ async def nav_get_mapping_status(
     }
 
 
-@router.get("/pcd-maps/{map_id}/metadata", response_model=PcdMetadataResponse)
-async def nav_get_pcd_metadata(map_id: str):
-    from ...services_pcd_maps import PcdMapError, get_pcd_metadata
-
-    try:
-        return get_pcd_metadata(map_id)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
-    except PcdMapError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.get("/pcd-maps/{map_id}/preview", response_model=PcdPreviewResponse)
-async def nav_get_pcd_preview(map_id: str, max_points: int | None = None):
-    from ...services_pcd_maps import PcdMapError, get_pcd_preview
-
-    try:
-        return get_pcd_preview(map_id, max_points=max_points)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"PCD 文件不存在: {map_id}")
-    except PcdMapError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.get("/pcd-scenes/{scene_id}/metadata", response_model=PcdSceneMetadataResponse)
-async def nav_get_pcd_scene_metadata(scene_id: str):
-    from ...services_pcd_maps import PcdMapError, get_scene_metadata
-
-    try:
-        return get_scene_metadata(scene_id)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"场景目录不存在: {scene_id}")
-    except PcdMapError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.get("/pcd-scenes/{scene_id}/preview", response_model=PcdScenePreviewResponse)
-async def nav_get_pcd_scene_preview(scene_id: str, max_points: int | None = None):
-    from ...services_pcd_maps import PcdMapError, get_scene_preview
-
-    try:
-        return get_scene_preview(scene_id, max_points=max_points)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"场景目录不存在: {scene_id}")
-    except PcdMapError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.get("/pcd-maps/{map_id}/waypoints", response_model=NavWaypointListResponse)
-async def nav_list_waypoints(map_id: str):
-    from ...services_pcd_maps import PcdMapError
-    from ...services_nav_waypoints import list_waypoints
-
-    try:
-        return list_waypoints(map_id)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {map_id}")
-    except PcdMapError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-
-@router.post("/pcd-maps/{map_id}/waypoints", response_model=NavWaypointDTO)
-async def nav_create_waypoint(
-    map_id: str,
-    body: NavWaypointCreateRequest,
-    user: AuthUserInternal = Depends(require_operator),
-    db=Depends(get_db),
-):
-    from ...services_nav_waypoints import create_waypoint
-    from ...services_pcd_maps import PcdMapError
-
-    try:
-        waypoint = create_waypoint(map_id, body.model_dump())
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {map_id}")
-    except (PcdMapError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    await safe_write_audit_log(
-        db,
-        level="INFO",
-        module="BACKEND",
-        message=(
-            f"用户={user.username} 角色={user.role} 操作=nav.waypoint.create "
-            f"目标={waypoint['id']} map={map_id} 结果=success"
-        ),
-    )
-    return waypoint
-
-
 @router.post("/pcd-maps/{map_id}/waypoints/{waypoint_id}")
 @router.post("/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to", response_model=NavWaypointGoToResponse)
 async def nav_go_to_waypoint(
@@ -841,6 +622,7 @@ async def nav_go_to_waypoint(
     user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
+    from ...control_service import get_control_service
     from ...services_nav_state import update_navigation_status
     from ...services_nav_waypoints import get_waypoint
     from ...services_pcd_maps import PcdMapError
@@ -863,10 +645,15 @@ async def nav_go_to_waypoint(
         _ensure_localization_ready_for_navigation()
         _ensure_navigation_runtime_ready()
         stop_task_nav_result = bridge.publish_navigation_start(False)
+        control_service = get_control_service()
+        if control_service is None:
+            raise RuntimeError("控制服务未就绪")
+        motion_prepare_result = await control_service.prepare_navigation_motion()
         cmd_vel_result = start_cmd_vel_script()
         _request_navigation_control()
         try:
             goal_result = bridge.publish_goal_xyz_yaw(waypoint)
+            nav_start_result = bridge.publish_navigation_start(True)
         except RuntimeError:
             stop_cmd_vel_script()
             _release_navigation_control()
@@ -882,7 +669,8 @@ async def nav_go_to_waypoint(
             f"用户={user.username} 角色={user.role} 操作=nav.go_to "
             f"目标={waypoint_id} map={map_id} 结果=success "
             f"clicked_point_topic={goal_result['xyz_topic']} yaw_topic={goal_result['yaw_topic']} "
-            f"stop_task_nav_topic={stop_task_nav_result['topic']} cmd_vel_pid={cmd_vel_result.get('pid')}"
+            f"stop_task_nav_topic={stop_task_nav_result['topic']} "
+            f"nav_start={nav_start_result['data']} cmd_vel_pid={cmd_vel_result.get('pid')}"
         ),
     )
     update_navigation_status(
@@ -907,7 +695,9 @@ async def nav_go_to_waypoint(
         "yaw_topic": goal_result["yaw_topic"],
         "goal": goal_result,
         "stop_task_nav": stop_task_nav_result,
+        "nav_start": nav_start_result,
         "cmd_vel": cmd_vel_result,
+        "motion_prepare": motion_prepare_result,
         "message": "已发布 clicked_point 和 goal_yaw",
     }
 
@@ -918,89 +708,53 @@ async def nav_emergency_stop(
     db=Depends(get_db),
 ):
     from ...control_service import get_control_service
-    from ...services_nav_localization import set_cmd_vel_estop, stop_navigation_processes
+    from ...services_nav_localization import set_cmd_vel_estop
     from ...services_nav_state import clear_global_path, set_navigation_idle
     control_service = get_control_service()
 
     try:
         _cancel_pending_auto_track_resume("nav_e_stop")
-        _release_navigation_control()
         cmd_vel_estop_result = set_cmd_vel_estop(True, "nav_e_stop")
         cmd_vel_zero_result = None
         bridge = get_ros_nav_bridge()
         if bridge is not None:
             try:
+                bridge.publish_navigation_start(False)
                 cmd_vel_zero_result = bridge.publish_zero_cmd_vel(publish_count=20, interval_s=0.02)
             except RuntimeError as exc:
                 cmd_vel_zero_result = {
                     "success": False,
                     "message": str(exc),
                 }
-        control_result = None
+        control_zero_sent = None
         if control_service is not None:
-            control_result = await control_service.force_stop()
-
-        nav_result = stop_navigation_processes()
+            control_zero_sent = await control_service.send_navigation_velocity(0.0, 0.0, 0.0)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
     clear_global_path()
-    set_navigation_idle("已触发导航急停")
+    set_navigation_idle("导航已软停：速度已归零，导航定位进程保持运行")
     await safe_write_audit_log(
         db,
         level="WARN",
         module="BACKEND",
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.e_stop 目标=nav 结果=success "
-            f"control_result={getattr(control_result, 'result', 'N/A')} "
+            f"soft_stop=true control_zero_sent={control_zero_sent} "
             f"cmd_vel_estop={cmd_vel_estop_result.get('active') if isinstance(cmd_vel_estop_result, dict) else 'N/A'} "
-            f"nav_pids={nav_result.get('pids') if isinstance(nav_result, dict) else 'N/A'}"
+            "navigation_processes_preserved=true"
         ),
     )
     return {
         "success": True,
-        "message": "已触发导航急停",
-        "topic": None,
-        "control_stop": {
-            "result": getattr(control_result, "result", None),
-            "ack_cmd": getattr(control_result, "ack_cmd", None),
-        } if control_result is not None else None,
+        "message": "导航已软停：全速度为 0，导航定位进程保持运行",
+        "topic": cmd_vel_zero_result.get("topic") if isinstance(cmd_vel_zero_result, dict) else None,
+        "control_zero": {
+            "sent": control_zero_sent,
+            "linear": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "angular": {"x": 0.0, "y": 0.0, "z": 0.0},
+        },
         "cmd_vel_estop": cmd_vel_estop_result,
         "cmd_vel_zero": cmd_vel_zero_result,
-        "nav_stop": nav_result,
+        "navigation_processes_preserved": True,
     }
-
-
-@router.delete(
-    "/pcd-maps/{map_id}/waypoints/{waypoint_id}",
-    response_model=DeleteWaypointResponse,
-)
-async def nav_delete_waypoint(
-    map_id: str,
-    waypoint_id: str,
-    user: AuthUserInternal = Depends(require_admin),
-    db=Depends(get_db),
-):
-    from ...services_nav_waypoints import delete_waypoint
-    from ...services_pcd_maps import PcdMapError
-
-    try:
-        ok = delete_waypoint(map_id, waypoint_id)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {map_id}")
-    except PcdMapError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
-    if not ok:
-        raise HTTPException(status_code=404, detail=f"导航点不存在: {waypoint_id}")
-
-    await safe_write_audit_log(
-        db,
-        level="WARN",
-        module="BACKEND",
-        message=(
-            f"用户={user.username} 角色={user.role} 操作=nav.waypoint.delete "
-            f"目标={waypoint_id} map={map_id} 结果=success"
-        ),
-    )
-    return {"success": True}

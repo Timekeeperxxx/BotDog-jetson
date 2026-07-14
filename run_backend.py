@@ -22,7 +22,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 if __name__ == "__main__":
     import uvicorn
+    from uvicorn.main import STARTUP_FAILURE
     from backend.logging_config import get_logger, setup_logging
+    from backend.uvicorn_server import BotDogUvicornServer
 
     setup_logging()
     env_logger = get_logger("启动环境")
@@ -41,10 +43,18 @@ if __name__ == "__main__":
     env_logger.info("LD_LIBRARY_PATH={}", os.getenv("LD_LIBRARY_PATH", "未设置"))
     app_logger.info("即将启动 Uvicorn：host=0.0.0.0，port=8000，access_log=false")
 
-    uvicorn.run(
-        app,
+    config = uvicorn.Config(
+        app=app,
         host="0.0.0.0",
         port=8000,
         log_level="info",
         access_log=False,
+        timeout_graceful_shutdown=5.0,
     )
+    server = BotDogUvicornServer(config)
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    if not server.started:
+        raise SystemExit(STARTUP_FAILURE)

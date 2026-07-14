@@ -1,6 +1,7 @@
 """系统诊断路由。"""
 
 import asyncio
+import shutil
 import subprocess
 import threading
 import time
@@ -12,6 +13,7 @@ from ...app_runtime_state import APP_START_MONO
 from ...auth.dependencies import require_operator
 from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
+from ...config import settings
 from ...control_service import get_control_service
 from ...database import get_db
 from ...safety_supervisor import get_safety_supervisor
@@ -21,6 +23,7 @@ from ...schemas import (
     SystemSafetyResponse,
     SystemStartupResponse,
     StartupSummaryItem,
+    utc_now_iso,
 )
 from ...startup_summary import coerce_startup_summary
 from ...state_machine import SystemState
@@ -31,6 +34,7 @@ router = APIRouter(tags=["system"])
 _PIPELINE_SCRIPT = Path("/home/jetson/Project/BOTDOG/BotDog/scripts/run-pipeline.sh")
 _pipeline_restart_proc: subprocess.Popen[str] | None = None
 _pipeline_restart_lock = threading.Lock()
+_PROJECT_ROOT = _PIPELINE_SCRIPT.parents[1]
 
 
 def _pipeline_restart_log_path() -> Path:
@@ -58,6 +62,58 @@ def _without_proxy_env() -> dict[str, str]:
     ):
         env.pop(key, None)
     return env
+
+
+def _diagnostic_level(checks: list[dict]) -> str:
+    statuses = {str(check.get("status") or "") for check in checks}
+    if "failed" in statuses:
+        return "error"
+    if "degraded" in statuses or "warning" in statuses:
+        return "warning"
+    return "normal"
+
+
+def _path_check(name: str, path: Path, *, should_be_dir: bool = False) -> dict:
+    exists = path.exists()
+    correct_type = path.is_dir() if should_be_dir else path.is_file()
+    ok = exists and correct_type
+    expected = "目录" if should_be_dir else "文件"
+    if ok:
+        message = f"{expected}存在"
+        status = "ready"
+    elif exists:
+        message = f"路径存在但不是{expected}"
+        status = "failed"
+    else:
+        message = f"{expected}不存在"
+        status = "failed"
+
+    return {
+        "name": name,
+        "ok": ok,
+        "status": status,
+        "message": message,
+        "details": {"path": str(path)},
+    }
+
+
+def _disk_check(path: Path, *, min_free_gb: float = 1.0) -> dict:
+    usage = shutil.disk_usage(path)
+    free_gb = usage.free / (1024 ** 3)
+    total_gb = usage.total / (1024 ** 3)
+    ok = free_gb >= min_free_gb
+    return {
+        "name": "磁盘空间",
+        "ok": ok,
+        "status": "ready" if ok else "degraded",
+        "message": f"剩余 {free_gb:.1f} GiB / 总计 {total_gb:.1f} GiB",
+        "details": {
+            "path": str(path),
+            "free_bytes": usage.free,
+            "total_bytes": usage.total,
+            "min_free_gb": min_free_gb,
+        },
+    }
 
 
 @router.get("/api/v1/system/health", response_model=SystemHealthResponse)
@@ -129,6 +185,59 @@ async def system_safety() -> SystemSafetyResponse:
         system_state=state_machine.state.value if state_machine is not None else "UNINITIALIZED",
         control_adapter_ready=bool(adapter_status.get("ready")),
     )
+
+
+@router.get("/api/v1/system/diagnostics")
+async def system_diagnostics(
+    request: Request,
+    user: AuthUserInternal = Depends(require_operator),
+) -> dict:
+    """聚合常用只读诊断项，便于现场一键排查。"""
+    health = await system_health()
+    startup = await system_startup(request)
+    safety = await system_safety()
+
+    startup_ok = not any(item.status in {"failed", "degraded"} for item in startup.items)
+    health_ok = health.status == "healthy"
+    safety_ok = safety.safe_to_move or bool(safety.reasons)
+
+    checks = [
+        {
+            "name": "系统健康",
+            "ok": health_ok,
+            "status": "ready" if health_ok else "degraded",
+            "message": f"status={health.status}, mavlink_connected={health.mavlink_connected}",
+            "details": health.model_dump(),
+        },
+        {
+            "name": "启动摘要",
+            "ok": startup_ok,
+            "status": "ready" if startup_ok else "degraded",
+            "message": startup.status,
+            "details": startup.model_dump(),
+        },
+        {
+            "name": "运动安全",
+            "ok": safety_ok,
+            "status": "ready" if safety.safe_to_move else "degraded",
+            "message": safety.reasons[0] if safety.reasons else "当前允许执行运动命令",
+            "details": safety.model_dump(),
+        },
+        _path_check("视频 Pipeline 脚本", _PIPELINE_SCRIPT),
+        _path_check("MediaMTX 配置", _PROJECT_ROOT / "config" / "mediamtx.yml"),
+        _path_check("前端构建产物", _PROJECT_ROOT / "frontend" / "dist", should_be_dir=True),
+        _disk_check(_PROJECT_ROOT),
+    ]
+    level = _diagnostic_level(checks)
+
+    return {
+        "ok": level == "normal",
+        "level": level,
+        "checked_at": utc_now_iso(),
+        "requested_by": user.username,
+        "checks": checks,
+        "message": "诊断正常" if level == "normal" else "存在需要关注的诊断项",
+    }
 
 
 @router.get("/api/v1/system/radar/health", response_model=RadarHealthResponse)

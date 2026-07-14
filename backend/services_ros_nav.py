@@ -2,15 +2,37 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import threading
 import time
 from typing import Any
 
-import numpy as np
-
 from .config import settings
 from .logging_config import get_logger
+from .ros_nav_cloud_bridge import RosNavCloudBridgeMixin
+from .ros_nav_messages import (
+    extract_global_path,
+    extract_pose,
+    global_path_signature,
+    header_frame_id,
+    normalize_nav_status,
+    resolve_pose_msg_type,
+)
+from .ros_nav_publishers import (
+    backend_initial_pose_publisher_count,
+    initial_pose_subscription_counts,
+    publish_bool_message,
+    publish_goal_xyz_yaw as publish_goal_xyz_yaw_message,
+    publish_initial_pose_messages,
+    publish_zero_cmd_vel as publish_zero_cmd_vel_message,
+    wait_for_initial_pose_subscribers as wait_for_initial_pose_subscriber_ready,
+)
+from .ros_nav_tf import (
+    base_frame_candidates,
+    lookup_tf_pose,
+    tf_source,
+    use_tf_pose,
+)
+from .ros_nav_lifecycle import RosNavLifecycleMixin
 from .services_nav_state import (
     clear_robot_pose,
     update_global_path,
@@ -26,46 +48,18 @@ from .ws_event_broadcaster import EventBroadcaster
 nav_logger = get_logger("ROS导航")
 tf_logger = get_logger("ROS TF")
 GLOBAL_PATH_BROADCAST_MIN_INTERVAL_S = 1.0
-MAPPING_CLOUD_LIVE_MIN_INTERVAL_S = 3.0
-MAPPING_CLOUD_BROADCAST_MIN_INTERVAL_S = 3.0
-MAPPING_CLOUD_ACCUMULATED_VOXEL_SIZE_M = 0.10
-MAPPING_CLOUD_ACCUMULATED_MAX_BROADCAST_POINTS = 15000
-MAPPING_CLOUD_ACCUMULATE_MAX_INPUT_POINTS = 1500
-MAPPING_CLOUD_LIVE_MAX_BROADCAST_POINTS = 600
 INITIAL_POSE_PUBLISH_COUNT = 20
 INITIAL_POSE_PUBLISH_INTERVAL_S = 0.2
 INITIAL_POSE_SUBSCRIBER_WAIT_S = 5.0
 GOAL_PUBLISH_COUNT = 3
 GOAL_PUBLISH_INTERVAL_S = 0.15
+# A go-to request deliberately publishes nav_start=false before the new goal.
+# The cancellation acknowledgement for that old run can arrive after the new
+# nav_start=true and must not release the freshly acquired NAVIGATION owner.
+NAV_START_IDLE_RELEASE_GRACE_S = 2.0
 
 
-def quaternion_to_yaw(x: float, y: float, z: float, w: float) -> float:
-    siny_cosp = 2.0 * (w * z + x * y)
-    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
-    return math.atan2(siny_cosp, cosy_cosp)
-
-
-def _stamp_to_seconds(stamp: Any) -> float:
-    sec = float(getattr(stamp, "sec", 0.0))
-    nanosec = float(getattr(stamp, "nanosec", 0.0))
-    value = sec + nanosec / 1_000_000_000.0
-    return value or time.time()
-
-
-def _header_frame_id(msg: Any) -> str:
-    header = getattr(msg, "header", None)
-    return getattr(header, "frame_id", "") or settings.ROS_NAV_FRAME_ID
-
-
-def _header_timestamp(msg: Any) -> float:
-    header = getattr(msg, "header", None)
-    stamp = getattr(header, "stamp", None)
-    if stamp is None:
-        return time.time()
-    return _stamp_to_seconds(stamp)
-
-
-class RosNavBridge:
+class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
     def __init__(
         self,
         broadcaster: EventBroadcaster,
@@ -93,18 +87,14 @@ class RosNavBridge:
         self._nav_status_subscription: Any | None = None
         self._estop_publisher: Any | None = None
         self._initial_pose_publisher: Any | None = None
-        self._cloud_subscription: Any | None = None
         self._publisher_lock = threading.RLock()
         self._last_broadcast_at = 0.0
         self._last_tf_lookup_at = 0.0
         self._last_localization_broadcast_at = 0.0
         self._last_global_path_broadcast_at = 0.0
         self._last_global_path_signature: tuple[Any, ...] | None = None
-        self._last_cloud_broadcast_at = 0.0
-        self._accumulated_cloud: np.ndarray = np.empty((0, 3), dtype=np.float32)
-        self._accumulated_cloud_voxels: dict[tuple[int, int, int], tuple[float, float, float]] = {}
-        self._last_full_map_broadcast_at = 0.0
-        self._mapping_cloud_broadcast_future: Any | None = None
+        self._navigation_idle_release_blocked_until = 0.0
+        self._init_mapping_cloud_state()
         self._tf_available = False
         self._tf_wait_started_at = 0.0
         self._last_tf_warning_at = 0.0
@@ -141,142 +131,6 @@ class RosNavBridge:
 
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=timeout)
-
-    def pause(self) -> None:
-        """建图前调用：销毁 ROS2 node 以退出 DDS 网络，保留 rclpy context 以便恢复。
-
-        CLI 手动建图时后端 ROS2 节点不存在；前端建图时后端节点仍在 DDS
-        网络里可能干扰 SuperLIO 的 IMU 消息发现与时序，导致重力方向估计偏差。
-        销毁 node 后该进程不再参与 DDS 发现，建图环境与 CLI 完全一致。
-        """
-        if self._paused or self._node is None:
-            return
-        self._request_lifecycle("pause")
-
-    def resume(self) -> None:
-        """建图结束后调用：重新创建 ROS2 node 并恢复所有订阅/发布。"""
-        if not self._paused:
-            return
-        if not self._thread or not self._thread.is_alive():
-            nav_logger.warning("ROS2 导航线程未运行，尝试重新启动")
-            self._paused = False
-            self.start()
-            self._wait_for_backend_initial_pose_publisher(timeout_s=5.0)
-            return
-        self._request_lifecycle("resume")
-        self._wait_for_backend_initial_pose_publisher(timeout_s=3.0)
-
-    def _request_lifecycle(self, command: str, timeout_s: float = 8.0) -> None:
-        if threading.current_thread() is self._thread:
-            self._handle_lifecycle_command(command)
-            return
-        if not self._thread or not self._thread.is_alive():
-            raise RuntimeError("ROS2 导航线程未运行")
-
-        done = threading.Event()
-        request: dict[str, Any] = {"command": command, "done": done, "error": None}
-        with self._lifecycle_cv:
-            if self._lifecycle_request is not None:
-                raise RuntimeError("ROS2 导航节点生命周期操作正在进行中")
-            self._lifecycle_request = request
-            self._lifecycle_cv.notify_all()
-
-        if not done.wait(timeout_s):
-            with self._lifecycle_cv:
-                if self._lifecycle_request is request:
-                    self._lifecycle_request = None
-                    self._lifecycle_cv.notify_all()
-            raise RuntimeError(f"等待 ROS2 导航节点{command}超时")
-        if request["error"] is not None:
-            raise RuntimeError(str(request["error"]))
-
-    def _handle_lifecycle_request(self) -> None:
-        with self._lifecycle_cv:
-            request = self._lifecycle_request
-            self._lifecycle_request = None
-            self._lifecycle_cv.notify_all()
-        if request is None:
-            return
-
-        try:
-            self._handle_lifecycle_command(str(request["command"]))
-        except Exception as exc:
-            request["error"] = exc
-        finally:
-            request["done"].set()
-
-    def _handle_lifecycle_command(self, command: str) -> None:
-        if command == "pause":
-            self._pause_ros_node_for_mapping()
-            return
-        if command == "resume":
-            self._resume_ros_node_after_mapping()
-            return
-        raise ValueError(f"未知 ROS2 导航节点生命周期操作: {command}")
-
-    def _pause_ros_node_for_mapping(self) -> None:
-        if self._paused or self._node is None:
-            self._paused = True
-            self._pause_event.set()
-            return
-
-        self._destroy_ros_node("暂停 ROS2 节点")
-        self._paused = True
-        self._pause_event.set()
-        update_localization_status(
-            {
-                "status": "paused",
-                "frame_id": settings.ROS_NAV_FRAME_ID,
-                "source": self._tf_source() if self._use_tf_pose() else settings.ROS_NAV_POSE_TOPIC,
-                "message": "建图进行中，导航定位已暂停",
-            }
-        )
-        nav_logger.info("ROS2 导航节点已暂停（node 销毁，rclpy 保持初始化）")
-
-    def _resume_ros_node_after_mapping(self) -> None:
-        if not self._paused and self._node is not None:
-            return
-        if self._rclpy is None:
-            self._paused = False
-            raise RuntimeError("rclpy 未初始化，无法恢复节点")
-
-        source = self._create_ros_node()
-        self._pause_event.clear()
-        self._paused = False
-        self._tf_available = False
-        self._tf_wait_started_at = 0.0
-        self._last_tf_lookup_at = 0.0
-
-        update_localization_status(
-            {
-                "status": "initializing",
-                "frame_id": settings.ROS_NAV_FRAME_ID,
-                "source": source,
-                "message": "建图已结束，导航定位恢复中",
-            }
-        )
-        nav_logger.info("ROS2 导航节点已恢复")
-
-    def _destroy_ros_node(self, action: str) -> None:
-        with self._publisher_lock:
-            node = self._node
-            self._node = None
-            self._tf_buffer = None
-            self._tf_listener = None
-            self._nav_start_publisher = None
-            self._cmd_vel_publisher = None
-            self._goal_xyz_publisher = None
-            self._goal_yaw_publisher = None
-            self._global_path_subscription = None
-            self._nav_status_subscription = None
-            self._estop_publisher = None
-            self._initial_pose_publisher = None
-            self._cloud_subscription = None
-            if node is not None:
-                try:
-                    node.destroy_node()
-                except Exception as exc:
-                    nav_logger.warning("{}销毁失败：{}", action, exc)
 
     def _create_ros_node(self) -> str:
         if self._rclpy is None:
@@ -373,7 +227,11 @@ class RosNavBridge:
         self._rclpy = rclpy
 
         try:
-            rclpy.init(args=None)
+            from rclpy.signals import SignalHandlerOptions
+
+            # Uvicorn/systemd owns process signals. Installing rclpy's global
+            # handlers here would consume SIGTERM and prevent FastAPI shutdown.
+            rclpy.init(args=None, signal_handler_options=SignalHandlerOptions.NO)
             self._create_ros_node()
 
             while not self._stop_event.is_set():
@@ -387,19 +245,22 @@ class RosNavBridge:
                 self._broadcast_latest_if_needed()
 
         except Exception as exc:
-            update_localization_status(
-                {
-                    "status": "error",
-                    "frame_id": settings.ROS_NAV_FRAME_ID,
-                    "source": settings.ROS_NAV_POSE_TOPIC,
-                    "message": f"ROS2 导航订阅异常: {exc}",
-                }
-            )
-            nav_logger.exception("ROS2 导航订阅异常：{}", exc)
+            if self._stop_event.is_set():
+                nav_logger.info("ROS2 导航线程收到关闭通知")
+            else:
+                update_localization_status(
+                    {
+                        "status": "error",
+                        "frame_id": settings.ROS_NAV_FRAME_ID,
+                        "source": settings.ROS_NAV_POSE_TOPIC,
+                        "message": f"ROS2 导航订阅异常: {exc}",
+                    }
+                )
+                nav_logger.exception("ROS2 导航订阅异常：{}", exc)
         finally:
             self._destroy_ros_node("退出 ROS2 导航线程")
             try:
-                rclpy.shutdown()
+                rclpy.try_shutdown()
             except Exception:
                 pass
             nav_logger.info("ROS2 导航订阅线程已退出")
@@ -464,110 +325,59 @@ class RosNavBridge:
         )
 
     def publish_navigation_start(self, enabled: bool = True) -> dict[str, Any]:
-        if self._node is None or self._nav_start_publisher is None:
-            raise RuntimeError("ROS2 nav_start 发布器未就绪")
-
-        from std_msgs.msg import Bool
-
-        msg = Bool()
-        msg.data = bool(enabled)
-        with self._publisher_lock:
-            self._nav_start_publisher.publish(msg)
-
-        return {
-            "success": True,
-            "topic": settings.ROS_NAV_START_TOPIC,
-            "data": bool(enabled),
-        }
+        result = publish_bool_message(
+            node=self._node,
+            publisher=self._nav_start_publisher,
+            lock=self._publisher_lock,
+            topic=settings.ROS_NAV_START_TOPIC,
+            value=enabled,
+            not_ready_message="ROS2 nav_start 发布器未就绪",
+        )
+        # Protect both sides of the false -> goal -> true hand-off.  The old
+        # run can acknowledge `canceled` while publish_goal_xyz_yaw is still
+        # publishing the new goal, i.e. before nav_start=true is sent.
+        # Explicit stop/E-stop routes release their owner directly.
+        self._navigation_idle_release_blocked_until = (
+            time.monotonic() + NAV_START_IDLE_RELEASE_GRACE_S
+        )
+        return result
 
     def publish_zero_cmd_vel(self, publish_count: int = 10, interval_s: float = 0.03) -> dict[str, Any]:
-        if self._node is None or self._cmd_vel_publisher is None:
-            raise RuntimeError("ROS2 cmd_vel 发布器未就绪")
-
-        from geometry_msgs.msg import Twist
-
-        count = max(1, int(publish_count))
-        interval = max(0.0, float(interval_s))
-        msg = Twist()
-        with self._publisher_lock:
-            for _ in range(count):
-                self._cmd_vel_publisher.publish(msg)
-                if interval > 0:
-                    time.sleep(interval)
-
-        return {
-            "success": True,
-            "topic": "/cmd_vel",
-            "publish_count": count,
-            "linear": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "angular": {"x": 0.0, "y": 0.0, "z": 0.0},
-        }
+        return publish_zero_cmd_vel_message(
+            node=self._node,
+            publisher=self._cmd_vel_publisher,
+            lock=self._publisher_lock,
+            publish_count=publish_count,
+            interval_s=interval_s,
+        )
 
     def publish_goal_xyz_yaw(self, waypoint: dict[str, Any]) -> dict[str, Any]:
-        if self._node is None:
-            raise RuntimeError("ROS2 导航节点未就绪")
-        if self._goal_xyz_publisher is None:
-            raise RuntimeError("ROS2 clicked_point 发布器未就绪")
-        if self._goal_yaw_publisher is None:
-            raise RuntimeError("ROS2 goal_yaw 发布器未就绪")
-
-        from geometry_msgs.msg import PointStamped
-        from std_msgs.msg import Float64
-
-        yaw = float(waypoint.get("yaw", 0.0))
-
-        yaw_msg = Float64()
-        yaw_msg.data = yaw
-
-        point_msg = PointStamped()
-        point_msg.header.stamp = self._node.get_clock().now().to_msg()
-        point_msg.header.frame_id = str(waypoint.get("frame_id") or settings.ROS_NAV_FRAME_ID)
-        point_msg.point.x = float(waypoint["x"])
-        point_msg.point.y = float(waypoint["y"])
-        original_z = float(waypoint.get("z", 0.0))
-        point_msg.point.z = planner_goal_z(original_z)
-
-        publish_count = 0
-        for index in range(GOAL_PUBLISH_COUNT):
-            point_msg.header.stamp = self._node.get_clock().now().to_msg()
-            with self._publisher_lock:
-                self._goal_yaw_publisher.publish(yaw_msg)
-                self._goal_xyz_publisher.publish(point_msg)
-            publish_count += 1
-            if index < GOAL_PUBLISH_COUNT - 1:
-                time.sleep(GOAL_PUBLISH_INTERVAL_S)
-
-        return {
-            "success": True,
-            "xyz_topic": settings.ROS_NAV_GOAL_XYZ_TOPIC,
-            "yaw_topic": settings.ROS_NAV_GOAL_YAW_TOPIC,
-            "publish_count": publish_count,
-            "waypoint_id": waypoint.get("id"),
-            "x": point_msg.point.x,
-            "y": point_msg.point.y,
-            "z": point_msg.point.z,
-            "ground_z": original_z,
-            "planner_goal_z": point_msg.point.z,
-            "planner_goal_z_offset_m": float(settings.ROS_NAV_GOAL_Z_SEARCH_OFFSET_M),
-            "yaw": yaw,
-            "frame_id": point_msg.header.frame_id,
-        }
+        return publish_goal_xyz_yaw_message(
+            node=self._node,
+            xyz_publisher=self._goal_xyz_publisher,
+            yaw_publisher=self._goal_yaw_publisher,
+            lock=self._publisher_lock,
+            waypoint=waypoint,
+            frame_id=settings.ROS_NAV_FRAME_ID,
+            xyz_topic=settings.ROS_NAV_GOAL_XYZ_TOPIC,
+            yaw_topic=settings.ROS_NAV_GOAL_YAW_TOPIC,
+            publish_count=GOAL_PUBLISH_COUNT,
+            publish_interval_s=GOAL_PUBLISH_INTERVAL_S,
+            planner_goal_z=planner_goal_z,
+            planner_goal_z_offset_m=float(settings.ROS_NAV_GOAL_Z_SEARCH_OFFSET_M),
+        )
 
     def publish_emergency_stop(self) -> dict[str, Any]:
-        if self._node is None or self._estop_publisher is None:
-            raise RuntimeError("ROS2 急停发布器未就绪")
-
-        from std_msgs.msg import Bool
-
-        msg = Bool()
-        msg.data = True
-        with self._publisher_lock:
-            self._estop_publisher.publish(msg)
-
-        return {
-            "success": True,
-            "topic": settings.ROS_NAV_STOP_TOPIC,
-        }
+        result = publish_bool_message(
+            node=self._node,
+            publisher=self._estop_publisher,
+            lock=self._publisher_lock,
+            topic=settings.ROS_NAV_STOP_TOPIC,
+            value=True,
+            not_ready_message="ROS2 急停发布器未就绪",
+        )
+        result.pop("data", None)
+        return result
 
     def get_current_robot_pose(self) -> dict[str, Any] | None:
         if self._use_tf_pose():
@@ -601,35 +411,22 @@ class RosNavBridge:
         if not subscriber_status["ready"]:
             raise RuntimeError(subscriber_status["message"])
 
-        # Euler ZYX -> quaternion
-        cr = math.cos(float(roll) / 2.0)
-        sr = math.sin(float(roll) / 2.0)
-        cp = math.cos(float(pitch) / 2.0)
-        sp = math.sin(float(pitch) / 2.0)
-        cy = math.cos(float(yaw) / 2.0)
-        sy = math.sin(float(yaw) / 2.0)
         frame = frame_id or settings.ROS_NAV_FRAME_ID
-        publish_count = 0
-
-        for index in range(INITIAL_POSE_PUBLISH_COUNT):
-            msg = PoseWithCovarianceStamped()
-            msg.header.stamp = self._node.get_clock().now().to_msg()
-            msg.header.frame_id = frame
-
-            msg.pose.pose.position.x = float(x)
-            msg.pose.pose.position.y = float(y)
-            msg.pose.pose.position.z = float(z)
-            msg.pose.pose.orientation.w = cr * cp * cy + sr * sp * sy
-            msg.pose.pose.orientation.x = sr * cp * cy - cr * sp * sy
-            msg.pose.pose.orientation.y = cr * sp * cy + sr * cp * sy
-            msg.pose.pose.orientation.z = cr * cp * sy - sr * sp * cy
-
-            with self._publisher_lock:
-                self._initial_pose_publisher.publish(msg)
-            publish_count += 1
-
-            if index < INITIAL_POSE_PUBLISH_COUNT - 1:
-                time.sleep(INITIAL_POSE_PUBLISH_INTERVAL_S)
+        publish_count = publish_initial_pose_messages(
+            node=self._node,
+            publisher=self._initial_pose_publisher,
+            lock=self._publisher_lock,
+            pose_msg_cls=PoseWithCovarianceStamped,
+            x=x,
+            y=y,
+            z=z,
+            roll=roll,
+            pitch=pitch,
+            yaw=yaw,
+            frame_id=frame,
+            publish_count=INITIAL_POSE_PUBLISH_COUNT,
+            publish_interval_s=INITIAL_POSE_PUBLISH_INTERVAL_S,
+        )
 
         nav_logger.info(
             "已发布 initial_pose：topic={} count={} interval={:.3f}s x={:.3f} y={:.3f} z={:.3f} roll={:.3f} pitch={:.3f} yaw={:.3f} frame={}",
@@ -650,297 +447,29 @@ class RosNavBridge:
         }
 
     def get_initial_pose_subscription_counts(self) -> dict[str, int]:
-        if self._node is None or self._initial_pose_publisher is None:
-            raise RuntimeError("ROS2 initial_pose 发布器未就绪")
-
-        graph_count = 0
-        matched_count = 0
-
-        count_subscribers = getattr(self._node, "count_subscribers", None)
-        if callable(count_subscribers):
-            graph_count = int(count_subscribers(settings.ROS_NAV_INITIAL_POSE_TOPIC))
-
-        get_count = getattr(self._initial_pose_publisher, "get_subscription_count", None)
-        if callable(get_count):
-            matched_count = int(get_count())
-
-        if not callable(count_subscribers) and not callable(get_count):
-            raise RuntimeError("ROS2 initial_pose 发布器不支持订阅者计数")
-
-        return {
-            "graph_count": graph_count,
-            "matched_count": matched_count,
-            "subscriber_count": max(graph_count, matched_count),
-        }
+        return initial_pose_subscription_counts(
+            self._node,
+            self._initial_pose_publisher,
+            settings.ROS_NAV_INITIAL_POSE_TOPIC,
+        )
 
     def get_initial_pose_subscription_count(self) -> int:
         return self.get_initial_pose_subscription_counts()["subscriber_count"]
 
     def get_backend_initial_pose_publisher_count(self) -> int:
-        if self._node is None or self._initial_pose_publisher is None:
-            return 0
-
-        count_publishers = getattr(self._node, "count_publishers", None)
-        if callable(count_publishers):
-            return int(count_publishers(settings.ROS_NAV_INITIAL_POSE_TOPIC))
-        return 1
+        return backend_initial_pose_publisher_count(
+            self._node,
+            self._initial_pose_publisher,
+            settings.ROS_NAV_INITIAL_POSE_TOPIC,
+        )
 
     def wait_for_initial_pose_subscribers(self, timeout_s: float = INITIAL_POSE_SUBSCRIBER_WAIT_S) -> dict[str, Any]:
-        deadline = time.time() + max(0.1, float(timeout_s))
-        last_counts = {
-            "graph_count": 0,
-            "matched_count": 0,
-            "subscriber_count": 0,
-            "backend_publisher_count": 0,
-        }
-
-        while time.time() < deadline:
-            subscription_counts = self.get_initial_pose_subscription_counts()
-            backend_publisher_count = self.get_backend_initial_pose_publisher_count()
-            last_counts = {
-                **subscription_counts,
-                "backend_publisher_count": backend_publisher_count,
-            }
-            if last_counts["subscriber_count"] > 0 and backend_publisher_count > 0:
-                return {
-                    "ready": True,
-                    "topic": settings.ROS_NAV_INITIAL_POSE_TOPIC,
-                    **last_counts,
-                    "message": (
-                        f"{settings.ROS_NAV_INITIAL_POSE_TOPIC} 已发现订阅者 "
-                        f"{last_counts['subscriber_count']} 个"
-                        f"（graph={last_counts['graph_count']} matched={last_counts['matched_count']} "
-                        f"publisher={backend_publisher_count}）"
-                    ),
-                }
-            time.sleep(0.2)
-
-        if last_counts["backend_publisher_count"] <= 0:
-            message = (
-                f"后端 {settings.ROS_NAV_INITIAL_POSE_TOPIC} publisher 未进入 ROS graph"
-                f"（publisher={last_counts['backend_publisher_count']} "
-                f"graph={last_counts['graph_count']} matched={last_counts['matched_count']}），"
-                "请检查后端 ROS 导航桥是否已恢复"
-            )
-        else:
-            message = (
-                f"{settings.ROS_NAV_INITIAL_POSE_TOPIC} 暂无订阅者"
-                f"（graph={last_counts['graph_count']} matched={last_counts['matched_count']} "
-                f"publisher={last_counts['backend_publisher_count']}），"
-                "Super-LIO 还未准备接收 initialpose 或后端 ROS graph 与导航进程不一致"
-            )
-
-        return {
-            "ready": False,
-            "topic": settings.ROS_NAV_INITIAL_POSE_TOPIC,
-            **last_counts,
-            "message": message,
-        }
-
-    def _setup_cloud_subscription(self) -> None:
-        if self._node is None:
-            return
-        if not settings.ROS_NAV_MAPPING_CLOUD_FORWARD_ENABLED:
-            nav_logger.info("建图实时点云转发已禁用，跳过 {} 订阅", settings.ROS_NAV_MAPPING_CLOUD_TOPIC)
-            return
-        try:
-            from sensor_msgs.msg import PointCloud2
-        except Exception as exc:
-            nav_logger.warning("PointCloud2 不可用，跳过建图点云订阅：{}", exc)
-            return
-
-        from rclpy.qos import qos_profile_sensor_data
-
-        cloud_topic = settings.ROS_NAV_MAPPING_CLOUD_TOPIC
-        self.clear_accumulated_cloud()
-        self._cloud_subscription = self._node.create_subscription(
-            PointCloud2,
-            cloud_topic,
-            self._handle_cloud_message,
-            qos_profile_sensor_data,
+        return wait_for_initial_pose_subscriber_ready(
+            topic=settings.ROS_NAV_INITIAL_POSE_TOPIC,
+            timeout_s=timeout_s,
+            subscription_counts=self.get_initial_pose_subscription_counts,
+            backend_publisher_count=self.get_backend_initial_pose_publisher_count,
         )
-        nav_logger.info("ROS2 建图实时点云订阅已启动：topic={}", cloud_topic)
-
-    def reset_mapping_cloud_subscription(self) -> bool:
-        """Recreate the mapping cloud subscription after the mapping stack starts."""
-        with self._publisher_lock:
-            if self._node is None:
-                nav_logger.warning(
-                    "无法重建建图实时点云订阅：ROS2 节点未就绪，topic={}",
-                    settings.ROS_NAV_MAPPING_CLOUD_TOPIC,
-                )
-                return False
-
-            if self._cloud_subscription is not None:
-                try:
-                    self._node.destroy_subscription(self._cloud_subscription)
-                except Exception as exc:
-                    nav_logger.warning("销毁旧建图实时点云订阅失败：{}", exc)
-                self._cloud_subscription = None
-
-            self._setup_cloud_subscription()
-            return self._cloud_subscription is not None
-
-    def clear_accumulated_cloud(self) -> None:
-        self._accumulated_cloud = np.empty((0, 3), dtype=np.float32)
-        self._accumulated_cloud_voxels = {}
-        self._last_full_map_broadcast_at = 0.0
-        nav_logger.info("建图累积点云已清空")
-
-    def _handle_cloud_message(self, msg: Any) -> None:
-        now = time.monotonic()
-        if not self._mapping_cloud_broadcaster.has_connections():
-            has_voxel_cloud = bool(getattr(self, "_accumulated_cloud_voxels", None))
-            if len(self._accumulated_cloud) > 0 or has_voxel_cloud:
-                self.clear_accumulated_cloud()
-            return
-
-        if self._is_navigation_active():
-            has_voxel_cloud = bool(getattr(self, "_accumulated_cloud_voxels", None))
-            if len(self._accumulated_cloud) > 0 or has_voxel_cloud:
-                self.clear_accumulated_cloud()
-            return
-
-        if now - self._last_cloud_broadcast_at < MAPPING_CLOUD_LIVE_MIN_INTERVAL_S:
-            return
-        self._last_cloud_broadcast_at = now
-
-        cloud_pts = self._extract_cloud_xyz_np(msg, max_points=MAPPING_CLOUD_ACCUMULATE_MAX_INPUT_POINTS)
-        if cloud_pts is None or len(cloud_pts) == 0:
-            return
-
-        self._merge_mapping_cloud_voxels(cloud_pts)
-
-        live_pts = self._limit_cloud_points(cloud_pts, MAPPING_CLOUD_LIVE_MAX_BROADCAST_POINTS)
-        if live_pts is None or len(live_pts) == 0:
-            return
-
-        payload: dict[str, Any] = {
-            "live_points": live_pts.tolist(),
-            "timestamp": time.time(),
-        }
-
-        if now - self._last_full_map_broadcast_at >= MAPPING_CLOUD_BROADCAST_MIN_INTERVAL_S:
-            self._last_full_map_broadcast_at = now
-            accumulated_preview = self._mapping_cloud_voxel_preview()
-            if len(accumulated_preview) > 0:
-                accumulated_points = accumulated_preview.tolist()
-                payload["accumulated_points"] = accumulated_points
-                payload["points"] = accumulated_points
-
-        self._submit_broadcast("nav.mapping_cloud", payload)
-
-    @staticmethod
-    def _is_navigation_active() -> bool:
-        try:
-            nav_status = get_nav_state().get("navigation_status", {})
-            status = str(nav_status.get("status") or "").strip().lower()
-        except Exception:
-            return False
-        return status == "navigating"
-
-    @staticmethod
-    def _limit_cloud_points(points: np.ndarray, max_points: int) -> np.ndarray:
-        if max_points <= 0 or len(points) <= max_points:
-            return points
-        step = max(1, math.ceil(len(points) / max_points))
-        return points[::step][:max_points]
-
-    def _merge_mapping_cloud_voxels(self, points: np.ndarray) -> None:
-        if len(points) == 0:
-            return
-        if not hasattr(self, "_accumulated_cloud_voxels"):
-            self._accumulated_cloud_voxels = {}
-
-        voxel_size = MAPPING_CLOUD_ACCUMULATED_VOXEL_SIZE_M
-        keys = np.floor(points / voxel_size).astype(np.int32)
-        for key, point in zip(keys, points, strict=False):
-            self._accumulated_cloud_voxels[(int(key[0]), int(key[1]), int(key[2]))] = (
-                float(point[0]),
-                float(point[1]),
-                float(point[2]),
-            )
-
-    def _mapping_cloud_voxel_preview(self) -> np.ndarray:
-        if not hasattr(self, "_accumulated_cloud_voxels") or not self._accumulated_cloud_voxels:
-            return np.empty((0, 3), dtype=np.float32)
-        points = np.fromiter(
-            (coord for point in self._accumulated_cloud_voxels.values() for coord in point),
-            dtype=np.float32,
-        ).reshape((-1, 3))
-        return self._limit_cloud_points(points, MAPPING_CLOUD_ACCUMULATED_MAX_BROADCAST_POINTS)
-
-    @staticmethod
-    def _voxel_downsample(points: np.ndarray, voxel_size: float) -> np.ndarray:
-        if len(points) == 0:
-            return points
-        keys = np.floor(points / voxel_size).astype(np.int32)
-        _, unique_indices = np.unique(keys, axis=0, return_index=True)
-        return points[np.sort(unique_indices)]
-
-    @staticmethod
-    def _extract_cloud_xyz_np(msg: Any, max_points: int | None = None) -> np.ndarray | None:
-        import struct as _struct
-        try:
-            point_step: int = msg.point_step
-            n_points: int = msg.width * msg.height
-            if n_points == 0 or point_step < 12:
-                return None
-
-            fields = {f.name: f.offset for f in msg.fields}
-            if not all(k in fields for k in ("x", "y", "z")):
-                return None
-
-            x_off, y_off, z_off = fields["x"], fields["y"], fields["z"]
-            raw = bytes(msg.data)
-            step = 1 if max_points is None or max_points <= 0 else max(1, math.ceil(n_points / max_points))
-            result: list[list[float]] = []
-            for i in range(0, n_points, step):
-                base = i * point_step
-                x = _struct.unpack_from("<f", raw, base + x_off)[0]
-                y = _struct.unpack_from("<f", raw, base + y_off)[0]
-                z = _struct.unpack_from("<f", raw, base + z_off)[0]
-                if math.isnan(x) or math.isnan(y) or math.isnan(z):
-                    continue
-                if math.isinf(x) or math.isinf(y) or math.isinf(z):
-                    continue
-                result.append([x, y, z])
-            return np.array(result, dtype=np.float32) if result else None
-        except Exception as exc:
-            nav_logger.warning("点云消息解析失败：{}", exc)
-            return None
-
-    @staticmethod
-    def _extract_cloud_xyz(msg: Any, max_points: int = 1500) -> list[list[float]]:
-        import struct as _struct
-        try:
-            point_step: int = msg.point_step
-            n_points: int = msg.width * msg.height
-            if n_points == 0 or point_step < 12:
-                return []
-
-            fields = {f.name: f.offset for f in msg.fields}
-            if not all(k in fields for k in ("x", "y", "z")):
-                return []
-
-            x_off, y_off, z_off = fields["x"], fields["y"], fields["z"]
-            raw = bytes(msg.data)
-            step = max(1, n_points // max_points)
-            result: list[list[float]] = []
-            for i in range(0, n_points, step):
-                base = i * point_step
-                x = _struct.unpack_from("<f", raw, base + x_off)[0]
-                y = _struct.unpack_from("<f", raw, base + y_off)[0]
-                z = _struct.unpack_from("<f", raw, base + z_off)[0]
-                if math.isnan(x) or math.isnan(y) or math.isnan(z):
-                    continue
-                if math.isinf(x) or math.isinf(y) or math.isinf(z):
-                    continue
-                result.append([round(x, 3), round(y, 3), round(z, 3)])
-            return result
-        except Exception as exc:
-            nav_logger.warning("点云消息解析失败：{}", exc)
-            return []
 
     def _setup_global_path_subscription(self, path_cls: Any) -> None:
         if self._node is None:
@@ -988,25 +517,9 @@ class RosNavBridge:
         if self._should_broadcast_global_path(path):
             self._submit_broadcast("nav.global_path", path)
 
-    def _global_path_signature(self, path: dict[str, Any]) -> tuple[Any, ...]:
-        points = path.get("points") or []
-        return (
-            path.get("frame_id"),
-            len(points),
-            tuple(
-                (
-                    round(float(point.get("x", 0.0)), 3),
-                    round(float(point.get("y", 0.0)), 3),
-                    round(float(point.get("z", 0.0)), 3),
-                )
-                for point in points
-                if isinstance(point, dict)
-            ),
-        )
-
     def _should_broadcast_global_path(self, path: dict[str, Any]) -> bool:
         now = time.monotonic()
-        signature = self._global_path_signature(path)
+        signature = global_path_signature(path)
         last_signature = getattr(self, "_last_global_path_signature", None)
         last_broadcast_at = float(getattr(self, "_last_global_path_broadcast_at", 0.0))
 
@@ -1041,10 +554,18 @@ class RosNavBridge:
         self._release_navigation_control_on_terminal_status(nav_status)
         self._submit_broadcast("nav.navigation_status", updated_status)
 
-    @staticmethod
-    def _release_navigation_control_on_terminal_status(nav_status: dict[str, Any]) -> None:
+    def _release_navigation_control_on_terminal_status(self, nav_status: dict[str, Any]) -> None:
         status = str(nav_status.get("status") or "").strip().lower()
         if status not in {"reached", "idle", "error", "estop"}:
+            return
+        if (
+            status == "idle"
+            and time.monotonic()
+            < float(getattr(self, "_navigation_idle_release_blocked_until", 0.0))
+        ):
+            nav_logger.info(
+                "忽略新导航启动窗口内的旧任务 idle 回执，保留 NAVIGATION 控制权"
+            )
             return
         try:
             from .nav_auto_track_coordinator import get_nav_auto_track_coordinator
@@ -1056,85 +577,20 @@ class RosNavBridge:
             nav_logger.debug("释放导航控制权失败：{}", exc)
 
     def _normalize_nav_status(self, payload: dict[str, Any]) -> dict[str, Any]:
-        raw_status = str(payload.get("status") or "").strip().lower()
-        status_map = {
-            "accepted": "navigating",
-            "moving": "navigating",
-            "reached": "reached",
-            "failed": "error",
-            "canceled": "idle",
-            "estop": "estop",
-        }
-        mapped_status = status_map.get(raw_status)
-        if mapped_status is None:
-            mapped_status = "error"
-            nav_logger.warning("收到未知 nav_status：{}", raw_status or "<empty>")
-
-        interrupted_navigation = None
-        if raw_status == "canceled":
-            interrupted_navigation = self._auto_track_interrupted_navigation()
-            if interrupted_navigation is not None:
-                mapped_status = "paused"
-
-        def _to_optional_float(value: Any) -> float | None:
-            if value in (None, ""):
-                return None
+        def current_navigation_status() -> dict[str, Any]:
             try:
-                return float(value)
+                return get_nav_state().get("navigation_status") or {}
             except Exception:
-                return None
+                return {}
 
-        def _to_optional_str(value: Any) -> str | None:
-            if value in (None, ""):
-                return None
-            return str(value)
-
-        waypoint_id = _to_optional_str(payload.get("waypoint_id"))
-        target_waypoint_id = _to_optional_str(payload.get("target_waypoint_id")) or waypoint_id
-        target_name = _to_optional_str(payload.get("target_name") or payload.get("waypoint_name"))
-        message = _to_optional_str(payload.get("message")) or ""
-        error_code = _to_optional_str(payload.get("error_code"))
-        if interrupted_navigation is not None:
-            message = "导航任务已暂停，正在自动跟踪陌生人"
-            target_waypoint_id = interrupted_navigation.get("target_waypoint_id") or target_waypoint_id
-            target_name = interrupted_navigation.get("target_name") or target_name
-        if mapped_status == "error":
-            diagnosis = self._diagnose_navigation_failure()
-            if diagnosis is not None:
-                message = str(diagnosis["message"])
-                error_code = str(diagnosis["error_code"])
-
-        timestamp_value = _to_optional_float(payload.get("timestamp"))
-        timestamp = timestamp_value if timestamp_value is not None else time.time()
-
-        payload_task_id = _to_optional_str(payload.get("task_id"))
-        if payload_task_id is None and mapped_status in {"navigating", "paused"}:
-            try:
-                current_nav_status = get_nav_state().get("navigation_status") or {}
-                current_task_id = _to_optional_str(current_nav_status.get("task_id"))
-                current_status = str(current_nav_status.get("status") or "").strip().lower()
-                if current_task_id and current_status in {"navigating", "paused"}:
-                    payload_task_id = current_task_id
-            except Exception:
-                payload_task_id = None
-
-        return {
-            "status": mapped_status,
-            "target_waypoint_id": target_waypoint_id,
-            "target_name": target_name,
-            "message": message,
-            "timestamp": timestamp,
-            "ros_status": raw_status or None,
-            "task_id": (
-                interrupted_navigation.get("task_id")
-                if interrupted_navigation is not None
-                else payload_task_id
-            ),
-            "waypoint_id": waypoint_id,
-            "distance_to_goal": _to_optional_float(payload.get("distance_to_goal")),
-            "error_code": error_code,
-            "source": settings.ROS_NAV_STATUS_TOPIC,
-        }
+        return normalize_nav_status(
+            payload,
+            status_topic=settings.ROS_NAV_STATUS_TOPIC,
+            current_navigation_status=current_navigation_status,
+            diagnose_navigation_failure=self._diagnose_navigation_failure,
+            interrupted_navigation=self._auto_track_interrupted_navigation,
+            warn_unknown_status=lambda raw_status: nav_logger.warning("收到未知 nav_status：{}", raw_status),
+        )
 
     @staticmethod
     def _auto_track_interrupted_navigation() -> dict[str, str | None] | None:
@@ -1166,52 +622,19 @@ class RosNavBridge:
             return None
 
     def _extract_global_path(self, msg: Any) -> dict[str, Any]:
-        poses = getattr(msg, "poses", []) or []
-        points: list[dict[str, float]] = []
-        for pose_stamped in poses:
-            pose = getattr(pose_stamped, "pose", None)
-            position = getattr(pose, "position", None)
-            if position is None:
-                continue
-            points.append(
-                {
-                    "x": float(position.x),
-                    "y": float(position.y),
-                    "z": float(getattr(position, "z", 0.0)),
-                }
-            )
-
-        return {
-            "frame_id": _header_frame_id(msg),
-            "timestamp": _header_timestamp(msg),
-            "points": points,
-        }
+        return extract_global_path(msg, settings.ROS_NAV_FRAME_ID)
 
     def _use_tf_pose(self) -> bool:
-        return settings.ROS_NAV_POSE_TYPE.strip().lower() in (
-            "tf",
-            "tf2",
-            "transform",
-            "transformstamped",
-        )
+        return use_tf_pose(settings.ROS_NAV_POSE_TYPE)
 
     def _tf_source(self) -> str:
-        return f"tf:{settings.ROS_NAV_FRAME_ID}->{settings.ROS_NAV_BASE_FRAME_ID}"
+        return tf_source(settings.ROS_NAV_FRAME_ID, settings.ROS_NAV_BASE_FRAME_ID)
 
     def _tf_source_for(self, source_frame: str) -> str:
-        return f"tf:{settings.ROS_NAV_FRAME_ID}->{source_frame}"
+        return tf_source(settings.ROS_NAV_FRAME_ID, source_frame)
 
     def _base_frame_candidates(self) -> list[str]:
-        configured = [
-            item.strip()
-            for item in str(settings.ROS_NAV_BASE_FRAME_ID).split(",")
-            if item.strip()
-        ]
-        candidates: list[str] = []
-        for frame in [*configured, "base_footprint", "base_link"]:
-            if frame and frame not in candidates:
-                candidates.append(frame)
-        return candidates
+        return base_frame_candidates(settings.ROS_NAV_BASE_FRAME_ID)
 
     def _setup_tf_listener(self) -> None:
         try:
@@ -1289,51 +712,22 @@ class RosNavBridge:
         )
 
     def _lookup_tf_pose(self) -> dict[str, Any]:
-        if self._tf_buffer is None or self._rclpy is None:
-            raise RuntimeError("TF buffer 未初始化")
-
         from rclpy.time import Time
 
-        errors: list[str] = []
-        transform_stamped = None
-        source_frame = ""
-        for candidate in self._base_frame_candidates():
-            try:
-                transform_stamped = self._tf_buffer.lookup_transform(
-                    settings.ROS_NAV_FRAME_ID,
-                    candidate,
-                    Time(),
-                )
-                source_frame = candidate
-                break
-            except Exception as exc:
-                errors.append(f"{candidate}: {exc}")
-
-        if transform_stamped is None:
-            raise RuntimeError("; ".join(errors) or "没有可用 base frame")
-
-        transform = transform_stamped.transform
-        translation = transform.translation
-        rotation = transform.rotation
-        header = transform_stamped.header
-        received_at = time.time()
-
-        return {
-            "x": float(translation.x),
-            "y": float(translation.y),
-            "z": float(translation.z),
-            "yaw": quaternion_to_yaw(
-                float(rotation.x),
-                float(rotation.y),
-                float(rotation.z),
-                float(rotation.w),
-            ),
-            "frame_id": settings.ROS_NAV_FRAME_ID,
-            "source": self._tf_source_for(source_frame),
-            "source_frame": source_frame,
-            "timestamp": received_at,
-            "ros_timestamp": _stamp_to_seconds(header.stamp),
-        }
+        pose = lookup_tf_pose(
+            tf_buffer=self._tf_buffer,
+            rclpy_time_cls=Time,
+            target_frame=settings.ROS_NAV_FRAME_ID,
+            source_frames=self._base_frame_candidates(),
+        )
+        ros_timestamp = float(pose.get("ros_timestamp") or 0.0)
+        max_age_seconds = max(float(settings.ROS_NAV_TF_MAX_AGE_SECONDS), 0.0)
+        tf_age = time.time() - ros_timestamp
+        if ros_timestamp <= 0.0 or tf_age > max_age_seconds:
+            raise RuntimeError(
+                f"TF 时间戳已过期：age={tf_age:.3f}s，limit={max_age_seconds:.3f}s"
+            )
+        return pose
 
     def _resolve_msg_type(
         self,
@@ -1342,16 +736,13 @@ class RosNavBridge:
         pose_stamped_cls: Any,
         odometry_cls: Any,
     ) -> Any:
-        normalized = pose_type.strip().lower()
-        if normalized in ("posewithcovariancestamped", "geometry_msgs/msg/posewithcovariancestamped"):
-            return pose_with_covariance_cls
-        if normalized in ("posestamped", "geometry_msgs/msg/posestamped"):
-            return pose_stamped_cls
-        if normalized in ("odometry", "nav_msgs/msg/odometry"):
-            return odometry_cls
-        if self._use_tf_pose():
-            return None
-        raise ValueError(f"不支持的 ROS_NAV_POSE_TYPE: {pose_type}")
+        return resolve_pose_msg_type(
+            pose_type,
+            pose_with_covariance_cls,
+            pose_stamped_cls,
+            odometry_cls,
+            use_tf_pose=self._use_tf_pose(),
+        )
 
     def _handle_pose_message(self, msg: Any) -> None:
         try:
@@ -1360,7 +751,7 @@ class RosNavBridge:
             update_localization_status(
                 {
                     "status": "error",
-                    "frame_id": _header_frame_id(msg),
+                    "frame_id": header_frame_id(msg, settings.ROS_NAV_FRAME_ID),
                     "source": settings.ROS_NAV_POSE_TOPIC,
                     "message": f"位姿消息解析失败: {exc}",
                 }
@@ -1390,33 +781,12 @@ class RosNavBridge:
         self._broadcast_latest_if_needed()
 
     def _extract_pose(self, msg: Any) -> dict[str, Any]:
-        pose_type = settings.ROS_NAV_POSE_TYPE.strip().lower()
-        if "odometry" in pose_type or hasattr(msg, "child_frame_id"):
-            pose = msg.pose.pose
-        elif hasattr(msg, "pose") and hasattr(msg.pose, "pose"):
-            pose = msg.pose.pose
-        else:
-            pose = msg.pose
-
-        position = pose.position
-        orientation = pose.orientation
-        frame_id = _header_frame_id(msg)
-
-        return {
-            "x": float(position.x),
-            "y": float(position.y),
-            "z": float(position.z),
-            "yaw": quaternion_to_yaw(
-                float(orientation.x),
-                float(orientation.y),
-                float(orientation.z),
-                float(orientation.w),
-            ),
-            "frame_id": frame_id,
-            "source": settings.ROS_NAV_POSE_TOPIC,
-            "timestamp": time.time(),
-            "ros_timestamp": _header_timestamp(msg),
-        }
+        return extract_pose(
+            msg,
+            pose_type=settings.ROS_NAV_POSE_TYPE,
+            pose_topic=settings.ROS_NAV_POSE_TOPIC,
+            default_frame_id=settings.ROS_NAV_FRAME_ID,
+        )
 
     def _broadcast_latest_if_needed(self) -> None:
         now = time.monotonic()
@@ -1452,7 +822,7 @@ class RosNavBridge:
 
     def _broadcaster_for_event(self, event_type: str) -> EventBroadcaster:
         if event_type == "nav.mapping_cloud":
-            return self._mapping_cloud_broadcaster
+            return getattr(self, "_mapping_cloud_broadcaster", None) or self._broadcaster
         return self._broadcaster
 
     @staticmethod

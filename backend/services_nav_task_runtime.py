@@ -37,7 +37,7 @@ def clear_nav_task_runtime() -> dict[str, Any]:
     }
 
 
-def _materialize_step(_scene_id: str, step: dict[str, Any]) -> dict[str, Any] | None:
+def _materialize_step(_scene_id: str, step: dict[str, Any]) -> dict[str, Any]:
     step_type = str(step.get("type") or "").strip()
 
     if step_type == "navigate_waypoint":
@@ -63,7 +63,16 @@ def _materialize_step(_scene_id: str, step: dict[str, Any]) -> dict[str, Any] | 
             "frame_id": str(waypoint["frame_id"]),
         }
 
-    return None
+    if step_type == "posture_control":
+        posture = str(step.get("posture") or "").strip()
+        if posture not in {"stand", "crouch"}:
+            raise NavTaskError("posture_control 步骤 posture 必须是 stand 或 crouch")
+        return {
+            "type": "posture_control",
+            "posture": posture,
+        }
+
+    raise NavTaskError(f"不支持的任务步骤类型: {step_type or '<empty>'}")
 
 
 def materialize_nav_task_runtime(task_id: str) -> dict[str, Any]:
@@ -78,9 +87,8 @@ def materialize_nav_task_runtime(task_id: str) -> dict[str, Any]:
         raise FileNotFoundError(f"场景缺少 ground.pcd: {scene_id}")
 
     runtime_steps = [
-        materialized
+        _materialize_step(scene_id, step)
         for step in list(task.get("steps") or [])
-        if (materialized := _materialize_step(scene_id, step)) is not None
     ]
     if not runtime_steps:
         raise NavTaskError("任务 steps 不能为空")

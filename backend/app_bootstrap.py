@@ -21,6 +21,43 @@ config_logger = get_logger("核心配置")
 db_logger = get_logger("数据库")
 cleanup_logger = get_logger("启动清理")
 
+DEFAULT_ADMIN_PASSWORDS = {"admin123", "please_change_me"}
+DEFAULT_JWT_SECRETS = {"please_change_me", "please_change_me_to_a_random_string"}
+
+
+def is_default_admin_password(value: str) -> bool:
+    return value in DEFAULT_ADMIN_PASSWORDS
+
+
+def is_default_jwt_secret(value: str) -> bool:
+    return value in DEFAULT_JWT_SECRETS
+
+
+def evaluate_security_config(
+    *,
+    auth_enabled: bool,
+    admin_password: str,
+    jwt_secret: str,
+    cors_allow_origins: list[str],
+    cors_allow_credentials: bool,
+) -> tuple[str, str]:
+    issues: list[str] = []
+
+    if not auth_enabled:
+        issues.append("鉴权已关闭")
+    if is_default_admin_password(admin_password):
+        issues.append("管理员密码仍为默认值")
+    if is_default_jwt_secret(jwt_secret):
+        issues.append("JWT_SECRET 仍为默认值")
+    if "*" in cors_allow_origins:
+        issues.append("CORS 允许任意来源")
+    if cors_allow_credentials and "*" in cors_allow_origins:
+        issues.append("CORS 凭据模式不能搭配任意来源")
+
+    if issues:
+        return "degraded", "；".join(issues)
+    return "ready", "鉴权、默认凭据和 CORS 基础配置正常"
+
 
 async def prepare_bootstrap_state() -> tuple[StartupSummary, Path]:
     """
@@ -43,14 +80,23 @@ async def prepare_bootstrap_state() -> tuple[StartupSummary, Path]:
     )
     if not settings.AUTH_ENABLED:
         config_logger.warning("鉴权已关闭，仅限开发环境：AUTH_ENABLED=false")
-    if settings.AUTH_ADMIN_PASSWORD == "please_change_me":
+    if is_default_admin_password(settings.AUTH_ADMIN_PASSWORD):
         config_logger.warning("AUTH_ADMIN_PASSWORD 仍为默认值，生产环境必须修改")
-    if settings.JWT_SECRET == "please_change_me":
+    if is_default_jwt_secret(settings.JWT_SECRET):
         config_logger.warning("JWT_SECRET 仍为默认值，生产环境必须修改")
         if settings.AUTH_ENABLED:
             config_logger.warning("AUTH_ENABLED=true 且 JWT_SECRET 为默认值，这属于高风险配置！")
 
     startup_summary = StartupSummary()
+    security_status, security_detail = evaluate_security_config(
+        auth_enabled=settings.AUTH_ENABLED,
+        admin_password=settings.AUTH_ADMIN_PASSWORD,
+        jwt_secret=settings.JWT_SECRET,
+        cors_allow_origins=settings.CORS_ALLOW_ORIGINS,
+        cors_allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
+    )
+    startup_summary.set("安全配置", security_status, security_detail)
+
     await init_db()
     db_logger.info("数据库初始化完成")
     startup_summary.set("数据库", "ready", "数据库连接可用")

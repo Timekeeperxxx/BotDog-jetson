@@ -32,6 +32,27 @@ if TYPE_CHECKING:
 TOPIC_SPORT_STATE = "rt/lf/sportmodestate"
 TOPIC_LOW_STATE = "rt/lowstate"
 
+# Small raw-state snapshots used by the control diagnostic endpoint. DDS
+# callbacks replace these dictionaries atomically.
+_latest_sport_diagnostic: Optional[dict] = None
+_latest_low_state_diagnostic: Optional[dict] = None
+
+
+def get_unitree_telemetry_diagnostics() -> dict:
+    """Return what the B2 itself most recently reported."""
+    now = time.time()
+    sport = dict(_latest_sport_diagnostic) if _latest_sport_diagnostic else None
+    low_state = (
+        dict(_latest_low_state_diagnostic)
+        if _latest_low_state_diagnostic
+        else None
+    )
+    if sport is not None:
+        sport["age_s"] = max(0.0, now - sport.pop("_received_at"))
+    if low_state is not None:
+        low_state["age_s"] = max(0.0, now - low_state.pop("_received_at"))
+    return {"sport": sport, "low_state": low_state}
+
 
 def _extract_battery_from_low_state(msg: object) -> Optional[BatteryDTO]:
     """从 Unitree LowState_ 中提取电压和 BMS SOC。"""
@@ -70,6 +91,8 @@ class UnitreeTelemetryWorker:
 
     async def start(self, stop_event: asyncio.Event) -> None:
         """启动遥测 Worker。"""
+        subscriber = None
+        low_state_subscriber = None
         try:
             from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
             from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_, SportModeState_
@@ -85,7 +108,6 @@ class UnitreeTelemetryWorker:
             # 创建订阅者（含重试逻辑）
             # UnitreeB2Adapter 在后台线程同时初始化 DDS，两者并发时 Topic 创建会失败。
             # 通过重试 + 等待解决竞态：B2Adapter 初始化约需 5~10s，最多等 15s。
-            subscriber = None
             for _retry in range(5):
                 try:
                     subscriber = ChannelSubscriber(TOPIC_SPORT_STATE, SportModeState_)
@@ -103,6 +125,8 @@ class UnitreeTelemetryWorker:
             def on_state_message(msg: SportModeState_) -> None:
                 """DDS 回调：接收到新状态时更新缓存。SportModeState_ 是 dataclass，字段直接访问。"""
                 try:
+                    global _latest_sport_diagnostic
+                    received_at = time.time()
                     self._latest_state = {
                         # IMUState_ 也是 dataclass，rpy 是 float32[3] 数组
                         "roll":  float(msg.imu_state.rpy[0]),
@@ -119,7 +143,18 @@ class UnitreeTelemetryWorker:
                         "body_height": float(msg.body_height),
                         "mode": int(msg.mode),
                     }
-                    self._last_update_time = time.time()
+                    _latest_sport_diagnostic = {
+                        "error_code": int(getattr(msg, "error_code", 0)),
+                        "mode": int(msg.mode),
+                        "gait_type": int(getattr(msg, "gait_type", 0)),
+                        "progress": float(getattr(msg, "progress", 0.0)),
+                        "position": [float(v) for v in msg.position],
+                        "velocity": [float(v) for v in msg.velocity],
+                        "yaw_speed": float(getattr(msg, "yaw_speed", 0.0)),
+                        "body_height": float(msg.body_height),
+                        "_received_at": received_at,
+                    }
+                    self._last_update_time = received_at
                 except Exception as exc:
                     logger.debug(f"[UnitreeTelemetry] 状态解析异常: {exc}")
 
@@ -128,15 +163,28 @@ class UnitreeTelemetryWorker:
             def on_low_state_message(msg: LowState_) -> None:
                 """DDS 回调：接收低层状态中的 BMS 电池数据。"""
                 try:
+                    global _latest_low_state_diagnostic
                     battery = _extract_battery_from_low_state(msg)
-                    if battery is None:
-                        return
-                    self._latest_battery = battery
-                    self._last_battery_update_time = time.time()
+                    received_at = time.time()
+                    if battery is not None:
+                        self._latest_battery = battery
+                        self._last_battery_update_time = received_at
+                    motor_state = list(getattr(msg, "motor_state", []) or [])[:12]
+                    _latest_low_state_diagnostic = {
+                        "bit_flag": int(getattr(msg, "bit_flag", 0)),
+                        "level_flag": int(getattr(msg, "level_flag", 0)),
+                        "motor_modes": [
+                            int(getattr(motor, "mode", 0)) for motor in motor_state
+                        ],
+                        "max_abs_motor_dq": max(
+                            (abs(float(getattr(motor, "dq", 0.0))) for motor in motor_state),
+                            default=0.0,
+                        ),
+                        "_received_at": received_at,
+                    }
                 except Exception as exc:
                     logger.debug(f"[UnitreeTelemetry] 电池状态解析异常: {exc}")
 
-            low_state_subscriber = None
             try:
                 low_state_subscriber = ChannelSubscriber(TOPIC_LOW_STATE, LowState_)
                 low_state_subscriber.Init(on_low_state_message, 10)
@@ -212,6 +260,17 @@ class UnitreeTelemetryWorker:
             logger.exception(f"[UnitreeTelemetry] 初始化失败: {exc}，回退到模拟数据")
             await self._fallback_simulation(stop_event)
         finally:
+            for name, subscription in (
+                (TOPIC_LOW_STATE, low_state_subscriber),
+                (TOPIC_SPORT_STATE, subscriber),
+            ):
+                if subscription is None:
+                    continue
+                try:
+                    await asyncio.to_thread(subscription.Close)
+                except Exception as exc:
+                    logger.warning(f"[UnitreeTelemetry] 关闭 DDS 订阅失败: topic={name} err={exc}")
+            self._initialized = False
             logger.info("[UnitreeTelemetry] Worker 已停止")
 
     async def _fallback_simulation(self, stop_event: asyncio.Event) -> None:

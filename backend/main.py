@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from .config import settings
 from .database import get_session_factory
@@ -359,6 +360,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # 点云 JSON 数值重复度高，低压缩级别即可显著减少下载量，且 CPU 开销较低。
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=1)
 
     @app.middleware("http")
     async def access_log_middleware(request: Request, call_next):

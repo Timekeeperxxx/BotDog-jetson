@@ -391,12 +391,18 @@ class LocalizationRestartResponse(BaseModel):
     map_pcd: str | None = Field(default=None, description="当前场景 map.pcd 路径")
     ground_pcd: str | None = Field(default=None, description="当前场景 ground.pcd 路径")
     planground_pcd: str | None = Field(default=None, description="当前场景 footprint_fill.pcd 路径")
+    navigation_pid: int | None = Field(default=None, description="Navigation 统一 launch PID")
     livox_pid: int | None = Field(default=None, description="Livox 驱动 PID")
     relocation_pid: int | None = Field(default=None, description="Super-LIO PID")
     global_planner_pid: int | None = Field(default=None, description="global_planner PID")
     p2p_move_base_pid: int | None = Field(default=None, description="p2p_move_base PID")
+    scan_planner_pid: int | None = Field(default=None, description="SCAN planner PID")
+    scan_controller_pid: int | None = Field(default=None, description="SCAN controller PID")
+    dynamic_avoidance_pid: int | None = Field(default=None, description="动态避障监控 PID")
+    nav_status_monitor_pid: int | None = Field(default=None, description="导航状态监控 PID")
     cmd_vel_pid: int | None = Field(default=None, description="cmd_vel PID")
     cmd_vel_running: bool = Field(default=False, description="cmd_vel 脚本是否已拉起")
+    startup_ready: bool = Field(default=False, description="导航定位子进程是否已启动并可接收 initialpose")
     navigation_ready: bool = Field(default=False, description="导航链路是否已恢复")
     process_pids: dict[str, int | None] = Field(default_factory=dict, description="子进程 PID 摘要")
     health: dict[str, Any] | None = Field(default=None, description="导航定位健康检查结果")
@@ -434,13 +440,14 @@ class MappingControlResponse(BaseModel):
 
 class NavTaskStepDTO(BaseModel):
     type: str
-    waypointId: str
+    waypointId: str | None = None
     waypointName: str | None = None
     x: float | None = None
     y: float | None = None
     z: float | None = None
     yaw: float | None = None
     frameId: str | None = None
+    posture: str | None = None
 
 
 class NavTaskDefinitionDTO(BaseModel):
@@ -494,6 +501,8 @@ class NavWaypointGoToResponse(BaseModel):
     xyz_topic: str
     yaw_topic: str
     goal: NavWaypointGoToGoalDTO
+    stop_task_nav: NavTaskExecuteNavStartDTO | None = None
+    nav_start: NavTaskExecuteNavStartDTO | None = None
     cmd_vel: dict[str, Any] | None = None
     message: str | None = None
 

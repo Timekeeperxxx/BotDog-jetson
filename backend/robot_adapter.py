@@ -184,6 +184,7 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             vy: 横向平移速度（m/s），范围 0~0.4，默认 0.25
             vyaw: 偏航转速（rad/s），范围 0~0.8，默认 0.5
         """
+        import multiprocessing
         import queue
         import threading
         self._vx = vx
@@ -191,82 +192,74 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         self._vyaw = vyaw
         self._network_interface = network_interface
         self._sport_client = None
+        self._sidecar_conn = None
+        self._sidecar_process = None
+        self._sidecar_pid = None
         self._initialized = False
 
         # 姿态命令（stand/sit）执行期间置 True，防止被后续命令从队列挤掉
         self._busy_with_posture = False
+        self._motion_mode_enabled = False
+        self._last_motion_prepare_result = None
+        self._last_velocity = None
+        self._last_velocity_at = None
+        self._last_move_return = None
+        self._executed_velocity_count = 0
+        self._executed_nonzero_velocity_count = 0
+        self._last_nonzero_velocity = None
+        self._last_nonzero_velocity_at = None
+        self._last_worker_error = None
         # 当前姿态状态："stand"=站立/运动中，"sit"=蹲坐，"unknown"=未知
         # stop 命令只在 stand 状态下调用 BalanceStand()，sit 状态跳过，防止 watchdog 把蹲下的狗强制站起来
         self._current_posture: str = "unknown"
 
         # 启动单独的工作线程处理阻塞的 SDK 调用，防止耗尽 FastAPI 的线程池
         self._cmd_queue = queue.Queue(maxsize=1)
+        self._close_lock = threading.Lock()
+        self._closed = False
         self._worker_thread = threading.Thread(target=self._command_worker, daemon=True)
         self._worker_thread.start()
 
         try:
-            from unitree_sdk2py.core.channel import ChannelFactoryInitialize
-            from unitree_sdk2py.b2.sport.sport_client import SportClient
-            from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import MotionSwitcherClient
+            from .unitree_b2_sidecar import run_unitree_b2_sidecar
 
-            # 初始化 DDS 频道
-            # 正常情况：首次调用成功；已有实例时抛 "channel factory init error."（可忽略）
-            # 异常情况：DDS 端口被占用等导致 "create domain error"（致命，需中止）
-            try:
-                ChannelFactoryInitialize(0, network_interface)
-            except Exception as _dds_e:
-                err_msg = str(_dds_e).lower()
-                if "create domain error" in err_msg or "domain" in err_msg:
-                    # 真实的 DDS domain 初始化失败（通常是端口被占用或网卡不可用）
-                    raise RuntimeError(
-                        f"[UnitreeB2] CycloneDDS domain 初始化失败，"
-                        f"可能存在其他后端进程占用 DDS 端口，请先 pkill -f run_backend.py: {_dds_e}"
-                    )
-                # 其他异常视为"已由其他组件初始化"，安全跳过
-                control_logger.debug("CycloneDDS ChannelFactoryInitialize 已跳过：{}", _dds_e)
-
-            # Step 1: 通过 MotionSwitcher 切换到 AI 运控模式（必须在 SportClient 之前）
-            import time
-            msc = None
-            try:
-                msc = MotionSwitcherClient()
-                msc.SetTimeout(5.0)
-                msc.Init()
-
-                # 查询当前模式
-                code, data = msc.CheckMode()
-                current_mode = data.get("name", "unknown") if data else "unknown"
-                control_logger.info("当前运控模式：mode={}，code={}", current_mode, code)
-
-                # 如果不是 ai 模式，切换过去
-                if code == 0 and current_mode != "ai":
-                    control_logger.info("正在切换到 AI 运控模式")
-                    sel_code, _ = msc.SelectMode("ai")
-                    if sel_code == 0:
-                        control_logger.info("已切换到 ai 运控模式")
-                        time.sleep(2.0)  # 等待模式切换完成
-                    else:
-                        control_logger.warning("AI 运控模式切换失败，继续尝试初始化：code={}", sel_code)
-            except Exception as e:
-                control_logger.warning("MotionSwitcherClient 初始化失败，已跳过模式检查：{}", e)
-                # 继续尝试初始化 SportClient，因为有些情况下 SportClient 仍然可以工作
-                msc = None  # 确保 msc 为 None，避免后续使用
-
-            # Step 2: 初始化 SportClient
-            self._sport_client = SportClient()
-            self._sport_client.SetTimeout(1.5)  # RPC 超时：1.5s（原 5s，减少界面卡顿）
-            self._sport_client.Init()
+            context = multiprocessing.get_context("spawn")
+            parent_conn, child_conn = context.Pipe(duplex=True)
+            process = context.Process(
+                target=run_unitree_b2_sidecar,
+                args=(child_conn, network_interface, vx, vy, vyaw),
+                name="botdog-b2-sport-client",
+                daemon=True,
+            )
+            process.start()
+            child_conn.close()
+            self._sidecar_conn = parent_conn
+            self._sidecar_process = process
+            if not parent_conn.poll(12.0):
+                raise RuntimeError("Unitree B2 独立控制进程启动超时")
+            ready = parent_conn.recv()
+            if not ready.get("ready"):
+                raise RuntimeError(
+                    f"Unitree B2 独立控制进程初始化失败：{ready.get('error') or ready}"
+                )
+            self._sidecar_pid = ready.get("pid")
+            # Compatibility marker used by readiness diagnostics and tests.
+            self._sport_client = object()
 
             self._initialized = True
             control_logger.info(
-                "B2 控制适配器已就绪：网卡={}，vx={}，vyaw={}，未发送起立指令",
+                "B2 独立控制进程已就绪：pid={}，网卡={}，vx={}，vyaw={}，序列={}",
+                self._sidecar_pid,
                 network_interface,
                 vx,
                 vyaw,
+                ready.get("sequence"),
             )
-        except ImportError:
-            control_logger.error("unitree_sdk2_python 未安装：请运行 pip install unitree_sdk2_python")
         except Exception as e:
+            process = getattr(self, "_sidecar_process", None)
+            if process is not None and process.is_alive():
+                process.terminate()
+                process.join(timeout=1.0)
             control_logger.error("UnitreeB2Adapter 初始化失败：{}", e)
 
     def is_ready(self) -> bool:
@@ -274,23 +267,60 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         return self._initialized
 
     def close(self) -> None:
-        """关闭后台命令线程并释放当前适配器。"""
+        """Stop motion in the SDK worker, then release the adapter."""
         try:
             import queue
+            import threading
 
-            self._initialized = False
-            self._sport_client = None
-            try:
-                while not self._cmd_queue.empty():
-                    self._cmd_queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                self._cmd_queue.put_nowait("_QUIT_")
-            except queue.Full:
-                pass
-            if hasattr(self, "_worker_thread") and self._worker_thread.is_alive():
-                self._worker_thread.join(timeout=1.0)
+            close_lock = getattr(self, "_close_lock", None)
+            if close_lock is None:
+                close_lock = threading.Lock()
+                self._close_lock = close_lock
+
+            with close_lock:
+                if getattr(self, "_closed", False):
+                    return
+                self._closed = True
+                self._initialized = False
+
+                try:
+                    while not self._cmd_queue.empty():
+                        self._cmd_queue.get_nowait()
+                except queue.Empty:
+                    pass
+
+                worker = getattr(self, "_worker_thread", None)
+                if worker is not None and worker.is_alive():
+                    stopped = threading.Event()
+                    try:
+                        self._cmd_queue.put_nowait(("_STOP_AND_QUIT_", stopped))
+                    except queue.Full:
+                        control_logger.critical("UnitreeB2Adapter 关闭命令入队失败")
+                    else:
+                        if not stopped.wait(timeout=5.0):
+                            control_logger.critical("UnitreeB2Adapter 最终 StopMove 等待超时")
+                    worker.join(timeout=0.5)
+
+                worker_alive = worker is not None and worker.is_alive()
+                if worker_alive:
+                    control_logger.warning("UnitreeB2Adapter 工作线程仍在退出中")
+                else:
+                    self._sport_client = None
+
+                connection = getattr(self, "_sidecar_conn", None)
+                if connection is not None:
+                    try:
+                        connection.close()
+                    except OSError:
+                        pass
+                    self._sidecar_conn = None
+                process = getattr(self, "_sidecar_process", None)
+                if process is not None:
+                    process.join(timeout=1.0)
+                    if process.is_alive():
+                        process.terminate()
+                        process.join(timeout=1.0)
+
             control_logger.info("UnitreeB2Adapter 已关闭")
         except Exception as exc:  # noqa: BLE001
             control_logger.warning("UnitreeB2Adapter 关闭时异常：{}", exc)
@@ -303,16 +333,116 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                 cmd = self._cmd_queue.get()
                 if cmd == "_QUIT_":
                     break
+                if (
+                    isinstance(cmd, tuple)
+                    and len(cmd) == 2
+                    and cmd[0] == "_STOP_AND_QUIT_"
+                ):
+                    stopped = cmd[1]
+                    try:
+                        if getattr(self, "_sidecar_conn", None) is not None:
+                            self._execute_sidecar_command(("_STOP_AND_QUIT_",))
+                            control_logger.info("UnitreeB2Adapter 独立进程关闭前已执行最终 StopMove")
+                        else:
+                            client = self._sport_client
+                            if client is not None:
+                                ret = client.StopMove()
+                                if ret != 0:
+                                    client.Move(0.0, 0.0, 0.0)
+                                control_logger.info("UnitreeB2Adapter 关闭前已执行最终 StopMove")
+                    except Exception as exc:  # noqa: BLE001
+                        control_logger.critical("UnitreeB2Adapter 最终 StopMove 失败：{}", exc)
+                    finally:
+                        stopped.set()
+                    break
                 if not self._initialized or self._sport_client is None:
                     continue
 
                 client = self._sport_client
+
+                if getattr(self, "_sidecar_conn", None) is not None:
+                    sidecar_cmd = (
+                        ("_PREPARE_NAVIGATION_",)
+                        if isinstance(cmd, tuple) and cmd and cmd[0] == "_PREPARE_NAVIGATION_"
+                        else cmd
+                    )
+                    reply = self._execute_sidecar_command(sidecar_cmd)
+                    if isinstance(cmd, tuple) and cmd and cmd[0] == "_PREPARE_NAVIGATION_":
+                        _, completed, result = cmd
+                        try:
+                            if not reply.get("ok"):
+                                raise RuntimeError(reply.get("error") or str(reply))
+                            self._motion_mode_enabled = True
+                            self._last_motion_prepare_result = {
+                                "success": True,
+                                "sequence": reply.get("sequence", "isolated_dddmr_direct_move"),
+                                "sidecar_pid": self._sidecar_pid,
+                            }
+                            result.update(self._last_motion_prepare_result)
+                        except Exception as exc:  # noqa: BLE001
+                            self._motion_mode_enabled = False
+                            self._last_worker_error = str(exc)
+                            result.update({"success": False, "error": str(exc)})
+                        finally:
+                            self._busy_with_posture = False
+                            completed.set()
+                        continue
+                    self._record_sidecar_result(cmd, reply)
+                    continue
+
+                if (
+                    isinstance(cmd, tuple)
+                    and len(cmd) == 3
+                    and cmd[0] == "_PREPARE_NAVIGATION_"
+                ):
+                    _, completed, result = cmd
+                    try:
+                        import time
+
+                        # Keep an already-standing B2 in balance stand.  The old
+                        # dddmr bridge sends Move directly and never calls
+                        # SwitchMoveMode.  StandUp must not be repeated here: on
+                        # this B2 it returns 3104 and changes the reported mode
+                        # from 1 to 6.
+                        ret_stand = client.BalanceStand()
+                        control_logger.info(
+                            "UnitreeB2 导航前 BalanceStand（dddmr Move 序列）：ret={}",
+                            ret_stand,
+                        )
+                        time.sleep(1.0)
+
+                        self._motion_mode_enabled = True
+                        self._last_motion_prepare_result = {
+                            "success": True,
+                            "sequence": "dddmr_balance_move",
+                            "balance_stand_return": ret_stand,
+                        }
+                        result.update(self._last_motion_prepare_result)
+                    except Exception as exc:  # noqa: BLE001
+                        self._motion_mode_enabled = False
+                        self._last_worker_error = str(exc)
+                        result.update({"success": False, "error": str(exc)})
+                        control_logger.exception(
+                            "UnitreeB2 导航运动模式准备失败：{}", exc
+                        )
+                    finally:
+                        self._busy_with_posture = False
+                        completed.set()
+                    continue
                 
                 # 检查是否是速度命令（元组格式）
                 if isinstance(cmd, tuple) and len(cmd) == 4 and cmd[0] == "velocity":
                     _, vx, vy, vyaw = cmd
                     logger.debug(f"[UnitreeB2 Worker] 执行速度命令: vx={vx:.2f}, vy={vy:.2f}, vyaw={vyaw:.2f}")
-                    client.Move(vx, vy, vyaw)
+                    ret_move = client.Move(vx, vy, vyaw)
+                    self._last_velocity = (vx, vy, vyaw)
+                    self._last_velocity_at = __import__("time").monotonic()
+                    self._last_move_return = ret_move
+                    self._executed_velocity_count += 1
+                    if abs(vx) + abs(vy) + abs(vyaw) > 1e-4:
+                        self._executed_nonzero_velocity_count += 1
+                        self._last_nonzero_velocity = (vx, vy, vyaw)
+                        self._last_nonzero_velocity_at = self._last_velocity_at
                 else:
                     # 处理普通命令
                     logger.debug(f"[UnitreeB2 Worker] 执行命令: {cmd}")
@@ -331,14 +461,8 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                         client.Move(0.0, -self._vy, 0.0)
 
                     elif cmd == "stop":
-                        ret = client.StopMove()
-                        logger.debug(f"[UnitreeB2 Worker] StopMove ret={ret}")
-                        if ret != 0:
-                            client.Move(0.0, 0.0, 0.0)
-                            logger.debug(f"[UnitreeB2 Worker] StopMove失败，备用 Move(0,0,0)")
-                        # 只停止运动，不主动切换姿态。
-                        # 这样页面切换 / 控制松手时不会把机器狗从当前状态强制拉到站立。
-                        logger.debug("[UnitreeB2 Worker] stop：已停止运动，保持当前姿态不变")
+                        ret = client.Move(0.0, 0.0, 0.0)
+                        logger.debug(f"[UnitreeB2 Worker] soft stop Move(0,0,0) ret={ret}")
                     elif cmd == "stand":
                         self._busy_with_posture = True
                         try:
@@ -357,6 +481,7 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                             logger.error(f"[UnitreeB2 Worker] stand 失败: {e_stand}")
                         else:
                             self._current_posture = "stand"
+                            self._motion_mode_enabled = True
                         finally:
                             self._busy_with_posture = False
                     elif cmd == "sit":
@@ -371,13 +496,88 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                             # StandDown 物理过程长于 1.5s，经常超时返回 3104。但硬件已在执行蹲下
                             # 所以无论返回值是什么，都认为已进入坐下状态
                             self._current_posture = "sit"
+                            self._motion_mode_enabled = False
                         finally:
                             self._busy_with_posture = False
 
                 logger.debug(f"[UnitreeB2 Worker] 执行完成")
             except Exception as e:
                 self._busy_with_posture = False
+                self._last_worker_error = str(e)
                 logger.error(f"[UnitreeB2 Worker] 执行异常: {e}")
+
+    def _execute_sidecar_command(self, command) -> dict:
+        connection = self._sidecar_conn
+        process = self._sidecar_process
+        if connection is None or process is None or not process.is_alive():
+            raise RuntimeError("Unitree B2 独立控制进程未运行")
+        connection.send(command)
+        if not connection.poll(2.5):
+            raise RuntimeError(f"Unitree B2 独立控制进程响应超时：{command!r}")
+        reply = connection.recv()
+        if not isinstance(reply, dict):
+            raise RuntimeError(f"Unitree B2 独立控制进程响应无效：{reply!r}")
+        return reply
+
+    def _record_sidecar_result(self, command, reply: dict) -> None:
+        if not reply.get("ok"):
+            raise RuntimeError(reply.get("error") or str(reply))
+        if isinstance(command, tuple) and len(command) == 4 and command[0] == "velocity":
+            _, vx, vy, vyaw = command
+            self._last_velocity = (vx, vy, vyaw)
+            self._last_velocity_at = __import__("time").monotonic()
+            self._last_move_return = reply.get("return")
+            self._executed_velocity_count += 1
+            if abs(vx) + abs(vy) + abs(vyaw) > 1e-4:
+                self._executed_nonzero_velocity_count += 1
+                self._last_nonzero_velocity = (vx, vy, vyaw)
+                self._last_nonzero_velocity_at = self._last_velocity_at
+        elif command == "stand":
+            self._current_posture = "stand"
+            self._motion_mode_enabled = True
+            self._busy_with_posture = False
+        elif command == "sit":
+            self._current_posture = "sit"
+            self._motion_mode_enabled = False
+            self._busy_with_posture = False
+
+    async def prepare_navigation_motion(self) -> dict:
+        """Arm B2 walking mode in the SDK worker before accepting a nav goal."""
+        if not self._initialized or self._sport_client is None:
+            raise RuntimeError("UnitreeB2 适配器未就绪")
+        if self._motion_mode_enabled:
+            return self._last_motion_prepare_result or {"success": True}
+        if self._busy_with_posture:
+            raise RuntimeError("UnitreeB2 正在执行其他姿态命令")
+
+        import queue
+        import threading
+
+        self._busy_with_posture = True
+        try:
+            while not self._cmd_queue.empty():
+                self._cmd_queue.get_nowait()
+        except queue.Empty:
+            pass
+
+        completed = threading.Event()
+        result: dict = {}
+        try:
+            self._cmd_queue.put_nowait(("_PREPARE_NAVIGATION_", completed, result))
+        except queue.Full as exc:
+            self._busy_with_posture = False
+            raise RuntimeError("UnitreeB2 导航运动模式准备队列已满") from exc
+
+        finished = await asyncio.to_thread(completed.wait, 6.0)
+        if not finished:
+            self._busy_with_posture = False
+            raise RuntimeError("UnitreeB2 导航运动模式准备超时")
+        if not result.get("success"):
+            raise RuntimeError(
+                "UnitreeB2 导航运动模式准备失败："
+                f"{result.get('error') or result}"
+            )
+        return result
 
     async def send_command(self, cmd: str, *, vx: Optional[float] = None, vyaw: Optional[float] = None) -> None:
         """
