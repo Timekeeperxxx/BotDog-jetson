@@ -116,9 +116,21 @@ export function useNavWebSocket() {
         setState((prev) => {
           switch (navEvent.type) {
             case 'nav.global_path':
-              return { ...prev, globalPath: navEvent.data, lastMessageAt: Date.now() }
+              return {
+                ...prev,
+                globalPath: navEvent.data,
+                scanExecutionPath: null,
+                lastMessageAt: Date.now(),
+              }
             case 'nav.scan_execution_path':
-              return { ...prev, scanExecutionPath: navEvent.data, lastMessageAt: Date.now() }
+              return {
+                ...prev,
+                scanExecutionPath: {
+                  ...navEvent.data,
+                  received_at: Date.now() / 1000,
+                },
+                lastMessageAt: Date.now(),
+              }
             case 'nav.localization_status':
               return { ...prev, localizationStatus: navEvent.data, lastMessageAt: Date.now() }
             case 'nav.navigation_status':
