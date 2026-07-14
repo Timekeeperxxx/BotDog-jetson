@@ -6,6 +6,7 @@ import type {
   NavigationStatus,
   NavWebSocketEvent,
   RobotPose,
+  ScanExecutionPath,
 } from '../types/navState'
 
 const ROBOT_POSE_UI_INTERVAL_MS = 80
@@ -14,6 +15,7 @@ type NavWebSocketState = {
   connected: boolean
   robotPose: RobotPose | null
   globalPath: GlobalPath | null
+  scanExecutionPath: ScanExecutionPath | null
   localizationStatus: LocalizationStatus | null
   navigationStatus: NavigationStatus | null
   lastMessageAt: number | null
@@ -24,6 +26,7 @@ export function useNavWebSocket() {
     connected: false,
     robotPose: null,
     globalPath: null,
+    scanExecutionPath: null,
     localizationStatus: null,
     navigationStatus: null,
     lastMessageAt: null,
@@ -114,6 +117,8 @@ export function useNavWebSocket() {
           switch (navEvent.type) {
             case 'nav.global_path':
               return { ...prev, globalPath: navEvent.data, lastMessageAt: Date.now() }
+            case 'nav.scan_execution_path':
+              return { ...prev, scanExecutionPath: navEvent.data, lastMessageAt: Date.now() }
             case 'nav.localization_status':
               return { ...prev, localizationStatus: navEvent.data, lastMessageAt: Date.now() }
             case 'nav.navigation_status':
@@ -173,6 +178,7 @@ export function useNavWebSocket() {
   const setInitialState = useCallback((next: {
     robotPose?: RobotPose | null
     globalPath?: GlobalPath | null
+    scanExecutionPath?: ScanExecutionPath | null
     localizationStatus?: LocalizationStatus | null
     navigationStatus?: NavigationStatus | null
   }) => {
@@ -180,6 +186,7 @@ export function useNavWebSocket() {
       ...prev,
       robotPose: Object.prototype.hasOwnProperty.call(next, 'robotPose') ? next.robotPose ?? null : prev.robotPose,
       globalPath: Object.prototype.hasOwnProperty.call(next, 'globalPath') ? next.globalPath ?? null : prev.globalPath,
+      scanExecutionPath: Object.prototype.hasOwnProperty.call(next, 'scanExecutionPath') ? next.scanExecutionPath ?? null : prev.scanExecutionPath,
       localizationStatus: Object.prototype.hasOwnProperty.call(next, 'localizationStatus') ? next.localizationStatus ?? null : prev.localizationStatus,
       navigationStatus: Object.prototype.hasOwnProperty.call(next, 'navigationStatus') ? next.navigationStatus ?? null : prev.navigationStatus,
     }))
