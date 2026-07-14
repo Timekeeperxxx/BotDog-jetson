@@ -82,7 +82,14 @@ export function PcdMapDemoPage() {
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
   const { telemetry } = useBotDogWebSocket()
   const navWs = useNavWebSocket()
-  const { robotPose, globalPath, localizationStatus, navigationStatus, setInitialState } = navWs
+  const {
+    robotPose,
+    globalPath,
+    scanExecutionPath,
+    localizationStatus,
+    navigationStatus,
+    setInitialState,
+  } = navWs
   const relocationNotice = getRelocationNotice(relocationPrompt)
   const waypointModeNotice = addMode
     ? { title: '3D ground 标点', message: '在 3D 蓝色 ground.pcd 上按住并拖动确定朝向。' }
@@ -165,6 +172,7 @@ export function PcdMapDemoPage() {
     setInitialState({
       robotPose: null,
       globalPath: null,
+      scanExecutionPath: null,
       localizationStatus: {
         status: 'initializing',
         frame_id: 'map',
@@ -505,6 +513,7 @@ export function PcdMapDemoPage() {
   const {
     allLayers,
     displayedGlobalPath,
+    displayedScanExecutionPath,
     groundCenterHeight,
     mapOptions,
     pointCloudViewKey,
@@ -512,6 +521,7 @@ export function PcdMapDemoPage() {
     selectedSceneWaypoints,
   } = useNavPointCloudViewModel({
     globalPath,
+    scanExecutionPath,
     liveMappingCloudPoints,
     mappingActive,
     mappingCloudPoints,
@@ -624,6 +634,7 @@ export function PcdMapDemoPage() {
               centerHeight={groundCenterHeight}
               followRobot={followRobot}
               globalPath={displayedGlobalPath}
+              scanExecutionPath={displayedScanExecutionPath}
               layers={allLayers}
               mode={pointCloudMode}
               robotPose={robotPose}
@@ -725,6 +736,7 @@ export function PcdMapDemoPage() {
           canOperate={canOperate}
           estopSending={estopSending}
           globalPath={displayedGlobalPath}
+          scanExecutionPath={displayedScanExecutionPath}
           layers={allLayers}
           navigatingWaypointId={navigatingWaypointId}
           robotPose={robotPose}
