@@ -19,8 +19,17 @@ def test_nav_stop_task_publishes_nav_start_false_and_clears_state(monkeypatch):
     clear_calls: list[str] = []
     status_updates: list[dict[str, object]] = []
     publish_calls: list[bool] = []
+    task_publish_calls: list[bool] = []
 
     class DummyBridge:
+        def publish_navigation_task_start(self, enabled: bool = True) -> dict[str, object]:
+            task_publish_calls.append(enabled)
+            return {
+                "success": True,
+                "topic": "/nav_task_start",
+                "data": enabled,
+            }
+
         def publish_navigation_start(self, enabled: bool = True) -> dict[str, object]:
             publish_calls.append(enabled)
             assert enabled is False
@@ -62,7 +71,9 @@ def test_nav_stop_task_publishes_nav_start_false_and_clears_state(monkeypatch):
     assert result["topic"] == "/nav_start"
     assert result["data"] is False
     assert result["nav_start"]["data"] is False
+    assert result["task_start"]["data"] is False
     assert publish_calls == [False]
+    assert task_publish_calls == [False]
     assert clear_calls == ["clear"]
     assert status_updates
     assert status_updates[0]["status"] == "idle"
@@ -84,6 +95,9 @@ def test_nav_emergency_stop_soft_stops_without_killing_navigation(monkeypatch):
             return True
 
     class DummyBridge:
+        def publish_navigation_task_start(self, enabled: bool = True) -> dict[str, object]:
+            return {"success": True, "topic": "/nav_task_start", "data": enabled}
+
         def publish_navigation_start(self, enabled: bool = True) -> dict[str, object]:
             nav_start_calls.append(enabled)
             return {"success": True, "topic": "/nav_start", "data": enabled}
@@ -224,6 +238,9 @@ def test_control_emergency_stop_clamps_both_navigation_and_direct_adapter(monkey
             calls.append("owner_e_stop")
 
     class DummyBridge:
+        def publish_navigation_task_start(self, enabled: bool = True):
+            calls.append(("task_start", enabled))
+
         def publish_navigation_start(self, enabled: bool = True):
             calls.append(("nav_start", enabled))
 
@@ -252,6 +269,7 @@ def test_control_emergency_stop_clamps_both_navigation_and_direct_adapter(monkey
     assert ("clamp", True, "control_e_stop") in calls
     assert "owner_e_stop" in calls
     assert ("nav_start", False) in calls
+    assert ("task_start", False) in calls
     assert ("zero", 20, 0.02) in calls
     assert "stop_sender" in calls
     assert "force_stop" in calls

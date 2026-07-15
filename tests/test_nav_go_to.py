@@ -21,8 +21,18 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
     nav_status_updates: list[dict[str, object]] = []
     publish_order: list[str] = []
     nav_start_calls: list[bool] = []
+    task_start_calls: list[bool] = []
 
     class DummyBridge:
+        def publish_navigation_task_start(self, enabled: bool = True) -> dict[str, object]:
+            publish_order.append("task_start")
+            task_start_calls.append(enabled)
+            return {
+                "success": True,
+                "topic": "/nav_task_start",
+                "data": enabled,
+            }
+
         def publish_navigation_start(self, enabled: bool = True) -> dict[str, object]:
             publish_order.append("nav_start")
             nav_start_calls.append(enabled)
@@ -105,10 +115,12 @@ def test_nav_go_to_waypoint_uses_goal_xyz_and_goal_yaw(monkeypatch):
     assert result["yaw_topic"] == "goal_yaw"
     assert result["goal"]["waypoint_id"] == "wp_001"
     assert result["stop_task_nav"]["data"] is False
+    assert result["stop_task"]["data"] is False
     assert result["nav_start"]["data"] is True
     assert result["motion_prepare"]["switch_move_mode_return"] == 0
-    assert publish_order == ["nav_start", "goal", "nav_start"]
+    assert publish_order == ["task_start", "nav_start", "goal", "nav_start"]
     assert nav_start_calls == [False, True]
+    assert task_start_calls == [False]
     assert audit_messages
     assert "clicked_point_topic=/clicked_point" in audit_messages[0]
     assert "yaw_topic=goal_yaw" in audit_messages[0]

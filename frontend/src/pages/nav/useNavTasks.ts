@@ -264,7 +264,9 @@ export function useNavTasks({
           ? `AI跟踪=${result.auto_track.state || '已启动'}`
           : `AI跟踪=未启动(${result.auto_track.message || '服务未启用'})`
         : 'AI跟踪=未开启'
-      addLog(`已执行导航任务 ${task.name}，已发布 ${result.topic}=true，${autoTrackText}`)
+      addLog(
+        `已执行导航任务 ${task.name}，已发布 ${result.topic}=true、${result.task_start.topic}=true，${autoTrackText}`,
+      )
     } catch (error) {
       addLog(error instanceof Error ? error.message : '执行导航任务失败', 'error')
     } finally {

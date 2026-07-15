@@ -136,6 +136,10 @@ async def emergency_stop(
     bridge = get_ros_nav_bridge()
     if bridge is not None:
         try:
+            try:
+                bridge.publish_navigation_task_start(False)
+            except RuntimeError:
+                pass
             bridge.publish_navigation_start(False)
             bridge.publish_zero_cmd_vel(publish_count=20, interval_s=0.02)
         except RuntimeError:

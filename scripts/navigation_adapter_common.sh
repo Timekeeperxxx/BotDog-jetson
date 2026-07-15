@@ -32,6 +32,7 @@ export NAV_ENABLE_SCAN_PLANNER="${NAV_ENABLE_SCAN_PLANNER:-true}"
 export NAV_ENABLE_SCAN_CONTROLLER="${NAV_ENABLE_SCAN_CONTROLLER:-true}"
 export NAV_ENABLE_PATH_FOLLOWER="${NAV_ENABLE_PATH_FOLLOWER:-false}"
 export NAV_ENABLE_DYNAMIC_AVOIDANCE="${NAV_ENABLE_DYNAMIC_AVOIDANCE:-true}"
+export NAV_ENABLE_WAYPOINT_NAVIGATOR="${NAV_ENABLE_WAYPOINT_NAVIGATOR:-true}"
 
 # BotDog's UnitreeB2Adapter remains the sole B2 hardware writer. Navigation
 # emits /cmd_vel_safe; the ROS sender only forwards it to the loopback ingress.

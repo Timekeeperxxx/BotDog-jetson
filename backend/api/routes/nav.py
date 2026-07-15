@@ -249,7 +249,12 @@ async def nav_execute_task(
         _request_navigation_control()
         try:
             nav_start_result = bridge.publish_navigation_start(True)
+            task_start_result = bridge.publish_navigation_task_start(True)
         except RuntimeError:
+            try:
+                bridge.publish_navigation_start(False)
+            except RuntimeError:
+                pass
             stop_cmd_vel_script()
             _release_navigation_control()
             raise
@@ -278,6 +283,7 @@ async def nav_execute_task(
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.task.execute "
             f"目标={task_id} 结果=success topic={nav_start_result['topic']} "
+            f"task_start_topic={task_start_result['topic']} "
             f"cmd_vel_pid={cmd_vel_result.get('pid')} "
             f"auto_track_requested={auto_track_result.get('requested')} "
             f"auto_track_enabled={auto_track_result.get('enabled')}"
@@ -289,6 +295,7 @@ async def nav_execute_task(
         "topic": nav_start_result["topic"],
         "data": nav_start_result["data"],
         "nav_start": nav_start_result,
+        "task_start": task_start_result,
         "cmd_vel": cmd_vel_result,
         "message": "已发布导航启动信号并生成任务运行时文件",
         "runtime_file": runtime_result["runtime_file"],
@@ -314,6 +321,10 @@ async def nav_stop_task(
     try:
         _task = get_nav_task(task_id)
         _cancel_pending_auto_track_resume("nav_task_stop")
+        try:
+            task_stop_result = bridge.publish_navigation_task_start(False)
+        except RuntimeError:
+            task_stop_result = None
         nav_stop_result = bridge.publish_navigation_start(False)
         cmd_vel_stop_result = stop_cmd_vel_script()
         _release_navigation_control()
@@ -350,6 +361,7 @@ async def nav_stop_task(
         "topic": nav_stop_result["topic"],
         "data": nav_stop_result["data"],
         "nav_start": nav_stop_result,
+        "task_start": task_stop_result,
         "cmd_vel_stop": cmd_vel_stop_result,
         "message": "已发布导航停止信号",
     }
@@ -644,6 +656,10 @@ async def nav_go_to_waypoint(
     try:
         _ensure_localization_ready_for_navigation()
         _ensure_navigation_runtime_ready()
+        try:
+            stop_task_result = bridge.publish_navigation_task_start(False)
+        except RuntimeError:
+            stop_task_result = None
         stop_task_nav_result = bridge.publish_navigation_start(False)
         control_service = get_control_service()
         if control_service is None:
@@ -670,6 +686,7 @@ async def nav_go_to_waypoint(
             f"目标={waypoint_id} map={map_id} 结果=success "
             f"clicked_point_topic={goal_result['xyz_topic']} yaw_topic={goal_result['yaw_topic']} "
             f"stop_task_nav_topic={stop_task_nav_result['topic']} "
+            f"stop_task_topic={stop_task_result['topic'] if stop_task_result else 'unavailable'} "
             f"nav_start={nav_start_result['data']} cmd_vel_pid={cmd_vel_result.get('pid')}"
         ),
     )
@@ -695,6 +712,7 @@ async def nav_go_to_waypoint(
         "yaw_topic": goal_result["yaw_topic"],
         "goal": goal_result,
         "stop_task_nav": stop_task_nav_result,
+        "stop_task": stop_task_result,
         "nav_start": nav_start_result,
         "cmd_vel": cmd_vel_result,
         "motion_prepare": motion_prepare_result,
@@ -719,6 +737,10 @@ async def nav_emergency_stop(
         bridge = get_ros_nav_bridge()
         if bridge is not None:
             try:
+                try:
+                    bridge.publish_navigation_task_start(False)
+                except RuntimeError:
+                    pass
                 bridge.publish_navigation_start(False)
                 cmd_vel_zero_result = bridge.publish_zero_cmd_vel(publish_count=20, interval_s=0.02)
             except RuntimeError as exc:

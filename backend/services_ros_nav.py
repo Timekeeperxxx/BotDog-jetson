@@ -83,6 +83,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._tf_buffer: Any | None = None
         self._tf_listener: Any | None = None
         self._nav_start_publisher: Any | None = None
+        self._nav_task_start_publisher: Any | None = None
         self._cmd_vel_publisher: Any | None = None
         self._goal_xyz_publisher: Any | None = None
         self._goal_yaw_publisher: Any | None = None
@@ -284,6 +285,11 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             settings.ROS_NAV_START_TOPIC,
             10,
         )
+        self._nav_task_start_publisher = self._node.create_publisher(
+            Bool,
+            settings.ROS_NAV_TASK_START_TOPIC,
+            10,
+        )
         self._cmd_vel_publisher = self._node.create_publisher(
             Twist,
             "/cmd_vel",
@@ -321,8 +327,9 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             initial_pose_qos,
         )
         nav_logger.info(
-            "ROS2 导航发布器已启动：nav_start_topic={}，clicked_point_topic={}，goal_yaw_topic={}，stop_topic={}，initial_pose_topic={}，status_topic={}，global_path_topic={}",
+            "ROS2 导航发布器已启动：nav_start_topic={}，nav_task_start_topic={}，clicked_point_topic={}，goal_yaw_topic={}，stop_topic={}，initial_pose_topic={}，status_topic={}，global_path_topic={}",
             settings.ROS_NAV_START_TOPIC,
+            settings.ROS_NAV_TASK_START_TOPIC,
             settings.ROS_NAV_GOAL_XYZ_TOPIC,
             settings.ROS_NAV_GOAL_YAW_TOPIC,
             settings.ROS_NAV_STOP_TOPIC,
@@ -347,6 +354,39 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._navigation_idle_release_blocked_until = (
             time.monotonic() + NAV_START_IDLE_RELEASE_GRACE_S
         )
+        return result
+
+    def publish_navigation_task_start(self, enabled: bool = True) -> dict[str, Any]:
+        if self._node is None or self._nav_task_start_publisher is None:
+            raise RuntimeError("ROS2 nav_task_start 发布器未就绪")
+
+        get_subscription_count = getattr(
+            self._nav_task_start_publisher,
+            "get_subscription_count",
+            None,
+        )
+        subscriber_count = 1
+        if callable(get_subscription_count):
+            deadline = time.monotonic() + 2.0
+            subscriber_count = int(get_subscription_count())
+            while subscriber_count <= 0 and time.monotonic() < deadline:
+                time.sleep(0.1)
+                subscriber_count = int(get_subscription_count())
+            if subscriber_count <= 0:
+                raise RuntimeError(
+                    "任务导航器未就绪：/nav_task_start 没有订阅者，请重启导航定位"
+                )
+
+        result = publish_bool_message(
+            node=self._node,
+            publisher=self._nav_task_start_publisher,
+            lock=self._publisher_lock,
+            topic=settings.ROS_NAV_TASK_START_TOPIC,
+            value=enabled,
+            not_ready_message="ROS2 nav_task_start 发布器未就绪",
+        )
+        result["publish_count"] = 1
+        result["subscriber_count"] = subscriber_count
         return result
 
     def publish_zero_cmd_vel(self, publish_count: int = 10, interval_s: float = 0.03) -> dict[str, Any]:

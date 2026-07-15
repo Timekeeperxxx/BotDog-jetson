@@ -140,6 +140,10 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
             assert enabled is True
             return {"success": True, "topic": "/nav_start", "data": True}
 
+        def publish_navigation_task_start(self, enabled: bool = True) -> dict[str, object]:
+            assert enabled is True
+            return {"success": True, "topic": "/nav_task_start", "data": True}
+
     async def fake_audit_log(*args, **kwargs):
         return None
 
@@ -156,6 +160,7 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
 
     assert result["success"] is True
     assert result["nav_start"]["topic"] == "/nav_start"
+    assert result["task_start"]["topic"] == "/nav_task_start"
     assert result["runtime_file"].endswith("current_task.json")
     assert Path(result["runtime_file"]).exists()
     assert nav_status_updates[-1]["status"] == "navigating"

@@ -130,6 +130,9 @@ class Settings(BaseSettings):
     ROS_NAV_BROADCAST_HZ: float = 10.0
     ROS_NAV_PAGE_OPEN_TOPIC: str = '/lidar_start'
     ROS_NAV_START_TOPIC: str = '/nav_start'
+    # Task workflow triggering is deliberately separate from /nav_start.
+    # /nav_start also gates single-waypoint navigation, controllers and safety.
+    ROS_NAV_TASK_START_TOPIC: str = '/nav_task_start'
     ROS_NAV_GOAL_TOPIC: str = '/goal_pose'
     ROS_NAV_GOAL_XYZ_TOPIC: str = '/clicked_point'
     ROS_NAV_GOAL_YAW_TOPIC: str = 'goal_yaw'

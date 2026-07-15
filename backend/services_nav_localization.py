@@ -83,6 +83,9 @@ NAV_PROCESS_NEEDLES: dict[str, list[str]] = {
     "nav_status_monitor": [
         "/Navigation/install/nav_planner/lib/nav_planner/waypoint_progress_monitor.py",
     ],
+    "waypoint_navigator": [
+        "/Navigation/install/nav_planner/lib/nav_planner/waypoint_navigator_from_json.py",
+    ],
 }
 
 
@@ -434,6 +437,11 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
         if unified_mode
         else None
     )
+    waypoint_navigator_ok = (
+        _is_nav_process_alive("waypoint_navigator", child_pids.get("waypoint_navigator_pid"))
+        if unified_mode
+        else None
+    )
     cmd_vel_pid = child_pids.get("cmd_vel_pid")
     cmd_vel_running = _is_pid_alive(cmd_vel_pid)
 
@@ -467,6 +475,8 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
             errors.append("动态避障安全监控未就绪")
         if not nav_status_monitor_ok:
             errors.append("导航状态监控未就绪")
+        if not waypoint_navigator_ok:
+            errors.append("任务航点执行器未就绪")
     elif not p2p_move_base_ok:
         errors.append("p2p_move_base 未就绪")
 
@@ -503,6 +513,7 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
             and scan_controller_ok
             and dynamic_avoidance_ok
             and nav_status_monitor_ok
+            and waypoint_navigator_ok
         )
     else:
         startup_ready = bool(startup_ready and p2p_move_base_ok)
@@ -533,6 +544,7 @@ def _build_restart_health(scene: dict[str, Any], child_pids: dict[str, int | Non
         "scan_controller_ok": scan_controller_ok,
         "dynamic_avoidance_ok": dynamic_avoidance_ok,
         "nav_status_monitor_ok": nav_status_monitor_ok,
+        "waypoint_navigator_ok": waypoint_navigator_ok,
         "cmd_vel_test_publisher_running": cmd_vel_test_publisher_running,
         "cmd_vel_running": cmd_vel_running,
         "cmd_vel_pid": cmd_vel_pid,
@@ -564,6 +576,7 @@ def assert_navigation_runtime_ready() -> dict[str, Any]:
         "scan_controller_pid": _read_pid_file(_named_pid_path("scan_controller")),
         "dynamic_avoidance_pid": _read_pid_file(_named_pid_path("dynamic_avoidance")),
         "nav_status_monitor_pid": _read_pid_file(_named_pid_path("nav_status_monitor")),
+        "waypoint_navigator_pid": _read_pid_file(_named_pid_path("waypoint_navigator")),
         "cmd_vel_pid": _read_cmd_vel_pid(),
     }
     health_result = _build_restart_health(scene, child_pids)
@@ -757,6 +770,7 @@ def stop_navigation_processes() -> dict[str, Any]:
         ("scan_tf_pose", _named_pid_path("scan_tf_pose"), ["/nav_bringup/scan_tf_pose_publisher.py"]),
         ("dynamic_avoidance", _named_pid_path("dynamic_avoidance"), ["dynamic_avoidance_monitor.py"]),
         ("nav_status_monitor", _named_pid_path("nav_status_monitor"), ["waypoint_progress_monitor.py"]),
+        ("waypoint_navigator", _named_pid_path("waypoint_navigator"), ["waypoint_navigator_from_json.py"]),
         ("static_base_tf", _named_pid_path("static_base_tf"), ["__node:=static_tf_base_link_to_base_footprint"]),
     ]
 
@@ -914,6 +928,7 @@ def restart_navigation_localization() -> dict[str, Any]:
             "scan_controller_pid": _named_pid_path("scan_controller"),
             "dynamic_avoidance_pid": _named_pid_path("dynamic_avoidance"),
             "nav_status_monitor_pid": _named_pid_path("nav_status_monitor"),
+            "waypoint_navigator_pid": _named_pid_path("waypoint_navigator"),
         }
         child_pids = _wait_for_pid_files(pid_files, timeout_s=20.0)
         unified_mode = "navigation_pid" in child_pids or "scan_planner_pid" in child_pids
@@ -970,6 +985,7 @@ def restart_navigation_localization() -> dict[str, Any]:
                 "scan_controller": child_pids.get("scan_controller_pid"),
                 "dynamic_avoidance": child_pids.get("dynamic_avoidance_pid"),
                 "nav_status_monitor": child_pids.get("nav_status_monitor_pid"),
+                "waypoint_navigator": child_pids.get("waypoint_navigator_pid"),
                 "cmd_vel": child_pids["cmd_vel_pid"],
             },
             "health": health_result["health"],

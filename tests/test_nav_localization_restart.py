@@ -421,6 +421,7 @@ def test_ros_nav_pause_clears_node_and_publishers(monkeypatch):
     bridge._tf_buffer = object()
     bridge._tf_listener = object()
     bridge._nav_start_publisher = object()
+    bridge._nav_task_start_publisher = object()
     bridge._cmd_vel_publisher = object()
     bridge._goal_xyz_publisher = object()
     bridge._goal_yaw_publisher = object()
@@ -439,6 +440,7 @@ def test_ros_nav_pause_clears_node_and_publishers(monkeypatch):
     assert bridge._pause_event.is_set()
     assert bridge._node is None
     assert bridge._initial_pose_publisher is None
+    assert bridge._nav_task_start_publisher is None
 
 
 def test_ros_nav_resume_recreates_node_and_resets_tf_state(monkeypatch):
@@ -820,6 +822,7 @@ def test_unified_navigation_scan_health_requires_complete_control_chain(monkeypa
         "scan_controller_pid": 105,
         "dynamic_avoidance_pid": 106,
         "nav_status_monitor_pid": 107,
+        "waypoint_navigator_pid": 108,
         "cmd_vel_pid": None,
     }
     result = services_nav_localization._build_restart_health(scene, pids)
@@ -848,6 +851,14 @@ def test_unified_navigation_scan_health_requires_complete_control_chain(monkeypa
     assert result["navigation_ready"] is False
     assert result["health"]["scan_controller_ok"] is False
     assert "SCAN controller 未就绪" in result["errors"]
+
+    pids["scan_controller_pid"] = 105
+    pids["waypoint_navigator_pid"] = None
+    result = services_nav_localization._build_restart_health(scene, pids)
+
+    assert result["navigation_ready"] is False
+    assert result["health"]["waypoint_navigator_ok"] is False
+    assert "任务航点执行器未就绪" in result["errors"]
 
 
 def test_navigation_ready_marker_rejects_previous_scene(monkeypatch, tmp_path):
@@ -1026,6 +1037,10 @@ def test_restart_navigation_script_uses_single_instance_and_unified_nodes():
     assert '"$ROBOT_NAV_WS/install/scan_planner/lib/scan_planner/scan_planner_node"' in adapter
     assert '"$ROBOT_NAV_WS/install/scan_planner/lib/scan_planner/closed_loop_controller"' in adapter
     assert '"$ROBOT_NAV_WS/install/nav_planner/lib/nav_planner/dynamic_avoidance_monitor.py"' in adapter
+    assert '"$ROBOT_NAV_WS/install/nav_planner/lib/nav_planner/waypoint_navigator_from_json.py"' in adapter
+    assert '"enable_waypoint_navigator:=$NAV_ENABLE_WAYPOINT_NAVIGATOR"' in adapter
+    assert '"waypoint_navigator_start_topic:=/nav_task_start"' in adapter
+    assert '"waypoints_file:=$NAV_TASK_RUNTIME_FILE"' in adapter
     assert "p2p_move_base go2_localization_launch.py" not in adapter
     assert "pgrep -f" not in adapter
     assert "stop_navigation_runtime_residuals 5" in adapter
@@ -1034,6 +1049,7 @@ def test_restart_navigation_script_uses_single_instance_and_unified_nodes():
     assert "nav_pcd_map_publisher.py" in common
     assert "scan_initial_path_adapter.py" in common
     assert "scan_tf_pose_publisher.py" in common
+    assert "waypoint_navigator_from_json.py" in common
     assert "__node:=static_tf_base_link_to_base_footprint" in common
     assert "stop_navigation_runtime_residuals 5" in stop_adapter
 

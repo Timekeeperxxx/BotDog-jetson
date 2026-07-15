@@ -145,6 +145,11 @@ export function executeNavTask(taskId: string): Promise<{
     topic: string
     data: boolean
   }
+  task_start: {
+    success: boolean
+    topic: string
+    data: boolean
+  }
   cmd_vel?: {
     success: boolean
     running: boolean
@@ -179,6 +184,11 @@ export function stopNavTask(taskId: string): Promise<{
     topic: string
     data: boolean
   }
+  task_start?: {
+    success: boolean
+    topic: string
+    data: boolean
+  } | null
   message: string
 }> {
   return requestJson(

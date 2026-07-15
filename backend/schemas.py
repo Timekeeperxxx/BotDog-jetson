@@ -400,6 +400,7 @@ class LocalizationRestartResponse(BaseModel):
     scan_controller_pid: int | None = Field(default=None, description="SCAN controller PID")
     dynamic_avoidance_pid: int | None = Field(default=None, description="动态避障监控 PID")
     nav_status_monitor_pid: int | None = Field(default=None, description="导航状态监控 PID")
+    waypoint_navigator_pid: int | None = Field(default=None, description="任务航点执行器 PID")
     cmd_vel_pid: int | None = Field(default=None, description="cmd_vel PID")
     cmd_vel_running: bool = Field(default=False, description="cmd_vel 脚本是否已拉起")
     startup_ready: bool = Field(default=False, description="导航定位子进程是否已启动并可接收 initialpose")
@@ -502,6 +503,7 @@ class NavWaypointGoToResponse(BaseModel):
     yaw_topic: str
     goal: NavWaypointGoToGoalDTO
     stop_task_nav: NavTaskExecuteNavStartDTO | None = None
+    stop_task: NavTaskExecuteNavStartDTO | None = None
     nav_start: NavTaskExecuteNavStartDTO | None = None
     cmd_vel: dict[str, Any] | None = None
     message: str | None = None
@@ -513,6 +515,7 @@ class NavTaskExecuteResponse(BaseModel):
     topic: str
     data: bool
     nav_start: NavTaskExecuteNavStartDTO
+    task_start: NavTaskExecuteNavStartDTO
     cmd_vel: dict[str, Any] | None = None
     auto_track: NavTaskExecuteAutoTrackDTO | None = None
     message: str
@@ -526,6 +529,7 @@ class NavTaskStopResponse(BaseModel):
     topic: str
     data: bool
     nav_start: NavTaskExecuteNavStartDTO
+    task_start: NavTaskExecuteNavStartDTO | None = None
     cmd_vel_stop: dict[str, Any] | None = None
     message: str
 
