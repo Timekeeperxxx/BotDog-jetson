@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import struct
 from types import SimpleNamespace
 
@@ -114,6 +115,81 @@ def test_execution_path_broadcast_tracks_live_path_without_duplicates(monkeypatc
     assert bridge._should_broadcast_execution_path(changed_path) is False
     assert bridge._should_broadcast_execution_path(changed_path) is True
     assert bridge._should_broadcast_execution_path(changed_path) is False
+
+
+def test_intermediate_task_waypoint_keeps_navigation_control(monkeypatch):
+    released = []
+    updates = []
+
+    class Coordinator:
+        def release_navigation_control(self):
+            released.append(True)
+
+    monkeypatch.setattr(
+        "backend.nav_auto_track_coordinator.get_nav_auto_track_coordinator",
+        lambda: Coordinator(),
+    )
+    monkeypatch.setattr(
+        "backend.services_ros_nav.get_nav_state",
+        lambda: {"navigation_status": {"task_id": "task-1", "status": "navigating"}},
+    )
+    monkeypatch.setattr(
+        "backend.services_ros_nav.update_navigation_status",
+        lambda status: updates.append(status) or status,
+    )
+
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._navigation_task_active = True
+    bridge._normalize_nav_status = lambda _payload: {
+        "status": "reached",
+        "task_id": None,
+        "message": "已到达目标",
+    }
+    bridge._submit_broadcast = lambda *_args: None
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(data=json.dumps({"status": "reached"}))
+    )
+
+    assert updates[-1]["status"] == "navigating"
+    assert updates[-1]["task_id"] == "task-1"
+    assert bridge._navigation_task_active is True
+    assert released == []
+
+
+def test_completed_task_releases_navigation_control(monkeypatch):
+    released = []
+
+    class Coordinator:
+        def release_navigation_control(self):
+            released.append(True)
+
+    monkeypatch.setattr(
+        "backend.nav_auto_track_coordinator.get_nav_auto_track_coordinator",
+        lambda: Coordinator(),
+    )
+    monkeypatch.setattr(
+        "backend.services_ros_nav.update_navigation_status",
+        lambda status: status,
+    )
+
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._navigation_task_active = True
+    bridge._normalize_nav_status = lambda _payload: {
+        "status": "reached",
+        "task_id": "task-1",
+        "message": "所有航点已完成",
+    }
+    bridge._submit_broadcast = lambda *_args: None
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(
+            data=json.dumps({"status": "reached", "task_complete": True})
+        )
+    )
+
+    assert bridge._navigation_task_active is False
+    assert released == [True]
 
 
 def test_mapping_cloud_points_are_limited():

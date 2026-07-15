@@ -101,6 +101,9 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._last_execution_path_broadcast_at = 0.0
         self._last_execution_path_signature: tuple[Any, ...] | None = None
         self._navigation_idle_release_blocked_until = 0.0
+        # /nav_status reports every reached waypoint.  During a multi-waypoint
+        # task those are progress events, not terminal navigation events.
+        self._navigation_task_active = False
         self._init_mapping_cloud_state()
         self._tf_available = False
         self._tf_wait_started_at = 0.0
@@ -357,6 +360,14 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         return result
 
     def publish_navigation_task_start(self, enabled: bool = True) -> dict[str, Any]:
+        previous_task_active = bool(
+            getattr(self, "_navigation_task_active", False)
+        )
+        # An explicit stop is authoritative even when the ROS task navigator
+        # has already exited and therefore cannot receive the false message.
+        if not enabled:
+            self._navigation_task_active = False
+
         if self._node is None or self._nav_task_start_publisher is None:
             raise RuntimeError("ROS2 nav_task_start 发布器未就绪")
 
@@ -377,14 +388,23 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
                     "任务导航器未就绪：/nav_task_start 没有订阅者，请重启导航定位"
                 )
 
-        result = publish_bool_message(
-            node=self._node,
-            publisher=self._nav_task_start_publisher,
-            lock=self._publisher_lock,
-            topic=settings.ROS_NAV_TASK_START_TOPIC,
-            value=enabled,
-            not_ready_message="ROS2 nav_task_start 发布器未就绪",
-        )
+        # Set the guard before publishing.  A one-point task can report its
+        # first waypoint very quickly on the ROS executor thread.
+        if enabled:
+            self._navigation_task_active = True
+        try:
+            result = publish_bool_message(
+                node=self._node,
+                publisher=self._nav_task_start_publisher,
+                lock=self._publisher_lock,
+                topic=settings.ROS_NAV_TASK_START_TOPIC,
+                value=enabled,
+                not_ready_message="ROS2 nav_task_start 发布器未就绪",
+            )
+        except Exception:
+            if enabled:
+                self._navigation_task_active = previous_task_active
+            raise
         result["publish_count"] = 1
         result["subscriber_count"] = subscriber_count
         return result
@@ -652,13 +672,46 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             return
 
         nav_status = self._normalize_nav_status(payload)
+        task_complete = bool(payload.get("task_complete", False))
+        task_active = bool(getattr(self, "_navigation_task_active", False))
+        status = str(nav_status.get("status") or "").strip().lower()
+
+        if task_active and not task_complete and status in {"reached", "idle", "error"}:
+            current_status = get_nav_state().get("navigation_status") or {}
+            nav_status["status"] = "navigating"
+            nav_status["task_id"] = nav_status.get("task_id") or current_status.get("task_id")
+            if status == "reached":
+                nav_status["message"] = "当前航点已到达，正在切换任务中的下一个航点"
+            elif status == "error":
+                nav_status["message"] = "当前航点执行失败，任务导航器正在重试"
+            else:
+                nav_status["message"] = "任务航点切换中"
+
         updated_status = update_navigation_status(nav_status)
-        self._release_navigation_control_on_terminal_status(nav_status)
+        self._release_navigation_control_on_terminal_status(
+            nav_status,
+            task_complete=task_complete,
+        )
         self._submit_broadcast("nav.navigation_status", updated_status)
 
-    def _release_navigation_control_on_terminal_status(self, nav_status: dict[str, Any]) -> None:
+    def _release_navigation_control_on_terminal_status(
+        self,
+        nav_status: dict[str, Any],
+        *,
+        task_complete: bool = False,
+    ) -> None:
         status = str(nav_status.get("status") or "").strip().lower()
         if status not in {"reached", "idle", "error", "estop"}:
+            return
+        if (
+            bool(getattr(self, "_navigation_task_active", False))
+            and not task_complete
+            and status != "estop"
+        ):
+            nav_logger.info(
+                "忽略任务中间航点的终态回执，保留 NAVIGATION 控制权：status={}",
+                status,
+            )
             return
         if (
             status == "idle"
@@ -669,6 +722,8 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
                 "忽略新导航启动窗口内的旧任务 idle 回执，保留 NAVIGATION 控制权"
             )
             return
+        if task_complete or status == "estop":
+            self._navigation_task_active = False
         try:
             from .nav_auto_track_coordinator import get_nav_auto_track_coordinator
 
