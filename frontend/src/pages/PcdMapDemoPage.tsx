@@ -82,7 +82,7 @@ export function PcdMapDemoPage() {
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
   const { telemetry } = useBotDogWebSocket()
   const navWs = useNavWebSocket()
-  const { robotPose, globalPath, localizationStatus, navigationStatus, setInitialState } = navWs
+  const { robotPose, globalPath, executionPath, localizationStatus, navigationStatus, setInitialState } = navWs
   const relocationNotice = getRelocationNotice(relocationPrompt)
   const waypointModeNotice = addMode
     ? { title: '3D ground 标点', message: '在 3D 蓝色 ground.pcd 上按住并拖动确定朝向。' }
@@ -165,6 +165,7 @@ export function PcdMapDemoPage() {
     setInitialState({
       robotPose: null,
       globalPath: null,
+      executionPath: null,
       localizationStatus: {
         status: 'initializing',
         frame_id: 'map',
@@ -281,6 +282,7 @@ export function PcdMapDemoPage() {
       setInitialState({
         robotPose: null,
         globalPath: null,
+        executionPath: null,
         localizationStatus: {
           status: 'initializing',
           frame_id: 'map',
@@ -371,6 +373,7 @@ export function PcdMapDemoPage() {
       setNavigatingWaypointId(null)
       setInitialState({
         globalPath: null,
+        executionPath: null,
         navigationStatus: {
           status: 'idle',
           target_waypoint_id: null,
@@ -504,6 +507,7 @@ export function PcdMapDemoPage() {
 
   const {
     allLayers,
+    displayedExecutionPath,
     displayedGlobalPath,
     groundCenterHeight,
     mapOptions,
@@ -511,6 +515,7 @@ export function PcdMapDemoPage() {
     rightRailBounds,
     selectedSceneWaypoints,
   } = useNavPointCloudViewModel({
+    executionPath,
     globalPath,
     liveMappingCloudPoints,
     mappingActive,
@@ -623,6 +628,7 @@ export function PcdMapDemoPage() {
             <NavMainViewer
               centerHeight={groundCenterHeight}
               followRobot={followRobot}
+              executionPath={displayedExecutionPath}
               globalPath={displayedGlobalPath}
               layers={allLayers}
               mode={pointCloudMode}
@@ -724,6 +730,7 @@ export function PcdMapDemoPage() {
           bounds={rightRailBounds}
           canOperate={canOperate}
           estopSending={estopSending}
+          executionPath={displayedExecutionPath}
           globalPath={displayedGlobalPath}
           layers={allLayers}
           navigatingWaypointId={navigatingWaypointId}

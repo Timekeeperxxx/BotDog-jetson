@@ -580,3 +580,4 @@ class NavStateResponse(BaseModel):
     navigation_status: NavigationStatusDTO
     localization_status: LocalizationStatusDTO
     global_path: GlobalPathDTO | None = None
+    execution_path: GlobalPathDTO | None = None

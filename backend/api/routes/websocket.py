@@ -60,7 +60,7 @@ async def nav_mapping_cloud_ws(websocket: WebSocket) -> None:
     """
     导航建图点云 WebSocket 端点。
 
-    大体积点云不再和导航状态共用 /ws/event，避免阻塞位姿、路径和导航状态更新。
+    大体积建图点云不与导航状态共用 /ws/event，避免阻塞位姿、路径和导航状态更新。
     """
     broadcaster = get_mapping_cloud_broadcaster()
     if broadcaster is None:

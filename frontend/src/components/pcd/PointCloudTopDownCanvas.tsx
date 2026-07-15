@@ -3,7 +3,11 @@ import type { MouseEvent } from 'react'
 import { LocateFixed, ZoomIn, ZoomOut } from 'lucide-react'
 import type { NavWaypoint, PcdBounds, PcdSceneLayerRole } from '../../types/pcdMap'
 import type { GlobalPath, RobotPose } from '../../types/navState'
-import { canvasToMap, mapToCanvas } from '../../utils/topDownCoordinate'
+import { canvasToMap, getTopDownScale, mapToCanvas } from '../../utils/topDownCoordinate'
+import {
+  SCAN_BODY_CYLINDER_OFFSETS,
+  SCAN_BODY_CYLINDER_RADIUS,
+} from './PointCloud3DViewerUtils'
 
 type PointCloudLayer = {
   role: PcdSceneLayerRole
@@ -18,6 +22,7 @@ type Props = {
   waypoints: NavWaypoint[]
   robotPose: RobotPose | null
   globalPath: GlobalPath | null
+  executionPath: GlobalPath | null
   mode: 'none' | 'waypoint' | 'pose'
   waypointZ: number
   onMouseMapPositionChange: (pos: { x: number; y: number } | null) => void
@@ -112,6 +117,7 @@ export function PointCloudTopDownCanvas({
   waypoints,
   robotPose,
   globalPath,
+  executionPath,
   mode,
   waypointZ,
   onMouseMapPositionChange,
@@ -316,17 +322,25 @@ export function PointCloudTopDownCanvas({
     ) => {
       if (!bounds || totalPointCount === 0) return
 
-      if (globalPath && globalPath.frame_id === 'map' && globalPath.points.length > 1) {
-        const pathColor = '#facc15'
+      const drawPath = (
+        path: GlobalPath | null,
+        color: string,
+        lineWidth: number,
+        lineDash: number[],
+        pointRadius: number,
+      ) => {
+        if (!path || path.frame_id !== 'map' || path.points.length < 2) return
+
         ctx.save()
-        ctx.strokeStyle = pathColor
-        ctx.fillStyle = pathColor
-        ctx.lineWidth = 2
+        ctx.strokeStyle = color
+        ctx.fillStyle = color
+        ctx.lineWidth = lineWidth
+        ctx.setLineDash(lineDash)
         ctx.lineJoin = 'round'
         ctx.lineCap = 'round'
         ctx.beginPath()
 
-        globalPath.points.forEach((point, index) => {
+        path.points.forEach((point, index) => {
           const basePos = mapToCanvas(point.x, point.y, bounds, width, height, PADDING)
           const pos = applyView(basePos.x, basePos.y, width, height)
           if (index === 0) {
@@ -337,16 +351,20 @@ export function PointCloudTopDownCanvas({
         })
 
         ctx.stroke()
+        ctx.setLineDash([])
 
-        globalPath.points.forEach((point) => {
+        path.points.forEach((point) => {
           const basePos = mapToCanvas(point.x, point.y, bounds, width, height, PADDING)
           const pos = applyView(basePos.x, basePos.y, width, height)
           ctx.beginPath()
-          ctx.arc(pos.x, pos.y, 1.7, 0, Math.PI * 2)
+          ctx.arc(pos.x, pos.y, pointRadius, 0, Math.PI * 2)
           ctx.fill()
         })
         ctx.restore()
       }
+
+      drawPath(globalPath, '#facc15', 2, [8, 5], 1.5)
+      drawPath(executionPath, '#22d3ee', 3, [], 2.1)
 
       waypoints.forEach((waypoint, index) => {
         const basePos = mapToCanvas(waypoint.x, waypoint.y, bounds, width, height, PADDING)
@@ -359,6 +377,12 @@ export function PointCloudTopDownCanvas({
         ctx.fillText(String(index + 1), pos.x, pos.y)
 
         drawYawArrow(ctx, waypoint.x, waypoint.y, waypoint.yaw, bounds, width, height, WAYPOINT_ARROW_LENGTH_PX, '#fbbf24', 2)
+        drawTextBadge(ctx, waypoint.name, pos.x + 11, pos.y - 19, {
+          font: 'bold 13px system-ui',
+          fill: '#f8fafc',
+          background: 'rgba(7, 16, 20, 0.90)',
+          align: 'left',
+        })
       })
 
       if (pendingWaypoint) {
@@ -377,6 +401,22 @@ export function PointCloudTopDownCanvas({
         const robotColor = robotPose.frame_id === 'map' ? '#f97316' : '#fb7185'
 
         ctx.save()
+        if (robotPose.frame_id === 'map') {
+          const footprintScale = getTopDownScale(bounds, width, height, PADDING) * view.zoom
+          SCAN_BODY_CYLINDER_OFFSETS.forEach((offset, index) => {
+            const centerMapX = robotPose.x + Math.cos(robotPose.yaw) * offset
+            const centerMapY = robotPose.y + Math.sin(robotPose.yaw) * offset
+            const centerBase = mapToCanvas(centerMapX, centerMapY, bounds, width, height, PADDING)
+            const center = applyView(centerBase.x, centerBase.y, width, height)
+            ctx.beginPath()
+            ctx.arc(center.x, center.y, SCAN_BODY_CYLINDER_RADIUS * footprintScale, 0, Math.PI * 2)
+            ctx.fillStyle = index === 0 ? 'rgba(34, 211, 238, 0.18)' : 'rgba(167, 139, 250, 0.18)'
+            ctx.strokeStyle = index === 0 ? '#22d3ee' : '#a78bfa'
+            ctx.lineWidth = 2
+            ctx.fill()
+            ctx.stroke()
+          })
+        }
         drawScreenMarker(
           ctx,
           pos.x,
@@ -422,7 +462,11 @@ export function PointCloudTopDownCanvas({
       const staticCacheValid = Boolean(
         cache &&
         cache.bounds === bounds &&
-        cache.layers === normalizedLayers &&
+        cache.layers.length === normalizedLayers.length &&
+        cache.layers.every((layer, index) => (
+          layer.role === normalizedLayers[index]?.role
+          && layer.points === normalizedLayers[index]?.points
+        )) &&
         cache.totalPointCount === totalPointCount &&
         cache.width === width &&
         cache.height === height &&
@@ -471,7 +515,17 @@ export function PointCloudTopDownCanvas({
     draw()
 
     return () => resizeObserver.disconnect()
-  }, [bounds, globalPath, normalizedLayers, pendingWaypoint, robotPose, totalPointCount, view, waypoints])
+  }, [
+    bounds,
+    executionPath,
+    globalPath,
+    normalizedLayers,
+    pendingWaypoint,
+    robotPose,
+    totalPointCount,
+    view,
+    waypoints,
+  ])
 
   const readMapPosition = (event: MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
@@ -489,6 +543,11 @@ export function PointCloudTopDownCanvas({
   return (
     <div className="pcd-viewer-shell pcd-topdown-shell">
       <div className="pcd-viewer-label">2D 俯视投影</div>
+      <div className="pcd-path-legend" aria-label="导航路径图例">
+        <span><i className="is-global" />全局路径</span>
+        <span><i className="is-execution" />SCAN 实际轨迹</span>
+        <span><i className="is-scan-body" />B2 双圆柱 r=0.36m</span>
+      </div>
       <div className="pcd-topdown-toolbar">
         <button
           className="pcd-icon-button"

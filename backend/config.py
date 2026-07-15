@@ -137,6 +137,7 @@ class Settings(BaseSettings):
     # 默认保持真实 ground z，不抬高目标点，避免把原本可规划的点排除在 0.5m 搜索半径外。
     ROS_NAV_GOAL_Z_SEARCH_OFFSET_M: float = 0.0
     ROS_NAV_GLOBAL_PATH_TOPIC: str = '/global_path'
+    ROS_NAV_EXECUTION_PATH_TOPIC: str = '/scan/execution_path'
     ROS_NAV_STOP_TOPIC: str = '/nav_stop'
     ROS_NAV_INITIAL_POSE_TOPIC: str = '/initialpose'
     ROS_NAV_MAPPING_CLOUD_FORWARD_ENABLED: bool = True

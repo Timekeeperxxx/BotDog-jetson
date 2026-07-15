@@ -144,6 +144,7 @@ class RosNavLifecycleMixin:
             self._goal_xyz_publisher = None
             self._goal_yaw_publisher = None
             self._global_path_subscription = None
+            self._execution_path_subscription = None
             self._nav_status_subscription = None
             self._estop_publisher = None
             self._initial_pose_publisher = None

@@ -28,6 +28,7 @@ import type { LogItem } from './navPageUtils'
 type InitialStatePayload = {
   robotPose?: RobotPose | null
   globalPath?: GlobalPath | null
+  executionPath?: GlobalPath | null
   localizationStatus?: LocalizationStatus | null
   navigationStatus?: NavigationStatus | null
 }
@@ -281,6 +282,7 @@ export function useNavTasks({
       setNavigatingWaypointId(null)
       setInitialState({
         globalPath: null,
+        executionPath: null,
         navigationStatus: {
           status: 'idle',
           target_waypoint_id: null,

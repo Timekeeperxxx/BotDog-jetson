@@ -85,6 +85,7 @@ type NavRightRailProps = {
   bounds: PcdBounds | null
   canOperate: boolean
   estopSending: boolean
+  executionPath: GlobalPath | null
   globalPath: GlobalPath | null
   layers: PointCloudLayer[]
   navigatingWaypointId: string | null
@@ -104,6 +105,7 @@ export function NavRightRail({
   bounds,
   canOperate,
   estopSending,
+  executionPath,
   globalPath,
   layers,
   navigatingWaypointId,
@@ -127,6 +129,7 @@ export function NavRightRail({
         waypoints={waypoints}
         robotPose={robotPose}
         globalPath={globalPath}
+        executionPath={executionPath}
         mode="none"
         waypointZ={0}
         onMouseMapPositionChange={onMouseMapPositionChange}

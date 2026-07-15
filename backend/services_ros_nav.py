@@ -34,7 +34,9 @@ from .ros_nav_tf import (
 )
 from .ros_nav_lifecycle import RosNavLifecycleMixin
 from .services_nav_state import (
+    clear_execution_path,
     clear_robot_pose,
+    update_execution_path,
     update_global_path,
     get_robot_pose,
     get_nav_state,
@@ -48,6 +50,7 @@ from .ws_event_broadcaster import EventBroadcaster
 nav_logger = get_logger("ROS导航")
 tf_logger = get_logger("ROS TF")
 GLOBAL_PATH_BROADCAST_MIN_INTERVAL_S = 1.0
+EXECUTION_PATH_BROADCAST_MIN_INTERVAL_S = 0.15
 INITIAL_POSE_PUBLISH_COUNT = 20
 INITIAL_POSE_PUBLISH_INTERVAL_S = 0.2
 INITIAL_POSE_SUBSCRIBER_WAIT_S = 5.0
@@ -84,6 +87,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._goal_xyz_publisher: Any | None = None
         self._goal_yaw_publisher: Any | None = None
         self._global_path_subscription: Any | None = None
+        self._execution_path_subscription: Any | None = None
         self._nav_status_subscription: Any | None = None
         self._estop_publisher: Any | None = None
         self._initial_pose_publisher: Any | None = None
@@ -93,6 +97,8 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._last_localization_broadcast_at = 0.0
         self._last_global_path_broadcast_at = 0.0
         self._last_global_path_signature: tuple[Any, ...] | None = None
+        self._last_execution_path_broadcast_at = 0.0
+        self._last_execution_path_signature: tuple[Any, ...] | None = None
         self._navigation_idle_release_blocked_until = 0.0
         self._init_mapping_cloud_state()
         self._tf_available = False
@@ -147,6 +153,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             self._node = self._rclpy.create_node("botdog_nav_state_bridge")
             self._setup_publishers()
             self._setup_global_path_subscription(Path)
+            self._setup_execution_path_subscription(Path)
             self._setup_nav_status_subscription()
             self._setup_cloud_subscription()
 
@@ -486,6 +493,21 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             settings.ROS_NAV_GLOBAL_PATH_TOPIC,
         )
 
+    def _setup_execution_path_subscription(self, path_cls: Any) -> None:
+        if self._node is None:
+            return
+
+        self._execution_path_subscription = self._node.create_subscription(
+            path_cls,
+            settings.ROS_NAV_EXECUTION_PATH_TOPIC,
+            self._handle_execution_path_message,
+            10,
+        )
+        nav_logger.info(
+            "ROS2 SCAN execution_path 订阅已启动：topic={}",
+            settings.ROS_NAV_EXECUTION_PATH_TOPIC,
+        )
+
     def _setup_nav_status_subscription(self) -> None:
         if self._node is None:
             return
@@ -513,9 +535,31 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             nav_logger.warning("global_path 消息解析失败：{}", exc)
             return
 
+        clear_execution_path()
+        self._last_execution_path_signature = None
+        self._last_execution_path_broadcast_at = 0.0
+        self._submit_broadcast(
+            "nav.execution_path",
+            {
+                "frame_id": path.get("frame_id", settings.ROS_NAV_FRAME_ID),
+                "timestamp": time.time(),
+                "points": [],
+            },
+        )
         update_global_path(path)
         if self._should_broadcast_global_path(path):
             self._submit_broadcast("nav.global_path", path)
+
+    def _handle_execution_path_message(self, msg: Any) -> None:
+        try:
+            path = self._extract_global_path(msg)
+        except Exception as exc:
+            nav_logger.warning("SCAN execution_path 消息解析失败：{}", exc)
+            return
+
+        update_execution_path(path)
+        if self._should_broadcast_execution_path(path):
+            self._submit_broadcast("nav.execution_path", path)
 
     def _should_broadcast_global_path(self, path: dict[str, Any]) -> bool:
         now = time.monotonic()
@@ -531,6 +575,24 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
 
         self._last_global_path_signature = signature
         self._last_global_path_broadcast_at = now
+        return True
+
+    def _should_broadcast_execution_path(self, path: dict[str, Any]) -> bool:
+        now = time.monotonic()
+        signature = global_path_signature(path)
+        last_signature = getattr(self, "_last_execution_path_signature", None)
+        last_broadcast_at = float(
+            getattr(self, "_last_execution_path_broadcast_at", 0.0)
+        )
+
+        if signature == last_signature:
+            return False
+
+        if now - last_broadcast_at < EXECUTION_PATH_BROADCAST_MIN_INTERVAL_S:
+            return False
+
+        self._last_execution_path_signature = signature
+        self._last_execution_path_broadcast_at = now
         return True
 
     def _handle_nav_status_message(self, msg: Any) -> None:

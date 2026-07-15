@@ -292,6 +292,54 @@
   font-size: 12px;
 }
 
+.pcd-path-legend {
+  position: absolute;
+  left: 12px;
+  top: 46px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  background: rgba(2, 6, 23, 0.72);
+  color: #cbd5e1;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.pcd-path-legend span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.pcd-path-legend i {
+  display: inline-block;
+  width: 24px;
+  height: 0;
+  border-top: 3px solid;
+}
+
+.pcd-path-legend i.is-global {
+  border-color: #facc15;
+  border-top-style: dashed;
+}
+
+.pcd-path-legend i.is-execution {
+  border-color: #22d3ee;
+}
+
+.pcd-path-legend i.is-scan-body {
+  width: 24px;
+  height: 12px;
+  border: 0;
+  background:
+    radial-gradient(circle at 7px 6px, rgba(34, 211, 238, 0.35) 0 4px, #22d3ee 4px 5px, transparent 5px),
+    radial-gradient(circle at 17px 6px, rgba(167, 139, 250, 0.35) 0 4px, #a78bfa 4px 5px, transparent 5px);
+}
+
 .pcd-viewer-empty {
   position: absolute;
   left: 50%;
@@ -1253,6 +1301,17 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.pcd-waypoint-item strong {
+  color: #f8fafc;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.pcd-waypoint-item span {
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .pcd-rail-footer {

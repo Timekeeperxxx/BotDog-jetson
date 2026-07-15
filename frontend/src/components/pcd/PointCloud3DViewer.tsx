@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import type { NavWaypoint } from '../../types/pcdMap'
+import type { NavWaypoint, PcdSceneLayerRole } from '../../types/pcdMap'
 import type { GlobalPath, RobotPose } from '../../types/navState'
 import { mapToThree, threeToMap } from '../../utils/pointCloudTransform'
 import { detectWebGLSupport } from './webglSupport'
@@ -19,6 +19,10 @@ import {
   ROBOT_HEIGHT,
   ROBOT_RADIUS,
   ROBOT_SCREEN_DIAMETER_PX,
+  SCAN_BODY_CYLINDER_CENTER_Z_OFFSET,
+  SCAN_BODY_CYLINDER_HEIGHT,
+  SCAN_BODY_CYLINDER_OFFSETS,
+  SCAN_BODY_CYLINDER_RADIUS,
   WAYPOINT_ARROW_HEAD_LENGTH,
   WAYPOINT_ARROW_HEAD_WIDTH,
   WAYPOINT_ARROW_LENGTH,
@@ -49,12 +53,19 @@ type Props = {
   waypoints: NavWaypoint[]
   robotPose: RobotPose | null
   globalPath: GlobalPath | null
+  executionPath: GlobalPath | null
   mode?: 'none' | 'waypoint' | 'pose'
   followRobot?: boolean
   centerHeight?: number | null
   onGroundPointerChange?: (pos: { x: number; y: number; z: number } | null) => void
   onAddWaypoint?: (pos: { x: number; y: number; z: number; yaw: number }) => void
   onSetPose?: (pos: { x: number; y: number; z: number; yaw: number }) => void
+}
+
+type RenderedCloudLayer = {
+  bounds: THREE.Box3
+  cloud: THREE.Points
+  points: [number, number, number][]
 }
 
 export function PointCloud3DViewer({
@@ -64,6 +75,7 @@ export function PointCloud3DViewer({
   waypoints,
   robotPose,
   globalPath,
+  executionPath,
   mode = 'none',
   followRobot = false,
   centerHeight = null,
@@ -80,10 +92,12 @@ export function PointCloud3DViewer({
   const followOffsetRef = useRef<THREE.Vector3 | null>(null)
   const gridRef = useRef<THREE.GridHelper | null>(null)
   const cloudGroupRef = useRef<THREE.Group | null>(null)
+  const renderedCloudLayersRef = useRef<Map<PcdSceneLayerRole, RenderedCloudLayer>>(new Map())
   const pathGroupRef = useRef<THREE.Group | null>(null)
   const waypointGroupRef = useRef<THREE.Group | null>(null)
   const pendingGroupRef = useRef<THREE.Group | null>(null)
   const robotGroupRef = useRef<THREE.Group | null>(null)
+  const scanBodyGroupRef = useRef<THREE.Group | null>(null)
   const lastAutoFitViewKeyRef = useRef<string | null>(null)
   const pendingTargetRef = useRef<{
     x: number
@@ -182,6 +196,7 @@ export function PointCloud3DViewer({
     scene.add(new THREE.AmbientLight(0xffffff, 0.85))
 
     const cloudGroup = new THREE.Group()
+    const renderedCloudLayers = renderedCloudLayersRef.current
     cloudGroupRef.current = cloudGroup
     scene.add(cloudGroup)
 
@@ -251,6 +266,55 @@ export function PointCloud3DViewer({
     robotGroupRef.current = robotGroup
     scene.add(robotGroup)
 
+    // Physical SCAN collision body.  Unlike the orange UI marker above this
+    // group is intentionally not adaptively scaled: its 0.36 m radii must
+    // remain comparable with walls, paths and point-cloud geometry.
+    const scanBodyGroup = new THREE.Group()
+    scanBodyGroup.visible = false
+    const scanBodyColors = [0x22d3ee, 0xa78bfa]
+    SCAN_BODY_CYLINDER_OFFSETS.forEach((offset, index) => {
+      const cylinderGroup = new THREE.Group()
+      cylinderGroup.position.x = offset
+
+      const geometry = new THREE.CylinderGeometry(
+        SCAN_BODY_CYLINDER_RADIUS,
+        SCAN_BODY_CYLINDER_RADIUS,
+        SCAN_BODY_CYLINDER_HEIGHT,
+        48,
+      )
+      const bodyMesh = new THREE.Mesh(
+        geometry,
+        new THREE.MeshBasicMaterial({
+          color: scanBodyColors[index],
+          transparent: true,
+          opacity: 0.18,
+          depthTest: false,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+      )
+      bodyMesh.position.y = SCAN_BODY_CYLINDER_CENTER_Z_OFFSET
+      bodyMesh.renderOrder = 84
+      cylinderGroup.add(bodyMesh)
+
+      const outline = new THREE.LineSegments(
+        new THREE.EdgesGeometry(geometry),
+        new THREE.LineBasicMaterial({
+          color: scanBodyColors[index],
+          transparent: true,
+          opacity: 0.95,
+          depthTest: false,
+          depthWrite: false,
+        }),
+      )
+      outline.position.y = SCAN_BODY_CYLINDER_CENTER_Z_OFFSET
+      outline.renderOrder = 85
+      cylinderGroup.add(outline)
+      scanBodyGroup.add(cylinderGroup)
+    })
+    scanBodyGroupRef.current = scanBodyGroup
+    scene.add(scanBodyGroup)
+
     const resize = () => {
       const rect = host.getBoundingClientRect()
       const width = Math.max(1, rect.width)
@@ -281,6 +345,7 @@ export function PointCloud3DViewer({
       controls.dispose()
       cloudGroup.children.forEach(disposeObject3D)
       cloudGroup.clear()
+      renderedCloudLayers.clear()
       pathGroup.children.forEach(disposeObject3D)
       pathGroup.clear()
       waypointGroup.children.forEach(disposeObject3D)
@@ -288,6 +353,8 @@ export function PointCloud3DViewer({
       pendingGroup.children.forEach(disposeObject3D)
       pendingGroup.clear()
       robotGroup.children.forEach(disposeObject3D)
+      scanBodyGroup.children.forEach(disposeObject3D)
+      scanBodyGroup.clear()
       renderer.dispose()
       renderer.domElement.remove()
     }
@@ -302,8 +369,18 @@ export function PointCloud3DViewer({
     const cloudGroup = cloudGroupRef.current
     if (!scene || !camera || !controls || !cloudGroup) return
 
-    cloudGroup.children.forEach(disposeObject3D)
-    cloudGroup.clear()
+    const renderedLayers = renderedCloudLayersRef.current
+    const activeRoles = new Set(
+      normalizedLayers
+        .filter((layer) => layer.points.length > 0)
+        .map((layer) => layer.role),
+    )
+    renderedLayers.forEach((rendered, role) => {
+      if (activeRoles.has(role)) return
+      cloudGroup.remove(rendered.cloud)
+      disposeObject3D(rendered.cloud)
+      renderedLayers.delete(role)
+    })
 
     if (normalizedLayers.length === 0) {
       lastAutoFitViewKeyRef.current = null
@@ -316,44 +393,54 @@ export function PointCloud3DViewer({
     normalizedLayers.forEach((layer) => {
       if (layer.points.length === 0) return
 
-      const positions = new Float32Array(layer.points.length * 3)
-      const layerBox = new THREE.Box3()
-      layer.points.forEach(([x, y, z], index) => {
-        // map -> Three.js: (x, y, z) => (x, z, -y)。直接写 typed array
-        // 并更新包围盒，避免为每个点创建临时对象。
-        const threeZ = -y
-        positions[index * 3] = x
-        positions[index * 3 + 1] = z
-        positions[index * 3 + 2] = threeZ
-        layerBox.min.x = Math.min(layerBox.min.x, x)
-        layerBox.min.y = Math.min(layerBox.min.y, z)
-        layerBox.min.z = Math.min(layerBox.min.z, threeZ)
-        layerBox.max.x = Math.max(layerBox.max.x, x)
-        layerBox.max.y = Math.max(layerBox.max.y, z)
-        layerBox.max.z = Math.max(layerBox.max.z, threeZ)
-      })
+      let rendered = renderedLayers.get(layer.role)
+      if (!rendered || rendered.points !== layer.points) {
+        if (rendered) {
+          cloudGroup.remove(rendered.cloud)
+          disposeObject3D(rendered.cloud)
+        }
 
-      const geometry = new THREE.BufferGeometry()
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-      geometry.boundingBox = layerBox.clone()
-      geometry.computeBoundingSphere()
+        const positions = new Float32Array(layer.points.length * 3)
+        const layerBox = new THREE.Box3()
+        layer.points.forEach(([x, y, z], index) => {
+          // map -> Three.js: (x, y, z) => (x, z, -y)。直接写 typed array
+          // 并更新包围盒，避免为每个点创建临时对象。
+          const threeZ = -y
+          positions[index * 3] = x
+          positions[index * 3 + 1] = z
+          positions[index * 3 + 2] = threeZ
+          layerBox.min.x = Math.min(layerBox.min.x, x)
+          layerBox.min.y = Math.min(layerBox.min.y, z)
+          layerBox.min.z = Math.min(layerBox.min.z, threeZ)
+          layerBox.max.x = Math.max(layerBox.max.x, x)
+          layerBox.max.y = Math.max(layerBox.max.y, z)
+          layerBox.max.z = Math.max(layerBox.max.z, threeZ)
+        })
 
-      const preset = getLayerPreset(layer.role)
-      const material = createPointCloudMaterial(
-        preset,
-        Math.min(window.devicePixelRatio || 1, POINT_CLOUD_PIXEL_RATIO_LIMIT),
-      )
+        const geometry = new THREE.BufferGeometry()
+        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+        geometry.boundingBox = layerBox.clone()
+        geometry.computeBoundingSphere()
 
-      const cloud = new THREE.Points(geometry, material)
-      cloud.renderOrder = preset.renderOrder
-      cloud.userData.role = layer.role
-      cloudGroup.add(cloud)
+        const preset = getLayerPreset(layer.role)
+        const material = createPointCloudMaterial(
+          preset,
+          Math.min(window.devicePixelRatio || 1, POINT_CLOUD_PIXEL_RATIO_LIMIT),
+        )
+
+        const cloud = new THREE.Points(geometry, material)
+        cloud.renderOrder = preset.renderOrder
+        cloud.userData.role = layer.role
+        cloudGroup.add(cloud)
+        rendered = { bounds: layerBox, cloud, points: layer.points }
+        renderedLayers.set(layer.role, rendered)
+      }
 
       if (!hasPoints) {
-        unionBox.copy(layerBox)
+        unionBox.copy(rendered.bounds)
         hasPoints = true
       } else {
-        unionBox.union(layerBox)
+        unionBox.union(rendered.bounds)
       }
     })
 
@@ -403,7 +490,7 @@ export function PointCloud3DViewer({
       controls.update()
     }
 
-    if (grid) {
+    if (grid && shouldAutoFit) {
       const gridSize = clamp(Math.ceil(horizontalSpan * 1.6), 20, 240)
       const divisions = clamp(Math.ceil(gridSize / 3), 10, 80)
       grid.geometry.dispose()
@@ -422,57 +509,91 @@ export function PointCloud3DViewer({
     pathGroup.children.forEach(disposeObject3D)
     pathGroup.clear()
 
-    if (!globalPath || globalPath.frame_id !== 'map' || globalPath.points.length < 2) {
-      return
+    const zLift = 0.03
+
+    if (globalPath && globalPath.frame_id === 'map' && globalPath.points.length >= 2) {
+      const pathPoints = globalPath.points.map((point) => {
+        const converted = mapToThree(point.x, point.y, point.z)
+        return new THREE.Vector3(converted.x, converted.y + zLift, converted.z)
+      })
+      const curve = new THREE.CatmullRomCurve3(pathPoints, false, 'centripetal')
+      const tubularSegments = Math.max(8, Math.min(pathPoints.length * 2, 480))
+      const geometry = new THREE.TubeGeometry(curve, tubularSegments, GLOBAL_PATH_RADIUS, 8, false)
+      const material = new THREE.MeshBasicMaterial({
+        color: 0xfacc15,
+        transparent: true,
+        opacity: 0.68,
+        depthTest: true,
+        depthWrite: false,
+      })
+      const pathMesh = new THREE.Mesh(geometry, material)
+      pathMesh.renderOrder = 12
+      pathGroup.add(pathMesh)
+
+      const markerStride = Math.max(1, Math.ceil(globalPath.points.length / 80))
+      globalPath.points.forEach((point, index) => {
+        const isTarget = index === globalPath.points.length - 1
+        if (!isTarget && index % markerStride !== 0) return
+        const converted = mapToThree(point.x, point.y, point.z)
+        const marker = new THREE.Mesh(
+          new THREE.SphereGeometry(isTarget ? GLOBAL_PATH_NODE_RADIUS * 1.5 : GLOBAL_PATH_NODE_RADIUS, 16, 10),
+          new THREE.MeshBasicMaterial({
+            color: isTarget ? 0x22c55e : 0xfacc15,
+            transparent: true,
+            opacity: 0.82,
+            depthTest: true,
+            depthWrite: false,
+          }),
+        )
+        marker.position.set(converted.x, converted.y + zLift, converted.z)
+        marker.renderOrder = 13
+        pathGroup.add(marker)
+      })
     }
 
-    const zLift = 0.03
-    const pathPoints = globalPath.points.map((point) => {
-      const converted = mapToThree(point.x, point.y, point.z)
-      return new THREE.Vector3(converted.x, converted.y + zLift, converted.z)
-    })
+    if (executionPath && executionPath.frame_id === 'map' && executionPath.points.length >= 2) {
+      const executionPoints = executionPath.points.map((point) => {
+        const converted = mapToThree(point.x, point.y, point.z)
+        return new THREE.Vector3(converted.x, converted.y + zLift * 2, converted.z)
+      })
+      const geometry = new THREE.BufferGeometry().setFromPoints(executionPoints)
+      const material = new THREE.LineBasicMaterial({
+        color: 0x22d3ee,
+        transparent: true,
+        opacity: 1,
+        depthTest: false,
+        depthWrite: false,
+      })
+      const line = new THREE.Line(geometry, material)
+      line.renderOrder = 20
+      pathGroup.add(line)
 
-    const curve = new THREE.CatmullRomCurve3(pathPoints, false, 'centripetal')
-    const tubularSegments = Math.max(8, Math.min(pathPoints.length * 2, 480))
-    const geometry = new THREE.TubeGeometry(curve, tubularSegments, GLOBAL_PATH_RADIUS, 8, false)
-    const material = new THREE.MeshBasicMaterial({
-      color: 0xfacc15,
-      transparent: true,
-      opacity: 0.96,
-      depthTest: true,
-      depthWrite: false,
-    })
-
-    const pathMesh = new THREE.Mesh(geometry, material)
-    pathMesh.renderOrder = 12
-    pathGroup.add(pathMesh)
-
-    const markerStride = Math.max(1, Math.ceil(globalPath.points.length / 80))
-    globalPath.points.forEach((point, index) => {
-      const isTarget = index === globalPath.points.length - 1
-      if (!isTarget && index % markerStride !== 0) return
-
-      const converted = mapToThree(point.x, point.y, point.z)
-      const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(isTarget ? GLOBAL_PATH_NODE_RADIUS * 1.5 : GLOBAL_PATH_NODE_RADIUS, 16, 10),
-        new THREE.MeshBasicMaterial({
-          color: isTarget ? 0x22c55e : 0xfacc15,
-          transparent: true,
-          opacity: 0.98,
-          depthTest: true,
-          depthWrite: false,
-        }),
-      )
-      marker.position.set(converted.x, converted.y + zLift, converted.z)
-      marker.renderOrder = 13
-      pathGroup.add(marker)
-    })
+      const markerStride = Math.max(1, Math.ceil(executionPath.points.length / 60))
+      executionPath.points.forEach((point, index) => {
+        const isEnd = index === executionPath.points.length - 1
+        if (!isEnd && index % markerStride !== 0) return
+        const converted = mapToThree(point.x, point.y, point.z)
+        const marker = new THREE.Mesh(
+          new THREE.SphereGeometry(isEnd ? GLOBAL_PATH_NODE_RADIUS * 1.7 : GLOBAL_PATH_NODE_RADIUS * 1.15, 14, 9),
+          new THREE.MeshBasicMaterial({
+            color: isEnd ? 0xf472b6 : 0x22d3ee,
+            transparent: true,
+            opacity: 1,
+            depthTest: false,
+            depthWrite: false,
+          }),
+        )
+        marker.position.set(converted.x, converted.y + zLift * 2, converted.z)
+        marker.renderOrder = 21
+        pathGroup.add(marker)
+      })
+    }
 
     return () => {
       pathGroup.children.forEach(disposeObject3D)
       pathGroup.clear()
     }
-  }, [globalPath, webglSupported])
+  }, [executionPath, globalPath, webglSupported])
 
   useEffect(() => {
     if (!webglSupported) return
@@ -520,7 +641,7 @@ export function PointCloud3DViewer({
         label.renderOrder = 38
         label.userData.adaptiveSprite = {
           pixels: WAYPOINT_LABEL_SCREEN_WIDTH_PX,
-          baseWidth: 1.8,
+          baseWidth: label.scale.x,
           baseScale: label.scale.clone(),
           minScale: 0.05,
           maxScale: 120,
@@ -590,12 +711,14 @@ export function PointCloud3DViewer({
   useEffect(() => {
     if (!webglSupported) return
     const robotGroup = robotGroupRef.current
+    const scanBodyGroup = scanBodyGroupRef.current
     const camera = cameraRef.current
     const controls = controlsRef.current
-    if (!robotGroup || !camera || !controls) return
+    if (!robotGroup || !scanBodyGroup || !camera || !controls) return
 
     if (!robotPose) {
       robotGroup.visible = false
+      scanBodyGroup.visible = false
       return
     }
 
@@ -603,6 +726,9 @@ export function PointCloud3DViewer({
     robotGroup.visible = true
     robotGroup.position.set(pos.x, pos.y, pos.z)
     robotGroup.rotation.y = robotPose.yaw
+    scanBodyGroup.visible = robotPose.frame_id === 'map'
+    scanBodyGroup.position.set(pos.x, pos.y, pos.z)
+    scanBodyGroup.rotation.y = robotPose.yaw
 
     if (followRobot) {
       const currentTarget = controls.target.clone()
@@ -775,6 +901,11 @@ export function PointCloud3DViewer({
   return (
     <div className="pcd-viewer-shell">
       <div className="pcd-viewer-label">3D 点云</div>
+      <div className="pcd-path-legend" aria-label="导航路径图例">
+        <span><i className="is-global" />全局路径</span>
+        <span><i className="is-execution" />SCAN 实际轨迹</span>
+        <span><i className="is-scan-body" />B2 双圆柱 r=0.36m</span>
+      </div>
       <div
         className={`pcd-three-host ${mode !== 'none' ? 'is-adding' : ''}`}
         ref={hostRef}

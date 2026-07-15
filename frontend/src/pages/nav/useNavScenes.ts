@@ -20,6 +20,7 @@ type PointCloudLayer = {
 type InitialStatePayload = {
   robotPose?: RobotPose | null
   globalPath?: GlobalPath | null
+  executionPath?: GlobalPath | null
   localizationStatus?: LocalizationStatus | null
   navigationStatus?: NavigationStatus | null
 }
@@ -135,6 +136,7 @@ export function useNavScenes({
         setInitialState({
           robotPose: navState.robot_pose,
           globalPath: navState.global_path,
+          executionPath: navState.execution_path,
           localizationStatus: navState.localization_status,
           navigationStatus: navState.navigation_status,
         })

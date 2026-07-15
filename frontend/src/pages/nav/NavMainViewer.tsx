@@ -5,6 +5,7 @@ import type { PointCloudLayer } from './NavPageShell'
 
 type NavMainViewerProps = {
   centerHeight: number | null
+  executionPath: GlobalPath | null
   followRobot: boolean
   globalPath: GlobalPath | null
   layers: PointCloudLayer[]
@@ -20,6 +21,7 @@ type NavMainViewerProps = {
 
 export function NavMainViewer({
   centerHeight,
+  executionPath,
   followRobot,
   globalPath,
   layers,
@@ -56,6 +58,7 @@ export function NavMainViewer({
       waypoints={waypoints}
       robotPose={robotPose}
       globalPath={globalPath}
+      executionPath={executionPath}
       mode={mode}
       followRobot={followRobot}
       centerHeight={centerHeight}

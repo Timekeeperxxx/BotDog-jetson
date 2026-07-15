@@ -18,10 +18,17 @@ export const ROBOT_HEIGHT = 0.26
 export const ROBOT_ARROW_LENGTH = 1.1
 export const ROBOT_ARROW_HEAD_LENGTH = 0.34
 export const ROBOT_ARROW_HEAD_WIDTH = 0.22
+// Keep these in sync with Navigation/src/nav_bringup/config/scan_planner.yaml.
+// The lidar/base_footprint origin is at the front cylinder centre; the rear
+// cylinder is 0.56 m behind it along the robot's local x axis.
+export const SCAN_BODY_CYLINDER_RADIUS = 0.36
+export const SCAN_BODY_CYLINDER_HEIGHT = 0.43
+export const SCAN_BODY_CYLINDER_CENTER_Z_OFFSET = -0.115
+export const SCAN_BODY_CYLINDER_OFFSETS = [0, -0.56] as const
 export const GLOBAL_PATH_RADIUS = 0.06
 export const GLOBAL_PATH_NODE_RADIUS = 0.06
 export const WAYPOINT_SCREEN_DIAMETER_PX = 13
-export const WAYPOINT_LABEL_SCREEN_WIDTH_PX = 48
+export const WAYPOINT_LABEL_SCREEN_WIDTH_PX = 112
 export const ROBOT_SCREEN_DIAMETER_PX = 18
 export const PENDING_TARGET_SCREEN_DIAMETER_PX = 13
 export const POINT_CLOUD_PIXEL_RATIO_LIMIT = 1.5
@@ -46,6 +53,10 @@ const POINT_DISPLAY_LIMIT_BY_ROLE: Partial<Record<PcdSceneLayerRole, number>> = 
   mapping: 25000,
   live: 1200,
 }
+const LIMITED_POINT_CACHE = new WeakMap<
+  [number, number, number][],
+  Partial<Record<PcdSceneLayerRole, [number, number, number][]>>
+>()
 
 export function limitDisplayPoints(
   role: PcdSceneLayerRole,
@@ -54,8 +65,15 @@ export function limitDisplayPoints(
   const limit = POINT_DISPLAY_LIMIT_BY_ROLE[role]
   if (!limit || points.length <= limit) return points
 
+  const cached = LIMITED_POINT_CACHE.get(points)?.[role]
+  if (cached) return cached
+
   const stride = Math.max(1, Math.ceil(points.length / limit))
-  return points.filter((_, index) => index % stride === 0).slice(0, limit)
+  const limited = points.filter((_, index) => index % stride === 0).slice(0, limit)
+  const cachedByRole = LIMITED_POINT_CACHE.get(points) ?? {}
+  cachedByRole[role] = limited
+  LIMITED_POINT_CACHE.set(points, cachedByRole)
+  return limited
 }
 
 function disposeMaterial(material: THREE.Material | THREE.Material[]) {
@@ -129,8 +147,8 @@ export function createMapYawDirection(yaw: number) {
 
 export function createWaypointLabelSprite(text: string) {
   const canvas = document.createElement('canvas')
-  const width = 256
-  const height = 64
+  const width = 512
+  const height = 128
   canvas.width = width
   canvas.height = height
 
@@ -140,14 +158,14 @@ export function createWaypointLabelSprite(text: string) {
   ctx.clearRect(0, 0, width, height)
   ctx.fillStyle = 'rgba(7, 14, 20, 0.56)'
   ctx.strokeStyle = 'rgba(251, 191, 36, 0.28)'
-  ctx.lineWidth = 2
+  ctx.lineWidth = 4
   ctx.beginPath()
-  ctx.roundRect(2, 2, width - 4, height - 4, 12)
+  ctx.roundRect(4, 4, width - 8, height - 8, 20)
   ctx.fill()
   ctx.stroke()
 
   ctx.fillStyle = 'rgba(248, 250, 252, 0.94)'
-  ctx.font = 'bold 26px sans-serif'
+  ctx.font = 'bold 44px sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(text, width / 2, height / 2)
@@ -162,7 +180,7 @@ export function createWaypointLabelSprite(text: string) {
     depthTest: false,
   })
   const sprite = new THREE.Sprite(material)
-  sprite.scale.set(1.8, 0.45, 1)
+  sprite.scale.set(2.8, 0.7, 1)
   sprite.center.set(0.5, 0)
   sprite.renderOrder = 38
   return sprite

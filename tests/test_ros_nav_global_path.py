@@ -91,6 +91,31 @@ def test_global_path_broadcast_throttles_changed_paths(monkeypatch):
     assert bridge._should_broadcast_global_path(changed_path) is True
 
 
+def test_execution_path_broadcast_tracks_live_path_without_duplicates(monkeypatch):
+    times = iter([10.0, 10.05, 10.2, 10.4])
+    monkeypatch.setattr("backend.services_ros_nav.time.monotonic", lambda: next(times))
+
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._last_execution_path_broadcast_at = 0.0
+    bridge._last_execution_path_signature = None
+
+    first_path = {
+        "frame_id": "map",
+        "timestamp": 123.0,
+        "points": [{"x": 2.0, "y": -1.0, "z": 0.0}],
+    }
+    changed_path = {
+        "frame_id": "map",
+        "timestamp": 123.0,
+        "points": [{"x": 1.8, "y": -0.9, "z": 0.0}],
+    }
+
+    assert bridge._should_broadcast_execution_path(first_path) is True
+    assert bridge._should_broadcast_execution_path(changed_path) is False
+    assert bridge._should_broadcast_execution_path(changed_path) is True
+    assert bridge._should_broadcast_execution_path(changed_path) is False
+
+
 def test_mapping_cloud_points_are_limited():
     points = np.arange(30, dtype=np.float32).reshape((10, 3))
 

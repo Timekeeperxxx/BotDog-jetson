@@ -7,7 +7,12 @@ export type PcdBounds = {
   max_z: number
 }
 
-export type PcdSceneLayerRole = 'ground' | 'wall' | 'footprint_fill' | 'mapping' | 'live'
+export type PcdSceneLayerRole =
+  | 'ground'
+  | 'wall'
+  | 'footprint_fill'
+  | 'mapping'
+  | 'live'
 
 export type PcdSceneFile = {
   name: string

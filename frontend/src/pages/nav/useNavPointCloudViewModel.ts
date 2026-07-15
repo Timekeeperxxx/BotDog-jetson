@@ -7,6 +7,7 @@ import type { MappingSessionInfo } from './navPageUtils'
 import { trimGlobalPathByRobotPose } from './navPageUtils'
 
 type UseNavPointCloudViewModelOptions = {
+  executionPath: GlobalPath | null
   globalPath: GlobalPath | null
   liveMappingCloudPoints: [number, number, number][]
   mappingActive: boolean
@@ -23,6 +24,7 @@ type UseNavPointCloudViewModelOptions = {
 }
 
 export function useNavPointCloudViewModel({
+  executionPath,
   globalPath,
   liveMappingCloudPoints,
   mappingActive,
@@ -56,7 +58,13 @@ export function useNavPointCloudViewModel({
       layers.push({ role: 'live', points: liveMappingCloudPoints })
     }
     return layers
-  }, [previewLayers, mappingActive, mappingCloudPoints, liveMappingCloudPoints, pcdLayerVisibility])
+  }, [
+    previewLayers,
+    mappingActive,
+    mappingCloudPoints,
+    liveMappingCloudPoints,
+    pcdLayerVisibility,
+  ])
 
   const pointCloudViewKey = mappingActive
     ? `mapping:${mappingSessionInfo?.sceneName || mappingSessionInfo?.mapDir || 'active'}`
@@ -118,6 +126,7 @@ export function useNavPointCloudViewModel({
 
   return {
     allLayers,
+    displayedExecutionPath: executionPath,
     displayedGlobalPath,
     groundCenterHeight,
     mapOptions,

@@ -48,6 +48,7 @@ export type NavStateResponse = {
   navigation_status: NavigationStatus
   localization_status: LocalizationStatus
   global_path: GlobalPath | null
+  execution_path: GlobalPath | null
 }
 
 export type MappingCloud = {
@@ -62,4 +63,5 @@ export type NavWebSocketEvent =
   | { type: 'nav.navigation_status'; data: NavigationStatus; timestamp?: string }
   | { type: 'nav.localization_status'; data: LocalizationStatus; timestamp?: string }
   | { type: 'nav.global_path'; data: GlobalPath; timestamp?: string }
+  | { type: 'nav.execution_path'; data: GlobalPath | null; timestamp?: string }
   | { type: 'nav.mapping_cloud'; data: MappingCloud; timestamp?: string }
