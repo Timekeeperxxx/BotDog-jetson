@@ -10,6 +10,7 @@ type Props = {
   canStartCreate: boolean
   canExecuteTask: boolean
   canStopTask: boolean
+  executingTaskId: string | null
   onSelectTask: (taskId: string) => void
   onEditTask: (taskId: string) => void
   onExecuteTask: (taskId: string) => void
@@ -25,6 +26,7 @@ export function TaskDrawerPanel({
   canStartCreate,
   canExecuteTask,
   canStopTask,
+  executingTaskId,
   onSelectTask,
   onEditTask,
   onExecuteTask,
@@ -55,8 +57,9 @@ export function TaskDrawerPanel({
           tasks.map((task) => {
             const isActive = task.id === selectedTaskId
             const isRunning = navigationStatus?.status === 'navigating' && navigationStatus.task_id === task.id
-            const statusClassName = isRunning ? 'pcd-task-status-running' : 'pcd-task-status-pending'
-            const statusLabel = isRunning ? '执行中' : '未执行'
+            const isStarting = executingTaskId === task.id
+            const statusClassName = isRunning || isStarting ? 'pcd-task-status-running' : 'pcd-task-status-pending'
+            const statusLabel = isStarting ? '启动中' : isRunning ? '执行中' : '未执行'
             return (
               <article
                 key={task.id}
@@ -91,10 +94,11 @@ export function TaskDrawerPanel({
                       event.stopPropagation()
                       onExecuteTask(task.id)
                     }}
-                    disabled={!canExecuteTask}
+                    disabled={!canExecuteTask || executingTaskId !== null}
+                    title={!canExecuteTask ? '当前账号没有任务执行权限' : isStarting ? '任务正在启动' : '执行此任务'}
                   >
                     <Play size={14} />
-                    <span>执行</span>
+                    <span>{isStarting ? '启动中…' : '执行'}</span>
                   </button>
                   <button
                     className="pcd-tool-button"

@@ -547,8 +547,8 @@ export function PcdMapDemoPage() {
     handleStopSelectedTask,
     handleStopTask,
     handleTaskDraftChange,
+    executingTaskId,
     selectedTaskId,
-    selectedTaskSceneNavigable,
     setSelectedTaskId,
     taskDraft,
     taskEditorMode,
@@ -643,11 +643,12 @@ export function PcdMapDemoPage() {
           </div>
           <NavDrawerCluster
             activeDrawer={activeDrawer}
-            canExecuteTask={canOperate && selectedTaskSceneNavigable}
+            canExecuteTask={canOperate}
             canSaveTask={draftSceneNavigable}
             canStartCreate={selectedSceneNavigable}
             canStopTask={canOperate && Boolean(selectedTaskId)}
             creatingTask={creatingTask}
+            executingTaskId={executingTaskId}
             draft={taskDraft}
             maps={mapOptions}
             navigationStatus={navigationStatus}

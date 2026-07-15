@@ -21,7 +21,6 @@ import {
   patchTaskDraftStep,
   removeTaskDraftStep,
   resolveInitialTaskMapId,
-  resolveTaskSceneId,
 } from './navPageUtils'
 import type { LogItem } from './navPageUtils'
 
@@ -43,7 +42,7 @@ type UseNavTasksOptions = {
   canOperate: boolean
   openTaskDrawer: () => void
   scenes: PcdSceneItem[]
-  selectScene: (sceneId: string) => Promise<void>
+  selectScene: (sceneId: string) => Promise<boolean>
   selectedSceneId: string | null
   selectedSceneNavigable: boolean
   selectedSceneWaypoints: WaypointOption[]
@@ -68,6 +67,7 @@ export function useNavTasks({
   const [creatingTask, setCreatingTask] = useState(false)
   const [taskEditorMode, setTaskEditorMode] = useState<'create' | 'edit' | null>(null)
   const [taskDraft, setTaskDraft] = useState<TaskDraft>(emptyTaskDraft)
+  const [executingTaskId, setExecutingTaskId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -95,17 +95,6 @@ export function useNavTasks({
     if (selectedTaskId && tasks.some((task) => task.id === selectedTaskId)) return selectedTaskId
     return tasks[0]?.id ?? null
   }, [selectedTaskId, tasks])
-
-  const selectedTask = useMemo(
-    () => findTaskById(tasks, resolvedSelectedTaskId),
-    [resolvedSelectedTaskId, tasks],
-  )
-
-  const selectedTaskScene = useMemo(
-    () => findSceneById(scenes, selectedTask ? resolveTaskSceneId(selectedTask) : null),
-    [scenes, selectedTask],
-  )
-  const selectedTaskSceneNavigable = selectedTaskScene?.navigable ?? false
 
   const draftScene = useMemo(
     () => findSceneById(scenes, taskDraft.mapId),
@@ -230,7 +219,14 @@ export function useNavTasks({
     }
 
     const task = findTaskById(tasks, taskId)
-    if (!task) return
+    if (!task) {
+      addLog('任务不存在或已被删除，请刷新任务列表', 'error')
+      return
+    }
+    if (executingTaskId) {
+      addLog('已有任务正在启动，请稍候', 'error')
+      return
+    }
     setSelectedTaskId(task.id)
     const taskScene = findSceneById(scenes, task.mapId)
     if (!taskScene) {
@@ -241,10 +237,16 @@ export function useNavTasks({
       addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
       return
     }
-    if (task.mapId !== selectedSceneId) {
-      await selectScene(task.mapId)
-    }
+    setExecutingTaskId(task.id)
+    addLog(`正在启动导航任务 ${task.name}…`)
     try {
+      if (task.mapId !== selectedSceneId) {
+        addLog(`正在切换到任务场景 ${task.mapName}…`)
+        const selected = await selectScene(task.mapId)
+        if (!selected) {
+          throw new Error(`任务场景 ${task.mapName} 切换失败，任务未启动`)
+        }
+      }
       const result = await executeNavTask(task.id)
       setNavigatingWaypointId(null)
       setInitialState({
@@ -265,8 +267,10 @@ export function useNavTasks({
       addLog(`已执行导航任务 ${task.name}，已发布 ${result.topic}=true，${autoTrackText}`)
     } catch (error) {
       addLog(error instanceof Error ? error.message : '执行导航任务失败', 'error')
+    } finally {
+      setExecutingTaskId(null)
     }
-  }, [addLog, canOperate, scenes, selectedSceneId, selectScene, setInitialState, setNavigatingWaypointId, tasks])
+  }, [addLog, canOperate, executingTaskId, scenes, selectedSceneId, selectScene, setInitialState, setNavigatingWaypointId, tasks])
 
   const handleStopTask = useCallback(async (taskId: string) => {
     if (!canOperate) {
@@ -306,6 +310,7 @@ export function useNavTasks({
     creatingTask,
     draftSceneMessage,
     draftSceneNavigable,
+    executingTaskId,
     handleAddDraftStep,
     handleCancelCreateTask,
     handleCreateTask,
@@ -319,7 +324,6 @@ export function useNavTasks({
     handleStopTask,
     handleTaskDraftChange,
     selectedTaskId: resolvedSelectedTaskId,
-    selectedTaskSceneNavigable,
     setSelectedTaskId,
     taskDraft,
     taskEditorMode,

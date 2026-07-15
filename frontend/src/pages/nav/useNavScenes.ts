@@ -93,15 +93,17 @@ export function useNavScenes({
     }
   }, [onLog])
 
-  const selectScene = useCallback(async (sceneId: string) => {
+  const selectScene = useCallback(async (sceneId: string): Promise<boolean> => {
     const requestId = ++selectRequestRef.current
+    let selectionApplied = false
     setLoading(true)
     noAvailableSceneLoggedRef.current = false
 
     try {
       const currentScene = await selectPcdScene(sceneId)
-      if (requestId !== selectRequestRef.current) return
+      if (requestId !== selectRequestRef.current) return false
 
+      selectionApplied = true
       setSelectedSceneId(currentScene.scene_id)
       setMetadata(null)
       setPreview(null)
@@ -112,7 +114,7 @@ export function useNavScenes({
       onLog(`当前场景 ground.pcd：${currentScene.ground_pcd}`)
 
       const nextMetadata = await getPcdSceneMetadata(sceneId)
-      if (requestId !== selectRequestRef.current) return
+      if (requestId !== selectRequestRef.current) return false
       setMetadata(nextMetadata)
       onLog(`已读取场景 metadata: ${sceneId}`)
 
@@ -120,7 +122,7 @@ export function useNavScenes({
         getPcdScenePreview(sceneId, previewPointLimit),
         listWaypoints(sceneId).catch(() => ({ items: [] as NavWaypoint[] })),
       ])
-      if (requestId !== selectRequestRef.current) return
+      if (requestId !== selectRequestRef.current) return false
       setPreview(nextPreview)
       onWaypointsLoaded(nextWaypoints.items)
       const groundPoints = nextPreview.layers.ground?.points.length || 0
@@ -132,7 +134,7 @@ export function useNavScenes({
 
       try {
         const navState = await getNavState()
-        if (requestId !== selectRequestRef.current) return
+        if (requestId !== selectRequestRef.current) return false
         setInitialState({
           robotPose: navState.robot_pose,
           globalPath: navState.global_path,
@@ -146,9 +148,11 @@ export function useNavScenes({
           onLog(error instanceof Error ? error.message : '刷新导航状态失败', 'error')
         }
       }
+      return true
     } catch (error) {
-      if (requestId !== selectRequestRef.current) return
+      if (requestId !== selectRequestRef.current) return false
       onLog(error instanceof Error ? error.message : `加载场景失败: ${sceneId}`, 'error')
+      return selectionApplied
     } finally {
       if (requestId === selectRequestRef.current) {
         setLoading(false)

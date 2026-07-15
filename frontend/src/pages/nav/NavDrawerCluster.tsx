@@ -22,6 +22,7 @@ type NavDrawerClusterProps = {
   canStartCreate: boolean
   canStopTask: boolean
   creatingTask: boolean
+  executingTaskId: string | null
   draft: TaskDraft
   maps: MapOption[]
   navigationStatus: NavigationStatus | null
@@ -60,6 +61,7 @@ export function NavDrawerCluster({
   canStartCreate,
   canStopTask,
   creatingTask,
+  executingTaskId,
   draft,
   maps,
   navigationStatus,
@@ -117,6 +119,7 @@ export function NavDrawerCluster({
             canStartCreate={canStartCreate}
             canExecuteTask={canExecuteTask}
             canStopTask={canStopTask}
+            executingTaskId={executingTaskId}
             onSelectTask={onSelectTask}
             onEditTask={onEditTask}
             onExecuteTask={onExecuteTask}
