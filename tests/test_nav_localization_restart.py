@@ -1006,16 +1006,36 @@ def test_restart_navigation_script_resets_backend_python_and_qt_env():
 
 def test_restart_navigation_script_uses_single_instance_and_unified_nodes():
     _, _, adapter = _navigation_adapter_sources()
+    botdog_root = Path(__file__).resolve().parents[1]
+    common = (
+        botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "common.sh"
+    ).read_text(encoding="utf-8")
+    stop_adapter = (
+        botdog_root.parent
+        / "Navigation"
+        / "adapters"
+        / "legacy_scripts"
+        / "stop_navigation.sh"
+    ).read_text(encoding="utf-8")
 
     assert 'flock -n 9' in adapter
     assert 'navigation_adapter.pid' in adapter
     assert 'stop_pid_file "$PID_FILE" "旧导航定位链路"' in adapter
     assert 'rm -f "$READY_FILE" "$ROBOT_NAV_RUNTIME_ROOT/p2p_move_base.pid"' in adapter
     assert "ros2 launch nav_bringup navigation.launch.py" in adapter
-    assert '"/scan_planner/scan_planner_node"' in adapter
-    assert '"/scan_planner/closed_loop_controller"' in adapter
-    assert '"/nav_planner/dynamic_avoidance_monitor.py"' in adapter
+    assert '"$ROBOT_NAV_WS/install/scan_planner/lib/scan_planner/scan_planner_node"' in adapter
+    assert '"$ROBOT_NAV_WS/install/scan_planner/lib/scan_planner/closed_loop_controller"' in adapter
+    assert '"$ROBOT_NAV_WS/install/nav_planner/lib/nav_planner/dynamic_avoidance_monitor.py"' in adapter
     assert "p2p_move_base go2_localization_launch.py" not in adapter
+    assert "pgrep -f" not in adapter
+    assert "stop_navigation_runtime_residuals 5" in adapter
+    assert "assert_single_navigation_runtime" in adapter
+    assert "navigation_runtime_process_patterns" in common
+    assert "nav_pcd_map_publisher.py" in common
+    assert "scan_initial_path_adapter.py" in common
+    assert "scan_tf_pose_publisher.py" in common
+    assert "__node:=static_tf_base_link_to_base_footprint" in common
+    assert "stop_navigation_runtime_residuals 5" in stop_adapter
 
 
 def test_restart_navigation_script_scopes_ready_and_guards_pcd_capacity():

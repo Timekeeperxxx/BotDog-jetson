@@ -744,15 +744,20 @@ def start_cmd_vel_script() -> dict[str, Any]:
 
 def stop_navigation_processes() -> dict[str, Any]:
     pid_specs = [
+        ("navigation_adapter", _named_pid_path("navigation_adapter"), ["restart_navigation_localization.sh"]),
         ("navigation", _named_pid_path("navigation"), ["ros2 launch nav_bringup navigation.launch.py"]),
         ("livox", _named_pid_path("livox"), ["ros2 launch livox_ros_driver2 msg_MID360_launch.py", "livox_ros_driver2_node"]),
         ("relocation", _named_pid_path("relocation"), ["ros2 launch super_lio relocation.py", "relocation_node"]),
         ("global_planner", _named_pid_path("global_planner"), ["ros2 launch global_planner path_planning_with_polygon.launch", "global_planner_node"]),
+        ("pcl_publisher", _named_pid_path("pcl_publisher"), ["/nav_bringup/nav_pcd_map_publisher.py"]),
         ("p2p_move_base", _named_pid_path("p2p_move_base"), ["ros2 launch p2p_move_base go2_localization_launch.py", "clicked2goal.py", "p2p_move_base"]),
         ("scan_planner", _named_pid_path("scan_planner"), ["scan_planner_node"]),
         ("scan_controller", _named_pid_path("scan_controller"), ["closed_loop_controller"]),
+        ("scan_path_adapter", _named_pid_path("scan_path_adapter"), ["/nav_bringup/scan_initial_path_adapter.py"]),
+        ("scan_tf_pose", _named_pid_path("scan_tf_pose"), ["/nav_bringup/scan_tf_pose_publisher.py"]),
         ("dynamic_avoidance", _named_pid_path("dynamic_avoidance"), ["dynamic_avoidance_monitor.py"]),
         ("nav_status_monitor", _named_pid_path("nav_status_monitor"), ["waypoint_progress_monitor.py"]),
+        ("static_base_tf", _named_pid_path("static_base_tf"), ["__node:=static_tf_base_link_to_base_footprint"]),
     ]
 
     target_pids: list[int] = []

@@ -9,6 +9,7 @@ from backend.services_nav_state import (
     clear_global_path,
     get_nav_state,
     set_navigation_idle,
+    update_execution_path,
     update_global_path,
 )
 
@@ -195,12 +196,15 @@ def test_restart_localization_clears_all_estop_layers_before_restart(monkeypatch
 
 def test_services_nav_state_clear_global_path_and_idle():
     update_global_path({"frame_id": "map", "points": [{"x": 1, "y": 2, "z": 0}]})
+    update_execution_path({"frame_id": "map", "points": [{"x": 1, "y": 2, "z": 0}]})
     state = get_nav_state()
     assert state["global_path"] is not None
+    assert state["execution_path"] is not None
 
     clear_global_path()
     state = get_nav_state()
     assert state["global_path"] is None
+    assert state["execution_path"] is None
 
     set_navigation_idle("测试 idle")
     state = get_nav_state()
