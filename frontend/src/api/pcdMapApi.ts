@@ -145,11 +145,11 @@ export function executeNavTask(taskId: string): Promise<{
     topic: string
     data: boolean
   }
-  task_start: {
+  task_start?: {
     success: boolean
     topic: string
     data: boolean
-  }
+  } | null
   cmd_vel?: {
     success: boolean
     running: boolean
