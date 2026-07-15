@@ -1,5 +1,5 @@
 import { PointCloud3DViewer } from '../../components/pcd/PointCloud3DViewer'
-import type { GlobalPath, RobotPose } from '../../types/navState'
+import type { GlobalPath, RobotPose, ScanExecutionPath } from '../../types/navState'
 import type { NavWaypoint } from '../../types/pcdMap'
 import type { PointCloudLayer } from './NavPageShell'
 
@@ -7,6 +7,7 @@ type NavMainViewerProps = {
   centerHeight: number | null
   followRobot: boolean
   globalPath: GlobalPath | null
+  scanExecutionPath: ScanExecutionPath | null
   layers: PointCloudLayer[]
   mode: 'none' | 'waypoint' | 'pose'
   robotPose: RobotPose | null
@@ -22,6 +23,7 @@ export function NavMainViewer({
   centerHeight,
   followRobot,
   globalPath,
+  scanExecutionPath,
   layers,
   mode,
   robotPose,
@@ -56,6 +58,7 @@ export function NavMainViewer({
       waypoints={waypoints}
       robotPose={robotPose}
       globalPath={globalPath}
+      scanExecutionPath={scanExecutionPath}
       mode={mode}
       followRobot={followRobot}
       centerHeight={centerHeight}

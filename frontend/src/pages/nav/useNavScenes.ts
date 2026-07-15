@@ -7,7 +7,7 @@ import {
   listWaypoints,
   selectPcdScene,
 } from '../../api/pcdMapApi'
-import type { GlobalPath, LocalizationStatus, NavigationStatus, RobotPose } from '../../types/navState'
+import type { GlobalPath, LocalizationStatus, NavigationStatus, RobotPose, ScanExecutionPath } from '../../types/navState'
 import type { NavWaypoint, PcdSceneItem, PcdSceneMetadata, PcdScenePreview, PcdSceneLayerRole } from '../../types/pcdMap'
 
 const SELECTED_SCENE_STORAGE_KEY = 'botdog-nav-selected-scene'
@@ -20,6 +20,7 @@ type PointCloudLayer = {
 type InitialStatePayload = {
   robotPose?: RobotPose | null
   globalPath?: GlobalPath | null
+  scanExecutionPath?: ScanExecutionPath | null
   localizationStatus?: LocalizationStatus | null
   navigationStatus?: NavigationStatus | null
 }
@@ -135,6 +136,7 @@ export function useNavScenes({
         setInitialState({
           robotPose: navState.robot_pose,
           globalPath: navState.global_path,
+          scanExecutionPath: navState.scan_execution_path,
           localizationStatus: navState.localization_status,
           navigationStatus: navState.navigation_status,
         })

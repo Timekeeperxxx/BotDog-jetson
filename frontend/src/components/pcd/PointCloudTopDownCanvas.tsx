@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { LocateFixed, ZoomIn, ZoomOut } from 'lucide-react'
 import type { NavWaypoint, PcdBounds, PcdSceneLayerRole } from '../../types/pcdMap'
-import type { GlobalPath, RobotPose } from '../../types/navState'
+import type { GlobalPath, RobotPose, ScanExecutionPath } from '../../types/navState'
 import { canvasToMap, mapToCanvas } from '../../utils/topDownCoordinate'
 
 type PointCloudLayer = {
@@ -18,6 +18,7 @@ type Props = {
   waypoints: NavWaypoint[]
   robotPose: RobotPose | null
   globalPath: GlobalPath | null
+  scanExecutionPath: ScanExecutionPath | null
   mode: 'none' | 'waypoint' | 'pose'
   waypointZ: number
   onMouseMapPositionChange: (pos: { x: number; y: number } | null) => void
@@ -112,6 +113,7 @@ export function PointCloudTopDownCanvas({
   waypoints,
   robotPose,
   globalPath,
+  scanExecutionPath,
   mode,
   waypointZ,
   onMouseMapPositionChange,
@@ -316,17 +318,24 @@ export function PointCloudTopDownCanvas({
     ) => {
       if (!bounds || totalPointCount === 0) return
 
-      if (globalPath && globalPath.frame_id === 'map' && globalPath.points.length > 1) {
-        const pathColor = '#facc15'
+      const drawNavigationPath = (
+        path: GlobalPath | ScanExecutionPath | null,
+        color: string,
+        lineWidth: number,
+        dashed = false,
+      ) => {
+        if (!path || path.frame_id !== 'map' || path.points.length < 2) return
+
         ctx.save()
-        ctx.strokeStyle = pathColor
-        ctx.fillStyle = pathColor
-        ctx.lineWidth = 2
+        ctx.strokeStyle = color
+        ctx.fillStyle = color
+        ctx.lineWidth = lineWidth
         ctx.lineJoin = 'round'
         ctx.lineCap = 'round'
+        if (dashed) ctx.setLineDash([7, 4])
         ctx.beginPath()
 
-        globalPath.points.forEach((point, index) => {
+        path.points.forEach((point, index) => {
           const basePos = mapToCanvas(point.x, point.y, bounds, width, height, PADDING)
           const pos = applyView(basePos.x, basePos.y, width, height)
           if (index === 0) {
@@ -335,18 +344,22 @@ export function PointCloudTopDownCanvas({
             ctx.lineTo(pos.x, pos.y)
           }
         })
-
         ctx.stroke()
 
-        globalPath.points.forEach((point) => {
+        const markerStride = Math.max(1, Math.ceil(path.points.length / 80))
+        path.points.forEach((point, index) => {
+          if (index !== path.points.length - 1 && index % markerStride !== 0) return
           const basePos = mapToCanvas(point.x, point.y, bounds, width, height, PADDING)
           const pos = applyView(basePos.x, basePos.y, width, height)
           ctx.beginPath()
-          ctx.arc(pos.x, pos.y, 1.7, 0, Math.PI * 2)
+          ctx.arc(pos.x, pos.y, lineWidth, 0, Math.PI * 2)
           ctx.fill()
         })
         ctx.restore()
       }
+
+      drawNavigationPath(globalPath, '#facc15', 2)
+      drawNavigationPath(scanExecutionPath, '#22d3ee', 3)
 
       waypoints.forEach((waypoint, index) => {
         const basePos = mapToCanvas(waypoint.x, waypoint.y, bounds, width, height, PADDING)
@@ -471,7 +484,7 @@ export function PointCloudTopDownCanvas({
     draw()
 
     return () => resizeObserver.disconnect()
-  }, [bounds, globalPath, normalizedLayers, pendingWaypoint, robotPose, totalPointCount, view, waypoints])
+  }, [bounds, globalPath, scanExecutionPath, normalizedLayers, pendingWaypoint, robotPose, totalPointCount, view, waypoints])
 
   const readMapPosition = (event: MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
@@ -489,6 +502,16 @@ export function PointCloudTopDownCanvas({
   return (
     <div className="pcd-viewer-shell pcd-topdown-shell">
       <div className="pcd-viewer-label">2D 俯视投影</div>
+      <div className="pcd-path-legend is-compact" aria-label="导航路径图例">
+        <div>
+          <span className="pcd-path-swatch is-global" />
+          <span>全局</span>
+        </div>
+        <div>
+          <span className="pcd-path-swatch is-scan" />
+          <span>SCAN</span>
+        </div>
+      </div>
       <div className="pcd-topdown-toolbar">
         <button
           className="pcd-icon-button"

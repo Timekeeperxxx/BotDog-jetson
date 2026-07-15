@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { GlobalPath, RobotPose } from '../../types/navState'
+import type { GlobalPath, RobotPose, ScanExecutionPath } from '../../types/navState'
 import type { NavWaypoint, PcdBounds, PcdSceneItem, PcdSceneMetadata, PcdScenePreview } from '../../types/pcdMap'
 import type { PointCloudLayer } from './NavPageShell'
 import type { PcdLayerVisibility } from './NavToolStrip'
@@ -8,6 +8,7 @@ import { trimGlobalPathByRobotPose } from './navPageUtils'
 
 type UseNavPointCloudViewModelOptions = {
   globalPath: GlobalPath | null
+  scanExecutionPath: ScanExecutionPath | null
   liveMappingCloudPoints: [number, number, number][]
   mappingActive: boolean
   mappingCloudPoints: [number, number, number][]
@@ -24,6 +25,7 @@ type UseNavPointCloudViewModelOptions = {
 
 export function useNavPointCloudViewModel({
   globalPath,
+  scanExecutionPath,
   liveMappingCloudPoints,
   mappingActive,
   mappingCloudPoints,
@@ -104,6 +106,11 @@ export function useNavPointCloudViewModel({
     [globalPath, robotPose],
   )
 
+  const displayedScanExecutionPath = useMemo(
+    () => scanExecutionPath?.frame_id === 'map' ? scanExecutionPath : null,
+    [scanExecutionPath],
+  )
+
   const mapOptions = useMemo(
     () => scenes.map((scene) => ({ id: scene.id, name: scene.name })),
     [scenes],
@@ -119,6 +126,7 @@ export function useNavPointCloudViewModel({
   return {
     allLayers,
     displayedGlobalPath,
+    displayedScanExecutionPath,
     groundCenterHeight,
     mapOptions,
     pointCloudViewKey,

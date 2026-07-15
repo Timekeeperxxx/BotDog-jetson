@@ -19,7 +19,10 @@ export type GlobalPath = {
   frame_id: string
   points: GlobalPathPoint[]
   timestamp: number
+  received_at?: number
 }
+
+export type ScanExecutionPath = GlobalPath
 
 export type NavigationStatus = {
   status: string
@@ -48,6 +51,7 @@ export type NavStateResponse = {
   navigation_status: NavigationStatus
   localization_status: LocalizationStatus
   global_path: GlobalPath | null
+  scan_execution_path: ScanExecutionPath | null
 }
 
 export type MappingCloud = {
@@ -62,4 +66,5 @@ export type NavWebSocketEvent =
   | { type: 'nav.navigation_status'; data: NavigationStatus; timestamp?: string }
   | { type: 'nav.localization_status'; data: LocalizationStatus; timestamp?: string }
   | { type: 'nav.global_path'; data: GlobalPath; timestamp?: string }
+  | { type: 'nav.scan_execution_path'; data: ScanExecutionPath; timestamp?: string }
   | { type: 'nav.mapping_cloud'; data: MappingCloud; timestamp?: string }

@@ -11,6 +11,7 @@ from .config import settings
 _lock = threading.RLock()
 _latest_robot_pose: dict[str, Any] | None = None
 _latest_global_path: dict[str, Any] | None = None
+_latest_scan_execution_path: dict[str, Any] | None = None
 _latest_navigation_status: dict[str, Any] = {
     "status": "idle",
     "target_waypoint_id": None,
@@ -89,11 +90,25 @@ def update_global_path(path: dict[str, Any]) -> dict[str, Any]:
     return copy.deepcopy(next_path)
 
 
+def update_scan_execution_path(path: dict[str, Any]) -> dict[str, Any]:
+    global _latest_scan_execution_path
+
+    next_path = copy.deepcopy(path)
+    next_path.setdefault("timestamp", time.time())
+    next_path.setdefault("received_at", time.time())
+
+    with _lock:
+        _latest_scan_execution_path = next_path
+
+    return copy.deepcopy(next_path)
+
+
 def clear_global_path() -> None:
-    global _latest_global_path
+    global _latest_global_path, _latest_scan_execution_path
 
     with _lock:
         _latest_global_path = None
+        _latest_scan_execution_path = None
 
 
 def reset_localization_tracking(message: str = "等待重定位数据") -> dict[str, Any]:
@@ -170,6 +185,11 @@ def get_global_path() -> dict[str, Any] | None:
         return copy.deepcopy(_latest_global_path)
 
 
+def get_scan_execution_path() -> dict[str, Any] | None:
+    with _lock:
+        return copy.deepcopy(_latest_scan_execution_path)
+
+
 def get_nav_state() -> dict[str, Any]:
     with _lock:
         now = time.time()
@@ -184,4 +204,5 @@ def get_nav_state() -> dict[str, Any]:
             "navigation_status": copy.deepcopy(_latest_navigation_status),
             "localization_status": localization_status,
             "global_path": copy.deepcopy(_latest_global_path),
+            "scan_execution_path": copy.deepcopy(_latest_scan_execution_path),
         }

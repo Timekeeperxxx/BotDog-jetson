@@ -292,6 +292,76 @@
   font-size: 12px;
 }
 
+.pcd-path-legend {
+  position: absolute;
+  left: 12px;
+  top: 46px;
+  z-index: 3;
+  display: grid;
+  gap: 5px;
+  min-width: 210px;
+  padding: 7px 9px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 6px;
+  background: rgba(2, 6, 23, 0.78);
+  color: #cbd5e1;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.pcd-path-legend > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.pcd-path-legend strong {
+  margin-left: auto;
+  color: #f8fafc;
+  font-size: 10px;
+}
+
+.pcd-path-legend em {
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 10px;
+}
+
+.pcd-path-legend em.is-fresh {
+  background: rgba(34, 197, 94, 0.18);
+  color: #86efac;
+}
+
+.pcd-path-legend em.is-stale {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fcd34d;
+}
+
+.pcd-path-legend.is-compact {
+  left: 92px;
+  top: 10px;
+  display: flex;
+  min-width: 0;
+  padding: 4px 7px;
+}
+
+.pcd-path-swatch {
+  display: inline-block;
+  width: 22px;
+  height: 3px;
+  border-radius: 999px;
+}
+
+.pcd-path-swatch.is-global {
+  background: #facc15;
+}
+
+.pcd-path-swatch.is-scan {
+  height: 4px;
+  background: #22d3ee;
+}
+
 .pcd-viewer-empty {
   position: absolute;
   left: 50%;
