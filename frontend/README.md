@@ -1,134 +1,68 @@
-# BotDog 前端 - 阶段 1 实现
+# BotDog 前端
+
+BotDog 前端是基于 React、TypeScript 和 Vite 的控制终端，包含登录页、主控台、导航巡逻页面和管理后台。当前实现已不是早期“阶段 1”原型，文档以当前源码为准。
 
 ## 技术栈
 
-- Vite (构建工具）
-- React 18 (UI 框架)
-- TypeScript (类型系统)
+| 组件 | 说明 |
+|------|------|
+| React | 19.x |
+| TypeScript | 5.9.x |
+| Vite | 7.x，多入口构建 |
+| Three.js | PCD 点云 3D 预览 |
+| Zustand | 登录态与部分全局状态 |
+| Vitest | 单元测试 |
 
-## 开发环境
+## 入口页面
 
-### 安装依赖
+| 路径 | 入口 | 说明 |
+|------|------|------|
+| `/login` | `src/pages/LoginPage.tsx` | 登录页 |
+| `/` | `src/IndustrialConsoleComplete.tsx` | 主控制台，含视频、遥测、手动控制、AI/驱离、证据 |
+| `/admin` | `src/admin/AdminApp.tsx` | 管理后台 |
+| `/nav-patrol.html` | `src/pages/PcdMapDemoPage.tsx` | PCD 场景、导航点、巡逻任务和 ROS2 重定位 |
+
+## 开发命令
 
 ```bash
 cd frontend
 npm install
-```
-
-### 启动开发服务器
-
-```bash
 npm run dev
-```
-
-前端将运行在 `http://localhost:5174`
-
-### 构建生产版本
-
-```bash
 npm run build
+npm run lint
+npm run test
 ```
 
-构建产物将输出到 `dist/` 目录
+开发服务器默认端口为 `5174`。`vite.config.ts` 会把 `/api` 和 `/ws` 代理到 `VITE_API_BASE_URL`，未设置时使用 `http://127.0.0.1:8000`。
 
-## 项目结构
+## 关键环境变量
 
-```
+| 变量 | 说明 |
+|------|------|
+| `VITE_API_BASE_URL` | 后端 HTTP 地址，例如 `http://192.168.144.104:8000` |
+| `VITE_WHEP_URL` | 主视频 WHEP 地址；未设置时按当前 hostname 生成 `http://<host>:8889/cam/whep` |
+
+## 目录结构
+
+```text
 src/
-├── components/          # React 组件
-│   ├── AttitudeHUD.tsx     # 姿态仪表
-│   ├── BatteryIndicator.tsx # 电池状态
-│   ├── PositionPanel.tsx    # 位置信息
-│   ├── StatusBar.tsx        # 系统状态栏
-│   └── VideoSection.tsx     # 视频与 HUD
-├── hooks/              # 自定义 Hooks
-│   ├── useBotDogWebSocket.ts # WebSocket 连接管理
-│   └── useWhepVideo.ts       # WHEP 播放管理
-├── types/              # TypeScript 类型定义
-│   ├── telemetry.ts          # 遥测数据类型
-│   └── event.ts              # 事件类型
-└── IndustrialConsoleComplete.tsx # 主界面
+├── AppRoot.tsx                 # 登录、主控台、管理后台路由分发
+├── IndustrialConsoleComplete.tsx # 主控制台容器
+├── nav-patrol-main.tsx         # 导航巡逻独立入口
+├── admin/                      # 管理后台页面、布局和 API 封装
+├── api/                        # 前端 API 客户端
+├── components/                 # 控制台组件、视频、证据、PCD 组件
+├── hooks/                      # WebSocket、WHEP、导航、控制、证据等 hooks
+├── pages/                      # 登录、证据历史、PCD 导航页
+├── stores/                     # authStore 等全局状态
+├── types/                      # DTO 与 UI 类型
+└── utils/                      # 坐标变换、手柄、导航点校验等工具
 ```
 
-## 功能特性
+## 功能范围
 
-- ✅ WebSocket 自动连接与重连
-- ✅ 实时遥测数据显示（姿态、位置、电池）
-- ✅ WHEP 视频播放与 HUD 叠层
-- ✅ 响应式布局设计
-- ✅ 深色工业控制台主题
-
-## 后端地址配置
-
-后端地址默认读取 `VITE_API_BASE_URL`，未设置时回退到 [frontend/src/config/api.ts](frontend/src/config/api.ts) 的默认值。
-
-## WHEP 播放地址
-
-通过 `VITE_WHEP_URL` 指定 MediaMTX 的 WHEP 地址，例如：
-
-```
-VITE_WHEP_URL=http://127.0.0.1:8889/cam/whep
-```
-
-## WebSocket 连接
-
-### 遥测 WebSocket
-
-默认连接到 `ws://localhost:8000/ws/telemetry`。
-
-可在 `src/hooks/useTelemetryWebSocket.ts` 中修改连接地址。
-
-## WHEP 播放
-
-前端通过 WHEP 直连 MediaMTX，使用 `VITE_WHEP_URL` 配置播放地址。
-
-## 组件说明
-
-### AttitudeHUD
-- 姿态可视化仪表
-- SVG 图形化显示俯仰、横滚、偏航
-- 实时角度数值显示
-
-### PositionPanel
-- GPS 位置信息面板
-- 显示经纬度、高度、航向角
-- 网格布局
-
-### BatteryIndicator
-- 电池状态显示
-- 电压显示
-- 剩余电量百分比
-- 可视化电量条
-- 低电量颜色警告
-
-### StatusBar
-- WebSocket 连接状态显示
-- 系统模式与解锁状态
-- 消息统计
-- 最后更新时间
-- 手动重连按钮
-
-### IndustrialConsoleComplete
-- 整合所有子组件
-- 管理 WebSocket 连接
-- 协调状态更新
-- 响应式布局
-
-## 状态管理
-
-使用 Zustand 进行全局状态管理：
-
-- `attitude`: 姿态数据
-- `position`: 位置数据
-- `battery`: 电池数据
-- `systemStatus`: 系统状态
-- `messageCount`: 消息计数
-- `updateTelemetry()`: 更新遥测数据
-- `reset()`: 重置状态
-
-## 下一步
-
-待后端实现完成后，可以继续添加：
-- 控制输入组件
-- 告警列表
-- 历史页面
+- 登录鉴权与 token 自动附加。
+- 主控制台 WHEP 视频、遥测 WebSocket、事件 WebSocket、手动控制和急停。
+- AI 自动跟踪、驱离模式、抓拍、录像和证据历史。
+- PCD 点云 2D/3D 预览、导航点管理、巡逻任务、建图状态、重定位 ready 判定。
+- 管理后台：系统总览、导航、设备与视频、日志、配置、用户权限等。

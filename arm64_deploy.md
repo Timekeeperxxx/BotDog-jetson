@@ -191,13 +191,7 @@ sudo chown -R "$USER:$USER" data
 
 ### 6.3 数据库初始化
 
-这个项目有一个已知坑：
-
-- README 写的是 `python scripts/init_db.py`
-- 但脚本本身 Python 导入路径处理有问题
-- 所以推荐用 `PYTHONPATH=.` 方式运行
-
-正确初始化方式：
+推荐用 `PYTHONPATH=.` 方式初始化，确保脚本能从项目根目录导入 `backend` 包：
 
 ```bash
 cd ~/Code/Project/BOTDOG/BotDog
@@ -298,19 +292,19 @@ http://<ARM64_HOST>:5174
 3. WebSocket 正常连接
 4. 遥测数据持续刷新
 5. 配置修改能生效
-6. 数据库能写入配置和事件
+6. 数据库能写入配置变更历史和审计日志
 
 ### 8.2 数据库验证
 
 ```bash
-sqlite3 data/botdog.db "SELECT key, value, value_type FROM system_configs;"
-sqlite3 data/botdog.db "SELECT event_type, created_at FROM events ORDER BY created_at DESC LIMIT 10;"
+sqlite3 data/botdog.db "SELECT key, value, value_type FROM system_config ORDER BY key LIMIT 10;"
+sqlite3 data/botdog.db "SELECT level, module, message FROM operation_logs ORDER BY created_at DESC LIMIT 10;"
 ```
 
 ### 8.3 建议运行验收测试
 
 ```bash
-python acceptance_test.py
+python -B -m pytest
 ```
 
 如果模拟模式都没跑通，不建议继续上真机。
@@ -658,12 +652,11 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-### 18.2 下载 YOLO 模型 (推荐 YOLOv8n)
+### 18.2 准备 AI 模型
 
-在 ARM64 等部署版上，推荐体积更小、推理更快的 **`yolov8n.pt`** (Nano 版，约 6MB)；如果是在 PC 上或者对检测精度要求极高，可以选择 **`yolov8s.pt`** (Small 版，约 22MB)。
-**注意：两者都完全支持自动跟踪功能，跟踪有无与模型带不带 "n" 或 "s" 无关。**
+当前默认配置使用 **`models/helmet.engine`**。如果你已经有 TensorRT engine，直接放入 `models/` 并确认 `.env` 指向该文件。
 
-**下载 YOLOv8n (首选):**
+CPU 调试或没有 engine 时，可以临时使用 Ultralytics `.pt` 模型：
 ```bash
 cd ~/Code/Project/BOTDOG/BotDog
 mkdir -p models
@@ -671,7 +664,7 @@ wget -O models/yolov8n.pt \
   https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt
 ```
 
-**或者下载 YOLOv8s (如果需要更高精度):**
+如果需要更高精度：
 ```bash
 cd ~/Code/Project/BOTDOG/BotDog
 mkdir -p models
@@ -679,7 +672,7 @@ wget -O models/yolov8s.pt \
   https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8s.pt
 ```
 
-或者使用 `curl`：
+也可以使用 `curl`：
 
 ```bash
 curl -L \
@@ -690,7 +683,7 @@ curl -L \
 检查文件是否存在：
 
 ```bash
-ls -lh models/yolov8*.pt
+ls -lh models/helmet.engine models/yolov8*.pt
 ```
 
 ### 18.4 修改 backend/.env
@@ -699,14 +692,14 @@ ls -lh models/yolov8*.pt
 
 ```ini
 AI_ENABLED=true
-AI_MODEL_PATH=models/yolov8n.pt
+AI_MODEL_PATH=models/helmet.engine
 AI_DEVICE=cpu
 ```
 
 说明：
 
 - 在 ARM64 主机上先用 `cpu` 更稳
-- 不要依赖模糊路径，直接指定 `models/yolov8n.pt`
+- 如果使用 `.pt` 调试模型，把 `AI_MODEL_PATH` 改成实际文件，例如 `models/yolov8n.pt`
 
 ### 18.5 重启后端
 
@@ -1099,9 +1092,9 @@ sudo ip addr replace 192.168.123.222/24 dev enP3p49s0
 sudo ip route replace 224.0.0.0/4 dev enP3p49s0
 ```
 
-### 下载 YOLO 模型 (推荐 YOLOv8n)
+### 准备 AI 模型
 
-体积更小、速度更快（约 6MB），适用于 ARM64 主机：
+默认使用 `models/helmet.engine`。如果没有该文件，可先下载 `.pt` 模型用于 CPU 调试：
 ```bash
 mkdir -p models
 wget -O models/yolov8n.pt \
