@@ -29,18 +29,6 @@ import { GuardPage } from './components/pages/GuardPage';
 import { ConfigModal } from './components/modals/ConfigModal';
 import type { VideoProfile } from './components/video/types';
 
-function isTailscaleHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  if (host.endsWith('.ts.net')) return true;
-
-  const match = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
-  if (!match) return false;
-
-  const first = Number(match[1]);
-  const second = Number(match[2]);
-  return first === 100 && second >= 64 && second <= 127;
-}
-
 function buildLocalWhepUrl(path: string): string {
   return `http://${window.location.hostname}:8889/${path}/whep`;
 }
@@ -66,9 +54,7 @@ export default function IndustrialConsoleComplete() {
 
   const { frontWhepUrl, omniUrls } = useCameraSources();
   const remoteWhepUrl = useMemo(() => buildLocalWhepUrl('cam_remote'), []);
-  const [videoProfile, setVideoProfile] = useState<VideoProfile>(() => (
-    isTailscaleHostname(window.location.hostname) ? 'remote' : 'main'
-  ));
+  const [videoProfile, setVideoProfile] = useState<VideoProfile>('main');
   const selectedWhepUrl = videoProfile === 'remote' ? remoteWhepUrl : frontWhepUrl;
 
   const {
