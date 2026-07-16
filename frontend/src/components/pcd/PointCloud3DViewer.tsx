@@ -267,7 +267,7 @@ export function PointCloud3DViewer({
     scene.add(robotGroup)
 
     // Physical SCAN collision body.  Unlike the orange UI marker above this
-    // group is intentionally not adaptively scaled: its 0.36 m radii must
+    // group is intentionally not adaptively scaled: its physical radii must
     // remain comparable with walls, paths and point-cloud geometry.
     const scanBodyGroup = new THREE.Group()
     scanBodyGroup.visible = false
@@ -904,7 +904,7 @@ export function PointCloud3DViewer({
       <div className="pcd-path-legend" aria-label="导航路径图例">
         <span><i className="is-global" />全局路径</span>
         <span><i className="is-execution" />SCAN 实际轨迹</span>
-        <span><i className="is-scan-body" />B2 双圆柱 r=0.36m</span>
+        <span><i className="is-scan-body" />B2 双圆柱 r={SCAN_BODY_CYLINDER_RADIUS.toFixed(2)}m</span>
       </div>
       <div
         className={`pcd-three-host ${mode !== 'none' ? 'is-adding' : ''}`}

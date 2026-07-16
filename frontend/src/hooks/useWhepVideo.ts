@@ -20,15 +20,41 @@ const DEFAULT_WHEP_URL = `http://${window.location.hostname}:8889/cam/whep`;
 
 // 重试退避阶梯（ms）
 const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000];
-const HIGH_BUFFER_RECONNECT_MS = 1200;
-const FORCE_BUFFER_RECONNECT_MS = 2500;
-const HIGH_BUFFER_SAMPLE_LIMIT = 5;
-const MIN_LATENCY_RECONNECT_INTERVAL_MS = 30000;
+const STALLED_FRAME_SAMPLE_LIMIT = 8;
+const MIN_STALL_RECONNECT_INTERVAL_MS = 30000;
 
 // TypeScript DOM lib 中无 RTCRemoteInboundRtpStreamStats，按需声明
 interface RemoteInboundRtpStats {
   kind?: string;
   roundTripTime?: number;
+}
+
+/**
+ * 通过指定 IPv4 地址打开控制台时，仅保留 MediaMTX 在该地址上的 ICE 候选。
+ * Jetson 同时连接相机网、Wi-Fi 和控制网；全部候选参与协商时，浏览器可能把
+ * 视频媒体绕到高延迟 Wi-Fi，即使 WHEP 信令本身走的是控制网。
+ */
+export function filterWhepAnswerCandidates(answerSdp: string, whepUrl: string): string {
+  let host: string;
+  try {
+    host = new URL(whepUrl).hostname;
+  } catch {
+    return answerSdp;
+  }
+
+  if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(host)) return answerSdp;
+
+  const newline = answerSdp.includes('\r\n') ? '\r\n' : '\n';
+  const lines = answerSdp.split(/\r?\n/);
+  const candidateLines = lines.filter((line) => line.startsWith('a=candidate:'));
+  const matchingCandidates = candidateLines.filter((line) => line.trim().split(/\s+/)[4] === host);
+
+  // MediaMTX 没公布该地址时保留原答案，避免因代理域名或 NAT 地址导致无法连接。
+  if (candidateLines.length === 0 || matchingCandidates.length === 0) return answerSdp;
+
+  return lines
+    .filter((line) => !line.startsWith('a=candidate:') || line.trim().split(/\s+/)[4] === host)
+    .join(newline);
 }
 
 export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boolean }) {
@@ -60,8 +86,8 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
   const connectSessionIdRef = useRef(0);
   const shouldRetryRef = useRef(false);
   const retryAttemptsRef = useRef(0);
-  const highLatencySamplesRef = useRef(0);
-  const lastLatencyReconnectAtRef = useRef(0);
+  const stalledFrameSamplesRef = useRef(0);
+  const lastStallReconnectAtRef = useRef(0);
   // statusRef 与 React state 保持同步，用于同步判断当前连接状态
   const statusRef = useRef<WhepStatus>('disconnected');
   // 最新 connect 函数引用，供 retry timer 调用，避免 stale closure
@@ -104,7 +130,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
     }
 
     prevInboundRef.current = null;
-    highLatencySamplesRef.current = 0;
+    stalledFrameSamplesRef.current = 0;
     setVideoLatencyMs(null);
     setVideoLatencyStats(null);
     setVideoResolution({ width: null, height: null });
@@ -128,7 +154,6 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
     // cleanup 已将 connectingRef 重置，重新占位继续建连
     connectingRef.current = true;
     shouldRetryRef.current = true;
-    retryAttemptsRef.current = 0;
     // sessionId 由 cleanup() 递增，旧回调凭此判断自身已失效
     const sessionId = connectSessionIdRef.current;
 
@@ -247,6 +272,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
                 // 用增量计算本周期的平均 jitter buffer 延迟和解码时间
                 let jitterBufferMs = 0;
                 let decodeMs = 0;
+                let decodedFramesDelta: number | null = null;
                 if (curInbound && prevInboundRef.current) {
                   const prev = prevInboundRef.current;
                   const cur = curInbound as {
@@ -259,6 +285,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
                   const deltaJitter = cur.jitterBufferDelay - prev.jitterBufferDelay;
                   const deltaFrames = cur.framesDecoded - prev.framesDecoded;
                   const deltaDecode = cur.totalDecodeTime - prev.totalDecodeTime;
+                  decodedFramesDelta = deltaFrames;
                   if (deltaEmitted > 0) jitterBufferMs = (deltaJitter / deltaEmitted) * 1000;
                   if (deltaFrames > 0) decodeMs = (deltaDecode / deltaFrames) * 1000;
                 }
@@ -282,30 +309,31 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
                     jitterBufferMs: Math.round(jitterBufferMs),
                     decodeMs: Math.round(decodeMs),
                   });
-                  if (!skipStats) {
-                    const now = Date.now();
-                    const bufferMs = Math.round(jitterBufferMs);
-                    if (bufferMs >= HIGH_BUFFER_RECONNECT_MS) {
-                      highLatencySamplesRef.current += 1;
-                    } else {
-                      highLatencySamplesRef.current = 0;
-                    }
-                    const shouldReconnect =
-                      bufferMs >= FORCE_BUFFER_RECONNECT_MS
-                      || highLatencySamplesRef.current >= HIGH_BUFFER_SAMPLE_LIMIT;
-                    if (
-                      shouldReconnect
-                      && now - lastLatencyReconnectAtRef.current >= MIN_LATENCY_RECONNECT_INTERVAL_MS
-                    ) {
-                      lastLatencyReconnectAtRef.current = now;
-                      highLatencySamplesRef.current = 0;
-                      void (async () => {
-                        await cleanup();
-                        window.setTimeout(() => {
-                          void connectFnRef.current?.();
-                        }, 250);
-                      })();
-                    }
+                }
+
+                // 高 jitter 并不等于视频已经停止；按缓冲区阈值主动重连会不断丢弃
+                // 当前会话和关键帧。仅在页面可见且连续多次没有解码新帧时重连。
+                if (!skipStats && decodedFramesDelta !== null) {
+                  if (decodedFramesDelta > 0) {
+                    stalledFrameSamplesRef.current = 0;
+                  } else {
+                    stalledFrameSamplesRef.current += 1;
+                  }
+
+                  const now = Date.now();
+                  const shouldReconnect =
+                    document.visibilityState === 'visible'
+                    && stalledFrameSamplesRef.current >= STALLED_FRAME_SAMPLE_LIMIT
+                    && now - lastStallReconnectAtRef.current >= MIN_STALL_RECONNECT_INTERVAL_MS;
+                  if (shouldReconnect) {
+                    lastStallReconnectAtRef.current = now;
+                    stalledFrameSamplesRef.current = 0;
+                    void (async () => {
+                      await cleanup();
+                      window.setTimeout(() => {
+                        void connectFnRef.current?.();
+                      }, 250);
+                    })();
                   }
                 }
               } catch {
@@ -353,7 +381,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
         }
       }
 
-      const answerSdp = await response.text();
+      const answerSdp = filterWhepAnswerCandidates(await response.text(), whepUrl);
       if (connectSessionIdRef.current !== sessionId || pc.signalingState === 'closed') {
         return;
       }
@@ -376,6 +404,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
 
   const disconnect = useCallback(async () => {
     await cleanup();
+    retryAttemptsRef.current = 0;
     setWhepStatus('disconnected');
   }, [cleanup, setWhepStatus]);
 

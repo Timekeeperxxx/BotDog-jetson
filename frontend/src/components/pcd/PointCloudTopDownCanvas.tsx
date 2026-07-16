@@ -546,7 +546,7 @@ export function PointCloudTopDownCanvas({
       <div className="pcd-path-legend" aria-label="导航路径图例">
         <span><i className="is-global" />全局路径</span>
         <span><i className="is-execution" />SCAN 实际轨迹</span>
-        <span><i className="is-scan-body" />B2 双圆柱 r=0.36m</span>
+        <span><i className="is-scan-body" />B2 双圆柱 r={SCAN_BODY_CYLINDER_RADIUS.toFixed(2)}m</span>
       </div>
       <div className="pcd-topdown-toolbar">
         <button
