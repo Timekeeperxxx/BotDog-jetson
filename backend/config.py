@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     CORS_ALLOW_ORIGINS: list[str] = ['*']
     CORS_ALLOW_CREDENTIALS: bool = False
 
+    # 运行日志：Python 日志由 Loguru 轮转，外部进程日志由 logrotate 管理。
+    LOG_CONSOLE_LEVEL: str = "INFO"
+    LOG_ROTATION_SIZE_MB: int = 20
+    LOG_RETENTION_DAYS: int = 14
+    LOG_COMPRESSION: str = "zip"
+
     # 本地模拟数据 Worker 控制（默认保持当前启用行为）
     SIMULATION_WORKER_ENABLED: bool = True
 
@@ -127,6 +133,7 @@ class Settings(BaseSettings):
     ROS_NAV_BASE_FRAME_ID: str = 'base_footprint'
     # Reject cached TF transforms whose ROS timestamp no longer advances.
     ROS_NAV_TF_MAX_AGE_SECONDS: float = 3.0
+    ROS_NAV_TF_WARNING_INTERVAL_SECONDS: float = 300.0
     ROS_NAV_BROADCAST_HZ: float = 10.0
     ROS_NAV_PAGE_OPEN_TOPIC: str = '/lidar_start'
     ROS_NAV_START_TOPIC: str = '/nav_start'

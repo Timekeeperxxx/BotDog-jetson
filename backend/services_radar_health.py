@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .config import settings
-from .logging_config import get_logger, get_logs_dir, trim_log_file_tail
+from .logging_config import get_logger, get_logs_dir
 from .schemas import utc_now_iso
 
 radar_logger = get_logger("雷达检测")
@@ -61,7 +61,6 @@ def _write_radar_log(message: str) -> None:
         path = _radar_log_path()
         with path.open("a", encoding="utf-8") as f:
             f.write(f"{utc_now_iso()} | {message}\n")
-        trim_log_file_tail(path)
     except Exception:
         return
 

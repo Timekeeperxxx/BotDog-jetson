@@ -14,6 +14,7 @@ BotDog 机器人控制系统的后端服务，运行于 **ARM64 主机**，负�
 | Pydantic Settings | 类型安全配置管理 |
 | ultralytics (YOLOv8) | AI 目标检测 |
 | loguru | 结构化日志 |
+| JWT / RBAC | 登录鉴权、角色权限、审计日志 |
 
 ## 系统架构
 
@@ -21,8 +22,8 @@ BotDog 机器人控制系统的后端服务，运行于 **ARM64 主机**，负�
 ARM64 主机
 ├── backend/          ← 本服务（FastAPI）
 │   ├── 遥测广播 (WebSocket /ws/telemetry)
-│   ├── 事件广播 (WebSocket /ws/events)
-│   ├── AI 推理  (RTSP → YOLOv8 → ByteTrack)
+│   ├── 事件广播 (WebSocket /ws/event)
+│   ├── AI 推理  (RTSP → YOLO / TensorRT → 目标跟踪)
 │   ├── 运动控制 (Unitree B2 SDK / 模拟)
 │   └── 任务管理 (SQLite)
 │
@@ -49,7 +50,8 @@ source .venv/bin/activate        # Linux
 ### 2. 安装依赖
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -U pip setuptools wheel
+python -m pip install -r requirements.txt
 ```
 
 ### 3. 配置环境变量
@@ -57,6 +59,7 @@ pip install -r requirements.txt
 ```bash
 cp backend/.env.example backend/.env
 # 根据实际硬件修改 .env 关键项（见下方说明）
+# 首次部署必须修改 JWT_SECRET 和 AUTH_ADMIN_PASSWORD
 ```
 
 ### 4. 启动后端
@@ -107,9 +110,9 @@ AI_RTSP_URL=rtsp://127.0.0.1:8554/cam   # MediaMTX cam 路径
 AI_FRAME_WIDTH=1280
 AI_FRAME_HEIGHT=720
 AI_FPS=30
-AI_MODEL_PATH=models/yolov8n.pt
-AI_CONFIDENCE_THRESHOLD=0.33
-AI_TARGET_CLASSES=["person"]
+AI_MODEL_PATH=models/helmet.engine
+AI_CONFIDENCE_THRESHOLD=0.4
+AI_TARGET_CLASSES=["person","head","helmet"]
 AI_DEVICE=auto                   # auto | cpu | cuda
 ```
 
@@ -203,7 +206,21 @@ config/
 |------|------|------|
 | GET | `/api/v1/system/health` | 健康检查 |
 | GET | `/api/v1/system/startup` | 启动摘要 |
-| GET | `/api/v1/system/status` | 系统完整状态 |
+| GET | `/api/v1/system/safety` | 安全状态 |
+| GET | `/api/v1/system/radar/health` | 雷达/ROS2 topic 健康检查 |
+| POST | `/api/v1/system/pipeline/restart` | 重启视频流水线 |
+
+### 鉴权与用户
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/v1/auth/login` | 登录并返回 bearer token |
+| GET | `/api/v1/auth/me` | 当前用户 |
+| GET | `/api/v1/auth/status` | 鉴权状态 |
+| GET/POST | `/api/v1/users` | 用户列表 / 创建用户 |
+| PATCH/DELETE | `/api/v1/users/{user_id}` | 更新 / 删除用户 |
+| POST | `/api/v1/users/{user_id}/reset-password` | 管理员重置密码 |
+| POST | `/api/v1/users/change-password` | 当前用户修改密码 |
 
 ### 任务管理
 
@@ -218,6 +235,8 @@ config/
 |------|------|------|
 | POST | `/api/v1/control/command` | 发送运动命令 |
 | POST | `/api/v1/control/stop` | 紧急停止 |
+| POST | `/api/v1/control/e-stop` | 进入急停 |
+| POST | `/api/v1/control/e-stop/reset` | 解除急停 |
 
 ### AI 自动跟踪
 
@@ -225,15 +244,57 @@ config/
 |------|------|------|
 | POST | `/api/v1/auto-track/enable` | 启用自动跟踪 |
 | POST | `/api/v1/auto-track/disable` | 禁用自动跟踪 |
-| GET | `/api/v1/auto-track/status` | 获取跟踪状态 |
+| POST | `/api/v1/auto-track/pause` | 暂停自动跟踪 |
+| POST | `/api/v1/auto-track/resume` | 恢复自动跟踪 |
+| POST | `/api/v1/auto-track/manual-override` | 手动接管 |
+| POST | `/api/v1/auto-track/release-override` | 释放手动接管 |
+| GET | `/api/v1/auto-track/debug` | 获取跟踪调试状态 |
+| GET | `/api/v1/auto-track/arbiter` | 获取控制权仲裁状态 |
+| POST | `/api/v1/auto-track/mark-known/{track_id}` | 标记已知目标 |
+| POST | `/api/v1/auto-track/unmark-known/{track_id}` | 取消已知目标标记 |
+| GET | `/api/v1/auto-track/known-list` | 已知目标列表 |
+
+### 导航巡逻 / PCD
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET/POST | `/api/v1/nav/auto-track-mode` | 导航任务自动跟踪联动开关 |
+| GET/PUT/DELETE | `/api/v1/nav/tasks` | 导航任务列表、更新、删除 |
+| POST | `/api/v1/nav/tasks/{task_id}/execute` | 执行导航任务 |
+| POST | `/api/v1/nav/tasks/{task_id}/stop` | 停止导航任务 |
+| GET | `/api/v1/nav/pcd-scenes` | 场景列表 |
+| POST | `/api/v1/nav/pcd-scenes/{scene_id}/select` | 选择当前场景 |
+| GET | `/api/v1/nav/pcd-maps/{map_id}/preview` | PCD 点云预览 |
+| GET/POST | `/api/v1/nav/pcd-maps/{map_id}/waypoints` | 导航点列表 / 创建 |
+| POST | `/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to` | 单点导航 |
+| POST | `/api/v1/nav/localization/restart` | 重启导航定位链路 |
+| GET | `/api/v1/nav/localization/initialpose-ready` | 判断可下发初始位姿 |
+| POST | `/api/v1/nav/localization/set-pose` | 下发初始位姿 |
+| GET | `/api/v1/nav/mapping/status` | 建图状态 |
+| POST | `/api/v1/nav/mapping/set-enabled` | 开启 / 关闭建图 |
 
 ### 证据 & 日志
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/v1/evidence` | 查询证据列表 |
+| DELETE | `/api/v1/evidence/{evidence_id}` | 删除单条证据 |
 | POST | `/api/v1/evidence/bulk-delete` | 批量删除证据 |
 | GET | `/api/v1/logs` | 查询操作日志 |
+| GET | `/api/v1/log-files` | 查询运行日志文件 |
+| GET | `/api/v1/log-files/{name}/tail` | 读取日志尾部 |
+
+### 录像与音频
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/recording/status` | 当前录像状态 |
+| POST | `/api/v1/recording/start` | 开始录像 |
+| POST | `/api/v1/recording/stop` | 停止录像 |
+| GET | `/api/v1/recordings` | 录像列表 |
+| POST | `/api/v1/audio/play` | 播放警告音 |
+| POST | `/api/v1/audio/stop` | 停止播放 |
+| GET | `/api/v1/audio/status` | 音频状态 |
 
 ### 视频源管理
 
@@ -241,21 +302,25 @@ config/
 |------|------|------|
 | GET | `/api/v1/video-sources` | 获取所有视频源 |
 | GET | `/api/v1/video-sources/active` | 获取已启用视频源 |
-| PUT | `/api/v1/video-sources/{id}` | 更新视频源配置 |
+| POST | `/api/v1/video-sources` | 新增视频源 |
+| PUT | `/api/v1/video-sources/{source_id}` | 更新视频源配置 |
+| DELETE | `/api/v1/video-sources/{source_id}` | 删除视频源 |
 
 ### 配置管理
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/v1/config` | 获取所有配置项 |
-| PUT | `/api/v1/config/{key}` | 更新配置项 |
+| POST | `/api/v1/config` | 更新配置项 |
+| GET | `/api/v1/config/history` | 配置变更历史 |
 
 ### WebSocket
 
 | 路径 | 说明 |
 |------|------|
 | `WS /ws/telemetry` | 遥测数据流（15Hz 推送） |
-| `WS /ws/events` | 事件流（AI 检测、告警、跟踪状态） |
+| `WS /ws/event` | 事件流（AI 检测、告警、跟踪状态） |
+| `WS /ws/nav-mapping-cloud` | 建图点云转发 |
 
 #### 遥测消息格式
 
@@ -392,7 +457,7 @@ python backend/test_keyboard_to_dog.py
 **Q: AI Worker 不推理？**
 
 1. 检查 `AI_ENABLED=true`
-2. 确认模型文件存在：`models/yolov8n.pt`
+2. 确认模型文件存在：默认 `models/helmet.engine`，或按 `.env` 中的 `AI_MODEL_PATH` 检查
 3. 确认 `AI_RTSP_URL` 指向有效的 MediaMTX 路径
 
 **Q: cam2 画中画不显示？**

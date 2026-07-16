@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import settings
-from .logging_config import get_logger, trim_log_file_tail
+from .logging_config import get_logger
 from .repositories.json_store import atomic_write_json, read_json
 from .services_nav_localization_process import (
     _cmd_vel_estop_path,
@@ -289,7 +289,6 @@ def _pump_restart_output(proc: subprocess.Popen[str], log_path: Path) -> None:
         for line in proc.stdout:
             log_file.write(line)
             log_file.flush()
-            trim_log_file_tail(log_path)
 
     try:
         proc.stdout.close()  # type: ignore[union-attr]

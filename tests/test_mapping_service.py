@@ -605,6 +605,9 @@ def test_start_mapping_wrapper_waits_for_unified_runtime_readiness():
 
     assert 'source "$SCRIPT_DIR/navigation_adapter_common.sh"' in wrapper
     assert "run_navigation_adapter start_mapping.sh" in wrapper
+    assert 'session_type="mapping"' in (
+        botdog_root / "scripts" / "navigation_adapter_common.sh"
+    ).read_text(encoding="utf-8")
     assert "ros2 launch nav_bringup mapping.launch.py" in adapter
     assert 'READY_FILE="$MAP_DIR/.ground_generation_started"' in adapter
     assert "RUN_LOG_OFFSET" in adapter

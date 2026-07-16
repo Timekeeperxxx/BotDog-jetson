@@ -111,7 +111,11 @@ class WebSocketBroadcaster:
             try:
                 await client.send_json(message)
             except Exception as exc:  # noqa: BLE001
-                get_logger("WebSocket遥测").warning("向客户端发送消息失败：{}", exc)
+                get_logger("WebSocket遥测").warning(
+                    "向客户端发送消息失败：异常类型={}，原因={!r}",
+                    type(exc).__name__,
+                    exc,
+                )
                 disconnected_clients.add(client)
 
         # 清理断开的客户端

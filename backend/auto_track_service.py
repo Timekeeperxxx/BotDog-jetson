@@ -214,7 +214,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
     def stop(self, reason: TrackStopReason, send_stop_command: bool = True) -> None:
         self._do_stop(reason, send_stop_command=send_stop_command)
 
-    def update_params(self, key: str, value: Any) -> None:
+    def update_params(self, key: str, value: Any) -> bool:
         """
         热更新系统参数（支持从数据库前台设置面板修改传入）。
         """
@@ -222,12 +222,24 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             if key == "auto_track_stable_hits":
                 self._stable_hits = max(5, int(value))
                 logger.info(f"[AutoTrackService] 热更新 stable_hits={self._stable_hits}")
+            elif key == "auto_track_enabled":
+                enabled = str(value).strip().lower() in {"1", "true", "yes", "on"}
+                self.enable() if enabled else self.disable()
+            elif key == "auto_track_out_of_zone_frames":
+                self._out_of_zone_frames = max(1, int(value))
+                logger.info(f"[AutoTrackService] 热更新 out_of_zone_frames={self._out_of_zone_frames}")
             elif key == "auto_track_lost_timeout_frames":
                 self._lost_timeout_frames = int(value)
                 logger.info(f"[AutoTrackService] 热更新 lost_timeout_frames={self._lost_timeout_frames}")
             elif key == "auto_track_video_lost_grace_seconds":
                 self._video_lost_grace_seconds = max(0.0, float(value))
                 logger.info(f"[AutoTrackService] 热更新 video_lost_grace_seconds={self._video_lost_grace_seconds}")
+            elif key == "auto_track_overlay_interval_seconds":
+                self._overlay_interval_s = max(0.05, float(value))
+                logger.info(f"[AutoTrackService] 热更新 overlay_interval_s={self._overlay_interval_s}")
+            elif key == "auto_track_command_interval_ms":
+                self._decision_engine._command_interval_s = max(0.0, float(value)) / 1000.0
+                logger.info(f"[AutoTrackService] 热更新 command_interval_ms={value}")
             elif key == "auto_track_yaw_deadband_px":
                 self._yaw_deadband_px = int(value)
                 self._decision_engine._yaw_deadband_px = self._yaw_deadband_px
@@ -235,15 +247,28 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             elif key == "auto_track_forward_area_ratio":
                 self._forward_area_ratio = float(value)
                 self._decision_engine._forward_area_ratio = self._forward_area_ratio
+                self._decision_engine._resume_area_ratio = self._forward_area_ratio * 0.85
                 logger.info(f"[AutoTrackService] 热更新 forward_area_ratio={self._forward_area_ratio}")
             elif key == "auto_track_anchor_y_stop_ratio":
                 self._anchor_y_stop_ratio = float(value)
                 self._decision_engine._anchor_y_stop_ratio = self._anchor_y_stop_ratio
                 logger.info(f"[AutoTrackService] 热更新 anchor_y_stop_ratio={self._anchor_y_stop_ratio}")
+            elif key == "auto_track_stop_snapshot_enabled":
+                self._stop_snapshot_enabled = str(value).strip().lower() in {"1", "true", "yes", "on"}
+                logger.info(f"[AutoTrackService] 热更新 stop_snapshot_enabled={self._stop_snapshot_enabled}")
+            elif key == "auto_track_yaw_pulse_ms":
+                self._yaw_pulse_s = max(0.0, float(value)) / 1000.0
+                logger.info(f"[AutoTrackService] 热更新 yaw_pulse_ms={value}")
+            elif key in {"auto_track_vx", "auto_track_vyaw"}:
+                # 速度在每次下发命令时直接从 settings 读取，路由已完成同步。
+                logger.info(f"[AutoTrackService] 热更新 {key}={value}")
             else:
                 logger.debug(f"[AutoTrackService] 忽略未知参数更新: {key}={value}")
+                return False
+            return True
         except Exception as e:
             logger.error(f"[AutoTrackService] 热更新参数 {key}={value} 失败: {e}")
+            return False
 
     def get_status(self) -> dict:
         target_info = None

@@ -41,3 +41,25 @@ def test_http_exception_response_is_normalized(client: TestClient) -> None:
     assert body["message"] == "缺少访问令牌"
     assert body["status_code"] == 401
     assert body["error"] == "unauthorized"
+    assert len(response.headers["X-Request-ID"]) == 16
+
+
+def test_request_id_is_preserved_when_valid(client: TestClient) -> None:
+    response = client.get(
+        "/api/v1/auth/me",
+        headers={"X-Request-ID": "ground-console-42"},
+    )
+
+    assert response.status_code == 401
+    assert response.headers["X-Request-ID"] == "ground-console-42"
+
+
+def test_invalid_request_id_is_replaced(client: TestClient) -> None:
+    response = client.get(
+        "/api/v1/auth/me",
+        headers={"X-Request-ID": "invalid request id"},
+    )
+
+    assert response.status_code == 401
+    assert response.headers["X-Request-ID"] != "invalid request id"
+    assert len(response.headers["X-Request-ID"]) == 16

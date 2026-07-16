@@ -86,7 +86,10 @@ async def create_user(
         db,
         level="INFO",
         module="BACKEND",
-        message=f"创建用户: {body.username} role={body.role} enabled={body.enabled} by admin {admin.username}",
+        message=(
+            f"用户={admin.username} 角色={admin.role} 操作=user.create "
+            f"目标={body.username} 结果=success target_role={body.role} enabled={body.enabled}"
+        ),
     )
     return new_user
 
@@ -137,7 +140,10 @@ async def update_user(
             db,
             level="INFO",
             module="BACKEND",
-            message=f"修改用户信息 user_id={user_id} actions=[{', '.join(actions)}] by admin {admin.username}",
+            message=(
+                f"用户={admin.username} 角色={admin.role} 操作=user.update "
+                f"目标={user_id} 结果=success 变更=[{', '.join(actions)}]"
+            ),
         )
 
     return user
@@ -168,7 +174,10 @@ async def delete_user(
         db,
         level="INFO",
         module="BACKEND",
-        message=f"软删除用户 user_id={user_id} username={user.username} by admin {admin.username}",
+        message=(
+            f"用户={admin.username} 角色={admin.role} 操作=user.delete "
+            f"目标={user_id} 结果=success target_username={user.username} soft_delete=true"
+        ),
     )
 
 
@@ -201,7 +210,10 @@ async def reset_password(
         db,
         level="INFO",
         module="BACKEND",
-        message=f"重置密码 user_id={user_id} by admin {admin.username}",
+        message=(
+            f"用户={admin.username} 角色={admin.role} 操作=user.password.reset "
+            f"目标={user_id} 结果=success"
+        ),
     )
     return {"detail": "密码已重置"}
 
@@ -234,6 +246,9 @@ async def change_password(
         db,
         level="INFO",
         module="BACKEND",
-        message=f"用户自改密码 user_id={user.id} username={user.username}",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=user.password.change "
+            f"目标={user.id} 结果=success"
+        ),
     )
     return {"detail": "密码修改成功"}

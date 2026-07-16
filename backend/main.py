@@ -9,7 +9,10 @@
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+import re
+import time
 from typing import Any, AsyncIterator
+import uuid
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -19,7 +22,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from .config import settings
 from .database import get_session_factory
-from .logging_config import get_access_logger, get_logger, setup_logging
+from .logging_config import get_access_logger, get_logger, logger, setup_logging
 from .state_machine_state import set_state_machine
 from .control_service import ControlService
 from .mavlink_gateway import MAVLinkGateway
@@ -70,6 +73,14 @@ IMPORTANT_ACCESS_PREFIXES = (
     "/api/v1/audio/stop",
     "/api/v1/auto-track",
 )
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _resolve_request_id(request: Request) -> str:
+    supplied = request.headers.get("X-Request-ID", "").strip()
+    if supplied and REQUEST_ID_PATTERN.fullmatch(supplied):
+        return supplied
+    return uuid.uuid4().hex[:16]
 
 
 def _format_status_text(status: str) -> str:
@@ -368,35 +379,46 @@ def create_app() -> FastAPI:
         client_host = request.client.host if request.client else "-"
         method = request.method.upper()
         path = request.url.path
+        request_id = _resolve_request_id(request)
+        started_at = time.perf_counter()
 
-        try:
-            response = await call_next(request)
-        except Exception:
-            access_logger.warning(
-                "接口处理异常：{} {}，来源={}，状态码=500",
-                method,
-                path,
-                client_host,
-            )
-            raise
+        with logger.contextualize(request_id=request_id):
+            try:
+                response = await call_next(request)
+            except Exception as exc:
+                duration_ms = (time.perf_counter() - started_at) * 1000
+                access_logger.warning(
+                    "接口处理异常：{} {}，来源={}，状态码=500，耗时={:.1f}ms，异常类型={}，原因={!r}",
+                    method,
+                    path,
+                    client_host,
+                    duration_ms,
+                    type(exc).__name__,
+                    exc,
+                )
+                raise
 
-        status_code = response.status_code
-        if status_code >= 400:
-            access_logger.warning(
-                "接口返回异常：{} {}，来源={}，状态码={}",
-                method,
-                path,
-                client_host,
-                status_code,
-            )
-        elif method != "GET" and path.startswith(IMPORTANT_ACCESS_PREFIXES):
-            access_logger.info(
-                "收到接口请求：{} {}，来源={}，状态码={}",
-                method,
-                path,
-                client_host,
-                status_code,
-            )
+            duration_ms = (time.perf_counter() - started_at) * 1000
+            status_code = response.status_code
+            response.headers["X-Request-ID"] = request_id
+            if status_code >= 400:
+                access_logger.warning(
+                    "接口返回异常：{} {}，来源={}，状态码={}，耗时={:.1f}ms",
+                    method,
+                    path,
+                    client_host,
+                    status_code,
+                    duration_ms,
+                )
+            elif method != "GET" and path.startswith(IMPORTANT_ACCESS_PREFIXES):
+                access_logger.info(
+                    "收到接口请求：{} {}，来源={}，状态码={}，耗时={:.1f}ms",
+                    method,
+                    path,
+                    client_host,
+                    status_code,
+                    duration_ms,
+                )
 
         return response
 

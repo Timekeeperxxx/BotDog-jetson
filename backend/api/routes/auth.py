@@ -35,7 +35,7 @@ async def auth_login(
             db,
             level="WARN",
             module="BACKEND",
-            message=f"登录失败 user={body.username} role=anonymous action=auth.login result=fail reason=bad_credentials",
+            message=f"用户={body.username} 角色=anonymous 操作=auth.login 目标=session 结果=fail 原因=bad_credentials",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -47,7 +47,7 @@ async def auth_login(
             db,
             level="WARN",
             module="BACKEND",
-            message=f"登录失败 user={user.username} role={user.role} action=auth.login result=fail reason=deleted",
+            message=f"用户={user.username} 角色={user.role} 操作=auth.login 目标=session 结果=fail 原因=deleted",
         )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="此账号已被删除")
 
@@ -56,7 +56,7 @@ async def auth_login(
             db,
             level="WARN",
             module="BACKEND",
-            message=f"登录失败 user={user.username} role={user.role} action=auth.login result=fail reason=disabled",
+            message=f"用户={user.username} 角色={user.role} 操作=auth.login 目标=session 结果=fail 原因=disabled",
         )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="此账号已被禁用")
 
@@ -76,7 +76,7 @@ async def auth_login(
         db,
         level="INFO",
         module="BACKEND",
-        message=f"登录成功 user={user.username} role={user.role} action=auth.login result=success",
+        message=f"用户={user.username} 角色={user.role} 操作=auth.login 目标=session 结果=success",
     )
     return LoginResponse(
         access_token=token,

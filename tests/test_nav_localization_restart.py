@@ -995,6 +995,9 @@ def test_restart_script_prefers_exact_scene_pcd_files():
     assert 'source "$SCRIPT_DIR/navigation_adapter_common.sh"' in wrapper
     assert "run_navigation_adapter restart_navigation_localization.sh" in wrapper
     assert 'BOTDOG_NAV_WS="${BOTDOG_NAV_WS:-$PROJECT_ROOT/Navigation}"' in wrapper_common
+    assert 'prepare_ros_log_dir "$adapter_name"' in wrapper_common
+    assert 'session_type="navigation"' in wrapper_common
+    assert 'ROS_LOG_RETENTION_DAYS="${ROS_LOG_RETENTION_DAYS:-14}"' in wrapper_common
     assert 'find_scene_pcd_file "$SCENE_DIR" "map.pcd" "map.pcd"' in adapter
     assert 'find_scene_pcd_file "$SCENE_DIR" "ground.pcd" "*ground.pcd"' in adapter
     assert '"footprint_fill.pcd|fill_footpoint.pcd"' in adapter

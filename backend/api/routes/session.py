@@ -35,7 +35,10 @@ async def session_start(
         db,
         level="INFO",
         module="BACKEND",
-        message=f"Session started: {task.task_name} (id={task.task_id})",
+        message=(
+            f"用户=anonymous 角色=anonymous 操作=session.start "
+            f"目标={task.task_id} 结果=success 任务名={task.task_name}"
+        ),
         task_id=task.task_id,
     )
 
@@ -74,7 +77,10 @@ async def session_stop(
         db,
         level="INFO",
         module="BACKEND",
-        message=f"Session stopped: {task.task_name} (id={task.task_id})",
+        message=(
+            f"用户=anonymous 角色=anonymous 操作=session.stop "
+            f"目标={task.task_id} 结果=success 任务名={task.task_name}"
+        ),
         task_id=task.task_id,
     )
 

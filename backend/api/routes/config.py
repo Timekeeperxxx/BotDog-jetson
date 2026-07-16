@@ -31,12 +31,38 @@ def _apply_runtime_update(key: str, value) -> dict:
 
     DB 保存成功后调用，失败不影响主流程。
     """
+    from ...services_config import ConfigService, apply_config_value_to_settings
+
+    definition = ConfigService.DEFAULT_CONFIGS.get(key)
+    if definition is None:
+        return {
+            "applied": False,
+            "target": "backend",
+            "message": "未知配置项，运行时未接入",
+        }
+
+    target = str(definition.get("category") or "backend")
+    if not definition.get("is_hot_reloadable", False):
+        return {
+            "applied": False,
+            "target": target,
+            "message": "已保存，重启后端后生效",
+        }
+
+    try:
+        setting_name = apply_config_value_to_settings(key, value)
+    except (TypeError, ValueError) as exc:
+        return {
+            "applied": False,
+            "target": target,
+            "message": f"已保存，但运行时值转换失败：{exc}",
+        }
+
     if key == "unitree_network_iface":
         try:
             from ...control_service import get_control_service
             from ...robot_adapter import UnitreeB2Adapter, create_adapter
 
-            settings.UNITREE_NETWORK_IFACE = str(value)
             control_service = get_control_service()
             current_adapter = control_service.get_adapter() if control_service else None
 
@@ -72,13 +98,6 @@ def _apply_runtime_update(key: str, value) -> dict:
                 "target": "hardware",
                 "message": "已保存，但当前适配器未接入热更新，请重启后端生效",
             }
-
-    if key == "mavlink_endpoint":
-        return {
-            "applied": False,
-            "target": "hardware",
-            "message": "需重启后端生效",
-        }
 
     if key.startswith("zone_draw_"):
         return {
@@ -116,8 +135,7 @@ def _apply_runtime_update(key: str, value) -> dict:
             from ...auto_track_service import get_auto_track_service
 
             auto_track_service = get_auto_track_service()
-            if auto_track_service:
-                auto_track_service.update_params(key, value)
+            if auto_track_service and auto_track_service.update_params(key, value):
                 return {
                     "applied": True,
                     "target": "auto_track",
@@ -126,27 +144,46 @@ def _apply_runtime_update(key: str, value) -> dict:
             return {
                 "applied": False,
                 "target": "auto_track",
-                "message": "自动跟踪服务未初始化，运行时未生效",
+                "message": "自动跟踪服务未初始化或不支持该参数，运行时未生效",
             }
         except Exception as exc:  # pragma: no cover - 仅在运行环境异常时触发
             logger.warning(f"[config] auto_track 热更新失败: key={key} error={exc}")
             return {
                 "applied": False,
                 "target": "auto_track",
-                "message": "自动跟踪服务未初始化，运行时未生效",
+                "message": "自动跟踪服务未初始化或不支持该参数，运行时未生效",
             }
 
-    if key == "safety_block_motion_when_disconnected":
-        settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED = _parse_bool(value)
+    if key == "guard_mission_enabled":
+        try:
+            from ...guard_mission_service import get_guard_mission_service
+
+            guard_service = get_guard_mission_service()
+            if guard_service is not None:
+                guard_service.enabled = _parse_bool(value)
+                return {
+                    "applied": True,
+                    "target": "guard",
+                    "message": "运行时已生效",
+                }
+        except Exception as exc:  # pragma: no cover - 运行环境异常
+            logger.warning(f"[config] 驱离任务开关热更新失败: error={exc}")
+        return {
+            "applied": False,
+            "target": "guard",
+            "message": "驱离任务服务未初始化，运行时未生效",
+        }
+
+    if setting_name is not None:
         return {
             "applied": True,
-            "target": "backend",
+            "target": target,
             "message": "运行时已生效",
         }
 
     return {
         "applied": False,
-        "target": "backend",
+        "target": target,
         "message": "已保存，运行时未接入",
     }
 

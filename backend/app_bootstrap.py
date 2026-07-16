@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from .auth.security import get_password_hash
 from .config import settings
 from .database import get_session_factory, init_db
-from .logging_config import get_logger
+from .logging_config import get_logger, setup_logging
 from .models import User
 from .services_config import get_config_service
 from .services_tasks import cleanup_stale_tasks
@@ -118,8 +118,10 @@ async def prepare_bootstrap_state() -> tuple[StartupSummary, Path]:
     config_service = get_config_service()
     async with get_session_factory()() as session:
         await config_service.initialize_defaults(session)
-        await config_service.get_all_configs(session)
-    config_logger.info("系统配置已加载完成")
+        restored_count = await config_service.load_into_settings(session)
+    # 日志系统早于数据库初始化；恢复 DB 配置后强制按持久化参数重建 sink。
+    setup_logging(force=True)
+    config_logger.info("系统配置已加载完成：已恢复 {} 项运行参数", restored_count)
 
     video_source_service = get_video_source_service()
     network_interface_service = get_network_interface_service()

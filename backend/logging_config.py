@@ -1,40 +1,37 @@
-"""
-日志配置模块。
+"""进程内日志配置。
 
-职责边界：
-- 初始化控制台与文件日志；
-- 统一标准 logging / Uvicorn / FastAPI 的输出格式；
-- 提供带业务域的 Loguru logger。
+Python 应用、HTTP 访问和 AI FFmpeg 原始输出分别拥有独立文件。
+ROS、MediaMTX 与视频流水线等外部进程日志不在此处改写，由 logrotate 管理。
 """
 
 from __future__ import annotations
 
 import logging
-import threading
-import time
 import sys
-from collections import deque
 from pathlib import Path
 from typing import Any
 
 from loguru import logger as _logger
 
+from .config import settings
+
 _LOGGING_READY = False
-_LOG_MAX_LINES = 1000
-_LOG_MAINTENANCE_STARTED = False
 
 LOG_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
     "<level>{level:<8}</level> | "
     "<cyan>{extra[domain]}</cyan> | "
+    "<magenta>rid={extra[request_id]}</magenta> | "
     "<level>{message}</level>"
 )
 
 
 def _patch_record(record: dict[str, Any]) -> None:
-    record["extra"].setdefault("domain", "应用服务")
+    module_name = str(record.get("name") or "").removeprefix("backend.")
+    record["extra"].setdefault("domain", module_name or "应用服务")
     record["extra"].setdefault("access_log", False)
     record["extra"].setdefault("raw_ffmpeg", False)
+    record["extra"].setdefault("request_id", "-")
 
 
 logger = _logger.patch(_patch_record)
@@ -64,7 +61,7 @@ class InterceptHandler(logging.Handler):
             frame = frame.f_back
             depth += 1
 
-        logger.bind(domain="标准日志").opt(
+        logger.bind(domain=record.name or "标准日志").opt(
             depth=depth,
             exception=record.exc_info,
         ).log(level, record.getMessage())
@@ -83,13 +80,21 @@ def get_logs_dir() -> Path:
 
 
 def _console_filter(record: dict[str, Any]) -> bool:
-    if record["extra"].get("raw_ffmpeg"):
+    if record["extra"].get("raw_ffmpeg") or record["extra"].get("access_log"):
         return False
     return record["level"].no >= logging.INFO
 
 
 def _backend_file_filter(record: dict[str, Any]) -> bool:
-    return not record["extra"].get("raw_ffmpeg", False)
+    return not record["extra"].get("raw_ffmpeg", False) and not record["extra"].get("access_log", False)
+
+
+def _debug_file_filter(record: dict[str, Any]) -> bool:
+    return (
+        record["level"].no == logging.DEBUG
+        and not record["extra"].get("raw_ffmpeg", False)
+        and not record["extra"].get("access_log", False)
+    )
 
 
 def _access_file_filter(record: dict[str, Any]) -> bool:
@@ -100,67 +105,29 @@ def _ffmpeg_file_filter(record: dict[str, Any]) -> bool:
     return record["extra"].get("raw_ffmpeg", False)
 
 
-def trim_log_file_tail(path: Path, max_lines: int = _LOG_MAX_LINES) -> None:
-    if not path.exists() or not path.is_file():
-        return
+def _file_sink_options() -> dict[str, Any]:
+    """返回 Python 日志文件的统一轮转策略。"""
 
-    try:
-        with path.open("r", encoding="utf-8", errors="ignore") as f:
-            tail = deque(f, maxlen=max_lines)
-        with path.open("w", encoding="utf-8") as f:
-            f.writelines(tail)
-    except Exception:
-        return
-
-
-class LimitedLineFileSink:
-    def __init__(self, path: Path, max_lines: int = _LOG_MAX_LINES) -> None:
-        self._path = path
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._max_lines = max_lines
-        self._lock = threading.Lock()
-        self._writes_since_trim = 0
-        self._last_trim_at = time.monotonic()
-
-    def write(self, message: str) -> None:
-        with self._lock:
-            with self._path.open("a", encoding="utf-8") as f:
-                f.write(message)
-            self._writes_since_trim += 1
-            now = time.monotonic()
-            if self._writes_since_trim >= 250 or now - self._last_trim_at >= 5.0:
-                trim_log_file_tail(self._path, self._max_lines)
-                self._writes_since_trim = 0
-                self._last_trim_at = now
-
-    def flush(self) -> None:
-        return
+    rotation_mb = max(1, int(settings.LOG_ROTATION_SIZE_MB))
+    retention_days = max(1, int(settings.LOG_RETENTION_DAYS))
+    compression = str(settings.LOG_COMPRESSION).strip() or None
+    return {
+        "rotation": f"{rotation_mb} MB",
+        "retention": f"{retention_days} days",
+        "compression": compression,
+        "encoding": "utf-8",
+        "enqueue": True,
+        "backtrace": False,
+        "diagnose": False,
+        "format": LOG_FORMAT,
+    }
 
 
-def _start_log_maintenance_thread(logs_dir: Path) -> None:
-    global _LOG_MAINTENANCE_STARTED
-    if _LOG_MAINTENANCE_STARTED:
-        return
-
-    def _loop() -> None:
-        while True:
-            try:
-                for log_path in logs_dir.rglob("*.log"):
-                    trim_log_file_tail(log_path, _LOG_MAX_LINES)
-            except Exception:
-                pass
-            time.sleep(30)
-
-    thread = threading.Thread(target=_loop, name="log-tail-maintenance", daemon=True)
-    thread.start()
-    _LOG_MAINTENANCE_STARTED = True
-
-
-def setup_logging() -> None:
+def setup_logging(*, force: bool = False) -> None:
     """初始化 Loguru 日志：控制台、业务日志、调试日志、访问日志、FFmpeg 原始日志。"""
 
     global _LOGGING_READY
-    if _LOGGING_READY:
+    if _LOGGING_READY and not force:
         return
 
     _logger.remove()
@@ -169,9 +136,10 @@ def setup_logging() -> None:
     logs_dir.mkdir(parents=True, exist_ok=True)
     (logs_dir / "scripts").mkdir(parents=True, exist_ok=True)
 
+    console_level = str(settings.LOG_CONSOLE_LEVEL).strip().upper() or "INFO"
     logger.add(
         sys.stdout,
-        level="INFO",
+        level=console_level,
         colorize=True,
         enqueue=True,
         backtrace=False,
@@ -179,40 +147,30 @@ def setup_logging() -> None:
         format=LOG_FORMAT,
         filter=_console_filter,
     )
+    file_options = _file_sink_options()
     logger.add(
-        LimitedLineFileSink(logs_dir / "backend.log"),
+        logs_dir / "backend.log",
         level="INFO",
-        enqueue=True,
-        backtrace=False,
-        diagnose=False,
-        format=LOG_FORMAT,
         filter=_backend_file_filter,
+        **file_options,
     )
     logger.add(
-        LimitedLineFileSink(logs_dir / "debug.log"),
+        logs_dir / "debug.log",
         level="DEBUG",
-        enqueue=True,
-        backtrace=False,
-        diagnose=False,
-        format=LOG_FORMAT,
+        filter=_debug_file_filter,
+        **file_options,
     )
     logger.add(
-        LimitedLineFileSink(logs_dir / "access.log"),
+        logs_dir / "access.log",
         level="INFO",
-        enqueue=True,
-        backtrace=False,
-        diagnose=False,
-        format=LOG_FORMAT,
         filter=_access_file_filter,
+        **file_options,
     )
     logger.add(
-        LimitedLineFileSink(logs_dir / "ffmpeg.log"),
+        logs_dir / "ai_ffmpeg.log",
         level="DEBUG",
-        enqueue=True,
-        backtrace=False,
-        diagnose=False,
-        format=LOG_FORMAT,
         filter=_ffmpeg_file_filter,
+        **file_options,
     )
 
     intercept_handler = InterceptHandler()
@@ -233,9 +191,7 @@ def setup_logging() -> None:
     access_logger.propagate = False
     access_logger.disabled = True
 
-    _start_log_maintenance_thread(logs_dir)
-
     _LOGGING_READY = True
 
 
-__all__ = ["logger", "setup_logging", "get_logger", "get_access_logger", "get_logs_dir", "trim_log_file_tail"]
+__all__ = ["logger", "setup_logging", "get_logger", "get_access_logger", "get_logs_dir"]

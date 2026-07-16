@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ...app_runtime_state import APP_START_MONO
-from ...auth.dependencies import require_operator
+from ...auth.dependencies import require_admin, require_operator, require_viewer
 from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
 from ...config import settings
@@ -19,6 +19,8 @@ from ...database import get_db
 from ...safety_supervisor import get_safety_supervisor
 from ...schemas import (
     RadarHealthResponse,
+    SystemActionRequest,
+    SystemActionResponse,
     SystemHealthResponse,
     SystemSafetyResponse,
     SystemStartupResponse,
@@ -28,6 +30,11 @@ from ...schemas import (
 from ...startup_summary import coerce_startup_summary
 from ...state_machine import SystemState
 from ...state_machine_state import get_state_machine
+from ...services_system import (
+    ensure_system_action_available,
+    get_host_resource_snapshot,
+    schedule_system_action,
+)
 
 router = APIRouter(tags=["system"])
 
@@ -35,6 +42,25 @@ _PIPELINE_SCRIPT = Path("/home/jetson/Project/BOTDOG/BotDog/scripts/run-pipeline
 _pipeline_restart_proc: subprocess.Popen[str] | None = None
 _pipeline_restart_lock = threading.Lock()
 _PROJECT_ROOT = _PIPELINE_SCRIPT.parents[1]
+
+_DANGER_ACTIONS = {
+    "restart-backend": {
+        "confirmation": "重启后端",
+        "message": "后端服务将在约 2 秒后重启，页面连接会短暂中断",
+    },
+    "restart-video": {
+        "confirmation": "重启视频流水线",
+        "message": "视频流水线重启已提交，视频画面会短暂中断",
+    },
+    "restart-ai": {
+        "confirmation": "重启 AI Worker",
+        "message": "AI Worker 与后端同进程，将通过重启后端完成完整重载",
+    },
+    "reboot-device": {
+        "confirmation": "重启设备",
+        "message": "主机将在约 2 秒后重启，全部服务和控制链路都会中断",
+    },
+}
 
 
 def _pipeline_restart_log_path() -> Path:
@@ -148,6 +174,18 @@ async def system_health() -> SystemHealthResponse:
         mavlink_connected=mavlink_connected,
         uptime=round(uptime, 3),
     )
+
+
+@router.get("/api/v1/system/resources")
+async def system_resources(
+    _: AuthUserInternal = Depends(require_viewer),
+) -> dict[str, object]:
+    """返回实时主机内存、磁盘和基础运行信息。"""
+
+    try:
+        return await asyncio.to_thread(get_host_resource_snapshot)
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail=f"读取主机资源失败: {exc}") from exc
 
 
 @router.get("/api/v1/system/startup", response_model=SystemStartupResponse)
@@ -305,3 +343,48 @@ async def restart_pipeline(
         "pid": _pipeline_restart_proc.pid,
         "message": "已启动 Pipeline 重启脚本",
     }
+
+
+@router.post("/api/v1/system/actions/{action_key}", response_model=SystemActionResponse)
+async def execute_system_action(
+    action_key: str,
+    payload: SystemActionRequest,
+    user: AuthUserInternal = Depends(require_admin),
+    db=Depends(get_db),
+) -> SystemActionResponse:
+    """执行固定白名单内的危险操作，仅允许管理员调用。"""
+
+    if not settings.AUTH_ENABLED:
+        raise HTTPException(status_code=503, detail="鉴权关闭时禁止执行系统危险操作")
+
+    definition = _DANGER_ACTIONS.get(action_key)
+    if definition is None:
+        raise HTTPException(status_code=404, detail="不支持的系统操作")
+    if payload.confirmation != definition["confirmation"]:
+        raise HTTPException(status_code=400, detail="确认文本不匹配，操作已取消")
+
+    try:
+        command = await asyncio.to_thread(ensure_system_action_available, action_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    await safe_write_audit_log(
+        db,
+        level="WARNING",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=system.{action_key} "
+            "结果=accepted"
+        ),
+    )
+
+    scheduled = schedule_system_action(action_key, command)
+    message = definition["message"] if scheduled else "相同的系统操作已在等待执行"
+    return SystemActionResponse(
+        success=True,
+        action=action_key,
+        scheduled=scheduled,
+        message=message,
+    )

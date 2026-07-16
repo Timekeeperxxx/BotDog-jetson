@@ -836,7 +836,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
                     ",".join(self._base_frame_candidates()),
                     exc,
                 )
-            elif now - self._last_tf_warning_at >= 30.0:
+            elif now - self._last_tf_warning_at >= max(30.0, settings.ROS_NAV_TF_WARNING_INTERVAL_SECONDS):
                 self._last_tf_warning_at = now
                 waited = int(now - self._tf_wait_started_at)
                 tf_logger.warning(

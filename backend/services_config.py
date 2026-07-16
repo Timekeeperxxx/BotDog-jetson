@@ -15,6 +15,12 @@ from sqlalchemy import select
 
 from .models_config import SystemConfig, ConfigChangeHistory
 from .config import settings
+from .config_registry import (
+    OPERATIONAL_CONFIGS,
+    coerce_setting_value,
+    config_setting_name,
+    serialize_setting_value,
+)
 from .logging_config import logger
 
 
@@ -37,7 +43,7 @@ class ConfigService:
             "value_type": "float",
             "category": "backend",
             "description": "触发高温告警的温度阈值 (°C)",
-            "is_hot_reloadable": True,
+            "is_hot_reloadable": False,
         },
         "heartbeat_timeout": {
             "value": "3.0",
@@ -50,22 +56,22 @@ class ConfigService:
             "value": "20",
             "value_type": "int",
             "category": "backend",
-            "description": "控制指令频率限制 (Hz)",
-            "is_hot_reloadable": True,
+            "description": "旧版控制频率配置（保留兼容，请改用 control_cmd_rate_limit_ms）",
+            "is_hot_reloadable": False,
         },
         "ws_max_clients_per_ip": {
             "value": "5",
             "value_type": "int",
             "category": "backend",
-            "description": "单 IP 最大 WebSocket 连接数",
+            "description": "旧版 WebSocket 限制配置（当前运行时未接入）",
             "is_hot_reloadable": False,
         },
         "video_watchdog_timeout_s": {
             "value": "2.0",
             "value_type": "float",
             "category": "backend",
-            "description": "视频看门狗超时时间 (秒)",
-            "is_hot_reloadable": True,
+            "description": "旧版视频看门狗配置（当前运行时未接入）",
+            "is_hot_reloadable": False,
         },
         "safety_block_motion_when_disconnected": {
             "value": "true" if settings.SAFETY_BLOCK_MOTION_WHEN_DISCONNECTED else "false",
@@ -417,6 +423,16 @@ class ConfigService:
         },
     }
 
+    # 补充实际被运行代码消费的可管理参数；同名项以注册表定义为准。
+    DEFAULT_CONFIGS.update(OPERATIONAL_CONFIGS)
+    for _frontend_only_key in (
+        "ui_alert_ack_timeout_s",
+        "telemetry_display_hz",
+        "ui_lang",
+        "ui_theme",
+    ):
+        DEFAULT_CONFIGS[_frontend_only_key]["is_hot_reloadable"] = False
+
     # 配置验证规则
     VALIDATION_RULES = {
         "thermal_threshold": {"min": 30.0, "max": 120.0},
@@ -465,6 +481,11 @@ class ConfigService:
         "auto_track_forward_area_ratio": {"min": 0.01, "max": 1.0},
         "auto_track_anchor_y_stop_ratio": {"min": 0.1, "max": 1.0},
     }
+    VALIDATION_RULES.update({
+        key: definition["validation"]
+        for key, definition in OPERATIONAL_CONFIGS.items()
+        if definition.get("validation")
+    })
 
     def __init__(self):
         """初始化配置服务。"""
@@ -476,26 +497,78 @@ class ConfigService:
 
         将默认配置写入数据库（如果不存在）。
         """
+        changed_result = await session.execute(
+            select(ConfigChangeHistory.config_key).distinct()
+        )
+        changed_keys = set(changed_result.scalars().all())
+        existing_result = await session.execute(select(SystemConfig))
+        existing_by_key = {
+            config.key: config for config in existing_result.scalars().all()
+        }
+
         for key, config_data in self.DEFAULT_CONFIGS.items():
-            # 检查是否已存在
-            result = await session.execute(
-                select(SystemConfig).where(SystemConfig.key == key)
+            setting_name = config_setting_name(key, config_data)
+            default_value = (
+                serialize_setting_value(setting_name)
+                if setting_name is not None
+                else str(config_data["value"])
             )
-            existing = result.scalar_one_or_none()
+            existing = existing_by_key.get(key)
 
             if not existing:
                 config = SystemConfig(
                     key=key,
-                    value=config_data["value"],
+                    value=default_value,
                     value_type=config_data["value_type"],
                     category=config_data["category"],
                     description=config_data["description"],
                     is_hot_reloadable=config_data["is_hot_reloadable"],
                 )
                 session.add(config)
-                logger.info(f"初始化默认配置: {key} = {config_data['value']}")
+                logger.info(f"初始化默认配置: {key} = {default_value}")
+                continue
+
+            # 注册表是元数据的唯一来源；没有修改历史的旧种子值继续跟随 .env。
+            existing.value_type = config_data["value_type"]
+            existing.category = config_data["category"]
+            existing.description = config_data["description"]
+            existing.is_hot_reloadable = config_data["is_hot_reloadable"]
+            if setting_name is not None and key not in changed_keys:
+                existing.value = default_value
 
         await session.commit()
+
+    async def load_into_settings(self, session: AsyncSession) -> int:
+        """在业务服务创建前，将数据库中的可管理配置恢复到 Settings。"""
+        result = await session.execute(select(SystemConfig))
+        applied = 0
+        for config in result.scalars().all():
+            definition = self.DEFAULT_CONFIGS.get(config.key)
+            setting_name = config_setting_name(config.key, definition)
+            if setting_name is None:
+                continue
+            try:
+                setattr(
+                    settings,
+                    setting_name,
+                    coerce_setting_value(setting_name, config.value),
+                )
+                applied += 1
+            except (TypeError, ValueError) as exc:
+                logger.error(
+                    "恢复数据库配置失败: key={} setting={} value={} error={}",
+                    config.key,
+                    setting_name,
+                    config.value,
+                    exc,
+                )
+        return applied
+
+    def _to_public_dict(self, config: SystemConfig) -> Dict[str, Any]:
+        data = config.to_dict()
+        definition = self.DEFAULT_CONFIGS.get(config.key, {})
+        data["validation"] = definition.get("validation") or None
+        return data
 
     async def get_all_configs(self, session: AsyncSession) -> Dict[str, Any]:
         """
@@ -510,7 +583,7 @@ class ConfigService:
         result = await session.execute(select(SystemConfig))
         configs = result.scalars().all()
 
-        return {config.key: config.to_dict() for config in configs}
+        return {config.key: self._to_public_dict(config) for config in configs}
 
     async def get_config(self, session: AsyncSession, key: str) -> Optional[Any]:
         """
@@ -529,7 +602,7 @@ class ConfigService:
         config = result.scalar_one_or_none()
 
         if config:
-            return config.to_dict()
+            return self._to_public_dict(config)
         return None
 
     async def update_config(
@@ -605,12 +678,41 @@ class ConfigService:
         Raises:
             ValueError: 配置值无效
         """
+        definition = self.DEFAULT_CONFIGS.get(key)
+        if definition is None:
+            raise ValueError(f"配置项不存在: {key}")
+
+        value_type = definition.get("value_type", "string")
+        if value_type == "bool":
+            normalized = str(value).strip().lower()
+            if normalized not in {"1", "0", "true", "false", "yes", "no", "on", "off"}:
+                raise ValueError(f"布尔值无效: {value}")
+        elif value_type == "int":
+            try:
+                if float(value) != int(float(value)):
+                    raise ValueError
+                int(float(value))
+            except (TypeError, ValueError):
+                raise ValueError(f"配置值 {value} 必须是整数") from None
+        elif value_type == "float":
+            try:
+                float(value)
+            except (TypeError, ValueError):
+                raise ValueError(f"配置值 {value} 必须是数字") from None
+
         if key not in self.VALIDATION_RULES:
             return
 
         rules = self.VALIDATION_RULES[key]
+        options = rules.get("options")
+        if options is not None and str(value) not in {str(item) for item in options}:
+            raise ValueError(f"配置值 {value} 不在允许选项中")
+
         min_val = rules.get("min")
         max_val = rules.get("max")
+
+        if min_val is None and max_val is None:
+            return
 
         try:
             num_value = float(value)
@@ -666,3 +768,13 @@ def get_config_service() -> ConfigService:
     if _config_service is None:
         _config_service = ConfigService()
     return _config_service
+
+
+def apply_config_value_to_settings(key: str, value: Any) -> Optional[str]:
+    """将单项配置同步到 Settings，返回对应的 Settings 字段名。"""
+    definition = ConfigService.DEFAULT_CONFIGS.get(key)
+    setting_name = config_setting_name(key, definition)
+    if setting_name is None:
+        return None
+    setattr(settings, setting_name, coerce_setting_value(setting_name, value))
+    return setting_name

@@ -7,7 +7,7 @@ Pydantic 模型层（I/O 契约）。
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +20,17 @@ class SystemHealthResponse(BaseModel):
     status: str = Field(..., description="整体健康状态：healthy/degraded/offline")
     mavlink_connected: bool = Field(..., description="MAVLink 底层链路是否连通")
     uptime: float = Field(..., description="服务运行秒数")
+
+
+class SystemActionRequest(BaseModel):
+    confirmation: str = Field(..., min_length=1, max_length=50, description="危险操作确认文本")
+
+
+class SystemActionResponse(BaseModel):
+    success: bool
+    action: str
+    scheduled: bool
+    message: str
 
 
 class StartupSummaryItem(BaseModel):
@@ -103,6 +114,7 @@ class LogsPage(BaseModel):
 
 class LogFileInfo(BaseModel):
     name: str
+    category: Literal["backend", "video", "navigation", "other"]
     size_bytes: int
     modified_at: str
     lines_hint: int | None = None

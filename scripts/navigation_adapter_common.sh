@@ -19,6 +19,7 @@ export ROBOT_NAV_WS="$BOTDOG_NAV_WS"
 export ROBOT_NAV_MAP_ROOT="${ROBOT_NAV_MAP_ROOT:-$PROJECT_ROOT/MAPS}"
 export ROBOT_NAV_LOG_ROOT="${ROBOT_NAV_LOG_ROOT:-$BOTDOG_ROOT/logs}"
 export ROBOT_NAV_RUNTIME_ROOT="${ROBOT_NAV_RUNTIME_ROOT:-$BOTDOG_ROOT/data/nav_runtime}"
+export ROS_LOG_RETENTION_DAYS="${ROS_LOG_RETENTION_DAYS:-14}"
 
 export LIVOX_LIDAR_IP="${LIVOX_LIDAR_IP:-192.168.123.179}"
 export LIVOX_HOST_IP="${LIVOX_HOST_IP:-192.168.123.222}"
@@ -40,6 +41,35 @@ export NAV_ENABLE_ROBOT_CONTROL="${NAV_ENABLE_ROBOT_CONTROL:-false}"
 export NAV_ROBOT_MODEL="${NAV_ROBOT_MODEL:-b2}"
 export NAV_ROBOT_CMD_VEL_TOPIC="${NAV_ROBOT_CMD_VEL_TOPIC:-/unitree/b2/cmd_vel}"
 
+prepare_ros_log_dir() {
+  local adapter_name="$1"
+  local ros_log_root="$ROBOT_NAV_LOG_ROOT/ros"
+  local session_type=""
+
+  mkdir -p "$ros_log_root"
+
+  if [[ "$ROS_LOG_RETENTION_DAYS" =~ ^[0-9]+$ ]]; then
+    # Remove expired files first, then remove the empty ROS2 launch directories
+    # left behind. Active logs have a recent mtime and are not affected.
+    find "$ros_log_root" -type f -mtime "+$ROS_LOG_RETENTION_DAYS" -delete
+    find "$ros_log_root" -mindepth 1 -depth -type d -empty -delete
+  else
+    printf '警告：ROS_LOG_RETENTION_DAYS 不是非负整数，跳过 ROS 日志清理：%s\n' \
+      "$ROS_LOG_RETENTION_DAYS" >&2
+  fi
+
+  case "$adapter_name" in
+    start_mapping.sh) session_type="mapping" ;;
+    restart_navigation_localization.sh) session_type="navigation" ;;
+    *) return ;;
+  esac
+
+  # Keep every run together. ROS2 may create another launch directory below
+  # this one, but node logs no longer spill into logs/ros itself.
+  export ROS_LOG_DIR="$ros_log_root/${session_type}_$(date '+%Y%m%d_%H%M%S')_$$"
+  mkdir -p "$ROS_LOG_DIR"
+}
+
 run_navigation_adapter() {
   local adapter_name="$1"
   shift
@@ -48,5 +78,6 @@ run_navigation_adapter() {
     printf '错误：Navigation 适配器不存在：%s\n' "$adapter" >&2
     exit 1
   fi
+  prepare_ros_log_dir "$adapter_name"
   exec bash "$adapter" "$@"
 }

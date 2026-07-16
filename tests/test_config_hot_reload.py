@@ -60,6 +60,10 @@ def test_system_config_contains_new_categories(client: TestClient):
     assert configs["zone_draw_saved_fill_rgba"]["category"] == "frontend_draw"
     assert "zone_yellow_h_low" in configs
     assert configs["zone_yellow_h_low"]["category"] == "zone"
+    assert configs["ai_fps"]["category"] == "ai"
+    assert configs["ai_fps"]["validation"] == {"min": 1, "max": 60}
+    assert configs["guard_vx"]["category"] == "guard"
+    assert configs["ros_nav_frame_id"]["category"] == "ros"
 
 
 def test_hardware_config_returns_restart_message(client: TestClient):
