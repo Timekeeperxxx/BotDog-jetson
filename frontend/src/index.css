@@ -51,3 +51,74 @@ body {
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
 }
+
+/* 后台管理使用紧凑、扁平的视觉规则；仅作用于 admin-shell。 */
+.admin-shell .rounded-3xl,
+.admin-shell .rounded-2xl {
+  border-radius: 0.5rem;
+}
+
+.admin-shell .rounded-xl {
+  border-radius: 0.375rem;
+}
+
+.admin-shell .gap-6 {
+  gap: 1rem;
+}
+
+.admin-shell .space-y-6 > :not(:last-child) {
+  margin-block-end: 1rem;
+}
+
+.admin-shell .font-black {
+  font-weight: 600;
+}
+
+.admin-shell .uppercase {
+  text-transform: none;
+}
+
+.admin-shell .tracking-wider,
+.admin-shell [class*="tracking-["] {
+  letter-spacing: normal;
+}
+
+.admin-shell [class*="shadow-"] {
+  box-shadow: none;
+}
+
+.admin-shell [class*="backdrop-blur"] {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.admin-shell :is(
+  .bg-black\/20,
+  .bg-black\/25,
+  .bg-black\/30,
+  .bg-black\/35,
+  .bg-black\/40
+) {
+  background-color: #11151a;
+}
+
+.admin-shell :is(
+  .bg-black\/50,
+  .bg-black\/60
+) {
+  background-color: #0d1014;
+}
+
+.admin-shell .field-input {
+  border-radius: 0.375rem;
+  background: #0d1014;
+  padding: 0.625rem 0.75rem;
+}
+
+.admin-shell button:focus-visible,
+.admin-shell input:focus-visible,
+.admin-shell select:focus-visible,
+.admin-shell textarea:focus-visible {
+  outline: 2px solid #0284c7;
+  outline-offset: 2px;
+}

@@ -2,10 +2,10 @@ import type { ReactNode } from 'react'
 import type { ModuleHealthState } from './adminTypes'
 
 const statusStyles: Record<ModuleHealthState, string> = {
-  normal: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
-  degraded: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
-  failed: 'border-red-500/40 bg-red-500/10 text-red-300',
-  waiting: 'border-sky-500/40 bg-sky-500/10 text-sky-300',
+  normal: 'border-emerald-700/60 bg-emerald-950/50 text-emerald-300',
+  degraded: 'border-amber-700/60 bg-amber-950/50 text-amber-300',
+  failed: 'border-red-700/60 bg-red-950/50 text-red-300',
+  waiting: 'border-sky-700/60 bg-sky-950/50 text-sky-300',
   todo: 'border-zinc-700 bg-zinc-900 text-zinc-400',
 }
 
@@ -19,7 +19,7 @@ const statusText: Record<ModuleHealthState, string> = {
 
 export function StatusBadge({ status }: { status: ModuleHealthState }) {
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium ${statusStyles[status]}`}>
+    <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ${statusStyles[status]}`}>
       {statusText[status]}
     </span>
   )
@@ -39,15 +39,15 @@ export function AdminCard({
   className?: string
 }) {
   return (
-    <section className={`rounded-3xl border border-white/8 bg-[linear-gradient(180deg,rgba(18,18,20,0.92),rgba(8,8,9,0.95))] shadow-[0_16px_50px_-30px_rgba(0,0,0,0.75)] ${className}`}>
-      <div className="flex items-start justify-between gap-4 border-b border-white/6 px-6 py-4">
+    <section className={`rounded-lg border border-white/8 bg-[#15191e] ${className}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/8 px-5 py-3.5">
         <div>
-          <h2 className="text-base font-semibold text-white">{title}</h2>
-          {subtitle ? <p className="mt-1 text-sm text-zinc-400">{subtitle}</p> : null}
+          <h2 className="text-sm font-semibold text-white">{title}</h2>
+          {subtitle ? <p className="mt-1 text-xs leading-5 text-zinc-400">{subtitle}</p> : null}
         </div>
         {actions}
       </div>
-      <div className="px-6 py-5">{children}</div>
+      <div className="px-5 py-4">{children}</div>
     </section>
   )
 }
@@ -62,10 +62,10 @@ export function MetricTile({
   hint?: string
 }) {
   return (
-    <div className="rounded-2xl border border-white/8 bg-black/50 p-4">
+    <div className="rounded-md border border-white/8 bg-[#15191e] p-4">
       <div className="text-xs font-medium text-zinc-500">{label}</div>
-      <div className="mt-2 text-2xl font-semibold text-white">{value}</div>
-      {hint ? <div className="mt-2 text-xs text-zinc-400">{hint}</div> : null}
+      <div className="mt-1.5 text-xl font-semibold text-white">{value}</div>
+      {hint ? <div className="mt-1.5 text-xs text-zinc-400">{hint}</div> : null}
     </div>
   )
 }
@@ -89,11 +89,11 @@ export function ToolbarButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className={`rounded-xl border px-4 py-2 text-sm font-medium transition-all ${
+      className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
         danger
-          ? 'border-red-500/40 text-red-300 hover:border-red-400 hover:bg-red-500/10'
-          : 'border-white/12 text-white hover:border-white/30 hover:bg-white/5'
-      } disabled:cursor-not-allowed disabled:border-white/8 disabled:text-white/30`}
+          ? 'border-red-800/70 text-red-300 hover:border-red-600 hover:bg-red-950/50'
+          : 'border-white/12 bg-[#1b2026] text-zinc-100 hover:border-white/25 hover:bg-[#222831]'
+      } disabled:cursor-not-allowed disabled:border-white/8 disabled:bg-transparent disabled:text-white/30`}
     >
       {children}
     </button>
@@ -114,7 +114,7 @@ export function SearchInput({
       value={value}
       onChange={(event) => onChange(event.target.value)}
       placeholder={placeholder}
-      className="w-full rounded-xl border border-white/10 bg-black/60 px-4 py-2.5 text-sm text-white outline-none transition-all placeholder:text-zinc-600 focus:border-white/30"
+      className="w-full rounded-md border border-white/10 bg-[#0d1014] px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-zinc-600 focus:border-sky-600"
     />
   )
 }
@@ -127,9 +127,9 @@ export function EmptyState({
   description: string
 }) {
   return (
-    <div className="rounded-2xl border border-dashed border-white/10 bg-black/40 px-6 py-10 text-center">
+    <div className="rounded-md border border-dashed border-white/10 px-6 py-8 text-center">
       <div className="text-sm font-medium text-white/80">{title}</div>
-      <p className="mx-auto mt-3 max-w-xl text-sm text-zinc-400">{description}</p>
+      <p className="mx-auto mt-2 max-w-xl text-sm text-zinc-400">{description}</p>
     </div>
   )
 }
@@ -156,8 +156,8 @@ export function ConfirmDialog({
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-zinc-950 p-6 shadow-[0_30px_120px_-30px_rgba(0,0,0,0.9)]">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/75 px-4">
+      <div className="w-full max-w-md rounded-lg border border-white/12 bg-[#15191e] p-5 shadow-xl">
         <div className="text-lg font-semibold text-white">{title}</div>
         <p className="mt-3 text-sm leading-6 text-zinc-400">{description}</p>
         <div className="mt-6 flex justify-end gap-3">
@@ -176,9 +176,9 @@ export function TableCell({
   children: ReactNode
   className?: string
 }) {
-  return <td className={`border-t border-white/8 px-4 py-3.5 align-top text-sm text-zinc-200 ${className}`}>{children}</td>
+  return <td className={`border-t border-white/8 px-4 py-3 align-top text-sm text-zinc-200 ${className}`}>{children}</td>
 }
 
 export function TableHead({ children }: { children: ReactNode }) {
-  return <th className="px-4 py-3 text-left text-sm font-medium text-zinc-500">{children}</th>
+  return <th className="bg-[#11151a] px-4 py-2.5 text-left text-xs font-medium text-zinc-400">{children}</th>
 }

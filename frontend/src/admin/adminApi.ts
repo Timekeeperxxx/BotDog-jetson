@@ -4,6 +4,9 @@ import type {
   AdminLogFileTail,
   AdminLogFilesResponse,
   HealthResponse,
+  HostResources,
+  SystemActionResponse,
+  SystemDangerActionKey,
   SystemInfoGroup,
 } from './adminTypes'
 
@@ -13,6 +16,18 @@ export function getSystemHealth() {
 
 export function getSystemInfo() {
   return apiFetch<{ groups: SystemInfoGroup[] }>('/api/v1/system-info')
+}
+
+export function getSystemResources() {
+  return apiFetch<HostResources>('/api/v1/system/resources')
+}
+
+export function executeSystemAction(action: SystemDangerActionKey, confirmation: string) {
+  return apiFetch<SystemActionResponse>(`/api/v1/system/actions/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirmation }),
+  })
 }
 
 export function getAdminLogs() {

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getNavState } from '../../api/navApi'
-import { getAdminLogs, getSystemHealth, getSystemInfo } from '../adminApi'
-import type { AdminLogEntry, HealthResponse, SystemInfoGroup } from '../adminTypes'
+import { getAdminLogs, getSystemHealth, getSystemInfo, getSystemResources } from '../adminApi'
+import type { AdminLogEntry, HealthResponse, HostResources, SystemInfoGroup } from '../adminTypes'
 import type { NavStateResponse } from '../../types/navState'
 
 export function useAdminCoreData() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [systemInfo, setSystemInfo] = useState<SystemInfoGroup[]>([])
+  const [hostResources, setHostResources] = useState<HostResources | null>(null)
   const [logs, setLogs] = useState<AdminLogEntry[]>([])
   const [navState, setNavState] = useState<NavStateResponse | null>(null)
   const [adminLoading, setAdminLoading] = useState(false)
@@ -16,14 +17,16 @@ export function useAdminCoreData() {
     setAdminLoading(true)
     setAdminError(null)
     try {
-      const [nextHealth, nextInfo, nextLogs, nextNavState] = await Promise.all([
+      const [nextHealth, nextInfo, nextResources, nextLogs, nextNavState] = await Promise.all([
         getSystemHealth(),
         getSystemInfo(),
+        getSystemResources().catch(() => null),
         getAdminLogs(),
         getNavState().catch(() => null),
       ])
       setHealth(nextHealth)
       setSystemInfo(nextInfo.groups || [])
+      setHostResources(nextResources)
       setLogs(nextLogs.items || [])
       setNavState(nextNavState)
     } catch (error) {
@@ -40,6 +43,7 @@ export function useAdminCoreData() {
   return {
     health,
     systemInfo,
+    hostResources,
     logs,
     navState,
     adminLoading,

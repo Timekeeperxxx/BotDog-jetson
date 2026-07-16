@@ -48,7 +48,7 @@ export function AdminAiGuardPage({
 
       <AdminCard title="已知限制" subtitle="当前后台只展示状态和入口，复杂操作仍在操作台中完成。">
         <div className="space-y-3 text-sm text-zinc-300">
-          <div className="rounded-2xl border border-white/8 bg-black/40 p-4">视觉识别参数和视频源配置已归入“设备与视频”模块。</div>
+          <div className="rounded-2xl border border-white/8 bg-black/40 p-4">视觉识别参数和视频源配置已归入“视频与 AI”模块。</div>
           <div className="rounded-2xl border border-white/8 bg-black/40 p-4">自动跟踪和驱离执行细节仍以操作台为准，这里不重做控制按钮。</div>
           <div className="rounded-2xl border border-white/8 bg-black/40 p-4">如果后续要做更细的 AI 运维，再拆子页和专门的诊断接口。</div>
         </div>

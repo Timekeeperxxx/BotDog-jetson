@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Copy, RefreshCw } from 'lucide-react'
 import { getLogFileTail, listLogFiles } from '../adminApi'
 import type { AdminLogEntry, AdminLogFileInfo, AdminLogFileTail } from '../adminTypes'
@@ -13,17 +13,30 @@ const CATEGORY_TABS = [
   { key: 'delete', label: '删除', keywords: ['delete', '删除', '.delete', 'soft delete', '软删除'] },
   { key: 'estop', label: '急停', keywords: ['e_stop', '急停', 'E_STOP', 'stop'] },
   { key: 'permission', label: '权限', keywords: ['permission', '403', '权限', '缺少访问令牌', 'token 已失效', 'token失效'] },
-  { key: 'fail', label: '失败', keywords: ['result=fail', 'failed', 'error', 'critical', '失败', '异常'] },
+  { key: 'fail', label: '失败', keywords: ['result=fail', '结果=fail', 'failed', 'error', 'critical', '失败', '异常'] },
 ] as const
 
 type CategoryKey = typeof CATEGORY_TABS[number]['key']
 type LogTab = 'audit' | 'runtime'
+type RuntimeLogCategory = AdminLogFileInfo['category'] | 'all'
+
+const RUNTIME_LOG_CATEGORIES: ReadonlyArray<{
+  key: RuntimeLogCategory
+  label: string
+  description: string
+}> = [
+  { key: 'all', label: '全部日志', description: '按系统模块查看所有可读日志' },
+  { key: 'backend', label: '后端核心', description: '业务、接口访问、调试和 AI 解码' },
+  { key: 'video', label: '视频系统', description: '摄像头转码、MediaMTX 和流水线' },
+  { key: 'navigation', label: '导航与雷达', description: '定位、建图、雷达、避障和 ROS2' },
+  { key: 'other', label: '其他日志', description: '尚未归入主要模块的脚本日志' },
+]
 
 function isHighRisk(item: AdminLogEntry): boolean {
   if (item.level === 'ERROR' || item.level === 'CRITICAL') return true
   if (item.level === 'WARN') {
     const msg = item.message.toLowerCase()
-    return msg.includes('result=fail') || msg.includes('e_stop') || msg.includes('失败') || msg.includes('异常')
+    return msg.includes('result=fail') || msg.includes('结果=fail') || msg.includes('e_stop') || msg.includes('失败') || msg.includes('异常')
   }
   return false
 }
@@ -49,12 +62,31 @@ function formatModifiedAt(value: string) {
   return new Date(time).toLocaleString('zh-CN', { hour12: false })
 }
 
-function parseLogLineTimestamp(value: string): number {
-  const match = value.match(/^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{1,6})?)/)
-  if (!match) return 0
-  const normalized = match[1].replace(',', '.')
-  const time = new Date(normalized).getTime()
-  return Number.isNaN(time) ? 0 : time
+function inferRuntimeLogCategory(name: string): AdminLogFileInfo['category'] {
+  const normalized = name.toLowerCase()
+  const fileName = normalized.split('/').at(-1) ?? normalized
+  if (
+    normalized.startsWith('ros/')
+    || fileName.startsWith('restart_navigation')
+    || fileName.startsWith('start_mapping')
+    || fileName.startsWith('radar_')
+    || fileName.startsWith('dynamic_avoidance')
+  ) return 'navigation'
+  if (['backend.log', 'access.log', 'debug.log', 'ai_ffmpeg.log'].includes(fileName) || fileName.startsWith('backend_')) {
+    return 'backend'
+  }
+  if (fileName.startsWith('ffmpeg') || fileName.startsWith('mediamtx') || fileName.startsWith('pipeline')) {
+    return 'video'
+  }
+  return 'other'
+}
+
+function normalizeRuntimeLogFile(item: AdminLogFileInfo): AdminLogFileInfo {
+  const knownCategories: AdminLogFileInfo['category'][] = ['backend', 'video', 'navigation', 'other']
+  return {
+    ...item,
+    category: knownCategories.includes(item.category) ? item.category : inferRuntimeLogCategory(item.name),
+  }
 }
 
 export function AdminLogsPage({
@@ -76,12 +108,14 @@ export function AdminLogsPage({
 
   const [runtimeFiles, setRuntimeFiles] = useState<AdminLogFileInfo[]>([])
   const [runtimeFileName, setRuntimeFileName] = useState('backend.log')
+  const [runtimeCategory, setRuntimeCategory] = useState<RuntimeLogCategory>('backend')
   const [runtimeLines, setRuntimeLines] = useState(300)
   const [runtimeFilesLoading, setRuntimeFilesLoading] = useState(false)
   const [runtimeFilesError, setRuntimeFilesError] = useState<string | null>(null)
   const [runtimeTailLoading, setRuntimeTailLoading] = useState(false)
   const [runtimeTailError, setRuntimeTailError] = useState<string | null>(null)
   const [runtimeTail, setRuntimeTail] = useState<AdminLogFileTail | null>(null)
+  const runtimeLogRef = useRef<HTMLPreElement | null>(null)
 
   const filteredLogs = useMemo(() => {
     return logs.filter((item) => {
@@ -98,7 +132,7 @@ export function AdminLogsPage({
     setRuntimeFilesError(null)
     try {
       const data = await listLogFiles()
-      const nextFiles = Array.isArray(data.items) ? data.items : []
+      const nextFiles = Array.isArray(data.items) ? data.items.map(normalizeRuntimeLogFile) : []
       setRuntimeFiles(nextFiles)
       if (nextFiles.length === 0) {
         setRuntimeTail(null)
@@ -133,6 +167,40 @@ export function AdminLogsPage({
     }
   }, [runtimeLines])
 
+  const runtimeCategoryCounts = useMemo(() => {
+    const counts: Record<AdminLogFileInfo['category'], number> = {
+      backend: 0,
+      video: 0,
+      navigation: 0,
+      other: 0,
+    }
+    runtimeFiles.forEach((item) => {
+      counts[item.category] += 1
+    })
+    return counts
+  }, [runtimeFiles])
+
+  const filteredRuntimeFiles = useMemo(
+    () => runtimeCategory === 'all'
+      ? runtimeFiles
+      : runtimeFiles.filter((item) => item.category === runtimeCategory),
+    [runtimeCategory, runtimeFiles],
+  )
+
+  const runtimeFileGroups = useMemo(
+    () => RUNTIME_LOG_CATEGORIES
+      .filter((category) => category.key !== 'all')
+      .map((category) => ({
+        ...category,
+        files: filteredRuntimeFiles.filter((item) => item.category === category.key),
+      }))
+      .filter((group) => group.files.length > 0),
+    [filteredRuntimeFiles],
+  )
+
+  const runtimeCategoryInfo = RUNTIME_LOG_CATEGORIES.find((item) => item.key === runtimeCategory)
+    ?? RUNTIME_LOG_CATEGORIES[0]
+
   useEffect(() => {
     if (tab !== 'runtime') return
     void refreshRuntimeFiles()
@@ -140,30 +208,48 @@ export function AdminLogsPage({
 
   useEffect(() => {
     if (tab !== 'runtime') return
-    if (runtimeFiles.length === 0) return
-    if (!runtimeFiles.some((item) => item.name === runtimeFileName)) return
+    if (filteredRuntimeFiles.length === 0) return
+    if (!filteredRuntimeFiles.some((item) => item.name === runtimeFileName)) return
     void refreshRuntimeTail(runtimeFileName, runtimeLines)
-  }, [refreshRuntimeTail, runtimeFileName, runtimeFiles, runtimeLines, tab])
+  }, [filteredRuntimeFiles, refreshRuntimeTail, runtimeFileName, runtimeLines, tab])
+
+  useEffect(() => {
+    if (tab !== 'runtime') return
+    if (filteredRuntimeFiles.length === 0) {
+      setRuntimeFileName('')
+      setRuntimeTail(null)
+      setRuntimeTailError(null)
+      return
+    }
+    setRuntimeFileName((current) => (
+      filteredRuntimeFiles.some((item) => item.name === current)
+        ? current
+        : filteredRuntimeFiles[0].name
+    ))
+  }, [filteredRuntimeFiles, tab])
 
   const runtimeFileInfo = useMemo(
     () => runtimeFiles.find((item) => item.name === runtimeFileName) ?? null,
     [runtimeFileName, runtimeFiles],
   )
 
-  const runtimeDisplayLines = useMemo(() => {
-    if (!runtimeTail) return []
-    return [...runtimeTail.lines].sort((left, right) => parseLogLineTimestamp(right) - parseLogLineTimestamp(left))
+  const runtimeDisplayLines = runtimeTail?.lines ?? []
+
+  useEffect(() => {
+    const element = runtimeLogRef.current
+    if (!element || !runtimeTail) return
+    element.scrollTop = element.scrollHeight
   }, [runtimeTail])
 
   return (
     <div className="space-y-6">
       <AdminCard
         title="日志中心"
-        subtitle="审计日志用于记录操作轨迹；后端运行日志用于查看真实服务输出，两类日志分开查看。"
+        subtitle="审计日志记录操作轨迹；运行日志按后端、视频、导航与雷达分类查看。"
       >
         <div className="flex flex-wrap gap-3">
           <LogTabButton active={tab === 'audit'} label="审计日志" onClick={() => setTab('audit')} />
-          <LogTabButton active={tab === 'runtime'} label="后端运行日志" onClick={() => setTab('runtime')} />
+          <LogTabButton active={tab === 'runtime'} label="运行日志" onClick={() => setTab('runtime')} />
         </div>
       </AdminCard>
 
@@ -265,8 +351,8 @@ export function AdminLogsPage({
         </AdminCard>
       ) : (
         <AdminCard
-          title="后端运行日志"
-          subtitle="读取 logs 目录下的运行日志文件，便于直接查看后端、访问和脚本输出。"
+          title="运行日志"
+          subtitle="只展示 logs 目录下可读取的 .log 文件；PID、调试图片和压缩归档不会混入日志列表。"
           actions={
             <div className="flex flex-wrap items-center gap-3">
               <ToolbarButton onClick={() => void refreshRuntimeFiles()}>
@@ -275,23 +361,55 @@ export function AdminLogsPage({
             </div>
           }
         >
+          <div className="mb-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+            {RUNTIME_LOG_CATEGORIES.map((item) => {
+              const count = item.key === 'all' ? runtimeFiles.length : runtimeCategoryCounts[item.key]
+              const active = runtimeCategory === item.key
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setRuntimeCategory(item.key)}
+                  className={`rounded-xl border p-3 text-left transition-colors ${
+                    active
+                      ? 'border-sky-500/50 bg-sky-500/10'
+                      : 'border-white/8 bg-black/40 hover:border-white/20 hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className={active ? 'text-sm font-medium text-sky-200' : 'text-sm font-medium text-white'}>
+                      {item.label}
+                    </span>
+                    <span className="rounded bg-white/5 px-2 py-0.5 text-xs text-zinc-400">{count}</span>
+                  </div>
+                  <div className="mt-1.5 text-xs leading-5 text-zinc-500">{item.description}</div>
+                </button>
+              )
+            })}
+          </div>
+
           <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
             <div className="space-y-4">
               <div className="rounded-2xl border border-white/8 bg-black/40 p-4">
-                <div className="text-xs font-medium text-zinc-500">日志文件</div>
+                <div className="text-xs font-medium text-zinc-500">{runtimeCategoryInfo.label} · 日志文件</div>
                 <div className="mt-3">
                   <select
                     value={runtimeFileName}
                     onChange={(event) => setRuntimeFileName(event.target.value)}
                     className="w-full rounded-xl border border-white/10 bg-black/60 px-4 py-2.5 text-sm text-white outline-none focus:border-white/30"
                   >
-                    {runtimeFiles.length === 0 ? (
+                    {filteredRuntimeFiles.length === 0 ? (
                       <option value="">暂无可查看日志</option>
                     ) : (
-                      runtimeFiles.map((item) => (
-                        <option key={item.name} value={item.name}>
-                          {item.name}
-                        </option>
+                      runtimeFileGroups.map((group) => (
+                        <optgroup key={group.key} label={`${group.label}（${group.files.length}）`}>
+                          {group.files.map((item) => (
+                            <option key={item.name} value={item.name}>
+                              {item.name}
+                            </option>
+                          ))}
+                        </optgroup>
                       ))
                     )}
                   </select>
@@ -327,7 +445,7 @@ export function AdminLogsPage({
                 <div>
                   <div className="text-sm font-medium text-white">{runtimeFileName || '未选择日志文件'}</div>
                   <div className="mt-1 text-xs text-zinc-500">
-                    {runtimeTail ? `最近 ${runtimeTail.line_count} 行${runtimeTail.truncated ? '（已截断）' : ''}` : '读取后端运行日志尾部内容'}
+                    {runtimeTail ? `最近 ${runtimeTail.line_count} 行${runtimeTail.truncated ? '（已截断）' : ''}` : `读取${runtimeCategoryInfo.label}尾部内容`}
                   </div>
                 </div>
               </div>
@@ -341,9 +459,11 @@ export function AdminLogsPage({
               ) : runtimeFilesLoading ? (
                 <EmptyState title="日志文件加载中" description="正在读取 logs 目录下可查看的运行日志文件。" />
               ) : runtimeFiles.length === 0 ? (
-                <EmptyState title="暂无可查看的运行日志" description="logs 目录中没有符合白名单的日志文件，或当前文件列表为空。" />
+                <EmptyState title="暂无可查看的运行日志" description="logs 目录中没有可读取的 .log 文件。" />
+              ) : filteredRuntimeFiles.length === 0 ? (
+                <EmptyState title={`暂无${runtimeCategoryInfo.label}`} description="当前分类还没有生成可读取的日志文件。" />
               ) : runtimeTail && runtimeDisplayLines.length > 0 ? (
-                <pre className="mt-4 max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-2xl border border-white/8 bg-black/80 p-4 font-mono text-[11px] leading-6 text-zinc-200">
+                <pre ref={runtimeLogRef} className="mt-4 max-h-[70vh] overflow-auto whitespace-pre-wrap rounded-2xl border border-white/8 bg-black/80 p-4 font-mono text-[11px] leading-6 text-zinc-200">
                   {runtimeDisplayLines.join('\n')}
                 </pre>
               ) : (

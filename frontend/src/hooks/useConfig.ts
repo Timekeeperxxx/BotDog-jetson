@@ -153,7 +153,8 @@ export function useConfig() {
   const validateConfig = useCallback((
     key: string,
     value: string | number | boolean,
-    valueType: 'int' | 'float' | 'bool' | 'string'
+    valueType: 'int' | 'float' | 'bool' | 'string',
+    serverRule?: ConfigValidationRule | null,
   ): { valid: boolean; error?: string } => {
     // 获取验证规则
     const rules: Record<string, ConfigValidationRule> = {
@@ -201,7 +202,7 @@ export function useConfig() {
       ui_theme: { options: ['dark', 'light'] },
     };
 
-    const rule = rules[key];
+    const rule = serverRule ?? rules[key];
     if (!rule) return { valid: true };
 
     // 类型检查

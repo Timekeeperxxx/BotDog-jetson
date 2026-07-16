@@ -26,7 +26,6 @@ type AdminEvidenceData = ReturnType<typeof useAdminEvidenceData>
 type AdminContentSwitchProps = {
   activeSection: AdminSection
   role: AdminRole
-  onSectionChange: (section: AdminSection) => void
   coreData: AdminCoreData
   navigationData: AdminNavigationData
   videoConfigData: AdminVideoConfigData
@@ -40,7 +39,6 @@ type AdminContentSwitchProps = {
 export function AdminContentSwitch({
   activeSection,
   role,
-  onSectionChange,
   coreData,
   navigationData,
   videoConfigData,
@@ -60,13 +58,16 @@ export function AdminContentSwitch({
           navState: mergedNavState,
           aiStatus: eventState.aiStatus,
           autoTrackStatus: eventState.autoTrackStatus,
-          alerts: eventState.alerts,
-          logs: coreData.logs,
-          evidence: evidenceData.evidenceHook.evidenceItems,
-          videoSources: videoConfigData.videoSources.sources,
+          systemInfo: coreData.systemInfo,
+          networkInterfaces: videoConfigData.videoSources.interfaces,
+          hostResources: coreData.hostResources,
         }}
-        onSectionChange={onSectionChange}
-        onRefresh={coreData.refreshAdminCore}
+        onRefresh={() => {
+          void coreData.refreshAdminCore()
+          void videoConfigData.videoSources.fetchInterfaces()
+          void videoConfigData.videoSources.fetchSources()
+        }}
+        canManageSystem={role === 'admin'}
       />
     )
   }
@@ -108,22 +109,6 @@ export function AdminContentSwitch({
   if (activeSection === 'device-video') {
     return (
       <AdminDeviceVideoPage
-        deviceData={{
-          systemInfo: coreData.systemInfo,
-          networkInterfaces: videoConfigData.videoSources.interfaces,
-          health: coreData.health,
-          navState: mergedNavState,
-          aiStatus: eventState.aiStatus,
-          autoTrackStatus: eventState.autoTrackStatus,
-        }}
-        scenes={navigationData.scenes}
-        selectedSceneId={navigationData.selectedSceneId}
-        onRefresh={() => {
-          void coreData.refreshAdminCore()
-          void videoConfigData.videoSources.fetchInterfaces()
-          void videoConfigData.videoSources.fetchSources()
-          void videoConfigData.configHook.fetchConfigs()
-        }}
         videoSources={videoConfigData.videoSources.sources}
         configs={videoConfigData.configList}
         videoLoading={videoConfigData.videoSources.loading || videoConfigData.configHook.loading}

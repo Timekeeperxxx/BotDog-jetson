@@ -1,6 +1,5 @@
 /**
- * BOTDOG // CONFIG_MATRIX
- * 系统参数配置终端 - 工业硬核风格
+ * 系统参数配置面板。
  */
 
 import { useState, useEffect, useRef } from 'react';
@@ -23,6 +22,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
 
   const [selectedCategory, setSelectedCategory] = useState<string>('backend');
   const [showHistory, setShowHistory] = useState(false);
+  const [search, setSearch] = useState('');
   const [history, setHistory] = useState<ConfigChangeHistory[]>([]);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -45,11 +45,17 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
   const categoryOrder = [
     'backend',
     'hardware',
+    'control',
+    'ai',
+    'auto_track',
+    'guard',
+    'navigation',
+    'ros',
+    'logging',
+    'storage',
     'frontend',
     'frontend_draw',
     'zone',
-    'storage',
-    'auto_track',
   ];
   const categories = Array.from(new Set(allConfigs.map(c => c.category)))
     .sort((a, b) => {
@@ -64,18 +70,29 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
 
   const categoryNames: Record<string, string> = {
     backend: '后端参数',
-    hardware: '硬件网口配置',
+    hardware: '硬件连接',
+    control: '运动控制',
+    ai: 'AI 推理',
+    auto_track: '自动跟踪',
+    guard: '驱离任务',
+    navigation: '地图与导航',
+    ros: 'ROS2 导航',
+    logging: '日志管理',
     frontend: '界面参数',
-    frontend_draw: 'Canvas 区域绘制配置',
+    frontend_draw: '区域绘制',
     storage: '存储参数',
-    auto_track: 'AI 参数',
-    zone: 'HSV / 黄区识别配置',
+    zone: '黄区识别',
     camera: '摄像参数',
     system: '系统参数',
-    navigation: '导航参数',
   };
 
-  const currentGroupConfigs = allConfigs.filter(c => c.category === selectedCategory);
+  const currentCategoryConfigs = allConfigs.filter(c => c.category === selectedCategory);
+  const normalizedSearch = search.trim().toLowerCase();
+  const currentGroupConfigs = currentCategoryConfigs.filter(config => (
+    !normalizedSearch
+    || config.key.toLowerCase().includes(normalizedSearch)
+    || config.description.toLowerCase().includes(normalizedSearch)
+  ));
 
   // 如果新旧值相同，不弹确认，不发请求
   const requestSaveConfig = (key: string, newValue: string | number | boolean) => {
@@ -84,7 +101,7 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
     const oldStr = String(config.value);
     const newStr = String(newValue);
     if (oldStr === newStr) return;
-    const validation = configHook.validateConfig(key, newValue, config.value_type);
+    const validation = configHook.validateConfig(key, newValue, config.value_type, config.validation);
     if (!validation.valid) {
       setValidationError(validation.error || '参数验证阻断');
       return;
@@ -98,14 +115,14 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
       setSuccessMessage(null);
 
       const config = configHook.configs[key];
-      const validation = configHook.validateConfig(key, value, config.value_type);
+      const validation = configHook.validateConfig(key, value, config.value_type, config.validation);
 
       if (!validation.valid) {
         setValidationError(validation.error || '参数验证阻断');
         return;
       }
 
-      const result = await configHook.updateConfig(key, value, '前端特权指令覆写');
+      const result = await configHook.updateConfig(key, value, '后台配置中心修改');
       const runtimeApply = result.runtime_apply;
       if (runtimeApply?.applied) {
         if (runtimeApply.target === 'frontend') {
@@ -131,12 +148,12 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
       setHistory(historyData);
       setShowHistory(true);
     } catch (error) {
-      console.error('档案提取失败:', error);
+      console.error('获取修改记录失败:', error);
     }
   };
 
   const getConfigDisplayValue = (config: SystemConfig): string => {
-    if (config.value_type === 'bool') return config.value ? '已激活' : '已休眠';
+    if (config.value_type === 'bool') return config.value ? '已启用' : '已禁用';
     return String(config.value);
   };
 
@@ -144,28 +161,26 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
     if (config.value_type === 'bool') {
       const isChecked = Boolean(config.value);
       return (
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <div className="relative">
+        <div className="flex items-center">
+          <label className="flex cursor-pointer items-center gap-3 text-sm text-zinc-300">
+            <span className="relative">
               <input
                 type="checkbox"
-                className="sr-only"
+                className="peer sr-only"
                 checked={isChecked}
                 onChange={(e) => requestSaveConfig(config.key, e.target.checked)}
                 disabled={configHook.loading || !canAdmin}
                 title={adminOnlyTitle}
               />
-              <div className={`w-10 h-5 border transition-all ${
-                isChecked ? 'bg-white border-white' : 'bg-zinc-900 border-zinc-600'
+              <span className={`block h-5 w-9 rounded-full border transition-colors peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-sky-600 ${
+                isChecked ? 'border-sky-600 bg-sky-600' : 'border-zinc-600 bg-zinc-800'
               }`} />
-              <div className={`absolute top-0.5 w-4 h-4 transition-transform duration-200 ${
-                isChecked ? 'translate-x-5 bg-black' : 'translate-x-0.5 bg-zinc-500'
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform ${
+                isChecked ? 'translate-x-[18px]' : 'translate-x-[2px]'
               }`} />
-            </div>
-            <span className={`text-[10px] font-bold uppercase tracking-[0.2em] ${
-              isChecked ? 'text-white' : 'text-zinc-400'
-            }`}>
-              {isChecked ? '已启用' : '已禁用'}
+            </span>
+            <span className={isChecked ? 'text-zinc-100' : 'text-zinc-400'}>
+              {isChecked ? '启用' : '禁用'}
             </span>
           </label>
         </div>
@@ -174,41 +189,55 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
 
     if (config.key === 'ui_lang') {
       return (
-        <div className="flex items-center gap-3">
-            <select
-              value={config.value as string}
-              onChange={(e) => requestSaveConfig(config.key, e.target.value)}
-              disabled={configHook.loading || !canAdmin}
-              title={adminOnlyTitle}
-              className="flex-1 bg-zinc-950 border border-zinc-700 text-white font-mono text-xs px-4 py-2 focus:outline-none focus:border-white transition-all appearance-none uppercase tracking-wider"
-            >
-            <option value="zh-CN">简体中文 (ZH-CN)</option>
-            <option value="en-US">English (EN-US)</option>
-          </select>
-        </div>
+        <select
+          value={config.value as string}
+          onChange={(e) => requestSaveConfig(config.key, e.target.value)}
+          disabled={configHook.loading || !canAdmin}
+          title={adminOnlyTitle}
+          className="w-full rounded-md border border-white/10 bg-[#0d1014] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-sky-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <option value="zh-CN">简体中文</option>
+          <option value="en-US">English</option>
+        </select>
       );
     }
 
     if (config.key === 'ui_theme') {
       return (
-        <div className="flex items-center gap-3">
-            <select
-              value={config.value as string}
-              onChange={(e) => requestSaveConfig(config.key, e.target.value)}
-              disabled={configHook.loading || !canAdmin}
-              title={adminOnlyTitle}
-              className="flex-1 bg-zinc-950 border border-zinc-700 text-white font-mono text-xs px-4 py-2 focus:outline-none focus:border-white transition-all appearance-none uppercase tracking-wider"
-            >
-            <option value="dark">暗夜工业 (DARK)</option>
-            <option value="light">耀眼极光 (LIGHT)</option>
-          </select>
-        </div>
+        <select
+          value={config.value as string}
+          onChange={(e) => requestSaveConfig(config.key, e.target.value)}
+          disabled={configHook.loading || !canAdmin}
+          title={adminOnlyTitle}
+          className="w-full rounded-md border border-white/10 bg-[#0d1014] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-sky-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <option value="dark">深色</option>
+          <option value="light">浅色</option>
+        </select>
+      );
+    }
+
+    if (config.validation?.options) {
+      return (
+        <select
+          value={String(config.value)}
+          onChange={(e) => requestSaveConfig(config.key, e.target.value)}
+          disabled={configHook.loading || !canAdmin}
+          title={adminOnlyTitle}
+          className="w-full rounded-md border border-white/10 bg-[#0d1014] px-3 py-2 text-sm text-white outline-none transition-colors focus:border-sky-600 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {config.validation.options.map(option => (
+            <option key={String(option)} value={String(option)}>
+              {String(option) || '不压缩'}
+            </option>
+          ))}
+        </select>
       );
     }
 
     const isNum = config.value_type === 'int' || config.value_type === 'float';
     return (
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         <input
           ref={(el) => { inputRefs.current[config.key] = el; }}
           type={isNum ? 'number' : 'text'}
@@ -216,59 +245,49 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
           defaultValue={config.value as string | number}
           disabled={configHook.loading || !canAdmin}
           title={adminOnlyTitle}
-          className="flex-1 bg-zinc-950 border border-zinc-700 px-4 py-2 text-sm text-white font-mono focus:outline-none focus:border-white transition-all placeholder-zinc-500"
-          placeholder={`输入 ${config.value_type}...`}
+          className="min-w-0 flex-1 rounded-md border border-white/10 bg-[#0d1014] px-3 py-2 font-mono text-sm text-white outline-none transition-colors placeholder:text-zinc-600 focus:border-sky-600 disabled:cursor-not-allowed disabled:opacity-40"
+          placeholder={`输入${config.value_type === 'string' ? '文本' : '数值'}`}
         />
         <button
+          type="button"
           onClick={() => {
             const el = inputRefs.current[config.key];
             if (el) requestSaveConfig(config.key, el.value);
           }}
           disabled={configHook.loading || !canAdmin}
           title={adminOnlyTitle}
-          className="bg-zinc-800 border border-zinc-600 text-white px-5 py-2 text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-white hover:text-black hover:border-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          className="shrink-0 rounded-md border border-white/12 bg-[#1b2026] px-3 py-2 text-sm font-medium text-zinc-100 transition-colors hover:border-white/25 hover:bg-[#222831] disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {configHook.loading ? '写入中' : '写入'}
+          {configHook.loading ? '保存中' : '保存'}
         </button>
       </div>
     );
   };
 
   const renderConfigItem = (config: SystemConfig) => (
-    <div key={config.key} className="bg-black p-5 group hover:bg-zinc-950 transition-colors">
-      <div className="flex flex-col gap-4">
-        {/* 顶部：参数名 + 类型标签 */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-0.5 h-4 bg-zinc-600 group-hover:bg-white transition-colors shrink-0" />
-            <span className="text-sm font-bold tracking-widest uppercase text-zinc-200 group-hover:text-white transition-colors truncate font-mono">
+    <div key={config.key} className="rounded-md border border-white/8 bg-[#11151a] p-4">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.9fr)] xl:items-start">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="break-all font-mono text-sm font-semibold text-zinc-100">
               {config.key}
             </span>
-            <span className={`text-[8px] px-2 py-0.5 border font-bold shrink-0 uppercase tracking-wider ${
+            <span className={`rounded border px-2 py-0.5 text-xs font-medium ${
               config.is_hot_reloadable
-                ? 'border-white bg-white text-black rounded-[3px] shadow-[0_0_0_1px_rgba(255,255,255,0.18)]'
-                : 'border-white text-white'
+                ? 'border-emerald-700/60 bg-emerald-950/50 text-emerald-300'
+                : 'border-amber-700/60 bg-amber-950/50 text-amber-300'
             }`}>
               {config.is_hot_reloadable ? '热更新' : '需重启'}
             </span>
           </div>
+          <p className="mt-2 text-sm leading-6 text-zinc-400">{config.description}</p>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+            <span>类型：{config.value_type}</span>
+            <span>当前值：<span className="font-mono text-zinc-300">{getConfigDisplayValue(config)}</span></span>
+          </div>
         </div>
-
-        {/* 描述 */}
-        <div className="text-[11px] text-zinc-300 ml-3 tracking-tight font-mono">
-          // {config.description}
-        </div>
-
-        {/* 输入区 */}
-        <div className="ml-3">
+        <div className="xl:pt-0.5">
           {renderConfigInput(config)}
-        </div>
-
-        {/* 底部元信息 */}
-        <div className="ml-3 flex items-center gap-6 text-[9px] text-zinc-500 uppercase border-t border-zinc-900 pt-3 font-bold tracking-widest">
-          <span>当前值: <span className="text-zinc-300">{getConfigDisplayValue(config)}</span></span>
-          <span>类型: {config.value_type.toUpperCase()}</span>
-          <span>REF: 0x{config.key.slice(0, 4).toUpperCase()}</span>
         </div>
       </div>
     </div>
@@ -276,35 +295,36 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
 
   return (
     <>
-      <div className="bg-black text-white font-mono flex flex-col w-full border border-zinc-800 max-h-[90vh]">
-
-        {/* ① 顶部标题栏 - sticky，不随内容滚动消失 */}
-        <div className="sticky top-0 z-20 bg-black border-b border-zinc-800 flex items-center justify-between px-5 shrink-0" style={{ height: '48px' }}>
-          <div className="flex items-center gap-5 min-w-0">
-            <span className="text-xs tracking-[0.2em] font-bold border-r border-zinc-700 pr-5 uppercase whitespace-nowrap">
-              BOTDOG // 参数矩阵
-            </span>
-            <span className="text-[10px] text-zinc-400 uppercase tracking-widest hidden md:block whitespace-nowrap">
-              访问权限: 已授权 // LVL_1
-            </span>
+      <div className={`flex w-full flex-col bg-[#15191e] text-white ${
+        onClose
+          ? 'max-h-[85vh] rounded-lg border border-white/10'
+          : 'max-h-[calc(100vh-180px)]'
+      }`}>
+        <div className="z-20 flex min-h-12 shrink-0 items-center justify-between border-b border-white/8 bg-[#15191e] px-5 py-2">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-white">配置参数</div>
+            <div className="mt-0.5 text-xs text-zinc-400">
+              {canAdmin ? '管理员可修改配置' : '当前账号仅可查看'}
+            </div>
           </div>
-
-          {/* 右侧操作区：刷新 | 关闭 各自独立，中间有明显间距 */}
-          <div className="flex items-stretch h-full shrink-0">
+          <div className="flex shrink-0 items-center gap-2">
             <button
+              type="button"
               onClick={() => configHook.fetchConfigs()}
               disabled={configHook.loading}
-              className="flex items-center gap-2 px-4 text-zinc-400 hover:text-white hover:bg-zinc-900 transition-all border-l border-zinc-800 disabled:opacity-40"
+              className="flex items-center gap-2 rounded-md border border-white/12 bg-[#1b2026] px-3 py-2 text-sm font-medium text-zinc-100 transition-colors hover:border-white/25 hover:bg-[#222831] disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <RefreshCw size={12} className={configHook.loading ? 'animate-spin' : ''} />
-              <span className="text-[10px] font-bold uppercase tracking-[0.2em]">刷新同步</span>
+              <RefreshCw size={14} className={configHook.loading ? 'animate-spin' : ''} />
+              <span>{configHook.loading ? '刷新中' : '刷新'}</span>
             </button>
 
             {onClose && (
               <button
+                type="button"
                 onClick={onClose}
-                className="flex items-center justify-center w-12 text-zinc-400 hover:text-white hover:bg-zinc-900 transition-all border-l border-zinc-800"
+                className="flex h-9 w-9 items-center justify-center rounded-md border border-white/12 text-zinc-400 transition-colors hover:border-white/25 hover:bg-white/5 hover:text-white"
                 title="关闭"
+                aria-label="关闭配置面板"
               >
                 <X size={14} />
               </button>
@@ -312,133 +332,152 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
           </div>
         </div>
 
-        {/* 告警/成功提示栏 */}
+        <div className="shrink-0 border-b border-amber-900/50 bg-amber-950/25 px-5 py-3">
+          <div className="flex items-start gap-2.5 text-sm text-amber-200">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0 text-amber-400" />
+            <div className="leading-6">
+              <span className="font-medium">请勿随意修改系统配置。</span>
+              <span className="ml-1 text-amber-200/80">
+                错误参数可能影响设备控制、导航和服务稳定性；修改前请确认参数含义并记录原值，标记“需重启”的配置将在后端重启后生效。
+              </span>
+            </div>
+          </div>
+        </div>
+
         {(configHook.error || successMessage || validationError) && (
-          <div className="border-b border-zinc-800 px-5 py-3 space-y-2 shrink-0 bg-black">
+          <div className="shrink-0 space-y-2 border-b border-white/8 bg-[#11151a] px-5 py-3">
             {configHook.error && (
-              <div className="flex items-center gap-3 text-red-400 text-[10px] font-mono">
-                <AlertTriangle size={12} className="shrink-0" />
+              <div className="flex items-center gap-2 rounded-md border border-red-800/60 bg-red-950/40 px-3 py-2 text-sm text-red-300">
+                <AlertTriangle size={14} className="shrink-0" />
                 <span>{configHook.error}</span>
               </div>
             )}
             {successMessage && (
-              <div className="flex items-center gap-3 text-white text-[10px] font-mono bg-zinc-900 px-3 py-1.5 border border-zinc-700">
-                <CheckCircle2 size={12} className="shrink-0" />
+              <div className="flex items-center gap-2 rounded-md border border-emerald-800/60 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-300">
+                <CheckCircle2 size={14} className="shrink-0" />
                 <span>{successMessage}</span>
               </div>
             )}
             {validationError && (
-              <div className="flex items-center gap-3 text-zinc-300 text-[10px] font-mono">
-                <AlertTriangle size={12} className="shrink-0" />
+              <div className="flex items-center gap-2 rounded-md border border-amber-800/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-300">
+                <AlertTriangle size={14} className="shrink-0" />
                 <span>{validationError}</span>
               </div>
             )}
           </div>
         )}
 
-        {/* ② 分类 Tab - 也 sticky，紧贴 header 下方 */}
-        <div className="sticky top-12 z-10 bg-black flex gap-px bg-zinc-900 border-b border-zinc-800 shrink-0">
+        <div className="z-10 flex shrink-0 gap-1 overflow-x-auto border-b border-white/8 bg-[#15191e] px-4">
           {categories.map(cat => {
             const count = allConfigs.filter(c => c.category === cat).length;
             const isActive = selectedCategory === cat;
             return (
               <button
                 key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`flex-1 flex items-center justify-between px-3 py-3 text-[10px] transition-all ${
+                type="button"
+                onClick={() => {
+                  setSelectedCategory(cat);
+                  setSearch('');
+                }}
+                className={`flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2 px-3 py-3 text-sm transition-colors ${
                   isActive
-                    ? 'bg-white text-black font-bold'
-                    : 'bg-black text-zinc-400 hover:text-white hover:bg-zinc-900'
+                    ? 'border-sky-500 text-white'
+                    : 'border-transparent text-zinc-400 hover:border-white/20 hover:text-zinc-100'
                 }`}
               >
-                <span className="tracking-widest uppercase">{categoryNames[cat] || cat}</span>
-                <span className="opacity-50 font-mono">[{String(count).padStart(2, '0')}]</span>
+                <span>{categoryNames[cat] || cat}</span>
+                <span className="rounded bg-white/5 px-1.5 py-0.5 text-xs text-zinc-500">{count}</span>
               </button>
             );
           })}
         </div>
 
-        {/* ③ 可滚动内容区，header 和 tab 保持不动 */}
-        <div className="overflow-y-auto custom-scrollbar flex-1">
-          {/* 参数列表标题行 */}
-          <div className="flex items-center justify-between border-b border-zinc-900 px-5 py-3 bg-black">
-            <div className="flex items-center gap-2">
-              <div className="w-0.5 h-4 bg-white" />
-              <h2 className="text-xs font-bold tracking-widest uppercase">
-                参数配置 // <span className="text-zinc-400">{categoryNames[selectedCategory] || selectedCategory}</span>
+        <div className="custom-scrollbar flex-1 overflow-y-auto">
+          <div className="flex flex-col gap-3 border-b border-white/8 bg-[#11151a] px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-sm font-medium text-zinc-200">
+                {categoryNames[selectedCategory] || selectedCategory}
               </h2>
+              <span className="mt-1 block text-xs text-zinc-500">
+                {normalizedSearch
+                  ? `找到 ${currentGroupConfigs.length} / ${currentCategoryConfigs.length} 个参数`
+                  : `共 ${currentCategoryConfigs.length} 个参数`}
+              </span>
             </div>
-            <span className="text-[9px] text-zinc-500 uppercase tracking-widest">
-              共 {currentGroupConfigs.length} 个参数
-            </span>
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="搜索参数名或说明"
+              className="w-full rounded-md border border-white/10 bg-[#0d1014] px-3 py-2 text-sm text-white outline-none placeholder:text-zinc-600 focus:border-sky-600 sm:w-64"
+            />
           </div>
 
           {currentGroupConfigs.length === 0 ? (
-            <div className="py-16 flex flex-col items-center justify-center gap-3 text-zinc-500">
-              <div className="w-12 h-12 border border-dashed border-zinc-700 flex items-center justify-center">
-                <span className="text-lg">∅</span>
-              </div>
-              <span className="text-[10px] uppercase tracking-widest">当前分类无参数</span>
+            <div className="flex items-center justify-center px-5 py-12 text-sm text-zinc-500">
+              当前分类暂无参数
             </div>
           ) : (
-            <div className="grid gap-px bg-zinc-900">
+            <div className="space-y-2 p-4">
               {currentGroupConfigs.map(config => renderConfigItem(config))}
             </div>
           )}
 
-          {/* 历史记录区 */}
-          <div className="border-t border-zinc-900">
+          <div className="border-t border-white/8">
             <button
+              type="button"
               onClick={handleShowHistory}
               disabled={showHistory}
-              className={`w-full py-3 flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] transition-all ${
+              className={`flex w-full items-center justify-center gap-2 px-4 py-3 text-sm transition-colors ${
                 showHistory
-                  ? 'text-zinc-600 cursor-not-allowed bg-black'
-                  : 'text-zinc-400 hover:text-white hover:bg-zinc-950 bg-black'
+                  ? 'cursor-not-allowed text-zinc-600'
+                  : 'text-zinc-400 hover:bg-white/3 hover:text-white'
               }`}
             >
-              <History size={12} />
-              <span>查阅指令下发历史</span>
+              <History size={14} />
+              <span>查看修改记录</span>
             </button>
 
             {showHistory && (
-              <div className="border-t border-zinc-900 bg-black p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-zinc-300">
-                    <History size={11} />
+              <div className="border-t border-white/8 bg-[#11151a] p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+                    <History size={14} />
                     <span>修改记录</span>
                   </div>
                   <button
+                    type="button"
                     onClick={() => setShowHistory(false)}
-                    className="text-zinc-400 hover:text-white transition-colors p-1"
+                    className="rounded p-1 text-zinc-400 transition-colors hover:bg-white/5 hover:text-white"
                     title="关闭"
+                    aria-label="关闭修改记录"
                   >
-                    <X size={12} />
+                    <X size={14} />
                   </button>
                 </div>
                 {history.length === 0 ? (
-                  <div className="py-4 text-center text-[9px] font-mono text-zinc-500 uppercase border border-zinc-800">
+                  <div className="rounded-md border border-dashed border-white/10 py-6 text-center text-sm text-zinc-500">
                     暂无修改记录
                   </div>
                 ) : (
-                  <div className="max-h-52 overflow-y-auto space-y-px bg-zinc-900 custom-scrollbar">
+                  <div className="custom-scrollbar max-h-64 space-y-2 overflow-y-auto">
                     {history.map(item => (
-                      <div key={item.history_id} className="bg-black px-4 py-3 flex flex-col gap-1.5 group hover:bg-zinc-950">
+                      <div key={item.history_id} className="rounded-md border border-white/8 bg-[#15191e] px-4 py-3">
                         <div className="flex items-center justify-between">
-                          <span className="font-mono text-xs font-bold text-white uppercase">{item.config_key}</span>
-                          <span className="text-[9px] font-mono text-zinc-400">
+                          <span className="font-mono text-sm font-medium text-white">{item.config_key}</span>
+                          <span className="text-xs text-zinc-500">
                             {new Date(item.changed_at).toLocaleString('zh-CN', { hour12: false })}
                           </span>
                         </div>
-                        <div className="flex items-center gap-3 text-[10px] font-mono bg-zinc-950 px-3 py-1.5">
+                        <div className="mt-2 flex items-center gap-3 rounded bg-[#0d1014] px-3 py-2 font-mono text-xs">
                           <span className="text-zinc-500 line-through">{item.old_value}</span>
                           <span className="text-zinc-400">→</span>
-                          <span className="text-white font-bold">{item.new_value}</span>
+                          <span className="font-medium text-white">{item.new_value}</span>
                         </div>
-                        <div className="flex items-center justify-between text-[9px]">
-                          <span className="text-zinc-500 uppercase tracking-widest">{item.changed_by}</span>
+                        <div className="mt-2 flex items-center justify-between gap-3 text-xs">
+                          <span className="text-zinc-500">操作人：{item.changed_by}</span>
                           {item.reason && (
-                            <span className="text-zinc-400 italic truncate max-w-[60%] text-right">"{item.reason}"</span>
+                            <span className="max-w-[60%] truncate text-right text-zinc-400">{item.reason}</span>
                           )}
                         </div>
                       </div>
@@ -451,47 +490,48 @@ export function ConfigPanel({ onClose, configHook: externalConfigHook }: ConfigP
         </div>
       </div>
 
-      {/* ─── 保存配置确认弹窗 ─── */}
       {pendingSave !== null && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="w-full max-w-md bg-zinc-950 border border-white/10 p-6 rounded-2xl shadow-[0_30px_120px_-30px_rgba(0,0,0,0.9)] font-mono">
-            <div className="text-base font-black text-white uppercase tracking-widest">确认修改配置</div>
-            <div className="mt-4 space-y-2 text-xs">
-              <div>
-                <span className="text-zinc-500 uppercase tracking-wider">配置项：</span>
-                <span className="text-white font-bold">{pendingSave.key}</span>
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/75 px-4">
+          <div className="w-full max-w-md rounded-lg border border-white/12 bg-[#15191e] p-5 shadow-xl">
+            <div className="text-lg font-semibold text-white">确认修改配置</div>
+            <div className="mt-4 space-y-3 text-sm">
+              <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+                <span className="text-zinc-500">配置项</span>
+                <span className="break-all font-mono text-white">{pendingSave.key}</span>
               </div>
-              <div>
-                <span className="text-zinc-500 uppercase tracking-wider">修改前：</span>
-                <span className="text-zinc-300 line-through">{String(pendingSave.oldValue)}</span>
+              <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+                <span className="text-zinc-500">修改前</span>
+                <span className="break-all font-mono text-zinc-300 line-through">{String(pendingSave.oldValue)}</span>
               </div>
-              <div>
-                <span className="text-zinc-500 uppercase tracking-wider">修改后：</span>
-                <span className="text-white font-bold">{String(pendingSave.newValue)}</span>
+              <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2">
+                <span className="text-zinc-500">修改后</span>
+                <span className="break-all font-mono font-medium text-white">{String(pendingSave.newValue)}</span>
               </div>
-              <div className={`mt-3 px-3 py-2 border text-[10px] ${
+              <div className={`mt-3 rounded-md border px-3 py-2 text-sm leading-6 ${
                 pendingSave.isHotReloadable
-                  ? 'border-zinc-700 text-zinc-400'
-                  : 'border-amber-500/40 bg-amber-500/5 text-amber-300'
+                  ? 'border-emerald-800/60 bg-emerald-950/40 text-emerald-300'
+                  : 'border-amber-800/60 bg-amber-950/40 text-amber-300'
               }`}>
                 {pendingSave.isHotReloadable
-                  ? '✓ 热重载项：修改将立即生效，无需重启。'
-                  : '⚠ 需重启项：修改后需重启后端服务才能生效。修改运行中的配置可能影响当前运行行为。'}
+                  ? '该配置支持热更新，保存后立即生效。'
+                  : '该配置需要重启后端服务才能生效，可能影响当前运行行为。'}
               </div>
             </div>
-            <div className="mt-6 flex justify-end gap-3">
+            <div className="mt-5 flex justify-end gap-2">
               <button
-                className="bg-zinc-800 border border-zinc-600 text-white px-5 py-2 text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-zinc-700 transition-all"
+                type="button"
+                className="rounded-md border border-white/12 bg-[#1b2026] px-3 py-2 text-sm font-medium text-zinc-100 transition-colors hover:border-white/25 hover:bg-[#222831]"
                 onClick={() => setPendingSave(null)}
               >取消</button>
               <button
-                className="bg-white text-black border border-white px-5 py-2 text-[10px] font-bold uppercase tracking-[0.2em] hover:bg-zinc-100 transition-all"
+                type="button"
+                className="rounded-md border border-sky-600 bg-sky-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:border-sky-500 hover:bg-sky-500"
                 onClick={() => {
                   const { key, newValue } = pendingSave;
                   setPendingSave(null);
                   void handleSaveConfig(key, newValue);
                 }}
-              >确认写入</button>
+              >确认保存</button>
             </div>
           </div>
         </div>

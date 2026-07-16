@@ -24,12 +24,10 @@ interface AdminHeaderProps {
 
 function HeaderPill({ icon, label, value }: AdminHeaderStatusItem) {
   return (
-    <div className="rounded-full border border-white/10 bg-black/40 px-3 py-2">
-      <div className="flex items-center gap-2 text-zinc-400">
-        {icon}
-        <span className="text-xs font-medium">{label}</span>
-      </div>
-      <div className="mt-1 text-xs text-white">{value}</div>
+    <div className="flex items-center gap-2 rounded-md border border-white/8 bg-[#0d1014] px-2.5 py-2 text-xs">
+      <span className="text-zinc-500">{icon}</span>
+      <span className="text-zinc-500">{label}</span>
+      <span className="font-medium text-zinc-200">{value}</span>
     </div>
   )
 }
@@ -46,12 +44,15 @@ export function AdminHeader({
   onSectionChange,
 }: AdminHeaderProps) {
   return (
-    <header className="sticky top-0 z-30 border-b border-white/10 bg-[linear-gradient(180deg,rgba(7,8,10,0.95),rgba(7,8,10,0.82))] px-4 py-4 backdrop-blur xl:px-8">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-        <div>
-          <div className="text-sm text-zinc-500">机器狗后台管理界面</div>
-          <div className="mt-2 text-2xl font-semibold text-white">{title}</div>
-          <div className="mt-1 text-sm text-zinc-400">{error ? `加载异常：${error}` : description}</div>
+    <header className="sticky top-0 z-30 border-b border-white/8 bg-[#101317]/95 px-4 py-3 lg:px-6 xl:px-7">
+      <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h1 className="text-lg font-semibold text-white">{title}</h1>
+            <p className={`text-sm ${error ? 'text-red-400' : 'text-zinc-400'}`}>
+              {error ? `加载异常：${error}` : description}
+            </p>
+          </div>
           {activeSection && onSectionChange ? (
             <AdminMobileNav
               items={mobileItems}
@@ -61,7 +62,7 @@ export function AdminHeader({
             />
           ) : null}
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           {statusItems.map((item) => (
             <HeaderPill key={`${item.label}-${item.value}`} {...item} />
           ))}

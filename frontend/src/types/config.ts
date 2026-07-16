@@ -13,6 +13,12 @@ export type ConfigValueType = 'int' | 'float' | 'bool' | 'string';
 export type ConfigCategory =
   | 'backend'
   | 'hardware'
+  | 'control'
+  | 'ai'
+  | 'guard'
+  | 'navigation'
+  | 'ros'
+  | 'logging'
   | 'frontend'
   | 'frontend_draw'
   | 'zone'
@@ -30,6 +36,7 @@ export interface SystemConfig {
   category: ConfigCategory;
   description: string;
   is_hot_reloadable: boolean;
+  validation?: ConfigValidationRule | null;
   created_at: string;
   updated_at: string;
 }
@@ -66,7 +73,7 @@ export interface ConfigChangeHistory {
 export interface ConfigValidationRule {
   min?: number;
   max?: number;
-  options?: string[]; // 对于 string/bool 类型的可选值
+  options?: Array<string | number>;
 }
 
 /**

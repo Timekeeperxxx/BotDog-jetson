@@ -23,37 +23,39 @@ export function AdminSidebar({ items, activeSection, onSectionChange, role }: Ad
   const visibleItems = items.filter((item) => item.visibleTo.includes(role))
 
   return (
-    <aside className="hidden w-[272px] shrink-0 border-r border-white/10 bg-[radial-gradient(circle_at_top,rgba(145,172,255,0.07),transparent_40%),linear-gradient(180deg,#0c0d11,#060708)] p-5 lg:block">
-      <div className="rounded-3xl border border-white/10 bg-black/25 p-4">
+    <aside className="sticky top-0 hidden h-screen w-56 shrink-0 overflow-y-auto border-r border-white/8 bg-[#0b0e12] p-3 lg:block">
+      <div className="border-b border-white/8 px-2 pb-4 pt-2">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-            <span className="text-sm font-semibold text-white">BD</span>
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-sky-600 text-xs font-semibold text-white">
+            BD
           </div>
           <div>
-            <div className="text-base font-semibold text-white">BotDog 管理后台</div>
-            <div className="mt-1 text-xs text-zinc-500">系统总览 · 导航管理 · 设备与视频 · 日志中心 · 系统配置</div>
+            <div className="text-sm font-semibold text-white">BotDog 后台</div>
+            <div className="mt-0.5 text-xs text-zinc-500">系统管理</div>
           </div>
         </div>
       </div>
 
-      <nav className="mt-5 space-y-2">
+      <nav className="mt-3 space-y-1" aria-label="后台主导航">
         {visibleItems.map((item) => (
           <button
             key={item.key}
             type="button"
             onClick={() => onSectionChange(item.key)}
-            className={`w-full rounded-2xl border px-4 py-3 text-left transition-all ${
+            title={item.description}
+            aria-current={activeSection === item.key ? 'page' : undefined}
+            className={`w-full rounded-md border-l-2 px-3 py-2.5 text-left transition-colors ${
               activeSection === item.key
-                ? 'border-white/20 bg-white/10 shadow-[0_16px_40px_-24px_rgba(255,255,255,0.45)]'
-                : 'border-white/8 bg-black/20 hover:border-white/14 hover:bg-white/4'
+                ? 'border-sky-500 bg-white/8 text-white'
+                : 'border-transparent text-zinc-400 hover:bg-white/5 hover:text-zinc-100'
             }`}
           >
             <div className="flex items-center gap-3">
-              <div className="text-zinc-300">{item.icon}</div>
+              <div className={activeSection === item.key ? 'text-sky-400' : 'text-zinc-500'}>{item.icon}</div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <div className="text-sm font-medium text-white">{item.label}</div>
-                  {item.badge ? <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[11px] text-zinc-400">{item.badge}</span> : null}
+                  <div className="text-sm font-medium">{item.label}</div>
+                  {item.badge ? <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-500">{item.badge}</span> : null}
                 </div>
               </div>
             </div>

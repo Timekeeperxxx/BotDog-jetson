@@ -13,12 +13,12 @@ export function ConfigModal({ isOpen, onClose }: ConfigModalProps) {
 
   return (
     <div
-      className="fixed inset-0 bg-black/85 flex items-center justify-center z-[1000] backdrop-blur-sm"
+      className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 px-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-[1000px] max-h-[90vh] rounded-none">
+      <div className="w-full max-w-[1000px]">
         <ConfigPanel onClose={onClose} />
       </div>
     </div>

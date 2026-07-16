@@ -92,7 +92,6 @@ export function AdminApp() {
       <AdminContentSwitch
         activeSection={activeSection}
         role={role}
-        onSectionChange={setActiveSection}
         coreData={coreData}
         navigationData={navigationData}
         videoConfigData={videoConfigData}

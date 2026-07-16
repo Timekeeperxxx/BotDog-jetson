@@ -1,7 +1,6 @@
 import {
   Camera,
   FileSearch,
-  HardDrive,
   LayoutDashboard,
   MapPinned,
   RefreshCw,
@@ -13,10 +12,10 @@ import {
 import type { AdminMenuItem, AdminRole } from './components/AdminSidebar'
 
 export const adminNavItems: AdminMenuItem[] = [
-  { key: 'dashboard', label: '系统总览', icon: <LayoutDashboard size={18} />, description: '服务状态 / 告警 / 最新日志', visibleTo: ['viewer', 'operator', 'admin'] },
+  { key: 'dashboard', label: '系统总览', icon: <LayoutDashboard size={18} />, description: '主机资源 / 设备 / 服务状态', visibleTo: ['viewer', 'operator', 'admin'] },
   { key: 'control', label: '运行控制', icon: <ShieldAlert size={18} />, description: '控制入口 / 安全状态 / 当前目标', visibleTo: [] },
   { key: 'navigation', label: '导航管理', icon: <MapPinned size={18} />, description: '场景 / 点位 / 任务', visibleTo: ['viewer', 'operator', 'admin'] },
-  { key: 'device-video', label: '设备与视频', icon: <HardDrive size={18} />, description: '主机 / 视频源 / 网络', visibleTo: ['viewer', 'operator', 'admin'] },
+  { key: 'device-video', label: '视频与 AI', icon: <Camera size={18} />, description: '视频源 / AI 参数', visibleTo: ['viewer', 'operator', 'admin'] },
   { key: 'ai-guard', label: 'AI 与驱离', icon: <Camera size={18} />, description: 'AI 状态 / 自动跟踪 / 驱离摘要', visibleTo: [] },
   { key: 'evidence', label: '证据中心', icon: <FileSearch size={18} />, description: '证据记录 / 删除确认', visibleTo: [] },
   { key: 'logs', label: '日志中心', icon: <ScrollText size={18} />, description: '审计日志 / 运行日志', visibleTo: ['viewer', 'operator', 'admin'] },

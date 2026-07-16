@@ -1,6 +1,5 @@
 import type { SystemConfig } from '../types/config'
-import type { AlertEvent, AIStatus, AutoTrackStatus } from '../types/event'
-import type { EvidenceItem } from '../types/evidence'
+import type { AIStatus, AutoTrackStatus } from '../types/event'
 import type { NavigationStatus, NavStateResponse } from '../types/navState'
 import type { VideoSource, NetworkInterface } from '../types/admin'
 import type { PcdSceneItem, NavWaypoint, PcdSceneMetadata } from '../types/pcdMap'
@@ -51,6 +50,7 @@ export interface AdminLogEntry {
 
 export interface AdminLogFileInfo {
   name: string
+  category: 'backend' | 'video' | 'navigation' | 'other'
   size_bytes: number
   modified_at: string
   lines_hint: number | null
@@ -72,10 +72,9 @@ export interface AdminDashboardData {
   navState: NavStateResponse | null
   aiStatus: AIStatus | null
   autoTrackStatus: AutoTrackStatus | null
-  alerts: AlertEvent[]
-  logs: AdminLogEntry[]
-  evidence: EvidenceItem[]
-  videoSources: VideoSource[]
+  systemInfo: SystemInfoGroup[]
+  networkInterfaces: NetworkInterface[]
+  hostResources: HostResources | null
 }
 
 export interface AdminServiceCard {
@@ -118,11 +117,49 @@ export interface AdminVideoAiData {
 }
 
 export interface DeviceDangerAction {
-  key: string
+  key: SystemDangerActionKey
   title: string
   description: string
-  supported: boolean
-  todo: string
+  effect: string
+  confirmation: string
+}
+
+export type SystemDangerActionKey =
+  | 'restart-backend'
+  | 'restart-video'
+  | 'restart-ai'
+  | 'reboot-device'
+
+export interface HostResources {
+  collected_at: string
+  hostname: string
+  platform: string
+  architecture: string
+  cpu_count: number
+  load_average: number[]
+  host_uptime_seconds: number | null
+  memory: {
+    total_bytes: number
+    used_bytes: number
+    available_bytes: number
+    usage_percent: number
+    swap_total_bytes: number
+    swap_used_bytes: number
+  }
+  disk: {
+    path: string
+    total_bytes: number
+    used_bytes: number
+    free_bytes: number
+    usage_percent: number
+  }
+}
+
+export interface SystemActionResponse {
+  success: boolean
+  action: SystemDangerActionKey
+  scheduled: boolean
+  message: string
 }
 
 export interface DeviceOverviewData {
@@ -132,6 +169,7 @@ export interface DeviceOverviewData {
   navState: NavStateResponse | null
   aiStatus: AIStatus | null
   autoTrackStatus: AutoTrackStatus | null
+  hostResources: HostResources | null
 }
 
 export interface AdminLogFilters {

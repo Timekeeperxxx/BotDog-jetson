@@ -6,10 +6,10 @@ export function AdminConfigPage({ configHook }: { configHook: ReturnType<typeof 
   return (
     <AdminCard
       title="配置中心"
-      subtitle="直接复用现有配置面板与 /api/v1/config 接口；保留热更新/需重启提示和配置历史。"
+      subtitle="集中查看和修改系统参数，保存前会提示生效方式。"
       className="overflow-hidden"
     >
-      <div className="-mx-6 -mb-5 -mt-5">
+      <div className="-mx-5 -mb-4 -mt-4">
         <ConfigPanel configHook={configHook} />
       </div>
     </AdminCard>
