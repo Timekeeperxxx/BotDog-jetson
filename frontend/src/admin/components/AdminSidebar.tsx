@@ -26,12 +26,12 @@ export function AdminSidebar({ items, activeSection, onSectionChange, role }: Ad
     <aside className="sticky top-0 hidden h-screen w-56 shrink-0 overflow-y-auto border-r border-white/8 bg-[#0b0e12] p-3 lg:block">
       <div className="border-b border-white/8 px-2 pb-4 pt-2">
         <div className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-sky-600 text-xs font-semibold text-white">
+          <div className="flex h-8 w-8 items-center justify-center rounded-md bg-sky-700 text-xs font-semibold text-white">
             BD
           </div>
           <div>
             <div className="text-sm font-semibold text-white">BotDog 后台</div>
-            <div className="mt-0.5 text-xs text-zinc-500">系统管理</div>
+            <div className="mt-0.5 text-xs text-zinc-400">系统管理</div>
           </div>
         </div>
       </div>
@@ -55,7 +55,7 @@ export function AdminSidebar({ items, activeSection, onSectionChange, role }: Ad
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <div className="text-sm font-medium">{item.label}</div>
-                  {item.badge ? <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-500">{item.badge}</span> : null}
+                  {item.badge ? <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-300">{item.badge}</span> : null}
                 </div>
               </div>
             </div>

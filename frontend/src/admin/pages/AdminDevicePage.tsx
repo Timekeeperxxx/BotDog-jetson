@@ -80,6 +80,10 @@ export function AdminDevicePage({
 
   const confirmedAction = dangerActions.find((action) => action.key === confirmKey) ?? null
   const resources = data.hostResources
+  const diskTone = !resources
+    ? 'normal'
+    : resources.disk.usage_percent >= 90 ? 'critical'
+      : resources.disk.usage_percent >= 80 ? 'warning' : 'normal'
 
   const handleDangerAction = async () => {
     if (!confirmedAction || !canManageSystem) return
@@ -120,6 +124,7 @@ export function AdminDevicePage({
           label="系统磁盘"
           value={resources ? `${resources.disk.usage_percent}%` : '暂未获取'}
           hint={resources ? `${formatBytes(resources.disk.used_bytes)} / ${formatBytes(resources.disk.total_bytes)}，剩余 ${formatBytes(resources.disk.free_bytes)}` : undefined}
+          tone={diskTone}
         />
         <QuickFact
           icon={<Network size={16} />}
@@ -138,11 +143,11 @@ export function AdminDevicePage({
                 {group.items.map((item) => (
                   <div key={item.key} className="border-t border-white/8 pt-3 first:border-0 first:pt-0">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs font-medium text-zinc-500">{item.label}</div>
-                      <div className="text-[10px] text-zinc-600">{item.env_key}</div>
+                      <div className="text-xs font-medium text-zinc-400">{item.label}</div>
+                      <div className="text-[10px] text-zinc-400">{item.env_key}</div>
                     </div>
                     <div className="mt-1.5 break-all text-sm text-white">{item.value}</div>
-                    <div className="mt-1 text-xs leading-5 text-zinc-500">{item.note}</div>
+                    <div className="mt-1 text-xs leading-5 text-zinc-400">{item.note}</div>
                   </div>
                 ))}
               </div>
@@ -217,6 +222,7 @@ export function AdminDevicePage({
                   disabled={!canManageSystem || executingKey !== null}
                   onClick={() => setConfirmKey(action.key)}
                   title={canManageSystem ? `执行${action.title}` : '需要管理员权限'}
+                  ariaLabel={canManageSystem ? `执行${action.title}` : `${action.title}，需要管理员权限`}
                 >
                   {executingKey === action.key ? '提交中' : '执行'}
                 </ToolbarButton>
@@ -245,17 +251,26 @@ function QuickFact({
   label,
   value,
   hint,
+  tone = 'normal',
 }: {
   icon: ReactNode
   label: string
   value: string
   hint?: string
+  tone?: 'normal' | 'warning' | 'critical'
 }) {
+  const toneClass = tone === 'critical'
+    ? 'border-red-700/70 bg-red-950/30'
+    : tone === 'warning' ? 'border-amber-600/60 bg-amber-950/25' : 'border-white/8 bg-[#15191e]'
+  const valueClass = tone === 'critical'
+    ? 'text-red-300'
+    : tone === 'warning' ? 'text-amber-300' : 'text-white'
+
   return (
-    <div className="rounded-md border border-white/8 bg-[#15191e] px-4 py-3.5">
+    <div className={`rounded-md border px-4 py-3.5 ${toneClass}`}>
       <div className="flex items-center gap-3 text-zinc-400">{icon}<span className="text-xs font-medium">{label}</span></div>
-      <div className="mt-2 text-lg font-semibold text-white">{value}</div>
-      {hint ? <div className="mt-1 text-xs text-zinc-500">{hint}</div> : null}
+      <div className={`mt-2 text-lg font-semibold ${valueClass}`}>{value}</div>
+      {hint ? <div className="mt-1 text-xs text-zinc-400">{hint}</div> : null}
     </div>
   )
 }

@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useId, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { usersApi } from '../../api/usersApi'
 import { ToolbarButton } from '../AdminUi'
 import { clearAuthState } from '../../stores/authStore'
+import { useModalFocus } from '../../hooks/useModalFocus'
 
 interface Props {
   onClose: () => void
@@ -15,14 +16,16 @@ export function ChangePasswordModal({ onClose, force = false }: Props) {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    return () => {
-      document.body.style.overflow = previousOverflow
-    }
-  }, [])
+  const titleId = useId()
+  const descriptionId = useId()
+  const oldPasswordId = useId()
+  const newPasswordId = useId()
+  const confirmPasswordId = useId()
+  const dialogRef = useModalFocus<HTMLDivElement>({
+    open: true,
+    onClose,
+    closeOnEscape: !force && !loading,
+  })
 
   const handleSubmit = async () => {
     setError(null)
@@ -54,18 +57,28 @@ export function ChangePasswordModal({ onClose, force = false }: Props) {
 
   return createPortal(
     <div className="fixed inset-0 z-[1000] flex items-start justify-center overflow-y-auto bg-black/70 px-4 py-6 backdrop-blur-sm sm:items-center sm:py-8">
-      <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-zinc-950 p-6 shadow-2xl">
-        <h3 className="text-lg font-black text-white mb-2">修改密码</h3>
-        <p className="text-sm text-zinc-400 mb-5">
+      <div
+        ref={dialogRef}
+        className="w-full max-w-sm rounded-3xl border border-white/10 bg-zinc-950 p-6 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
+      >
+        <h3 id={titleId} className="text-lg font-black text-white mb-2">修改密码</h3>
+        <p id={descriptionId} className="text-sm text-zinc-300 mb-5">
           {force ? '您的密码已被标记为必须修改，请设置新密码' : '修改成功后将需要重新登录'}
         </p>
         
-        {error && <div className="mb-4 rounded-lg bg-red-500/10 p-3 text-xs text-red-400">{error}</div>}
+        {error && <div className="mb-4 rounded-lg bg-red-500/10 p-3 text-xs text-red-300" role="alert">{error}</div>}
 
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-black uppercase text-zinc-500 mb-1">当前密码</label>
+            <label htmlFor={oldPasswordId} className="block text-xs font-black uppercase text-zinc-400 mb-1">当前密码</label>
             <input 
+              id={oldPasswordId}
+              autoFocus
               type="password" 
               value={oldPassword} 
               onChange={e => setOldPassword(e.target.value)} 
@@ -74,8 +87,9 @@ export function ChangePasswordModal({ onClose, force = false }: Props) {
             />
           </div>
           <div>
-            <label className="block text-xs font-black uppercase text-zinc-500 mb-1">新密码</label>
+            <label htmlFor={newPasswordId} className="block text-xs font-black uppercase text-zinc-400 mb-1">新密码</label>
             <input 
+              id={newPasswordId}
               type="password" 
               value={newPassword} 
               onChange={e => setNewPassword(e.target.value)} 
@@ -84,8 +98,9 @@ export function ChangePasswordModal({ onClose, force = false }: Props) {
             />
           </div>
           <div>
-            <label className="block text-xs font-black uppercase text-zinc-500 mb-1">确认新密码</label>
+            <label htmlFor={confirmPasswordId} className="block text-xs font-black uppercase text-zinc-400 mb-1">确认新密码</label>
             <input 
+              id={confirmPasswordId}
               type="password" 
               value={confirmPassword} 
               onChange={e => setConfirmPassword(e.target.value)} 

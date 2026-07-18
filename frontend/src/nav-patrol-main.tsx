@@ -5,6 +5,7 @@ import './styles/pcdMapDemo.css'
 import { PcdMapDemoPage } from './pages/PcdMapDemoPage'
 import { LoginPage } from './pages/LoginPage'
 import { AuthStatusBar } from './components/AuthStatusBar'
+import { AppErrorBoundary } from './components/AppErrorBoundary'
 import {
   bootstrapAuthState,
   hasAuthSession,
@@ -49,19 +50,22 @@ export function NavPatrolAuthRoot() {
 
   return (
     <>
-      {/* AuthStatusBar overlay：fixed 右上角，z-40 低于 modal z-50+，不遮挡确认框 */}
       {/* onLogout 传空函数：退出后 clearAuthState 触发状态变化，自动切回 LoginPage */}
-      <AuthStatusBar
-        variant="overlay"
-        onLogout={() => {
-          // 依赖 authStore 反应式更新自动切换回 LoginPage，无需手动跳转
-        }}
-      />
+      <div className="pcd-auth-status">
+        <AuthStatusBar
+          variant="bar"
+          onLogout={() => {
+            // 依赖 authStore 反应式更新自动切换回 LoginPage，无需手动跳转
+          }}
+        />
+      </div>
       <PcdMapDemoPage />
     </>
   )
 }
 
 createRoot(document.getElementById('nav-patrol-root')!).render(
-  <NavPatrolAuthRoot />,
+  <AppErrorBoundary>
+    <NavPatrolAuthRoot />
+  </AppErrorBoundary>,
 )

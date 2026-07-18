@@ -194,7 +194,7 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
     <div className={`select-none ${isDisabled || !canOperate ? 'opacity-40 pointer-events-none' : ''}`}>
       {/* 标题栏 */}
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[9px] font-black uppercase tracking-widest text-white/40">
+        <span className="text-[9px] font-black uppercase tracking-widest text-white/70">
           移动控制
         </span>
         {isControlling && (
@@ -254,18 +254,18 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
         <div className="flex items-center justify-between text-[8px]">
           {lastResult ? (
             <>
-              <span className="text-white/30">{lastResult.ack_cmd}</span>
+              <span className="text-white/60">{lastResult.ack_cmd}</span>
               <span className={`${resultColor} font-black opacity-80`}>{lastResult.result}</span>
-              <span className="text-white/30">{lastResult.latency_ms}ms</span>
+              <span className="text-white/60">{lastResult.latency_ms}ms</span>
             </>
           ) : (
-            <span className="text-white/20 w-full text-center tracking-tighter">
+            <span className="text-white/60 w-full text-center tracking-tighter">
               {canOperate ? 'W/S/Q/E 控制，方向键调速' : '登录后可进行手动控制'}
             </span>
           )}
         </div>
         {canOperate && (
-          <div className="flex items-center justify-between text-[8px] text-white/30">
+          <div className="flex items-center justify-between text-[8px] text-white/60">
             <span>前后 {formatSpeed(linearSpeed)} m/s</span>
             <span>转向 {formatSpeed(turnSpeed)} rad/s</span>
           </div>

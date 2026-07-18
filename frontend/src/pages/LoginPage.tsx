@@ -9,7 +9,7 @@ interface LoginPageProps {
 
 export function LoginPage({ onSuccess }: LoginPageProps = {}) {
   const auth = useAuthState()
-  const [username, setUsername] = useState('admin')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,16 +60,16 @@ export function LoginPage({ onSuccess }: LoginPageProps = {}) {
   }
 
   return (
-    <div className="min-h-screen bg-[#050506] text-white flex items-center justify-center px-6">
+    <main className="min-h-screen bg-[#050506] text-white flex items-center justify-center px-6">
       <form onSubmit={handleSubmit} className="w-full max-w-md border border-white/10 bg-black/70 p-8 space-y-5">
         <div className="space-y-2">
-          <div className="text-xs uppercase tracking-[0.35em] text-zinc-500">BotDog Auth</div>
+          <div className="text-xs uppercase tracking-[0.35em] text-zinc-400">BotDog Auth</div>
           <h1 className="text-2xl font-black tracking-tight">登录控制台</h1>
           <p className="text-sm text-zinc-400">控制、配置和删除类操作需要先登录。</p>
         </div>
 
         {sessionError ? (
-          <div className="rounded border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+          <div className="rounded border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-300" role="status">
             {sessionError}
           </div>
         ) : null}
@@ -95,7 +95,7 @@ export function LoginPage({ onSuccess }: LoginPageProps = {}) {
           />
         </label>
 
-        {error ? <div className="text-sm text-red-400">{error}</div> : null}
+        {error ? <div className="text-sm text-red-300" role="alert">{error}</div> : null}
 
         <button
           type="submit"
@@ -105,6 +105,6 @@ export function LoginPage({ onSuccess }: LoginPageProps = {}) {
           {loading ? '登录中' : '登录'}
         </button>
       </form>
-    </div>
+    </main>
   )
 }

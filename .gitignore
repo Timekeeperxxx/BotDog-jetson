@@ -70,7 +70,7 @@ scripts/logs/
 *.engine
 
 # Runtime logs
-logs/
+/logs/
 
 # Secrets (never commit)
 backend/.env

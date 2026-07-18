@@ -212,7 +212,7 @@ export function useConfig() {
 
     if (valueType === 'float') {
       const num = Number(value);
-      if (isNaN(num)) return { valid: false, error: '必须是数字' };
+      if (!Number.isFinite(num)) return { valid: false, error: '必须是有限数字' };
     }
 
     // 范围检查

@@ -68,6 +68,8 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
   if (variant === 'overlay') {
     return (
       <div
+        role="region"
+        aria-label="账户状态"
         className="fixed left-1/2 top-4 z-40 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-white/10 bg-black/75 px-3 py-2 text-xs text-white shadow-lg backdrop-blur-sm"
         style={{ maxWidth: 'calc(100vw - 2rem)' }}
       >
@@ -99,10 +101,10 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
 
   // variant === 'bar' — 嵌入 header
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2" role="region" aria-label="账户状态">
       <User size={13} className="text-zinc-400" />
       <span className="text-xs font-mono text-zinc-300">{username}</span>
-      <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-zinc-500">
+      <span className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-zinc-400">
         {role}
       </span>
       <button

@@ -9,7 +9,7 @@ function TopStatus({ icon, value, label }: { icon: ReactNode; value: string; lab
         {icon}
       </div>
       <div className="flex flex-col -space-y-1">
-        <span className="text-[9px] uppercase font-black text-slate-500 tracking-tighter">{label}</span>
+        <span className="text-[9px] uppercase font-black text-slate-400 tracking-tighter">{label}</span>
         <span className="text-[11px] font-mono font-black text-white">{value}</span>
       </div>
     </div>
@@ -19,7 +19,7 @@ function TopStatus({ icon, value, label }: { icon: ReactNode; value: string; lab
 function DataPointHeader({ label, value, unit }: { label: string; value: string; unit: string }) {
   return (
     <div className="flex items-baseline space-x-2 group">
-      <span className="text-[9px] uppercase font-black text-slate-500 tracking-tighter group-hover:text-white">{label}</span>
+      <span className="text-[9px] uppercase font-black text-slate-400 tracking-tighter group-hover:text-white">{label}</span>
       <span className="text-lg font-mono font-black text-white">{value}</span>
       <span className="text-[10px] font-mono font-bold text-slate-400">{unit}</span>
     </div>

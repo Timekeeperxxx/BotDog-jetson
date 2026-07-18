@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react'
+import { useId, type ReactNode } from 'react'
 import type { ModuleHealthState } from './adminTypes'
+import { useModalFocus } from '../hooks/useModalFocus'
 
 const statusStyles: Record<ModuleHealthState, string> = {
   normal: 'border-emerald-700/60 bg-emerald-950/50 text-emerald-300',
@@ -63,7 +64,7 @@ export function MetricTile({
 }) {
   return (
     <div className="rounded-md border border-white/8 bg-[#15191e] p-4">
-      <div className="text-xs font-medium text-zinc-500">{label}</div>
+      <div className="text-xs font-medium text-zinc-400">{label}</div>
       <div className="mt-1.5 text-xl font-semibold text-white">{value}</div>
       {hint ? <div className="mt-1.5 text-xs text-zinc-400">{hint}</div> : null}
     </div>
@@ -76,12 +77,14 @@ export function ToolbarButton({
   disabled,
   danger = false,
   title,
+  ariaLabel,
 }: {
   children: ReactNode
   onClick?: () => void
   disabled?: boolean
   danger?: boolean
   title?: string
+  ariaLabel?: string
 }) {
   return (
     <button
@@ -89,6 +92,7 @@ export function ToolbarButton({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      aria-label={ariaLabel}
       className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors ${
         danger
           ? 'border-red-800/70 text-red-300 hover:border-red-600 hover:bg-red-950/50'
@@ -153,13 +157,29 @@ export function ConfirmDialog({
   danger?: boolean
   disabled?: boolean
 }) {
+  const titleId = useId()
+  const descriptionId = useId()
+  const dialogRef = useModalFocus<HTMLDivElement>({
+    open,
+    onClose: onCancel,
+    closeOnEscape: !disabled,
+  })
+
   if (!open) return null
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/75 px-4">
-      <div className="w-full max-w-md rounded-lg border border-white/12 bg-[#15191e] p-5 shadow-xl">
-        <div className="text-lg font-semibold text-white">{title}</div>
-        <p className="mt-3 text-sm leading-6 text-zinc-400">{description}</p>
+      <div
+        ref={dialogRef}
+        className="w-full max-w-md rounded-lg border border-white/12 bg-[#15191e] p-5 shadow-xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
+      >
+        <div id={titleId} className="text-lg font-semibold text-white">{title}</div>
+        <p id={descriptionId} className="mt-3 text-sm leading-6 text-zinc-300">{description}</p>
         <div className="mt-6 flex justify-end gap-3">
           <ToolbarButton onClick={onCancel} disabled={disabled}>取消</ToolbarButton>
           <ToolbarButton onClick={onConfirm} danger={danger} disabled={disabled}>{confirmText}</ToolbarButton>

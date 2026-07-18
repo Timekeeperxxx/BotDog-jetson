@@ -169,6 +169,7 @@ export default function IndustrialConsoleComplete() {
 
       {/* 主视图 */}
       <main className="flex-1 flex flex-col min-w-0 relative">
+        <h1 className="sr-only">BotDog 智能巡检控制台</h1>
         <TopHeader
           isUiFullscreen={isUiFullscreen}
           isMissionRunning={isMissionRunning}
