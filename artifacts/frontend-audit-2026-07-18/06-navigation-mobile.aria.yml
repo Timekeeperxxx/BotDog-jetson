@@ -1,0 +1,64 @@
+- text: admin Admin
+- button "修改密码"
+- button "退出"
+- main:
+  - heading "BotDog 导航巡逻" [level=1]
+  - paragraph: from 西部泰力
+  - text: 电量
+  - strong: "--"
+  - text: 加载中
+  - button "重启导航定位" [disabled]
+  - button "添加导航点" [disabled]
+  - text: "当前浏览器未启用 WebGL，无法渲染三维点云地图。 请尝试： - 使用电脑浏览器访问本页面 - 在开发板 Chromium 中启用 `chrome://flags` → `Override software rendering list` - 使用启动参数 `--ignore-gpu-blocklist --enable-webgl --use-gl=egl` - 检查 `chrome://gpu` 中 WebGL/WebGL2 是否可用"
+  - button "任务选择"
+  - button "场景选择"
+  - button "场景信息 / 机器狗坐标 Scene35_图开始后会":
+    - strong: 场景信息 / 机器狗坐标
+    - text: Scene35_图开始后会
+  - text: 坐标系
+  - strong: map
+  - text: 点数量
+  - strong: 3,993,965
+  - text: DATA
+  - strong: binary
+  - text: 字段
+  - strong: x, y, z, intensity
+  - text: 鼠标 X/Y
+  - strong: "-"
+  - text: X / Y
+  - strong: "-"
+  - text: Z
+  - strong: "-"
+  - text: Yaw
+  - strong: "-"
+  - text: Frame
+  - strong: "-"
+  - text: Source
+  - strong: "-"
+  - text: 场景状态
+  - strong: ready
+  - text: 可导航
+  - strong: "yes"
+  - text: "X: -443.846 / 26.292 Y: -274.716 / 142.154 Z: -44.720 / 38.100 等待 map TF 恢复。"
+  - button "视角跟随" [disabled]
+  - button "点云图层"
+  - button "添加障碍物"
+  - button "重定位" [disabled]
+  - button "移动控制"
+  - button "开始建图"
+  - button "停止任务"
+  - button "检查雷达"
+  - button "跟踪联动关"
+  - complementary:
+    - text: 2D 俯视投影 全局路径 SCAN 实际轨迹 B2 双圆柱 r=0.25m
+    - button "放大"
+    - button "缩小"
+    - button "复位视图"
+    - heading "导航点" [level=2]
+    - paragraph: 0 个场景坐标点
+    - text: 在 3D 蓝色 ground.pcd 中开启标点后点击添加
+    - button "导航急停"
+  - text: 提示中心
+  - strong: 定位状态
+  - text: 等待 map TF 恢复。
+  - 'button "最近日志 02:27:44 已读取场景 metadata: Scene35_图开始后会"'

@@ -1,0 +1,5 @@
+{
+  "elapsedMs": 2002,
+  "alertText": "雷达未连接：未发现原始数据 /livox/lidar，请检查雷达供电、网线和驱动",
+  "mappingStartRequests": 0
+}

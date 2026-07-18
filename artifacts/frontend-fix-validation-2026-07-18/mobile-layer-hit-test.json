@@ -1,0 +1,29 @@
+{
+  "before": {
+    "buttonRect": {
+      "left": 130,
+      "top": 567.5,
+      "right": 227,
+      "bottom": 605.5
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "hitTag": "SPAN",
+    "hitClass": "",
+    "hitText": "点云图层"
+  },
+  "popoverCount": 1,
+  "after": {
+    "rect": {
+      "left": 12,
+      "top": 513,
+      "right": 378,
+      "bottom": 832
+    },
+    "display": "grid",
+    "visibility": "visible",
+    "clippedByViewport": false
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "before": {
+    "buttonRect": {
+      "left": 130,
+      "top": 405,
+      "right": 227,
+      "bottom": 443
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "hitTag": "SPAN",
+    "hitClass": "",
+    "hitText": "Source"
+  },
+  "popoverCount": 1,
+  "after": {
+    "rect": {
+      "left": 130,
+      "top": 78,
+      "right": 378,
+      "bottom": 397
+    },
+    "display": "grid",
+    "visibility": "visible",
+    "clippedByViewport": false
+  }
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "name": "login-desktop",
+    "path": "/login",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "violations": []
+  },
+  {
+    "name": "console-desktop",
+    "path": "/",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "violations": []
+  },
+  {
+    "name": "navigation-desktop",
+    "path": "/nav-patrol.html",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "violations": []
+  },
+  {
+    "name": "admin-desktop",
+    "path": "/admin",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "violations": []
+  },
+  {
+    "name": "navigation-mobile",
+    "path": "/nav-patrol.html",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "violations": []
+  }
+]

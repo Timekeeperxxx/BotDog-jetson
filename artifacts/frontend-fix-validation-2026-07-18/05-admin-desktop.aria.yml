@@ -1,0 +1,51 @@
+- complementary:
+  - text: BD BotDog 后台 系统管理
+  - navigation "后台主导航":
+    - button "系统总览"
+    - button "导航管理"
+    - button "视频与 AI"
+    - button "日志中心"
+    - button "系统配置 只读"
+    - button "用户与权限"
+- main:
+  - heading "系统总览" [level=1]
+  - paragraph: 主机资源 / 设备 / 服务状态
+  - text: 事件流 connected 导航 ws已连接 健康状态 degraded
+  - button "进入操作台"
+  - button "刷新总览"
+  - region "账户状态":
+    - text: admin Admin
+    - button "修改密码"
+    - button "退出登录"
+  - text: 主机 yahboom aarch64 · 8 核 · 已运行 6 小时 21 分钟 内存 36.1% 5.5 GiB / 15.3 GiB，可用 9.8 GiB 系统磁盘 88.2% 133.6 GiB / 151.5 GiB，剩余 17.9 GiB 网络配置 1 个网口 1 个已启用
+  - heading "设备信息" [level=2]
+  - paragraph: 机器人、图传与后端连接参数。
+  - text: "机器人连接 宇树 B2 网卡名 UNITREE_NETWORK_IFACE eno1 ARM64 主机上连接机器狗的物理网卡，用 `ip addr` 查看 宇树 B2 默认 IP — 192.168.123.161 B2 机器人的固定出厂 IP，不可更改 控制适配器类型 CONTROL_ADAPTER_TYPE unitree_b2 unitree_b2=真实硬件，simulation=仅打印日志 视频 / 图传 AI 推理 RTSP 地址 AI_RTSP_URL rtsp://127.0.0.1:8554/cam AI Worker 从此地址拉取视频帧进行推理 MediaMTX RTSP 端口 — 127.0.0.1:8554 摄像头推流到此地址（如 ffmpeg/OBS 的推流目标） MediaMTX WHEP 端口 — 127.0.0.1:8889 前端 WebRTC 播放地址的主机和端口 HM30 天空端 IP — 192.168.0.2 HM30 图传天空端的默认管理地址（连接后可访问 Web 配置页） HM30 地面端 IP — 192.168.0.3 HM30 图传地面端的默认管理地址 后端服务 后端监听地址 BACKEND_HOST / BACKEND_PORT 0.0.0.0:8000 前端通过此地址访问 API 和 WebSocket MAVLink 端点 MAVLINK_ENDPOINT udp:127.0.0.1:14550 MAVLink 数据来源（udp=模拟/真实飞控） MAVLink 数据源 MAVLINK_SOURCE simulation mavlink=真实硬件，simulation=内置模拟器"
+  - heading "网络接口" [level=2]
+  - table:
+    - rowgroup:
+      - row "名称 网卡名 IP 用途 状态":
+        - columnheader "名称"
+        - columnheader "网卡名"
+        - columnheader "IP"
+        - columnheader "用途"
+        - columnheader "状态"
+    - rowgroup:
+      - row "机器人连接网口 eno1 -- robot 正常":
+        - cell "机器人连接网口"
+        - cell "eno1"
+        - cell "--"
+        - cell "robot"
+        - cell "正常"
+  - heading "服务状态" [level=2]
+  - text: "后端服务 降级 status=degraded 机器人控制 降级 链路未确认或离线 ROS 导航桥 等待中 TF 暂未就绪：target=map，source=base_footprint,base_link，原因=base_footprint: \"map\" passed to lookupTransform argument target_frame does not exist. ; base_link: \"map\" passed to lookupTransform argument target_frame does not exist. AI Worker 等待中 尚未收到 AI 状态事件 自动跟踪 等待中 尚未收到自动跟踪状态"
+  - heading "危险操作区" [level=2]
+  - paragraph: 仅管理员可执行；所有操作都需要二次确认并写入审计日志。
+  - text: 重启后端 重新拉起 FastAPI、WebSocket 和全部后台工作线程
+  - button "执行重启后端": 执行
+  - text: 重启视频流水线 重新拉起 FFmpeg、MediaMTX 和摄像头拉流链路
+  - button "执行重启视频流水线": 执行
+  - text: 重启 AI Worker 重新加载 AI 模型并恢复 RTSP 推理
+  - button "执行重启 AI Worker": 执行
+  - text: 重启设备 重启当前主机及其承载的全部 BotDog 服务
+  - button "执行重启设备": 执行

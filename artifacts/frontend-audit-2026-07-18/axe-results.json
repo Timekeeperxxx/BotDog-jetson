@@ -1,0 +1,565 @@
+[
+  {
+    "name": "login-desktop",
+    "path": "/login",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "violations": [
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "help": "Elements must meet minimum color contrast ratio thresholds",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.10/color-contrast?application=axeAPI",
+        "nodes": [
+          {
+            "target": [
+              ".tracking-\\[0\\.35em\\]"
+            ],
+            "html": "<div class=\"text-xs uppercase tracking-[0.35em] text-zinc-500\">BotDog Auth</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.29 (foreground color: #71717b, background color: #020202, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          }
+        ]
+      },
+      {
+        "id": "landmark-one-main",
+        "impact": "moderate",
+        "help": "Document should have one main landmark",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.10/landmark-one-main?application=axeAPI",
+        "nodes": [
+          {
+            "target": [
+              "html"
+            ],
+            "html": "<html lang=\"zh-CN\">",
+            "failureSummary": "Fix all of the following:\n  Document does not have a main landmark"
+          }
+        ]
+      },
+      {
+        "id": "region",
+        "impact": "moderate",
+        "help": "All page content should be contained by landmarks",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.10/region?application=axeAPI",
+        "nodes": [
+          {
+            "target": [
+              ".space-y-2:nth-child(1)"
+            ],
+            "html": "<div class=\"space-y-2\"><div class=\"text-xs uppercase tracking-[0.35em] text-zinc-500\">BotDog Auth</div><h1 class=\"text-2xl font-black tracking-tight\">登录控制台</h1><p class=\"text-sm text-zinc-400\">控制、配置和删除类操作需要先登录。</p></div>",
+            "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              "label:nth-child(2)"
+            ],
+            "html": "<label class=\"block space-y-2\"><span class=\"text-xs uppercase tracking-[0.2em] text-zinc-400\">用户名</span><input class=\"w-full border border-white/10 bg-zinc-950 px-4 py-3 outline-none focus:border-white/30\" autocomplete=\"username\" value=\"admin\"></label>",
+            "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              "label:nth-child(3)"
+            ],
+            "html": "<label class=\"block space-y-2\"><span class=\"text-xs uppercase tracking-[0.2em] text-zinc-400\">密码</span><input class=\"w-full border border-white/10 bg-zinc-950 px-4 py-3 outline-none focus:border-white/30\" autocomplete=\"current-password\" type=\"password\" value=\"\"></label>",
+            "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "console-desktop",
+    "path": "/",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "violations": [
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "help": "Elements must meet minimum color contrast ratio thresholds",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.10/color-contrast?application=axeAPI",
+        "nodes": [
+          {
+            "target": [
+              ".items-baseline.space-x-2.group:nth-child(1) > .group-hover\\:text-white.tracking-tighter.text-slate-500"
+            ],
+            "html": "<span class=\"text-[9px] uppercase font-black text-slate-500 tracking-tighter group-hover:text-white\">速度</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.4 (foreground color: #62748e, background color: #000000, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".items-baseline.space-x-2.group:nth-child(2) > .group-hover\\:text-white.tracking-tighter.text-slate-500"
+            ],
+            "html": "<span class=\"text-[9px] uppercase font-black text-slate-500 tracking-tighter group-hover:text-white\">航向</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.4 (foreground color: #62748e, background color: #000000, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".items-baseline.space-x-2.group:nth-child(3) > .group-hover\\:text-white.tracking-tighter.text-slate-500"
+            ],
+            "html": "<span class=\"text-[9px] uppercase font-black text-slate-500 tracking-tighter group-hover:text-white\">延迟</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.4 (foreground color: #62748e, background color: #000000, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".space-x-3.items-center.flex:nth-child(1) > .-space-y-1.flex-col.flex > .tracking-tighter.text-slate-500.text-\\[9px\\]"
+            ],
+            "html": "<span class=\"text-[9px] uppercase font-black text-slate-500 tracking-tighter\">链路</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.4 (foreground color: #62748e, background color: #000000, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".space-x-3.items-center.flex:nth-child(2) > .-space-y-1.flex-col.flex > .tracking-tighter.text-slate-500.text-\\[9px\\]"
+            ],
+            "html": "<span class=\"text-[9px] uppercase font-black text-slate-500 tracking-tighter\">电量</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.4 (foreground color: #62748e, background color: #000000, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".space-x-3.items-center.flex:nth-child(3) > .-space-y-1.flex-col.flex > .tracking-tighter.text-slate-500.text-\\[9px\\]"
+            ],
+            "html": "<span class=\"text-[9px] uppercase font-black text-slate-500 tracking-tighter\">温度</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.4 (foreground color: #62748e, background color: #000000, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".mb-1\\.5 > .text-\\[9px\\].text-white\\/40.tracking-widest"
+            ],
+            "html": "<span class=\"text-[9px] font-black uppercase tracking-widest text-white/40\">移动控制</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.74 (foreground color: #6b6b6d, background color: #09090b, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".text-center"
+            ],
+            "html": "<span class=\"text-white/20 w-full text-center tracking-tighter\">W/S/Q/E 控制，方向键调速</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 1.75 (foreground color: #3a3a3c, background color: #09090b, font size: 6.0pt (8px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".text-\\[8px\\].text-white\\/30.justify-between > span:nth-child(1)"
+            ],
+            "html": "<span>前后 0.3 m/s</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.58 (foreground color: #535354, background color: #09090b, font size: 6.0pt (8px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".text-\\[8px\\].text-white\\/30.justify-between > span:nth-child(2)"
+            ],
+            "html": "<span>转向 0.5 rad/s</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.58 (foreground color: #535354, background color: #09090b, font size: 6.0pt (8px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".hover\\:bg-white\\/5 > .text-\\[9px\\].text-white\\/40.tracking-widest"
+            ],
+            "html": "<span class=\"text-[9px] font-black uppercase tracking-widest text-white/40\">统计数据</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.65 (foreground color: #666666, background color: #000000, font size: 6.8pt (9px), font weight: bold). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              "p"
+            ],
+            "html": "<p class=\"text-[10px] uppercase font-black tracking-widest text-white/30\">监测运行中...</p>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.52 (foreground color: #505050, background color: #050505, font size: 7.5pt (10px), font weight: bold). Expected contrast ratio of 4.5:1"
+          }
+        ]
+      },
+      {
+        "id": "page-has-heading-one",
+        "impact": "moderate",
+        "help": "Page should contain a level-one heading",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.10/page-has-heading-one?application=axeAPI",
+        "nodes": [
+          {
+            "target": [
+              "html"
+            ],
+            "html": "<html lang=\"zh-CN\">",
+            "failureSummary": "Fix all of the following:\n  Page must have a level-one heading"
+          }
+        ]
+      },
+      {
+        "id": "region",
+        "impact": "moderate",
+        "help": "All page content should be contained by landmarks",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.10/region?application=axeAPI",
+        "nodes": [
+          {
+            "target": [
+              ".truncate"
+            ],
+            "html": "<span class=\"truncate font-mono text-zinc-200\">admin</span>",
+            "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              ".px-1\\.5"
+            ],
+            "html": "<span class=\"rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-zinc-400\">Admin</span>",
+            "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "navigation-desktop",
+    "path": "/nav-patrol.html",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "violations": [
+      {
+        "id": "region",
+        "impact": "moderate",
+        "help": "All page content should be contained by landmarks",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.10/region?application=axeAPI",
+        "nodes": [
+          {
+            "target": [
+              ".truncate"
+            ],
+            "html": "<span class=\"truncate font-mono text-zinc-200\">admin</span>",
+            "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              ".px-1\\.5"
+            ],
+            "html": "<span class=\"rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-zinc-400\">Admin</span>",
+            "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "admin-desktop",
+    "path": "/admin",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "violations": [
+      {
+        "id": "color-contrast",
+        "impact": "serious",
+        "help": "Elements must meet minimum color contrast ratio thresholds",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.10/color-contrast?application=axeAPI",
+        "nodes": [
+          {
+            "target": [
+              ".h-8"
+            ],
+            "html": "<div class=\"flex h-8 w-8 items-center justify-center rounded-md bg-sky-600 text-xs font-semibold text-white\">BD</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4.02 (foreground color: #ffffff, background color: #0084d1, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".mt-0\\.5.text-zinc-500.text-xs"
+            ],
+            "html": "<div class=\"mt-0.5 text-xs text-zinc-500\">系统管理</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4 (foreground color: #71717b, background color: #0b0e12, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".flex-1.min-w-0 > .gap-2.items-center.flex > .px-1\\.5.border-white\\/10.rounded"
+            ],
+            "html": "<span class=\"rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-zinc-500\">只读</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 4 (foreground color: #71717b, background color: #0b0e12, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".px-2\\.5.bg-\\[\\#0d1014\\].gap-2:nth-child(1) > span:nth-child(2)"
+            ],
+            "html": "<span class=\"text-zinc-500\">事件流</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.94 (foreground color: #71717b, background color: #0d1014, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".px-2\\.5.bg-\\[\\#0d1014\\].gap-2:nth-child(2) > span:nth-child(2)"
+            ],
+            "html": "<span class=\"text-zinc-500\">导航</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.94 (foreground color: #71717b, background color: #0d1014, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".px-2\\.5.bg-\\[\\#0d1014\\].gap-2:nth-child(3) > span:nth-child(2)"
+            ],
+            "html": "<span class=\"text-zinc-500\">健康状态</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.94 (foreground color: #71717b, background color: #0d1014, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".bg-white\\/5"
+            ],
+            "html": "<span class=\"rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-zinc-500\">Admin</span>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.45 (foreground color: #71717b, background color: #1c1e22, font size: 6.8pt (9px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".bg-\\[\\#15191e\\].py-3\\.5.px-4:nth-child(1) > .mt-1.text-zinc-500.text-xs"
+            ],
+            "html": "<div class=\"mt-1 text-xs text-zinc-500\">aarch64 · 8 核 · 已运行 5 小时 58 分钟</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.65 (foreground color: #71717b, background color: #15191e, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".bg-\\[\\#15191e\\].py-3\\.5.px-4:nth-child(2) > .mt-1.text-zinc-500.text-xs"
+            ],
+            "html": "<div class=\"mt-1 text-xs text-zinc-500\">6.0 GiB / 15.3 GiB，可用 9.3 GiB</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.65 (foreground color: #71717b, background color: #15191e, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".bg-\\[\\#15191e\\].py-3\\.5.px-4:nth-child(3) > .mt-1.text-zinc-500.text-xs"
+            ],
+            "html": "<div class=\"mt-1 text-xs text-zinc-500\">133.6 GiB / 151.5 GiB，剩余 17.9 GiB</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.65 (foreground color: #71717b, background color: #15191e, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".bg-\\[\\#15191e\\].py-3\\.5.px-4:nth-child(4) > .mt-1.text-zinc-500.text-xs"
+            ],
+            "html": "<div class=\"mt-1 text-xs text-zinc-500\">1 个已启用</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.65 (foreground color: #71717b, background color: #15191e, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(1) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(1) > .justify-between.gap-3.items-center > .text-zinc-500.font-medium.text-xs"
+            ],
+            "html": "<div class=\"text-xs font-medium text-zinc-500\">宇树 B2 网卡名</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(1) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(1) > .justify-between.gap-3.items-center > .text-zinc-600.text-\\[10px\\]"
+            ],
+            "html": "<div class=\"text-[10px] text-zinc-600\">UNITREE_NETWORK_IFACE</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.37 (foreground color: #52525c, background color: #11151a, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(1) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(1) > .leading-5.mt-1.text-zinc-500"
+            ],
+            "html": "<div class=\"mt-1 text-xs leading-5 text-zinc-500\">ARM64 主机上连接机器狗的物理网卡，用 `ip addr` 查看</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(1) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(2) > .justify-between.gap-3.items-center > .text-zinc-500.font-medium.text-xs"
+            ],
+            "html": "<div class=\"text-xs font-medium text-zinc-500\">宇树 B2 默认 IP</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(1) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(2) > .leading-5.mt-1.text-zinc-500"
+            ],
+            "html": "<div class=\"mt-1 text-xs leading-5 text-zinc-500\">B2 机器人的固定出厂 IP，不可更改</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(1) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(3) > .justify-between.gap-3.items-center > .text-zinc-500.font-medium.text-xs"
+            ],
+            "html": "<div class=\"text-xs font-medium text-zinc-500\">控制适配器类型</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(1) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(3) > .justify-between.gap-3.items-center > .text-zinc-600.text-\\[10px\\]"
+            ],
+            "html": "<div class=\"text-[10px] text-zinc-600\">CONTROL_ADAPTER_TYPE</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.37 (foreground color: #52525c, background color: #11151a, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(1) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(3) > .leading-5.mt-1.text-zinc-500"
+            ],
+            "html": "<div class=\"mt-1 text-xs leading-5 text-zinc-500\">unitree_b2=真实硬件，simulation=仅打印日志</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(2) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(1) > .justify-between.gap-3.items-center > .text-zinc-500.font-medium.text-xs"
+            ],
+            "html": "<div class=\"text-xs font-medium text-zinc-500\">AI 推理 RTSP 地址</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(2) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(1) > .justify-between.gap-3.items-center > .text-zinc-600.text-\\[10px\\]"
+            ],
+            "html": "<div class=\"text-[10px] text-zinc-600\">AI_RTSP_URL</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.37 (foreground color: #52525c, background color: #11151a, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(2) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(1) > .leading-5.mt-1.text-zinc-500"
+            ],
+            "html": "<div class=\"mt-1 text-xs leading-5 text-zinc-500\">AI Worker 从此地址拉取视频帧进行推理</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(2) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(2) > .justify-between.gap-3.items-center > .text-zinc-500.font-medium.text-xs"
+            ],
+            "html": "<div class=\"text-xs font-medium text-zinc-500\">MediaMTX RTSP 端口</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(2) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(2) > .leading-5.mt-1.text-zinc-500"
+            ],
+            "html": "<div class=\"mt-1 text-xs leading-5 text-zinc-500\">摄像头推流到此地址（如 ffmpeg/OBS 的推流目标）</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(2) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(3) > .justify-between.gap-3.items-center > .text-zinc-500.font-medium.text-xs"
+            ],
+            "html": "<div class=\"text-xs font-medium text-zinc-500\">MediaMTX WHEP 端口</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(2) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(3) > .leading-5.mt-1.text-zinc-500"
+            ],
+            "html": "<div class=\"mt-1 text-xs leading-5 text-zinc-500\">前端 WebRTC 播放地址的主机和端口</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".pt-3.first\\:border-0.border-t:nth-child(4) > .justify-between.gap-3.items-center > .text-zinc-500.font-medium.text-xs"
+            ],
+            "html": "<div class=\"text-xs font-medium text-zinc-500\">HM30 天空端 IP</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".pt-3.first\\:border-0.border-t:nth-child(4) > .leading-5.mt-1.text-zinc-500"
+            ],
+            "html": "<div class=\"mt-1 text-xs leading-5 text-zinc-500\">HM30 图传天空端的默认管理地址（连接后可访问 Web 配置页）</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".pt-3.first\\:border-0.border-t:nth-child(5) > .justify-between.gap-3.items-center > .text-zinc-500.font-medium.text-xs"
+            ],
+            "html": "<div class=\"text-xs font-medium text-zinc-500\">HM30 地面端 IP</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".pt-3.first\\:border-0.border-t:nth-child(5) > .leading-5.mt-1.text-zinc-500"
+            ],
+            "html": "<div class=\"mt-1 text-xs leading-5 text-zinc-500\">HM30 图传地面端的默认管理地址</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(3) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(1) > .justify-between.gap-3.items-center > .text-zinc-500.font-medium.text-xs"
+            ],
+            "html": "<div class=\"text-xs font-medium text-zinc-500\">后端监听地址</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(3) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(1) > .justify-between.gap-3.items-center > .text-zinc-600.text-\\[10px\\]"
+            ],
+            "html": "<div class=\"text-[10px] text-zinc-600\">BACKEND_HOST / BACKEND_PORT</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.37 (foreground color: #52525c, background color: #11151a, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(3) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(1) > .leading-5.mt-1.text-zinc-500"
+            ],
+            "html": "<div class=\"mt-1 text-xs leading-5 text-zinc-500\">前端通过此地址访问 API 和 WebSocket</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(3) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(2) > .justify-between.gap-3.items-center > .text-zinc-500.font-medium.text-xs"
+            ],
+            "html": "<div class=\"text-xs font-medium text-zinc-500\">MAVLink 端点</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(3) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(2) > .justify-between.gap-3.items-center > .text-zinc-600.text-\\[10px\\]"
+            ],
+            "html": "<div class=\"text-[10px] text-zinc-600\">MAVLINK_ENDPOINT</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.37 (foreground color: #52525c, background color: #11151a, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(3) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(2) > .leading-5.mt-1.text-zinc-500"
+            ],
+            "html": "<div class=\"mt-1 text-xs leading-5 text-zinc-500\">MAVLink 数据来源（udp=模拟/真实飞控）</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(3) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(3) > .justify-between.gap-3.items-center > .text-zinc-500.font-medium.text-xs"
+            ],
+            "html": "<div class=\"text-xs font-medium text-zinc-500\">MAVLink 数据源</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(3) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(3) > .justify-between.gap-3.items-center > .text-zinc-600.text-\\[10px\\]"
+            ],
+            "html": "<div class=\"text-[10px] text-zinc-600\">MAVLINK_SOURCE</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 2.37 (foreground color: #52525c, background color: #11151a, font size: 7.5pt (10px), font weight: normal). Expected contrast ratio of 4.5:1"
+          },
+          {
+            "target": [
+              ".p-4.bg-\\[\\#11151a\\].rounded-md:nth-child(3) > .mt-4.space-y-3 > .pt-3.first\\:border-0.border-t:nth-child(3) > .leading-5.mt-1.text-zinc-500"
+            ],
+            "html": "<div class=\"mt-1 text-xs leading-5 text-zinc-500\">mavlink=真实硬件，simulation=内置模拟器</div>",
+            "failureSummary": "Fix any of the following:\n  Element has insufficient color contrast of 3.79 (foreground color: #71717b, background color: #11151a, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "navigation-mobile",
+    "path": "/nav-patrol.html",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "violations": [
+      {
+        "id": "region",
+        "impact": "moderate",
+        "help": "All page content should be contained by landmarks",
+        "helpUrl": "https://dequeuniversity.com/rules/axe/4.10/region?application=axeAPI",
+        "nodes": [
+          {
+            "target": [
+              ".truncate"
+            ],
+            "html": "<span class=\"truncate font-mono text-zinc-200\">admin</span>",
+            "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          },
+          {
+            "target": [
+              ".px-1\\.5"
+            ],
+            "html": "<span class=\"rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-zinc-400\">Admin</span>",
+            "failureSummary": "Fix any of the following:\n  Some page content is not contained by landmarks"
+          }
+        ]
+      }
+    ]
+  }
+]

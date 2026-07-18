@@ -1,0 +1,34 @@
+- text: admin Admin
+- button "修改密码"
+- button "退出"
+- navigation: 控制台 导航巡逻 驱离系统 档案库 后台管理 设置 告警
+- main:
+  - text: "BotDog V5.0-核心终端 西部泰力 速度 -- m/s 航向 -- ° 延迟 -- ms 链路 在线 电量 -- 温度 -- 02:27:27 x 视频流 Error: WHEP 响应失败: 404 Error: WHEP 响应失败: 404 等待WHEP连接..."
+  - button "重新连接"
+  - button "全方位监控 前 · 后 · 左 · 右"
+  - text: "清晰度: -- 视频流: Error: WHEP 响应失败: 404 信号: -- AI帧 0 无数据 检出 0 跟踪帧 0 AI延迟 -- 累计丢帧 0 WHEP Error: WHEP 响应失败: 404"
+  - button "重连"
+  - text: "延迟: -- 自动跟踪 已禁用"
+  - button "▷ 启用" [disabled]
+  - text: 请先点击「开始巡检」 系统状态 链路在线
+  - button "全屏"
+  - button "拍照"
+  - button "开始录像"
+  - button "高清"
+  - text: 待命
+  - button "开始巡检"
+  - complementary:
+    - text: 终端状态 移动控制
+    - button "左旋转"
+    - button "前进"
+    - button "右旋转"
+    - button "左平移"
+    - button "后退"
+    - button "右平移"
+    - button "起立"
+    - button "音频"
+    - button "下蹲"
+    - text: W/S/Q/E 控制，方向键调速 前后 0.3 m/s 转向 0.5 rad/s AI 识别 统计数据 任务控制
+    - button "开始巡检"
+    - paragraph: 监测运行中...
+    - button "重连所有链路"

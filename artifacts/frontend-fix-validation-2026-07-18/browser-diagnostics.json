@@ -1,0 +1,107 @@
+[
+  {
+    "name": "03-console-desktop",
+    "path": "/",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "console": [
+      {
+        "type": "warning",
+        "text": "WebSocket connection to 'ws://127.0.0.1:8000/ws/telemetry' failed: WebSocket is closed before the connection is established."
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (Not Found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (Not Found)"
+      },
+      {
+        "type": "error",
+        "text": "Failed to load resource: the server responded with a status of 404 (Not Found)"
+      }
+    ],
+    "pageErrors": [],
+    "failedRequests": [],
+    "badResponses": [
+      {
+        "url": "http://127.0.0.1:8889/cam/whep",
+        "status": 404
+      },
+      {
+        "url": "http://127.0.0.1:8889/cam/whep",
+        "status": 404
+      },
+      {
+        "url": "http://127.0.0.1:8889/cam/whep",
+        "status": 404
+      }
+    ],
+    "url": "http://127.0.0.1:8000/",
+    "title": "BotDog 智能巡检系统",
+    "bodyText": "admin\nADMIN\n修改密码\n退出\n控制台\n导航巡逻\n驱离系统\n档案库\n后台管理\n设置\n告警\nBotDog 智能巡检控制台\nBOTDOG\nV5.0-核心终端\n西部泰力\n速度\n--\nm/s\n航向\n--\n°\n延迟\n--\nms\n链路\n在线\n电量\n--\n温度\n--\n02:55:39\nx\n视频流 Error: WHEP 响应失败: 404\nError: WHEP 响应失败: 404\n等待WHEP连接...\n重新连接\n全方位监控\n前 · 后 · 左 · 右\n清晰度:\n--\n视频流:\nError: WHEP 响应失败: 404\n信号: --\nAI帧\n0\n无数据\n检出\n0\n跟踪帧\n0\nAI延迟\n--\n累计丢帧\n0\nWHEP\nError: WHEP 响应失败: 404\n重连\n延迟: --\n自动跟踪\n已禁用\n▷ 启用\n请先点击「开始巡检」\n系统状态\n链路在线\n高清\n待命\n开始巡检\n终端状态\n移动控制\n左旋转\n前进\n右旋转\n左平移\n后退\n右平移\n起立\n音频\n下蹲\nW/S/Q/E 控制，方向键调速\n前后 0.3 m/s\n转向 0.5 rad/s\nAI 识别\n统计数据\n任务控制\n开始巡检\n\n监测运行中...\n\n重连所有链路"
+  },
+  {
+    "name": "04-navigation-desktop",
+    "path": "/nav-patrol.html",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "console": [
+      {
+        "type": "warning",
+        "text": "WebSocket connection to 'ws://127.0.0.1:8000/ws/event' failed: WebSocket is closed before the connection is established."
+      }
+    ],
+    "pageErrors": [],
+    "failedRequests": [],
+    "badResponses": [],
+    "url": "http://127.0.0.1:8000/nav-patrol.html",
+    "title": "BotDog 导航巡逻 PCD Demo",
+    "bodyText": "admin\nADMIN\n修改密码\n退出登录\nBotDog 导航巡逻\n\nfrom 西部泰力\n\n电量\n--\n重启导航定位\n添加导航点\n当前浏览器未启用 WebGL，无法渲染三维点云地图。\n请尝试：\n- 使用电脑浏览器访问本页面\n- 在开发板 Chromium 中启用 `chrome://flags` → `Override software rendering list`\n- 使用启动参数 `--ignore-gpu-blocklist --enable-webgl --use-gl=egl`\n- 检查 `chrome://gpu` 中 WebGL/WebGL2 是否可用\n任务选择\n场景选择\n场景信息 / 机器狗坐标\nScene35_图开始后会\n视角跟随\n点云图层\n添加障碍物\n重定位\n移动控制\n开始建图\n停止任务\n检查雷达\n跟踪联动关\n2D 俯视投影\n全局路径\nSCAN 实际轨迹\nB2 双圆柱 r=0.25m\n导航点\n\n1 个场景坐标点\n\n原点\nx -0.419 · y 0.034 · z -0.796\nyaw -0.028 rad\n导航急停\n提示中心\n定位状态\n等待 map TF 恢复。\n最近日志\n02:55:41 已刷新导航实时状态"
+  },
+  {
+    "name": "05-admin-desktop",
+    "path": "/admin",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "console": [
+      {
+        "type": "warning",
+        "text": "WebSocket connection to 'ws://127.0.0.1:8000/ws/event' failed: WebSocket is closed before the connection is established."
+      }
+    ],
+    "pageErrors": [],
+    "failedRequests": [],
+    "badResponses": [],
+    "url": "http://127.0.0.1:8000/admin",
+    "title": "BotDog 智能巡检系统",
+    "bodyText": "BD\nBotDog 后台\n系统管理\n系统总览\n导航管理\n视频与 AI\n日志中心\n系统配置\n只读\n用户与权限\n系统总览\n\n主机资源 / 设备 / 服务状态\n\n事件流\nconnected\n导航\nws已连接\n健康状态\ndegraded\n进入操作台\n刷新总览\nadmin\nAdmin\n修改密码\n退出登录\n主机\nyahboom\naarch64 · 8 核 · 已运行 6 小时 21 分钟\n内存\n36.1%\n5.5 GiB / 15.3 GiB，可用 9.8 GiB\n系统磁盘\n88.2%\n133.6 GiB / 151.5 GiB，剩余 17.9 GiB\n网络配置\n1 个网口\n1 个已启用\n设备信息\n\n机器人、图传与后端连接参数。\n\n机器人连接\n宇树 B2 网卡名\nUNITREE_NETWORK_IFACE\neno1\nARM64 主机上连接机器狗的物理网卡，用 `ip addr` 查看\n宇树 B2 默认 IP\n—\n192.168.123.161\nB2 机器人的固定出厂 IP，不可更改\n控制适配器类型\nCONTROL_ADAPTER_TYPE\nunitree_b2\nunitree_b2=真实硬件，simulation=仅打印日志\n视频 / 图传\nAI 推理 RTSP 地址\nAI_RTSP_URL\nrtsp://127.0.0.1:8554/cam\nAI Worker 从此地址拉取视频帧进行推理\nMediaMTX RTSP 端口\n—\n127.0.0.1:8554\n摄像头推流到此地址（如 ffmpeg/OBS 的推流目标）\nMediaMTX WHEP 端口\n—\n127.0.0.1:8889\n前端 WebRTC 播放地址的主机和端口\nHM30 天空端 IP\n—\n192.168.0.2\nHM30 图传天空端的默认管理地址（连接后可访问 Web 配置页）\nHM30 地面端 IP\n—\n192.168.0.3\nHM30 图传地面端的默认管理地址\n后端服务\n后端监听地址\nBACKEND_HOST / BACKEND_PORT\n0.0.0.0:8000\n前端通过此地址访问 API 和 WebSocket\nMAVLink 端点\nMAVLINK_ENDPOINT\nudp:127.0.0.1:14550\nMAVLink 数据来源（udp=模拟/真实飞控）\nMAVLink 数据源\nMAVLINK_SOURCE\nsimulation\nmavlink=真实硬件，simulation=内置模拟器\n网络接口\n名称\t网卡名\tIP\t用途\t状态\n机器人连接网口\teno1\t--\trobot\t正常\n服务状态\n后端服务\n降级\nstatus=degraded\n机器人控制\n降级\n链路未确认或离线\nROS 导航桥\n等待中\nTF 暂未就绪：target=map，source=base_footprint,base_link，原因=base_footprint: \"map\" passed to lookupTransform argument target_frame does not exist. ; base_link: \"map\" passed to lookupTransform argument target_frame does not exist.\nAI Worker\n等待中\n尚未收到 AI 状态事件\n自动跟踪\n等待中\n尚未收到自动跟踪状态\n危险操作区\n\n仅管理员可执行；所有操作都需要二次确认并写入审计日志。\n\n重启后端\n重新拉起 FastAPI、WebSocket 和全部后台工作线程\n执行\n重启视频流水线\n重新拉起 FFmpeg、MediaMTX 和摄像头拉流链路\n执行\n重启 AI Worker\n重新加载 AI 模型并恢复 RTSP 推理\n执行\n重启设备\n重启当前主机及其承载的全部 BotDog 服务\n执行"
+  },
+  {
+    "name": "06-navigation-mobile",
+    "path": "/nav-patrol.html",
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "console": [
+      {
+        "type": "warning",
+        "text": "WebSocket connection to 'ws://127.0.0.1:8000/ws/event' failed: WebSocket is closed before the connection is established."
+      }
+    ],
+    "pageErrors": [],
+    "failedRequests": [],
+    "badResponses": [],
+    "url": "http://127.0.0.1:8000/nav-patrol.html",
+    "title": "BotDog 导航巡逻 PCD Demo",
+    "bodyText": "admin\nADMIN\n修改密码\n退出登录\nBotDog 导航巡逻\n\nfrom 西部泰力\n\n电量\n--\n重启导航定位\n添加导航点\n当前浏览器未启用 WebGL，无法渲染三维点云地图。\n请尝试：\n- 使用电脑浏览器访问本页面\n- 在开发板 Chromium 中启用 `chrome://flags` → `Override software rendering list`\n- 使用启动参数 `--ignore-gpu-blocklist --enable-webgl --use-gl=egl`\n- 检查 `chrome://gpu` 中 WebGL/WebGL2 是否可用\n任务选择\n场景选择\n场景信息 / 机器狗坐标\nScene35_图开始后会\n视角跟随\n点云图层\n添加障碍物\n重定位\n移动控制\n开始建图\n停止任务\n检查雷达\n跟踪联动关\n2D 俯视投影\n全局路径\nSCAN 实际轨迹\nB2 双圆柱 r=0.25m\n导航点\n\n1 个场景坐标点\n\n原点\nx -0.419 · y 0.034 · z -0.796\nyaw -0.028 rad\n导航急停\n提示中心\n定位状态\n等待 map TF 恢复。\n最近日志\n02:55:57 已刷新导航实时状态"
+  }
+]
