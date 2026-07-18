@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { LocateFixed, ZoomIn, ZoomOut } from 'lucide-react'
-import type { NavWaypoint, PcdBounds, PcdSceneLayerRole } from '../../types/pcdMap'
+import type { NavWaypoint, PcdBounds, PcdSceneLayerRole, PointCloudPoints } from '../../types/pcdMap'
 import type { GlobalPath, RobotPose } from '../../types/navState'
+import { getPointCount, getPointXYZ } from '../../utils/pointCloudPoints'
 import { canvasToMap, getTopDownScale, mapToCanvas } from '../../utils/topDownCoordinate'
 import {
   SCAN_BODY_CYLINDER_OFFSETS,
@@ -11,12 +12,13 @@ import {
 
 type PointCloudLayer = {
   role: PcdSceneLayerRole
-  points: [number, number, number][]
+  points: PointCloudPoints
+  coordinateSpace?: 'map' | 'three'
 }
 
 type Props = {
   layers?: PointCloudLayer[]
-  points?: [number, number, number][]
+  points?: PointCloudPoints
   viewKey?: string
   bounds: PcdBounds | null
   waypoints: NavWaypoint[]
@@ -162,7 +164,7 @@ export function PointCloudTopDownCanvas({
   )
 
   const totalPointCount = useMemo(
-    () => normalizedLayers.reduce((sum, layer) => sum + layer.points.length, 0),
+    () => normalizedLayers.reduce((sum, layer) => sum + getPointCount(layer.points), 0),
     [normalizedLayers],
   )
 
@@ -278,12 +280,14 @@ export function PointCloudTopDownCanvas({
       if (!bounds || totalPointCount === 0) return
 
       normalizedLayers.forEach((layer) => {
-        if (layer.points.length === 0) return
-        const stride = Math.max(1, Math.floor(layer.points.length / 45000))
+        const pointCount = getPointCount(layer.points)
+        if (pointCount === 0) return
+        const stride = Math.max(1, Math.floor(pointCount / 45000))
         ctx.fillStyle = getLayerColor(layer.role)
-        for (let index = 0; index < layer.points.length; index += stride) {
-          const point = layer.points[index]
-          const pos = mapToCanvas(point[0], point[1], bounds, width, height, PADDING)
+        for (let index = 0; index < pointCount; index += stride) {
+          const point = getPointXYZ(layer.points, index)
+          const mapY = layer.coordinateSpace === 'three' ? -point.z : point.y
+          const pos = mapToCanvas(point.x, mapY, bounds, width, height, PADDING)
           ctx.fillRect(pos.x, pos.y, 1.4, 1.4)
         }
       })
@@ -543,11 +547,6 @@ export function PointCloudTopDownCanvas({
   return (
     <div className="pcd-viewer-shell pcd-topdown-shell">
       <div className="pcd-viewer-label">2D 俯视投影</div>
-      <div className="pcd-path-legend" aria-label="导航路径图例">
-        <span><i className="is-global" />全局路径</span>
-        <span><i className="is-execution" />SCAN 实际轨迹</span>
-        <span><i className="is-scan-body" />B2 双圆柱 r={SCAN_BODY_CYLINDER_RADIUS.toFixed(2)}m</span>
-      </div>
       <div className="pcd-topdown-toolbar">
         <button
           className="pcd-icon-button"

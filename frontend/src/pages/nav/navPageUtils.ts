@@ -29,6 +29,7 @@ type WaypointOption = {
 export type LogItem = {
   id: number
   level: 'info' | 'error'
+  timestamp: number
   message: string
 }
 
@@ -76,6 +77,11 @@ export function findSceneById(scenes: PcdSceneItem[], sceneId: string | null | u
 export function findTaskById(tasks: TaskDefinition[], taskId: string | null | undefined) {
   if (!taskId) return null
   return tasks.find((task) => task.id === taskId) ?? null
+}
+
+export function filterTasksByScene(tasks: TaskDefinition[], sceneId: string | null | undefined) {
+  if (!sceneId) return []
+  return tasks.filter((task) => resolveTaskSceneId(task) === sceneId)
 }
 
 export function createEmptyDraftStep(): TaskDraftStep {
@@ -161,10 +167,6 @@ export function patchTaskDraftStep(
   }
 }
 
-export function nowText() {
-  return new Date().toLocaleTimeString()
-}
-
 export function compactRuntimeMessage(message: string) {
   if (message.includes('relocation 进程未运行')) {
     return 'Super-LIO 已退出，请重新重启导航定位。'
@@ -173,7 +175,7 @@ export function compactRuntimeMessage(message: string) {
     return '还没有接收端，请稍后或重新重启导航定位。'
   }
   if (message.includes('target_frame does not exist') || message.includes('map') && message.includes('TF')) {
-    return '等待 map TF 恢复。'
+    return '未获取到 TF 位姿数据，请点击右上角“重启导航定位”开始标记位姿。'
   }
   if (message.includes('超时')) {
     return '等待超时，请查看日志后重试。'

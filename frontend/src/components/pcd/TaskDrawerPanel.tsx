@@ -5,6 +5,7 @@ import { summarizeWorkflowSteps } from '../../pages/nav/navPageUtils'
 
 type Props = {
   tasks: TaskDefinition[]
+  sceneName: string | null
   selectedTaskId: string | null
   navigationStatus: NavigationStatus | null
   canStartCreate: boolean
@@ -21,6 +22,7 @@ type Props = {
 
 export function TaskDrawerPanel({
   tasks,
+  sceneName,
   selectedTaskId,
   navigationStatus,
   canStartCreate,
@@ -41,7 +43,7 @@ export function TaskDrawerPanel({
       <div className="pcd-panel-header pcd-panel-header-compact">
         <div className="pcd-panel-header-main">
           <h2>导航任务</h2>
-          <p>{tasks.length === 0 ? '已保存 0 个任务' : `已保存 ${tasks.length} 个任务`}</p>
+          <p>{sceneName ? `${sceneName} · ${tasks.length} 个任务` : '请先选择地图'}</p>
         </div>
       </div>
 
@@ -52,7 +54,9 @@ export function TaskDrawerPanel({
 
       <div className="pcd-task-card-list">
         {tasks.length === 0 ? (
-          <div className="pcd-empty">还没有导航任务，点击上方按钮开始创建。</div>
+          <div className="pcd-empty">
+            {sceneName ? '当前地图还没有导航任务，点击上方按钮开始创建。' : '选择地图后查看其导航任务。'}
+          </div>
         ) : (
           tasks.map((task) => {
             const isActive = task.id === selectedTaskId

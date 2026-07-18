@@ -23,7 +23,7 @@ export function PcdMetadataPanel({ metadata, mouseMapPosition }: Props) {
         <div className="pcd-metadata-grid">
           <span>坐标系</span>
           <strong>{metadata.frame_id}</strong>
-          <span>点数量</span>
+          <span>文件点数</span>
           <strong>{metadata.point_count.toLocaleString()}</strong>
           <span>DATA</span>
           <strong>{metadata.data_type}</strong>

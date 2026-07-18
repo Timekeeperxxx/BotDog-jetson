@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { GlobalPath, RobotPose } from '../../types/navState'
-import type { NavWaypoint, PcdBounds, PcdSceneItem, PcdSceneMetadata, PcdScenePreview } from '../../types/pcdMap'
+import type { NavWaypoint, PcdBounds, PcdSceneMetadata, PcdScenePreview, PcdSceneTileManifest } from '../../types/pcdMap'
 import type { PointCloudLayer } from './NavPageShell'
 import type { PcdLayerVisibility } from './NavToolStrip'
 import type { MappingSessionInfo } from './navPageUtils'
@@ -17,8 +17,9 @@ type UseNavPointCloudViewModelOptions = {
   pcdLayerVisibility: PcdLayerVisibility
   preview: PcdScenePreview | null
   previewLayers: PointCloudLayer[]
+  topDownLayers: PointCloudLayer[]
+  tileManifest: PcdSceneTileManifest | null
   robotPose: RobotPose | null
-  scenes: PcdSceneItem[]
   selectedSceneId: string | null
   waypoints: NavWaypoint[]
 }
@@ -34,8 +35,9 @@ export function useNavPointCloudViewModel({
   pcdLayerVisibility,
   preview,
   previewLayers,
+  topDownLayers,
+  tileManifest,
   robotPose,
-  scenes,
   selectedSceneId,
   waypoints,
 }: UseNavPointCloudViewModelOptions) {
@@ -70,6 +72,16 @@ export function useNavPointCloudViewModel({
     ? `mapping:${mappingSessionInfo?.sceneName || mappingSessionInfo?.mapDir || 'active'}`
     : `scene:${selectedSceneId || 'none'}`
 
+  const rightRailLayers = useMemo(() => {
+    if (mappingActive) return allLayers
+    return topDownLayers.filter((layer) => {
+      if (layer.role === 'wall') return pcdLayerVisibility.map
+      if (layer.role === 'ground') return pcdLayerVisibility.ground
+      if (layer.role === 'footprint_fill') return pcdLayerVisibility.footprint
+      return true
+    })
+  }, [allLayers, mappingActive, pcdLayerVisibility, topDownLayers])
+
   const liveMappingBounds = useMemo<PcdBounds | null>(() => {
     if (!mappingActive || (mappingCloudPoints.length === 0 && liveMappingCloudPoints.length === 0)) return null
 
@@ -103,18 +115,13 @@ export function useNavPointCloudViewModel({
   }, [mappingActive, mappingCloudPoints, liveMappingCloudPoints])
 
   const groundCenterHeight = useMemo(() => {
-    const bounds = preview?.layers.ground?.bounds ?? metadata?.files.ground?.bounds ?? null
+    const bounds = tileManifest?.layer_bounds.ground ?? preview?.layers.ground?.bounds ?? metadata?.files.ground?.bounds ?? null
     return bounds ? (bounds.min_z + bounds.max_z) / 2 : null
-  }, [metadata?.files.ground?.bounds, preview?.layers.ground?.bounds])
+  }, [metadata?.files.ground?.bounds, preview?.layers.ground?.bounds, tileManifest?.layer_bounds.ground])
 
   const displayedGlobalPath = useMemo(
     () => trimGlobalPathByRobotPose(globalPath, robotPose),
     [globalPath, robotPose],
-  )
-
-  const mapOptions = useMemo(
-    () => scenes.map((scene) => ({ id: scene.id, name: scene.name })),
-    [scenes],
   )
 
   const selectedSceneWaypoints = useMemo(
@@ -122,16 +129,18 @@ export function useNavPointCloudViewModel({
     [waypoints],
   )
 
-  const rightRailBounds = mappingActive ? liveMappingBounds : (preview?.bounds || metadata?.bounds || null)
+  const rightRailBounds = mappingActive
+    ? liveMappingBounds
+    : (tileManifest?.bounds || preview?.bounds || metadata?.bounds || null)
 
   return {
     allLayers,
     displayedExecutionPath: executionPath,
     displayedGlobalPath,
     groundCenterHeight,
-    mapOptions,
     pointCloudViewKey,
     rightRailBounds,
+    rightRailLayers,
     selectedSceneWaypoints,
   }
 }

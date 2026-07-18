@@ -5,11 +5,6 @@ import type { NavigationStatus } from '../../types/navState'
 import type { PcdSceneItem } from '../../types/pcdMap'
 import type { TaskDefinition, TaskDraft, TaskDraftStep } from '../../types/taskWorkflow'
 
-type MapOption = {
-  id: string
-  name: string
-}
-
 type WaypointOption = {
   id: string
   name: string
@@ -24,7 +19,6 @@ type NavDrawerClusterProps = {
   creatingTask: boolean
   executingTaskId: string | null
   draft: TaskDraft
-  maps: MapOption[]
   navigationStatus: NavigationStatus | null
   root: string
   scenes: PcdSceneItem[]
@@ -63,7 +57,6 @@ export function NavDrawerCluster({
   creatingTask,
   executingTaskId,
   draft,
-  maps,
   navigationStatus,
   root,
   scenes,
@@ -114,6 +107,7 @@ export function NavDrawerCluster({
         {activeDrawer === 'task' ? (
           <TaskDrawerPanel
             tasks={tasks}
+            sceneName={scenes.find((scene) => scene.id === selectedSceneId)?.name ?? null}
             selectedTaskId={selectedTaskId}
             navigationStatus={navigationStatus}
             canStartCreate={canStartCreate}
@@ -145,8 +139,8 @@ export function NavDrawerCluster({
           <TaskCreatorDrawer
             mode={taskEditorMode || 'create'}
             draft={draft}
-            maps={maps}
             selectedSceneId={selectedSceneId}
+            selectedSceneName={scenes.find((scene) => scene.id === selectedSceneId)?.name ?? null}
             selectedSceneWaypoints={selectedSceneWaypoints}
             selectedSceneNavigable={selectedSceneNavigable}
             selectedSceneMessage={selectedSceneMessage}

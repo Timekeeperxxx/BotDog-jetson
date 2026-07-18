@@ -3,18 +3,36 @@ import { getNavState } from '../../api/navApi'
 import {
   getPcdSceneMetadata,
   getPcdScenePreview,
+  getPcdSceneTile,
+  getPcdSceneTileManifest,
   listPcdScenes,
   listWaypoints,
   selectPcdScene,
 } from '../../api/pcdMapApi'
 import type { GlobalPath, LocalizationStatus, NavigationStatus, RobotPose } from '../../types/navState'
-import type { NavWaypoint, PcdSceneItem, PcdSceneMetadata, PcdScenePreview, PcdSceneLayerRole } from '../../types/pcdMap'
+import type { NavWaypoint, PcdSceneItem, PcdSceneMetadata, PcdScenePreview, PcdSceneLayerRole, PcdSceneRootTile, PcdSceneTileManifest, PointCloudPoints } from '../../types/pcdMap'
+import { getPointCount } from '../../utils/pointCloudPoints'
 
 const SELECTED_SCENE_STORAGE_KEY = 'botdog-nav-selected-scene'
 
 type PointCloudLayer = {
   role: PcdSceneLayerRole
-  points: [number, number, number][]
+  points: PointCloudPoints
+  intensity?: Uint8Array
+  coordinateSpace?: 'map' | 'three'
+}
+
+export function decodeTopDownOverviewTile(tile: PcdSceneRootTile, buffer: ArrayBuffer): PointCloudLayer {
+  const expectedBytes = tile.point_count * (tile.has_intensity ? 13 : 12)
+  if (tile.byte_length !== expectedBytes || buffer.byteLength !== expectedBytes) {
+    throw new Error(`2D 概览瓦片长度不匹配: ${tile.file}`)
+  }
+  return {
+    role: tile.role,
+    points: new Float32Array(buffer, 0, tile.point_count * 3),
+    // 分块文件直接存储 Three.js (x, z, -y)，2D 绘制时再映射回地图 XY，避免复制点数组。
+    coordinateSpace: 'three',
+  }
 }
 
 type InitialStatePayload = {
@@ -26,7 +44,6 @@ type InitialStatePayload = {
 }
 
 export type UseNavScenesOptions = {
-  previewPointLimit: number
   setInitialState: (state: InitialStatePayload) => void
   onWaypointsLoaded: (waypoints: NavWaypoint[]) => void
   onLog: (message: string, level?: 'info' | 'error') => void
@@ -34,7 +51,6 @@ export type UseNavScenesOptions = {
 }
 
 export function useNavScenes({
-  previewPointLimit,
   setInitialState,
   onWaypointsLoaded,
   onLog,
@@ -48,6 +64,8 @@ export function useNavScenes({
   })
   const [metadata, setMetadata] = useState<PcdSceneMetadata | null>(null)
   const [preview, setPreview] = useState<PcdScenePreview | null>(null)
+  const [tileManifest, setTileManifest] = useState<PcdSceneTileManifest | null>(null)
+  const [tileOverviewLayers, setTileOverviewLayers] = useState<PointCloudLayer[]>([])
   const [loading, setLoading] = useState(false)
   const selectRequestRef = useRef(0)
   const noAvailableSceneLoggedRef = useRef(false)
@@ -63,11 +81,59 @@ export function useNavScenes({
 
   const previewLayers = useMemo<PointCloudLayer[]>(
     () => [
-      { role: 'ground', points: preview?.layers.ground?.points ?? [] },
-      { role: 'wall', points: preview?.layers.wall?.points ?? [] },
-      { role: 'footprint_fill', points: preview?.layers.footprint_fill?.points ?? [] },
+      {
+        role: 'ground',
+        points: tileManifest ? [] : (preview?.layers.ground?.points ?? []),
+        intensity: preview?.layers.ground?.intensity,
+      },
+      {
+        role: 'wall',
+        points: tileManifest ? [] : (preview?.layers.wall?.points ?? []),
+        intensity: preview?.layers.wall?.intensity,
+      },
+      {
+        role: 'footprint_fill',
+        points: tileManifest ? [] : (preview?.layers.footprint_fill?.points ?? []),
+        intensity: preview?.layers.footprint_fill?.intensity,
+      },
     ],
-    [preview],
+    [preview, tileManifest],
+  )
+
+  useEffect(() => {
+    if (!tileManifest) {
+      setTileOverviewLayers([])
+      return
+    }
+
+    const controller = new AbortController()
+    setTileOverviewLayers([])
+    void Promise.all(
+      tileManifest.root_tiles.map(async (tile) => {
+        const buffer = await getPcdSceneTile(
+          tileManifest.scene_id,
+          tile.file,
+          tileManifest.cache_key,
+          controller.signal,
+        )
+        return decodeTopDownOverviewTile(tile, buffer)
+      }),
+    ).then((layers) => {
+      if (controller.signal.aborted) return
+      setTileOverviewLayers(layers)
+      const pointCount = layers.reduce((sum, layer) => sum + getPointCount(layer.points), 0)
+      onLog(`2D 俯视概览已加载：${pointCount.toLocaleString()} 点`)
+    }).catch((error: unknown) => {
+      if (controller.signal.aborted) return
+      onLog(error instanceof Error ? error.message : '2D 俯视概览加载失败', 'error')
+    })
+
+    return () => controller.abort()
+  }, [onLog, tileManifest])
+
+  const topDownLayers = useMemo(
+    () => tileManifest ? tileOverviewLayers : previewLayers,
+    [previewLayers, tileManifest, tileOverviewLayers],
   )
 
   useEffect(() => {
@@ -107,6 +173,7 @@ export function useNavScenes({
       setSelectedSceneId(currentScene.scene_id)
       setMetadata(null)
       setPreview(null)
+      setTileManifest(null)
       onWaypointsLoaded([])
       onSceneChanging?.()
       onLog(`当前选择导航场景：${currentScene.scene_id}`)
@@ -118,19 +185,38 @@ export function useNavScenes({
       setMetadata(nextMetadata)
       onLog(`已读取场景 metadata: ${sceneId}`)
 
-      const [nextPreview, nextWaypoints] = await Promise.all([
-        getPcdScenePreview(sceneId, previewPointLimit),
+      const [pointCloudData, nextWaypoints] = await Promise.all([
+        getPcdSceneTileManifest(sceneId)
+          .then((manifest) => ({ manifest, preview: null as PcdScenePreview | null }))
+          .catch(async (error: unknown) => {
+            // 兼容前端先于后端发布的窗口；新后端构建失败时不再退回超大单体文件。
+            if (!(error instanceof Error) || !['HTTP 404', 'Not Found'].includes(error.message)) {
+              throw error
+            }
+            return { manifest: null, preview: await getPcdScenePreview(sceneId) }
+          }),
         listWaypoints(sceneId).catch(() => ({ items: [] as NavWaypoint[] })),
       ])
       if (requestId !== selectRequestRef.current) return false
-      setPreview(nextPreview)
+      setTileManifest(pointCloudData.manifest)
+      setPreview(pointCloudData.preview)
       onWaypointsLoaded(nextWaypoints.items)
-      const groundPoints = nextPreview.layers.ground?.points.length || 0
-      const wallPoints = nextPreview.layers.wall?.points.length || 0
-      const footprintFillPoints = nextPreview.layers.footprint_fill?.points.length || 0
-      onLog(
-        `已加载场景预览点云：ground ${groundPoints.toLocaleString()} 点，wall ${wallPoints.toLocaleString()} 点，footprint_fill ${footprintFillPoints.toLocaleString()} 点`,
-      )
+      if (pointCloudData.manifest) {
+        const rootPoints = pointCloudData.manifest.root_tiles.reduce((sum, tile) => sum + tile.point_count, 0)
+        onLog(
+          `已加载分层点云索引：首屏 ${rootPoints.toLocaleString()} 点，${pointCloudData.manifest.nodes.length.toLocaleString()} 个空间瓦片`,
+        )
+      } else if (pointCloudData.preview) {
+        const nextPreview = pointCloudData.preview
+        const groundPoints = nextPreview.layers.ground ? getPointCount(nextPreview.layers.ground.points) : 0
+        const wallPoints = nextPreview.layers.wall ? getPointCount(nextPreview.layers.wall.points) : 0
+        const footprintFillPoints = nextPreview.layers.footprint_fill
+          ? getPointCount(nextPreview.layers.footprint_fill.points)
+          : 0
+        onLog(
+          `已加载兼容点云预览：ground ${groundPoints.toLocaleString()} 点，wall ${wallPoints.toLocaleString()} 点，footprint_fill ${footprintFillPoints.toLocaleString()} 点`,
+        )
+      }
 
       try {
         const navState = await getNavState()
@@ -158,7 +244,7 @@ export function useNavScenes({
         setLoading(false)
       }
     }
-  }, [onSceneChanging, onWaypointsLoaded, onLog, previewPointLimit, setInitialState])
+  }, [onSceneChanging, onWaypointsLoaded, onLog, setInitialState])
 
   useEffect(() => {
     void refreshScenes()
@@ -196,6 +282,7 @@ export function useNavScenes({
     setSelectedSceneId(null)
     setMetadata(null)
     setPreview(null)
+    setTileManifest(null)
     onWaypointsLoaded([])
     if (!noAvailableSceneLoggedRef.current) {
       onLog('当前没有可用于导航的场景')
@@ -214,9 +301,11 @@ export function useNavScenes({
     selectedSceneMessage,
     metadata,
     preview,
+    tileManifest,
     loading,
     refreshScenes,
     selectScene,
     previewLayers,
+    topDownLayers,
   }
 }

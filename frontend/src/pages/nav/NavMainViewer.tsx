@@ -1,6 +1,6 @@
 import { PointCloud3DViewer } from '../../components/pcd/PointCloud3DViewer'
 import type { GlobalPath, RobotPose } from '../../types/navState'
-import type { NavWaypoint } from '../../types/pcdMap'
+import type { NavWaypoint, PcdSceneTileManifest, PointCloudQualityMode, WallColorMode } from '../../types/pcdMap'
 import type { PointCloudLayer } from './NavPageShell'
 
 type NavMainViewerProps = {
@@ -10,8 +10,16 @@ type NavMainViewerProps = {
   globalPath: GlobalPath | null
   layers: PointCloudLayer[]
   mode: 'none' | 'waypoint' | 'pose'
+  pointCloudQualityMode: PointCloudQualityMode
   robotPose: RobotPose | null
   viewKey: string
+  wallColorMode: WallColorMode
+  tiledScene: PcdSceneTileManifest | null
+  tileVisibility: {
+    ground: boolean
+    wall: boolean
+    footprint_fill: boolean
+  }
   waypoints: NavWaypoint[]
   webglSupported: boolean
   onAddWaypoint: (pos: { x: number; y: number; z: number; yaw: number }) => void
@@ -26,8 +34,12 @@ export function NavMainViewer({
   globalPath,
   layers,
   mode,
+  pointCloudQualityMode,
   robotPose,
   viewKey,
+  wallColorMode,
+  tiledScene,
+  tileVisibility,
   waypoints,
   webglSupported,
   onAddWaypoint,
@@ -54,7 +66,11 @@ export function NavMainViewer({
   return (
     <PointCloud3DViewer
       layers={layers}
+      qualityMode={pointCloudQualityMode}
+      tiledScene={tiledScene}
+      tileVisibility={tileVisibility}
       viewKey={viewKey}
+      wallColorMode={wallColorMode}
       waypoints={waypoints}
       robotPose={robotPose}
       globalPath={globalPath}

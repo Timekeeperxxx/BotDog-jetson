@@ -7,6 +7,7 @@ import {
   buildWorkflowStepsFromDraft,
   clampSpeed,
   compactRuntimeMessage,
+  filterTasksByScene,
   findSceneById,
   findTaskById,
   formatSpeed,
@@ -61,6 +62,9 @@ describe('navPageUtils', () => {
   it('compacts runtime and relocation status messages', () => {
     expect(compactRuntimeMessage('relocation 进程未运行')).toBe('Super-LIO 已退出，请重新重启导航定位。')
     expect(compactRuntimeMessage('/initialpose 暂无订阅者')).toBe('还没有接收端，请稍后或重新重启导航定位。')
+    expect(compactRuntimeMessage('map TF target_frame does not exist')).toBe(
+      '未获取到 TF 位姿数据，请点击右上角“重启导航定位”开始标记位姿。',
+    )
     expect(summarizeLocalizationStatus('ok', '定位正常')).toBe('定位正常')
     expect(summarizeLocalizationStatus('waiting', '等待 TF 超时')).toBe('等待超时，请查看日志后重试。')
     expect(getRelocationNotice({ status: 'idle', message: '' })).toBeNull()
@@ -218,6 +222,20 @@ describe('navPageUtils', () => {
   it('resolves task scene identifiers', () => {
     expect(resolveTaskSceneId({ sceneId: 'scene-a', mapId: 'map-a' })).toBe('scene-a')
     expect(resolveTaskSceneId({ sceneId: null, mapId: 'map-a' })).toBe('map-a')
+  })
+
+  it('only exposes tasks bound to the selected scene', () => {
+    const tasks = [
+      { id: 'task-a', mapId: 'scene-a', sceneId: 'scene-a' },
+      { id: 'task-b', mapId: 'scene-b', sceneId: 'scene-b' },
+      { id: 'task-legacy', mapId: 'scene-a', sceneId: null },
+    ] as never
+
+    expect(filterTasksByScene(tasks, 'scene-a').map((task) => task.id)).toEqual([
+      'task-a',
+      'task-legacy',
+    ])
+    expect(filterTasksByScene(tasks, null)).toEqual([])
   })
 
   it('resolves initial task map id', () => {

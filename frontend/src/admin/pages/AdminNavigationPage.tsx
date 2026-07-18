@@ -120,7 +120,7 @@ export function AdminNavigationPage({
                   <div className="text-sm font-medium text-white">{selectedSceneId}</div>
                   <div className="mt-4 grid gap-3 md:grid-cols-2">
                     <InfoChip label="frame_id" value={metadata?.frame_id || 'map'} />
-                    <InfoChip label="点数量" value={metadata?.point_count?.toLocaleString?.() || '--'} />
+                    <InfoChip label="ground 点数" value={metadata?.point_count?.toLocaleString?.() || '--'} />
                     <InfoChip label="字段" value={metadata?.fields?.join(', ') || '--'} />
                     <InfoChip label="数据类型" value={metadata?.data_type || '--'} />
                   </div>

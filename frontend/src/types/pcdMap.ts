@@ -14,6 +14,11 @@ export type PcdSceneLayerRole =
   | 'mapping'
   | 'live'
 
+export type WallColorMode = 'solid' | 'height' | 'intensity'
+export type PointCloudQualityMode = 'auto' | 'performance' | 'quality'
+
+export type PointCloudPoints = [number, number, number][] | Float32Array
+
 export type PcdSceneFile = {
   name: string
   size_bytes: number
@@ -79,7 +84,8 @@ export type PcdSceneMetadata = {
 export type PcdSceneLayerPreview = {
   role: PcdSceneLayerRole
   file_name: string
-  points: [number, number, number][]
+  points: PointCloudPoints
+  intensity?: Uint8Array
   bounds: PcdBounds
 }
 
@@ -92,6 +98,58 @@ export type PcdScenePreview = {
     footprint_fill: PcdSceneLayerPreview | null
   }
   bounds: PcdBounds
+}
+
+export type PcdSceneTilePayload = {
+  file: string
+  point_count: number
+  byte_length: number
+  has_intensity: boolean
+}
+
+export type PcdSceneRootTile = PcdSceneTilePayload & {
+  id: string
+  role: Extract<PcdSceneLayerRole, 'ground' | 'wall' | 'footprint_fill'>
+  bounds: PcdBounds
+}
+
+export type PcdSceneTileNode = {
+  id: string
+  role: Extract<PcdSceneLayerRole, 'ground' | 'wall' | 'footprint_fill'>
+  bounds: PcdBounds
+  center: [number, number, number]
+  radius: number
+  performance: PcdSceneTilePayload
+  balanced: PcdSceneTilePayload
+  original: PcdSceneTilePayload
+}
+
+export type PcdSceneTileManifest = {
+  version: number
+  cache_key: string
+  scene_id: string
+  frame_id: string
+  bounds: PcdBounds
+  layer_bounds: Record<'ground' | 'wall' | 'footprint_fill', PcdBounds | null>
+  root_tiles: PcdSceneRootTile[]
+  nodes: PcdSceneTileNode[]
+  stats: Record<string, {
+    source_points: number
+    retained_points: number
+    original_points: number
+    balanced_points: number
+    performance_points: number
+    tile_count: number
+    intensity_percentile_2_98?: [number, number]
+  } | null>
+  settings: {
+    tile_size_m: number
+    balanced_voxel_size_m: number
+    balanced_points_per_voxel: number
+    performance_voxel_size_m: number
+    performance_points_per_voxel: number
+    max_points_per_tile: number
+  }
 }
 
 export type PcdMapItem = {

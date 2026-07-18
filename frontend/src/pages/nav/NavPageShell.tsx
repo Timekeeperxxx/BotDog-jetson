@@ -2,7 +2,7 @@ import { Battery, Crosshair, Loader2 } from 'lucide-react'
 import { NavWaypointPanel } from '../../components/pcd/NavWaypointPanel'
 import { PointCloudTopDownCanvas } from '../../components/pcd/PointCloudTopDownCanvas'
 import type { GlobalPath, RobotPose } from '../../types/navState'
-import type { NavWaypoint, PcdBounds, PcdSceneLayerRole } from '../../types/pcdMap'
+import type { NavWaypoint, PcdBounds, PcdSceneLayerRole, PointCloudPoints } from '../../types/pcdMap'
 
 type NavPageHeaderProps = {
   addMode: boolean
@@ -78,7 +78,9 @@ export function NavPageHeader({
 
 export type PointCloudLayer = {
   role: PcdSceneLayerRole
-  points: [number, number, number][]
+  points: PointCloudPoints
+  intensity?: Uint8Array
+  coordinateSpace?: 'map' | 'three'
 }
 
 type NavRightRailProps = {

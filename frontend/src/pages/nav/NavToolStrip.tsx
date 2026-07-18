@@ -1,14 +1,17 @@
 import {
   Boxes,
+  CircleStop,
   Crosshair,
   Keyboard,
   Layers,
   Loader2,
   LocateFixed,
+  MapPlus,
   Radar,
-  Square,
+  Save,
   UserSearch,
 } from 'lucide-react'
+import type { PointCloudQualityMode, WallColorMode } from '../../types/pcdMap'
 import { formatSpeed } from '../../utils/speedControl'
 import type { MappingSessionInfo } from './navPageUtils'
 
@@ -27,12 +30,15 @@ type NavToolStripProps = {
   lastResultText: string | null
   linearSpeed: number
   mappingActive: boolean
+  mappingPreflightChecking: boolean
+  mappingSaving: boolean
   mappingSending: boolean
   mappingSessionInfo: MappingSessionInfo | null
   navAutoTrackEnabled: boolean
   navAutoTrackLoading: boolean
   pcdLayerPanelOpen: boolean
   pcdLayerVisibility: PcdLayerVisibility
+  pointCloudQualityMode: PointCloudQualityMode
   radarChecking: boolean
   resultMessage: string | null
   robotPoseAvailable: boolean
@@ -41,12 +47,15 @@ type NavToolStripProps = {
   toolMode: 'none' | 'obstacle' | 'pose'
   turnSpeed: number
   webglSupported: boolean
+  wallColorMode: WallColorMode
   onCheckRadar: () => void
   onStopSelectedTask: () => void
   onToggleFollowRobot: () => void
   onToggleKeyboardControl: () => void
   onToggleLayer: (layer: keyof PcdLayerVisibility) => void
   onToggleLayerPanel: () => void
+  onSelectWallColorMode: (mode: WallColorMode) => void
+  onSelectPointCloudQualityMode: (mode: PointCloudQualityMode) => void
   onToggleMapping: () => void
   onToggleNavAutoTrack: () => void
   onToolMode: (mode: 'obstacle' | 'pose') => void
@@ -61,12 +70,15 @@ export function NavToolStrip({
   lastResultText,
   linearSpeed,
   mappingActive,
+  mappingPreflightChecking,
+  mappingSaving,
   mappingSending,
   mappingSessionInfo,
   navAutoTrackEnabled,
   navAutoTrackLoading,
   pcdLayerPanelOpen,
   pcdLayerVisibility,
+  pointCloudQualityMode,
   radarChecking,
   resultMessage,
   robotPoseAvailable,
@@ -75,16 +87,30 @@ export function NavToolStrip({
   toolMode,
   turnSpeed,
   webglSupported,
+  wallColorMode,
   onCheckRadar,
   onStopSelectedTask,
   onToggleFollowRobot,
   onToggleKeyboardControl,
   onToggleLayer,
   onToggleLayerPanel,
+  onSelectWallColorMode,
+  onSelectPointCloudQualityMode,
   onToggleMapping,
   onToggleNavAutoTrack,
   onToolMode,
 }: NavToolStripProps) {
+  const mappingBusy = mappingPreflightChecking || mappingSending || mappingSaving
+  const mappingButtonLabel = mappingSaving
+    ? '正在保存地图...'
+    : mappingPreflightChecking
+      ? '检查雷达中'
+      : mappingSending
+        ? '开始建图中'
+        : mappingActive
+          ? '结束建图'
+          : '开始建图'
+
   return (
     <>
       <section className="pcd-tool-strip">
@@ -103,12 +129,14 @@ export function NavToolStrip({
             onClick={onToggleLayerPanel}
             disabled={mappingActive}
             title={mappingActive ? '建图中显示实时点云，场景图层开关暂不可用' : '选择显示的 PCD 图层'}
+            aria-expanded={pcdLayerPanelOpen}
+            aria-controls="pcd-layer-popover"
           >
             <Layers size={15} />
             <span>点云图层</span>
           </button>
           {pcdLayerPanelOpen && !mappingActive ? (
-            <div className="pcd-layer-popover" role="group" aria-label="PCD 图层显示开关">
+            <div id="pcd-layer-popover" className="pcd-layer-popover" role="group" aria-label="PCD 图层显示开关">
               <button
                 type="button"
                 className={`pcd-layer-toggle ${pcdLayerVisibility.map ? 'is-active' : ''}`}
@@ -133,6 +161,55 @@ export function NavToolStrip({
                 <span className="pcd-layer-swatch is-footprint" />
                 <span>footprint</span>
               </button>
+              <div className="pcd-layer-setting-group">
+                <span>wall 显示颜色</span>
+                <div className="pcd-layer-segments" role="group" aria-label="wall 点云显示颜色">
+                  {([
+                    ['solid', '纯色'],
+                    ['intensity', '强度'],
+                    ['height', '高度'],
+                  ] as const).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={wallColorMode === mode ? 'is-active' : ''}
+                      onClick={() => onSelectWallColorMode(mode)}
+                      aria-pressed={wallColorMode === mode}
+                    >
+                      <i className={`pcd-layer-swatch is-wall-color is-${mode}`} />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="pcd-layer-setting-group">
+                <span>点云密度</span>
+                <div className="pcd-layer-segments" role="group" aria-label="点云显示密度">
+                  {([
+                    ['performance', '流畅', '10cm 体素，每个空间区域最多保留 1 点'],
+                    ['auto', '均衡', '7cm 体素，每个空间区域最多保留 1 点'],
+                    ['quality', '原始', '不做空间降采样，加载源 PCD 的全部有效点'],
+                  ] as const).map(([mode, label, title]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      className={pointCloudQualityMode === mode ? 'is-active' : ''}
+                      onClick={() => onSelectPointCloudQualityMode(mode)}
+                      aria-pressed={pointCloudQualityMode === mode}
+                      title={title}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <small className={pointCloudQualityMode === 'quality' ? 'is-warning' : ''}>
+                  {pointCloudQualityMode === 'quality'
+                    ? '原始档不降采样，超大场景会显著增加内存占用和加载时间。'
+                    : pointCloudQualityMode === 'performance'
+                      ? '流畅档优先降低 Jetson 或低性能客户端的渲染压力。'
+                      : '均衡档兼顾物体轮廓、加载速度和运行性能。'}
+                </small>
+              </div>
             </div>
           ) : null}
         </div>
@@ -162,24 +239,25 @@ export function NavToolStrip({
           <span>{keyboardControlEnabled ? '控制中' : '移动控制'}</span>
         </button>
         <button
-          className={`pcd-tool-button ${mappingActive ? 'is-active' : ''}`}
+          className={`pcd-tool-button pcd-mapping-button ${mappingActive ? 'is-active' : ''} ${mappingSaving ? 'is-saving' : ''}`}
           onClick={onToggleMapping}
-          disabled={mappingSending || !canOperate}
+          disabled={mappingBusy || !canOperate}
+          title={mappingActive ? '结束当前建图并保存地图' : '检查雷达状态后开始建图'}
         >
-          <Square size={15} />
-          <span>
-            {mappingSending
-              ? (mappingActive ? '正在保存地图...' : '开始建图中')
-              : (mappingActive ? '结束建图' : '开始建图')}
-          </span>
+          {mappingBusy
+            ? <Loader2 size={15} className="pcd-spin" />
+            : mappingActive
+              ? <Save size={15} />
+              : <MapPlus size={15} />}
+          <span>{mappingButtonLabel}</span>
         </button>
         <button
-          className="pcd-tool-button"
+          className="pcd-tool-button pcd-stop-task-button"
           onClick={onStopSelectedTask}
           disabled={!canOperate || !selectedTaskId}
-          title={!selectedTaskId ? '先选择一个任务' : undefined}
+          title={!selectedTaskId ? '先选择一个任务' : '停止当前选中的任务'}
         >
-          <Square size={15} />
+          <CircleStop size={15} />
           <span>停止任务</span>
         </button>
         <button
@@ -216,7 +294,7 @@ export function NavToolStrip({
       </section>
       {mappingSessionInfo ? (
         <section className="pcd-mapping-session">
-          <strong>当前建图场景：{mappingSessionInfo.sceneName}</strong>
+          <strong>{mappingSaving ? '正在保存场景' : '当前建图场景'}：{mappingSessionInfo.sceneName}</strong>
           <span>场景保存路径：{mappingSessionInfo.mapDir}</span>
         </section>
       ) : null}

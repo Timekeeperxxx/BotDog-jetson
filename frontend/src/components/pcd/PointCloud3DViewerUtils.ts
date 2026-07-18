@@ -1,9 +1,10 @@
 import * as THREE from 'three'
-import type { PcdSceneLayerRole } from '../../types/pcdMap'
+import type { PcdSceneLayerRole, PointCloudPoints, WallColorMode } from '../../types/pcdMap'
 
 export type PointCloudLayer = {
   role: PcdSceneLayerRole
-  points: [number, number, number][]
+  points: PointCloudPoints
+  intensity?: Uint8Array
 }
 
 export const WAYPOINT_COLOR = 0xfbbf24
@@ -31,15 +32,27 @@ export const WAYPOINT_SCREEN_DIAMETER_PX = 13
 export const WAYPOINT_LABEL_SCREEN_WIDTH_PX = 112
 export const ROBOT_SCREEN_DIAMETER_PX = 18
 export const PENDING_TARGET_SCREEN_DIAMETER_PX = 13
-export const POINT_CLOUD_PIXEL_RATIO_LIMIT = 1.5
+export const POINT_CLOUD_PIXEL_RATIO_LIMIT = 1
+export const POINT_CLOUD_MIN_ORBIT_DISTANCE = 0.05
 
 type PointCloudMaterialPreset = {
   color: number
+  heightGradient?: {
+    lowColor: number
+    middleColor: number
+    highColor: number
+    contourSpacing: number
+    contourStrength: number
+    farBrightness: number
+  }
   nearSize: number
   farSize: number
   nearDistance: number
   farDistance: number
+  worldPointSize: number
+  maxPointSize: number
   opacity: number
+  depthWrite: boolean
   renderOrder: number
 }
 
@@ -47,33 +60,77 @@ export function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
 
-const POINT_DISPLAY_LIMIT_BY_ROLE: Partial<Record<PcdSceneLayerRole, number>> = {
-  ground: 70000,
-  footprint_fill: 50000,
-  mapping: 25000,
-  live: 1200,
+export function getAdaptiveCameraNear(orbitDistance: number) {
+  return clamp(orbitDistance / 1000, 0.005, 0.25)
 }
-const LIMITED_POINT_CACHE = new WeakMap<
-  [number, number, number][],
-  Partial<Record<PcdSceneLayerRole, [number, number, number][]>>
->()
 
-export function limitDisplayPoints(
-  role: PcdSceneLayerRole,
-  points: [number, number, number][],
+export function shouldShowOrbitPivotMarker(pivotAvailable: boolean, cameraMoving: boolean) {
+  return pivotAvailable && cameraMoving
+}
+
+export function createOrbitPivotMarker() {
+  const marker = new THREE.Group()
+  const coreGeometry = new THREE.OctahedronGeometry(0.08, 0)
+  const coreMaterial = new THREE.MeshBasicMaterial({
+    color: 0xff5a1f,
+    transparent: true,
+    opacity: 1,
+    depthTest: false,
+    depthWrite: false,
+  })
+  const core = new THREE.Mesh(coreGeometry, coreMaterial)
+  core.renderOrder = 96
+  marker.add(core)
+
+  const crossGeometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(-0.24, 0, 0),
+    new THREE.Vector3(0.24, 0, 0),
+    new THREE.Vector3(0, -0.24, 0),
+    new THREE.Vector3(0, 0.24, 0),
+    new THREE.Vector3(0, 0, -0.24),
+    new THREE.Vector3(0, 0, 0.24),
+  ])
+  const cross = new THREE.LineSegments(
+    crossGeometry,
+    new THREE.LineBasicMaterial({
+      color: 0xfff200,
+      transparent: true,
+      opacity: 1,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  )
+  cross.renderOrder = 95
+  marker.add(cross)
+  marker.renderOrder = 95
+  marker.visible = false
+  marker.userData.adaptiveScale = {
+    pixels: 28,
+    baseSize: 0.48,
+    minScale: 0.02,
+    maxScale: 200,
+  }
+  return marker
+}
+
+export function getWallHeightGradientBounds(
+  sampledHeights: number[],
+  fallbackMin: number,
+  fallbackMax: number,
 ) {
-  const limit = POINT_DISPLAY_LIMIT_BY_ROLE[role]
-  if (!limit || points.length <= limit) return points
+  const finiteHeights = sampledHeights.filter(Number.isFinite).sort((left, right) => left - right)
+  if (finiteHeights.length < 20) {
+    return { min: fallbackMin, max: fallbackMax }
+  }
 
-  const cached = LIMITED_POINT_CACHE.get(points)?.[role]
-  if (cached) return cached
+  const lastIndex = finiteHeights.length - 1
+  const min = finiteHeights[Math.floor(lastIndex * 0.05)]
+  const max = finiteHeights[Math.ceil(lastIndex * 0.95)]
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max - min < 0.25) {
+    return { min: fallbackMin, max: fallbackMax }
+  }
 
-  const stride = Math.max(1, Math.ceil(points.length / limit))
-  const limited = points.filter((_, index) => index % stride === 0).slice(0, limit)
-  const cachedByRole = LIMITED_POINT_CACHE.get(points) ?? {}
-  cachedByRole[role] = limited
-  LIMITED_POINT_CACHE.set(points, cachedByRole)
-  return limited
+  return { min, max }
 }
 
 function disposeMaterial(material: THREE.Material | THREE.Material[]) {
@@ -190,11 +247,14 @@ export function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPrese
   if (role === 'ground') {
     return {
       color: 0x0ea5e9,
-      nearSize: 3.8,
-      farSize: 6.2,
+      nearSize: 2,
+      farSize: 3.2,
       nearDistance: 1.5,
       farDistance: 18,
-      opacity: 0.94,
+      worldPointSize: 0.025,
+      maxPointSize: 6,
+      opacity: 1,
+      depthWrite: true,
       renderOrder: 1,
     }
   }
@@ -206,7 +266,10 @@ export function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPrese
       farSize: 4.6,
       nearDistance: 6,
       farDistance: 52,
+      worldPointSize: 0,
+      maxPointSize: 7,
       opacity: 0.94,
+      depthWrite: false,
       renderOrder: 3,
     }
   }
@@ -214,11 +277,14 @@ export function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPrese
   if (role === 'footprint_fill') {
     return {
       color: 0xffffff,
-      nearSize: 2.6,
-      farSize: 3.8,
+      nearSize: 1.8,
+      farSize: 2.6,
       nearDistance: 4,
       farDistance: 42,
+      worldPointSize: 0.02,
+      maxPointSize: 5,
       opacity: 0.72,
+      depthWrite: true,
       renderOrder: 2,
     }
   }
@@ -230,32 +296,81 @@ export function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPrese
       farSize: 2.8,
       nearDistance: 4,
       farDistance: 48,
+      worldPointSize: 0,
+      maxPointSize: 5,
       opacity: 0.42,
+      depthWrite: false,
       renderOrder: 2,
     }
   }
 
   return {
     color: 0x22c55e,
-    nearSize: 2.2,
-    farSize: 2.8,
+    heightGradient: {
+      lowColor: 0x2563eb,
+      middleColor: 0x22c55e,
+      highColor: 0xf97316,
+      contourSpacing: 0.5,
+      contourStrength: 0.18,
+      farBrightness: 0.9,
+    },
+    nearSize: 1.5,
+    farSize: 2.2,
     nearDistance: 6,
     farDistance: 48,
-    opacity: 0.62,
+    worldPointSize: 0.018,
+    maxPointSize: 5,
+    opacity: 1,
+    depthWrite: true,
     renderOrder: 2,
   }
 }
 
-export function createPointCloudMaterial(preset: PointCloudMaterialPreset, pixelRatio: number) {
+type PointCloudMaterialOptions = {
+  minHeight?: number
+  maxHeight?: number
+  wallColorMode?: WallColorMode
+  viewportHeight?: number
+  hasIntensity?: boolean
+}
+
+export function createPointCloudMaterial(
+  preset: PointCloudMaterialPreset,
+  pixelRatio: number,
+  options: PointCloudMaterialOptions = {},
+) {
   const color = new THREE.Color(preset.color)
+  const gradient = preset.heightGradient
+  const minHeight = Number.isFinite(options.minHeight) ? options.minHeight! : 0
+  const maxHeight = Number.isFinite(options.maxHeight) ? options.maxHeight! : minHeight + 1
+  const gradientEnabled = gradient && options.wallColorMode !== 'solid' ? 1 : 0
+  const intensityEnabled = gradient && options.wallColorMode === 'intensity' && options.hasIntensity ? 1 : 0
+  const opaqueDepthPoint = preset.depthWrite && preset.opacity >= 0.9
 
   return new THREE.ShaderMaterial({
+    defines: {
+      USE_POINT_INTENSITY: options.hasIntensity ? 1 : 0,
+      OPAQUE_DEPTH_POINT: opaqueDepthPoint ? 1 : 0,
+    },
     uniforms: {
       uColor: { value: color },
+      uLowColor: { value: new THREE.Color(gradient?.lowColor ?? preset.color) },
+      uMiddleColor: { value: new THREE.Color(gradient?.middleColor ?? preset.color) },
+      uHighColor: { value: new THREE.Color(gradient?.highColor ?? preset.color) },
+      uMinHeight: { value: minHeight },
+      uMaxHeight: { value: Math.max(maxHeight, minHeight + 0.001) },
+      uGradientEnabled: { value: gradientEnabled },
+      uIntensityEnabled: { value: intensityEnabled },
+      uContourSpacing: { value: gradient?.contourSpacing ?? 1 },
+      uContourStrength: { value: gradient?.contourStrength ?? 0 },
+      uFarBrightness: { value: gradient?.farBrightness ?? 1 },
       uNearSize: { value: preset.nearSize * pixelRatio },
       uFarSize: { value: preset.farSize * pixelRatio },
       uNearDistance: { value: preset.nearDistance },
       uFarDistance: { value: preset.farDistance },
+      uWorldPointSize: { value: preset.worldPointSize },
+      uViewportHeight: { value: Math.max(1, options.viewportHeight ?? 1) },
+      uMaxPointSize: { value: preset.maxPointSize * pixelRatio },
       uOpacity: { value: preset.opacity },
     },
     vertexShader: `
@@ -263,20 +378,82 @@ export function createPointCloudMaterial(preset: PointCloudMaterialPreset, pixel
       uniform float uFarSize;
       uniform float uNearDistance;
       uniform float uFarDistance;
+      uniform float uWorldPointSize;
+      uniform float uViewportHeight;
+      uniform float uMaxPointSize;
+      uniform vec3 uColor;
+      uniform vec3 uLowColor;
+      uniform vec3 uMiddleColor;
+      uniform vec3 uHighColor;
+      uniform float uMinHeight;
+      uniform float uMaxHeight;
+      uniform float uGradientEnabled;
+      uniform float uIntensityEnabled;
+      uniform float uContourSpacing;
+      uniform float uContourStrength;
+      uniform float uFarBrightness;
       varying float vDistanceMix;
+      varying vec3 vPointColor;
+      #if USE_POINT_INTENSITY == 1
+        attribute float intensity;
+      #endif
+
+      vec3 intensityColor(float value) {
+        if (value < 0.25) {
+          return mix(vec3(0.03, 0.08, 1.0), vec3(0.0, 0.9, 1.0), value * 4.0);
+        }
+        if (value < 0.5) {
+          return mix(vec3(0.0, 0.9, 1.0), vec3(0.05, 1.0, 0.18), (value - 0.25) * 4.0);
+        }
+        if (value < 0.75) {
+          return mix(vec3(0.05, 1.0, 0.18), vec3(1.0, 0.92, 0.0), (value - 0.5) * 4.0);
+        }
+        return mix(vec3(1.0, 0.92, 0.0), vec3(1.0, 0.03, 0.0), (value - 0.75) * 4.0);
+      }
 
       void main() {
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
         float cameraDistance = length(mvPosition.xyz);
         vDistanceMix = smoothstep(uNearDistance, uFarDistance, cameraDistance);
-        gl_PointSize = mix(uNearSize, uFarSize, vDistanceMix);
+
+        vPointColor = uColor;
+        if (uGradientEnabled > 0.5) {
+          float heightMix = clamp(
+            (position.y - uMinHeight) / max(uMaxHeight - uMinHeight, 0.001),
+            0.0,
+            1.0
+          );
+          vec3 gradientColor;
+          if (heightMix < 0.5) {
+            gradientColor = mix(uLowColor, uMiddleColor, smoothstep(0.0, 0.5, heightMix));
+          } else {
+            gradientColor = mix(uMiddleColor, uHighColor, smoothstep(0.5, 1.0, heightMix));
+          }
+
+          float contourCycle = fract(position.y / max(uContourSpacing, 0.001));
+          float contourDistance = min(contourCycle, 1.0 - contourCycle);
+          float contourLine = 1.0 - smoothstep(0.0, 0.12, contourDistance);
+          float distanceBrightness = mix(1.0, uFarBrightness, vDistanceMix);
+          gradientColor *= distanceBrightness * (1.0 - contourLine * uContourStrength);
+          vPointColor = gradientColor;
+        }
+        #if USE_POINT_INTENSITY == 1
+          if (uIntensityEnabled > 0.5) {
+            vPointColor = intensityColor(intensity);
+          }
+        #endif
+
+        float fixedPointSize = mix(uNearSize, uFarSize, vDistanceMix);
+        float projectedWorldSize = uWorldPointSize * uViewportHeight * projectionMatrix[1][1]
+          / max(-2.0 * mvPosition.z, 0.01);
+        gl_PointSize = min(max(fixedPointSize, projectedWorldSize), uMaxPointSize);
         gl_Position = projectionMatrix * mvPosition;
       }
     `,
     fragmentShader: `
-      uniform vec3 uColor;
       uniform float uOpacity;
       varying float vDistanceMix;
+      varying vec3 vPointColor;
 
       void main() {
         vec2 pointCoord = gl_PointCoord - vec2(0.5);
@@ -285,14 +462,49 @@ export function createPointCloudMaterial(preset: PointCloudMaterialPreset, pixel
           discard;
         }
 
-        float softEdge = 1.0 - smoothstep(0.36, 0.5, radius);
-        float distanceOpacity = mix(0.82, 1.0, vDistanceMix);
-        gl_FragColor = vec4(uColor, uOpacity * distanceOpacity * softEdge);
+        #if OPAQUE_DEPTH_POINT == 1
+          gl_FragColor = vec4(vPointColor, 1.0);
+        #else
+          float softEdge = 1.0 - smoothstep(0.36, 0.5, radius);
+          float distanceOpacity = mix(0.82, 1.0, vDistanceMix);
+          float alpha = uOpacity * distanceOpacity * softEdge;
+          if (alpha < 0.06) {
+            discard;
+          }
+          gl_FragColor = vec4(vPointColor, alpha);
+        #endif
       }
     `,
-    transparent: true,
+    transparent: !opaqueDepthPoint,
     depthTest: true,
-    depthWrite: false,
+    depthWrite: preset.depthWrite,
+  })
+}
+
+export function setPointCloudWallColorMode(
+  material: THREE.Material | THREE.Material[],
+  mode: WallColorMode,
+) {
+  const materials = Array.isArray(material) ? material : [material]
+  materials.forEach((item) => {
+    if (!(item instanceof THREE.ShaderMaterial)) return
+    const gradientUniform = item.uniforms.uGradientEnabled
+    if (gradientUniform) gradientUniform.value = mode === 'solid' ? 0 : 1
+    const intensityUniform = item.uniforms.uIntensityEnabled
+    const hasIntensity = Number(item.defines?.USE_POINT_INTENSITY) === 1
+    if (intensityUniform) intensityUniform.value = mode === 'intensity' && hasIntensity ? 1 : 0
+  })
+}
+
+export function setPointCloudViewportHeight(
+  material: THREE.Material | THREE.Material[],
+  viewportHeight: number,
+) {
+  const materials = Array.isArray(material) ? material : [material]
+  materials.forEach((item) => {
+    if (!(item instanceof THREE.ShaderMaterial)) return
+    const uniform = item.uniforms.uViewportHeight
+    if (uniform) uniform.value = Math.max(1, viewportHeight)
   })
 }
 

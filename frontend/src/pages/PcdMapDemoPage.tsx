@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createWaypoint,
   deleteWaypoint,
@@ -21,7 +21,13 @@ import { useBotDogWebSocket } from '../hooks/useBotDogWebSocket'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import { useMappingCloudWebSocket } from '../hooks/useMappingCloudWebSocket'
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
-import type { LocalizationPosePayload, NavWaypoint, PcdSceneItem } from '../types/pcdMap'
+import type {
+  LocalizationPosePayload,
+  NavWaypoint,
+  PcdSceneItem,
+  PointCloudQualityMode,
+  WallColorMode,
+} from '../types/pcdMap'
 import { validateWaypointName } from '../utils/navWaypointValidation'
 import { MIN_MAPPING_RUNTIME_SECONDS, useNavMappingControls } from './nav/useNavMappingControls'
 import { useNavPointCloudViewModel } from './nav/useNavPointCloudViewModel'
@@ -41,25 +47,31 @@ import { NavToolStrip, type PcdLayerVisibility } from './nav/NavToolStrip'
 import {
   formatRestartHealthLog,
   getRelocationNotice,
-  nowText,
   summarizeLocalizationStatus,
 } from './nav/navPageUtils'
 import type { LogItem, RelocationPromptState } from './nav/navPageUtils'
 
+type OperationNotice = {
+  title: string
+  message: string
+  kind: 'info' | 'error'
+}
+
 export function PcdMapDemoPage() {
   useAuthState()
   const canOperate = hasAuthSession() && hasRole('operator')
-  const previewPointLimit = 100000
   const [pcdLayerPanelOpen, setPcdLayerPanelOpen] = useState(false)
   const [pcdLayerVisibility, setPcdLayerVisibility] = useState<PcdLayerVisibility>({
     map: true,
     ground: true,
     footprint: true,
   })
+  const [wallColorMode, setWallColorMode] = useState<WallColorMode>('intensity')
+  const [pointCloudQualityMode, setPointCloudQualityMode] = useState<PointCloudQualityMode>('auto')
   const [waypoints, setWaypoints] = useState<NavWaypoint[]>([])
   const [addMode, setAddMode] = useState(false)
   const [activeDrawer, setActiveDrawer] = useState<'task' | 'map' | null>(null)
-  const [infoOpen, setInfoOpen] = useState(true)
+  const [infoOpen, setInfoOpen] = useState(false)
   const [followRobot, setFollowRobot] = useState(false)
   const [toolMode, setToolMode] = useState<'none' | 'obstacle' | 'pose'>('none')
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
@@ -76,6 +88,8 @@ export function PcdMapDemoPage() {
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
   const [logsExpanded, setLogsExpanded] = useState(false)
+  const [operationNotice, setOperationNotice] = useState<OperationNotice | null>(null)
+  const operationNoticeTimerRef = useRef<number | null>(null)
   const [webglSupported, setWebglSupported] = useState(true)
   const [sceneDeleteConfirm, setSceneDeleteConfirm] = useState<PcdSceneItem | null>(null)
   // ── 高危操作确认 ──
@@ -93,8 +107,8 @@ export function PcdMapDemoPage() {
   const localizationNotice = localizationStatus && localizationStatus.status !== 'ok'
     ? { title: '定位状态', message: summarizeLocalizationStatus(localizationStatus.status, localizationStatus.message) }
     : null
-  const currentNotice = relocationNotice ?? waypointModeNotice ?? poseModeNotice ?? localizationNotice
-  const currentNoticeKind = relocationPrompt.status !== 'idle'
+  const stateNotice = relocationNotice ?? waypointModeNotice ?? poseModeNotice ?? localizationNotice
+  const stateNoticeKind = relocationPrompt.status !== 'idle'
     ? relocationPrompt.status === 'nav-waiting'
       ? 'waiting'
       : relocationPrompt.status === 'nav-ready'
@@ -105,6 +119,12 @@ export function PcdMapDemoPage() {
       : localizationNotice
         ? 'waiting'
         : 'idle'
+  const currentNotice = operationNotice?.kind === 'error'
+    ? operationNotice
+    : stateNotice ?? operationNotice
+  const currentNoticeKind = currentNotice === operationNotice
+    ? operationNotice?.kind ?? 'idle'
+    : stateNoticeKind
   const {
     startCommand,
     stopCommand,
@@ -130,10 +150,30 @@ export function PcdMapDemoPage() {
   }, [localizationStatus?.status, relocationPrompt.status])
 
   const addLog = useCallback((message: string, level: LogItem['level'] = 'info') => {
+    const timestamp = Date.now()
     setLogs((items) => [
-      { id: Date.now() + Math.random(), level, message: `${nowText()} ${message}` },
+      { id: timestamp + Math.random(), level, timestamp, message },
       ...items,
     ].slice(0, 30))
+
+    setOperationNotice({
+      title: level === 'error' ? '操作异常' : '操作反馈',
+      message,
+      kind: level,
+    })
+    if (operationNoticeTimerRef.current !== null) {
+      window.clearTimeout(operationNoticeTimerRef.current)
+    }
+    operationNoticeTimerRef.current = window.setTimeout(() => {
+      setOperationNotice(null)
+      operationNoticeTimerRef.current = null
+    }, level === 'error' ? 9000 : 5000)
+  }, [])
+
+  useEffect(() => () => {
+    if (operationNoticeTimerRef.current !== null) {
+      window.clearTimeout(operationNoticeTimerRef.current)
+    }
   }, [])
 
   useEffect(() => {
@@ -185,17 +225,27 @@ export function PcdMapDemoPage() {
     selectedSceneMessage,
     metadata,
     preview,
+    tileManifest,
     loading,
     refreshScenes,
     selectScene,
     previewLayers,
+    topDownLayers,
   } = useNavScenes({
-    previewPointLimit,
     setInitialState,
     onWaypointsLoaded: setWaypoints,
     onLog: addLog,
     onSceneChanging: handleSceneChanging,
   })
+  const sceneDisplayPointCount = useMemo(() => {
+    if (!tileManifest) return null
+    const tier = pointCloudQualityMode === 'performance'
+      ? 'performance'
+      : pointCloudQualityMode === 'quality'
+        ? 'original'
+        : 'balanced'
+    return tileManifest.nodes.reduce((sum, node) => sum + node[tier].point_count, 0)
+  }, [pointCloudQualityMode, tileManifest])
   const {
     closeMappingDialog,
     confirmStopMapping,
@@ -203,8 +253,10 @@ export function PcdMapDemoPage() {
     handleToggleMapping,
     mappingActive,
     mappingDialogOpen,
+    mappingPreflightChecking,
     mappingSceneError,
     mappingSceneName,
+    mappingSaving,
     mappingSending,
     mappingSessionInfo,
     mappingStopConfirmOpen,
@@ -408,6 +460,9 @@ export function PcdMapDemoPage() {
     })
     try {
       const result = await restartNavigationLocalization()
+      if (!result.success || !result.running || !result.startup_ready) {
+        throw new Error(result.message || '导航定位关键进程未就绪')
+      }
       addLog(formatRestartHealth(result), result.navigation_ready || result.startup_ready ? 'info' : 'error')
       setRelocationPrompt({
         status: 'waiting',
@@ -510,9 +565,9 @@ export function PcdMapDemoPage() {
     displayedExecutionPath,
     displayedGlobalPath,
     groundCenterHeight,
-    mapOptions,
     pointCloudViewKey,
     rightRailBounds,
+    rightRailLayers,
     selectedSceneWaypoints,
   } = useNavPointCloudViewModel({
     executionPath,
@@ -525,8 +580,9 @@ export function PcdMapDemoPage() {
     pcdLayerVisibility,
     preview,
     previewLayers,
+    topDownLayers,
+    tileManifest,
     robotPose,
-    scenes,
     selectedSceneId,
     waypoints,
   })
@@ -614,7 +670,7 @@ export function PcdMapDemoPage() {
         batteryPct={telemetry?.battery_pct}
         canOperate={canOperate}
         loading={loading}
-        previewAvailable={Boolean(preview)}
+        previewAvailable={Boolean(preview || tileManifest)}
         restartLocalizationSending={restartLocalizationSending}
         selectedSceneNavigable={selectedSceneNavigable}
         webglSupported={webglSupported}
@@ -632,8 +688,16 @@ export function PcdMapDemoPage() {
               globalPath={displayedGlobalPath}
               layers={allLayers}
               mode={pointCloudMode}
+              pointCloudQualityMode={pointCloudQualityMode}
               robotPose={robotPose}
               viewKey={pointCloudViewKey}
+              wallColorMode={wallColorMode}
+              tiledScene={mappingActive ? null : tileManifest}
+              tileVisibility={{
+                wall: pcdLayerVisibility.map,
+                ground: pcdLayerVisibility.ground,
+                footprint_fill: pcdLayerVisibility.footprint,
+              }}
               waypoints={waypoints}
               webglSupported={webglSupported}
               onAddWaypoint={handleAddWaypoint}
@@ -650,7 +714,6 @@ export function PcdMapDemoPage() {
             creatingTask={creatingTask}
             executingTaskId={executingTaskId}
             draft={taskDraft}
-            maps={mapOptions}
             navigationStatus={navigationStatus}
             root={root}
             scenes={scenes}
@@ -683,6 +746,7 @@ export function PcdMapDemoPage() {
           <SceneInfoDrawer
             open={infoOpen}
             metadata={metadata}
+            sceneDisplayPointCount={sceneDisplayPointCount}
             mouseMapPosition={mouseMapPosition}
             robotPose={robotPose}
             selectedSceneReady={selectedSceneReady}
@@ -701,12 +765,15 @@ export function PcdMapDemoPage() {
             lastResultText={lastResult?.result ?? null}
             linearSpeed={linearSpeed}
             mappingActive={mappingActive}
+            mappingPreflightChecking={mappingPreflightChecking}
+            mappingSaving={mappingSaving}
             mappingSending={mappingSending}
             mappingSessionInfo={mappingSessionInfo}
             navAutoTrackEnabled={navAutoTrackEnabled}
             navAutoTrackLoading={navAutoTrackLoading}
             pcdLayerPanelOpen={pcdLayerPanelOpen}
             pcdLayerVisibility={pcdLayerVisibility}
+            pointCloudQualityMode={pointCloudQualityMode}
             radarChecking={radarChecking}
             resultMessage={resultMessage}
             robotPoseAvailable={Boolean(robotPose)}
@@ -715,12 +782,15 @@ export function PcdMapDemoPage() {
             toolMode={toolMode}
             turnSpeed={turnSpeed}
             webglSupported={webglSupported}
+            wallColorMode={wallColorMode}
             onCheckRadar={() => void handleCheckRadar()}
             onStopSelectedTask={handleStopSelectedTask}
             onToggleFollowRobot={handleToggleFollowRobot}
             onToggleKeyboardControl={handleToggleKeyboardControl}
             onToggleLayer={handleTogglePcdLayer}
             onToggleLayerPanel={() => setPcdLayerPanelOpen((value) => !value)}
+            onSelectWallColorMode={setWallColorMode}
+            onSelectPointCloudQualityMode={setPointCloudQualityMode}
             onToggleMapping={handleToggleMapping}
             onToggleNavAutoTrack={() => void handleToggleNavAutoTrack()}
             onToolMode={handleToolMode}
@@ -733,7 +803,7 @@ export function PcdMapDemoPage() {
           estopSending={estopSending}
           executionPath={displayedExecutionPath}
           globalPath={displayedGlobalPath}
-          layers={allLayers}
+          layers={rightRailLayers}
           navigatingWaypointId={navigatingWaypointId}
           robotPose={robotPose}
           sceneNavigable={selectedSceneNavigable}
@@ -773,6 +843,7 @@ export function PcdMapDemoPage() {
         open={mappingDialogOpen}
         sceneName={mappingSceneName}
         error={mappingSceneError}
+        preflightChecking={mappingPreflightChecking}
         sending={mappingSending}
         onSceneNameChange={setMappingSceneName}
         onClearError={() => setMappingSceneError(null)}

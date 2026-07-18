@@ -12,6 +12,7 @@ import type {
   PcdBounds,
   PcdSceneMetadata,
   PcdScenePreview,
+  PcdSceneTileManifest,
   PcdSceneLayerRole,
   PcdMapListResponse,
   PcdMetadata,
@@ -36,6 +37,9 @@ type PcdSceneBinaryLayerHeader = {
   point_count: number
   byte_offset: number
   byte_length: number
+  intensity_byte_offset?: number | null
+  intensity_byte_length?: number
+  intensity_encoding?: 'uint8_percentile_2_98' | null
 }
 
 type PcdSceneBinaryHeader = {
@@ -79,16 +83,28 @@ function decodePcdScenePreviewBinary(buffer: ArrayBuffer): PcdScenePreview {
       throw new Error('无效的点云二进制响应')
     }
 
-    const values = new Float32Array(buffer, absoluteOffset, pointCount * 3)
-    const points = new Array<[number, number, number]>(pointCount)
-    for (let index = 0; index < pointCount; index += 1) {
-      const valueIndex = index * 3
-      points[index] = [values[valueIndex], values[valueIndex + 1], values[valueIndex + 2]]
+    const points = new Float32Array(buffer, absoluteOffset, pointCount * 3)
+    let intensity: Uint8Array | undefined
+    const intensityByteOffset = layer.intensity_byte_offset
+    const intensityByteLength = layer.intensity_byte_length ?? 0
+    if (intensityByteOffset != null || intensityByteLength > 0) {
+      const absoluteIntensityOffset = pointDataOffset + (intensityByteOffset ?? -1)
+      if (
+        layer.intensity_encoding !== 'uint8_percentile_2_98' ||
+        !Number.isSafeInteger(intensityByteOffset) || intensityByteOffset! < 0 ||
+        intensityByteLength !== pointCount ||
+        absoluteIntensityOffset < pointDataOffset ||
+        absoluteIntensityOffset + intensityByteLength > buffer.byteLength
+      ) {
+        throw new Error('无效的点云二进制响应')
+      }
+      intensity = new Uint8Array(buffer, absoluteIntensityOffset, pointCount)
     }
     return {
       role: layer.role,
       file_name: layer.file_name,
       points,
+      intensity,
       bounds: layer.bounds,
     }
   }
@@ -242,8 +258,9 @@ export function getPcdPreview(mapId: string, maxPoints = 100000): Promise<PcdPre
   )
 }
 
-export function getPcdScenePreview(sceneId: string, maxPoints = 15000): Promise<PcdScenePreview> {
-  const path = `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/preview.bin?max_points=${maxPoints}`
+export function getPcdScenePreview(sceneId: string, maxPoints?: number): Promise<PcdScenePreview> {
+  const query = maxPoints == null ? '' : `?max_points=${maxPoints}`
+  const path = `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/preview.bin${query}`
   return apiFetchArrayBuffer(path).then(decodePcdScenePreviewBinary).catch((error: unknown) => {
     // 兼容前端先于后端发布的短暂窗口；新后端的其他错误保持原样抛出。
     if (
@@ -256,10 +273,32 @@ export function getPcdScenePreview(sceneId: string, maxPoints = 15000): Promise<
     ) throw error
     return requestJson(
       getApiUrl(
-        `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/preview?max_points=${maxPoints}`,
+        `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/preview${query}`,
       ),
     )
   })
+}
+
+export function getPcdSceneTileManifest(
+  sceneId: string,
+  signal?: AbortSignal,
+): Promise<PcdSceneTileManifest> {
+  return apiFetch<PcdSceneTileManifest>(
+    `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/tiles/manifest`,
+    { signal },
+  )
+}
+
+export function getPcdSceneTile(
+  sceneId: string,
+  tileFile: string,
+  cacheKey: string,
+  signal?: AbortSignal,
+): Promise<ArrayBuffer> {
+  return apiFetchArrayBuffer(
+    `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/tiles/${encodeURIComponent(tileFile)}?v=${encodeURIComponent(cacheKey)}`,
+    { signal },
+  )
 }
 
 export function listWaypoints(mapId: string): Promise<{ items: NavWaypoint[] }> {
@@ -497,6 +536,10 @@ export function getMappingStatus(): Promise<MappingControlResponse> {
 
 export function checkRadarHealth(): Promise<RadarHealthResponse> {
   return requestJson(getApiUrl('/api/v1/system/radar/health'))
+}
+
+export function checkRadarPreflight(signal?: AbortSignal): Promise<RadarHealthResponse> {
+  return requestJson(getApiUrl('/api/v1/system/radar/preflight'), { signal })
 }
 
 export type NavAutoTrackModeResponse = {

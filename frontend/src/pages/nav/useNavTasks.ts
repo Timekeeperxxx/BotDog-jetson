@@ -15,6 +15,7 @@ import {
   buildTaskDefinitionFromDraft,
   buildTaskDraftFromTask,
   emptyTaskDraft,
+  filterTasksByScene,
   findSceneById,
   findTaskById,
   insertTaskDraftStep,
@@ -69,6 +70,11 @@ export function useNavTasks({
   const [taskDraft, setTaskDraft] = useState<TaskDraft>(emptyTaskDraft)
   const [executingTaskId, setExecutingTaskId] = useState<string | null>(null)
 
+  const sceneTasks = useMemo(
+    () => filterTasksByScene(tasks, selectedSceneId),
+    [selectedSceneId, tasks],
+  )
+
   useEffect(() => {
     let cancelled = false
 
@@ -92,9 +98,9 @@ export function useNavTasks({
   }, [addLog])
 
   const resolvedSelectedTaskId = useMemo(() => {
-    if (selectedTaskId && tasks.some((task) => task.id === selectedTaskId)) return selectedTaskId
-    return tasks[0]?.id ?? null
-  }, [selectedTaskId, tasks])
+    if (selectedTaskId && sceneTasks.some((task) => task.id === selectedTaskId)) return selectedTaskId
+    return sceneTasks[0]?.id ?? null
+  }, [sceneTasks, selectedTaskId])
 
   const draftScene = useMemo(
     () => findSceneById(scenes, taskDraft.mapId),
@@ -105,10 +111,7 @@ export function useNavTasks({
 
   const handleTaskDraftChange = useCallback((patch: Partial<TaskDraft>) => {
     setTaskDraft((current) => applyTaskDraftPatch(current, patch))
-    if (patch.mapId && patch.mapId !== selectedSceneId) {
-      void selectScene(patch.mapId)
-    }
-  }, [selectedSceneId, selectScene])
+  }, [])
 
   const handleAddDraftStep = useCallback((index?: number) => {
     setTaskDraft((current) => (
@@ -142,7 +145,7 @@ export function useNavTasks({
   }, [addLog, openTaskDrawer, scenes, selectedSceneId, selectedSceneNavigable])
 
   const handleStartEditTask = useCallback((taskId: string) => {
-    const task = findTaskById(tasks, taskId)
+    const task = findTaskById(sceneTasks, taskId)
     if (!task) return
     const nextDraft: TaskDraft = buildTaskDraftFromTask(task)
     setSelectedTaskId(task.id)
@@ -150,10 +153,7 @@ export function useNavTasks({
     setCreatingTask(true)
     setTaskEditorMode('edit')
     openTaskDrawer()
-    if (task.mapId !== selectedSceneId) {
-      void selectScene(task.mapId)
-    }
-  }, [openTaskDrawer, selectedSceneId, selectScene, tasks])
+  }, [openTaskDrawer, sceneTasks])
 
   const handleCancelCreateTask = useCallback(() => {
     setCreatingTask(false)
@@ -162,6 +162,11 @@ export function useNavTasks({
   }, [])
 
   const handleCreateTask = useCallback(async () => {
+    if (!selectedSceneId || taskDraft.mapId !== selectedSceneId) {
+      addLog('场景已经切换，请在当前场景重新创建任务', 'error')
+      return
+    }
+
     const result = buildTaskDefinitionFromDraft({
       draft: taskDraft,
       scenes,
@@ -196,7 +201,7 @@ export function useNavTasks({
     setTaskDraft(emptyTaskDraft)
     openTaskDrawer()
     addLog(taskEditorMode === 'edit' ? `已更新任务 ${name}` : `已创建任务工作流 ${name}`)
-  }, [addLog, openTaskDrawer, resolvedSelectedTaskId, scenes, selectedSceneWaypoints, taskDraft, taskEditorMode, tasks])
+  }, [addLog, openTaskDrawer, resolvedSelectedTaskId, scenes, selectedSceneId, selectedSceneWaypoints, taskDraft, taskEditorMode, tasks])
 
   const handleDeleteTask = useCallback(async (taskId: string) => {
     const task = findTaskById(tasks, taskId)
@@ -332,6 +337,6 @@ export function useNavTasks({
     setSelectedTaskId,
     taskDraft,
     taskEditorMode,
-    tasks,
+    tasks: sceneTasks,
   }
 }

@@ -1,4 +1,13 @@
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  CircleDot,
+  Info,
+  LoaderCircle,
+  ScrollText,
+} from 'lucide-react'
 import type { LocalizationStatus, RobotPose } from '../../types/navState'
 import type { PcdSceneMetadata } from '../../types/pcdMap'
 import type { LogItem } from './navPageUtils'
@@ -7,6 +16,7 @@ import { summarizeLocalizationStatus } from './navPageUtils'
 type SceneInfoDrawerProps = {
   open: boolean
   metadata: PcdSceneMetadata | null
+  sceneDisplayPointCount: number | null
   mouseMapPosition: { x: number; y: number } | null
   robotPose: RobotPose | null
   selectedSceneReady: boolean
@@ -19,6 +29,7 @@ type SceneInfoDrawerProps = {
 export function SceneInfoDrawer({
   open,
   metadata,
+  sceneDisplayPointCount,
   mouseMapPosition,
   robotPose,
   selectedSceneReady,
@@ -47,8 +58,14 @@ export function SceneInfoDrawer({
               <div className="pcd-metadata-grid">
                 <span>坐标系</span>
                 <strong>{metadata.frame_id}</strong>
-                <span>点数量</span>
+                <span>ground 点数</span>
                 <strong>{metadata.point_count.toLocaleString()}</strong>
+                {sceneDisplayPointCount !== null ? (
+                  <>
+                    <span>场景点数</span>
+                    <strong>{sceneDisplayPointCount.toLocaleString()}</strong>
+                  </>
+                ) : null}
                 <span>DATA</span>
                 <strong>{metadata.data_type}</strong>
                 <span>字段</span>
@@ -129,13 +146,40 @@ export function NavMessageCenter({
   onToggleExpanded,
 }: NavMessageCenterProps) {
   const latestLog = logs[0] ?? null
+  const errorCount = logs.filter((item) => item.level === 'error').length
+  const noticeLabel = noticeKind === 'error'
+    ? '异常'
+    : noticeKind === 'ready' || noticeKind === 'localized'
+      ? '完成'
+      : noticeKind === 'waiting' || noticeKind === 'restarting'
+        ? '进行中'
+        : noticeKind === 'info'
+          ? '消息'
+          : '状态'
+  const noticeIcon = noticeKind === 'error'
+    ? <AlertTriangle size={19} />
+    : noticeKind === 'ready' || noticeKind === 'localized'
+      ? <CheckCircle2 size={19} />
+      : noticeKind === 'waiting' || noticeKind === 'restarting'
+        ? <LoaderCircle size={19} className="pcd-spin" />
+        : noticeKind === 'info'
+          ? <Info size={19} />
+          : <CircleDot size={19} />
 
   return (
-    <section className={`pcd-message-center is-${noticeKind} ${expanded ? 'is-log-expanded' : ''}`} aria-live="polite">
+    <section
+      className={`pcd-message-center is-${noticeKind} ${expanded ? 'is-log-expanded' : ''}`}
+      aria-live={noticeKind === 'error' ? 'assertive' : 'polite'}
+    >
       <div className="pcd-message-primary" title={notice?.message || undefined}>
-        <span className="pcd-message-label">提示中心</span>
-        <strong>{notice?.title || '待命'}</strong>
-        <span>{notice?.message || '无新的操作提醒。'}</span>
+        <span className="pcd-message-status-icon" aria-hidden="true">{noticeIcon}</span>
+        <div className="pcd-message-copy">
+          <div className="pcd-message-heading">
+            <span className="pcd-message-label">{noticeLabel}</span>
+            <strong>{notice?.title || '系统待命'}</strong>
+          </div>
+          <span className="pcd-message-detail">{notice?.message || '当前没有新的操作提醒。'}</span>
+        </div>
       </div>
       <div className="pcd-message-log">
         <button
@@ -145,26 +189,51 @@ export function NavMessageCenter({
           title={expanded ? '收起导航日志' : '展开导航历史日志'}
           aria-expanded={expanded}
         >
-          <span className="pcd-message-label">最近日志</span>
-          <span className={latestLog?.level === 'error' ? 'is-error' : ''}>
-            {latestLog?.message || '等待操作日志'}
+          <span className="pcd-message-log-title">
+            <ScrollText size={15} />
+            <strong>操作日志</strong>
+            <i>{logs.length}</i>
+            {errorCount > 0 ? <i className="is-error">{errorCount} 错误</i> : null}
+          </span>
+          <span className={`pcd-message-log-latest ${latestLog?.level === 'error' ? 'is-error' : ''}`}>
+            {latestLog ? (
+              <>
+                <time>{formatLogTime(latestLog.timestamp)}</time>
+                <span>{latestLog.message}</span>
+              </>
+            ) : '等待操作日志'}
           </span>
           {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
         {expanded ? (
           <div className="pcd-message-log-history" role="log" aria-label="导航历史日志">
+            <div className="pcd-message-log-history-head">
+              <strong>操作日志</strong>
+              <span>最近 {logs.length} 条，最多保留 30 条</span>
+            </div>
             {logs.length > 0 ? (
               logs.map((item) => (
-                <div key={item.id} className={item.level === 'error' ? 'is-error' : ''}>
-                  {item.message}
+                <div key={item.id} className={`pcd-message-log-row ${item.level === 'error' ? 'is-error' : 'is-info'}`}>
+                  <time>{formatLogTime(item.timestamp)}</time>
+                  <span className="pcd-message-log-level">{item.level === 'error' ? '错误' : '信息'}</span>
+                  <p>{item.message}</p>
                 </div>
               ))
             ) : (
-              <div>暂无历史日志</div>
+              <div className="pcd-message-log-empty">暂无操作日志</div>
             )}
           </div>
         ) : null}
       </div>
     </section>
   )
+}
+
+function formatLogTime(timestamp: number) {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 }

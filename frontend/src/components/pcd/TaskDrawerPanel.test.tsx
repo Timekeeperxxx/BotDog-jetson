@@ -26,6 +26,7 @@ const tasks: TaskDefinition[] = [
 function renderPanel(overrides: Partial<React.ComponentProps<typeof TaskDrawerPanel>> = {}) {
   const props: React.ComponentProps<typeof TaskDrawerPanel> = {
     tasks,
+    sceneName: 'Scene21',
     selectedTaskId: 'task-old-scene',
     navigationStatus: null,
     canStartCreate: true,

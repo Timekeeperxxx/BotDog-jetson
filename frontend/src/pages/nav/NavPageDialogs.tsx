@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom'
 import type { NavWaypoint, PcdSceneItem } from '../../types/pcdMap'
+import { useModalFocus } from '../../hooks/useModalFocus'
 
 type SceneDeleteConfirmDialogProps = {
   scene: PcdSceneItem | null
@@ -12,11 +13,22 @@ export function SceneDeleteConfirmDialog({
   onCancel,
   onConfirm,
 }: SceneDeleteConfirmDialogProps) {
+  const dialogRef = useModalFocus<HTMLDivElement>({
+    open: scene !== null,
+    onClose: onCancel,
+  })
   if (scene === null) return null
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-[0_30px_120px_-30px_rgba(0,0,0,0.9)]">
+      <div
+        ref={dialogRef}
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-[0_30px_120px_-30px_rgba(0,0,0,0.9)]"
+        role="alertdialog"
+        aria-modal="true"
+        aria-label={`确认删除场景 ${scene.name}`}
+        tabIndex={-1}
+      >
         <div className="text-lg font-black text-white">确认删除场景「{scene.name}」</div>
         <div className="mt-3 space-y-1.5 text-sm text-zinc-400">
           <div>scene_id：{scene.id}</div>
@@ -27,12 +39,14 @@ export function SceneDeleteConfirmDialog({
         </p>
         <div className="mt-6 flex justify-end gap-3">
           <button
+            type="button"
             className="rounded-xl border border-white/12 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-white hover:border-white/30 hover:bg-white/5"
             onClick={onCancel}
           >
             取消
           </button>
           <button
+            type="button"
             className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-red-300 hover:border-red-400 hover:bg-red-500/20"
             onClick={onConfirm}
           >
@@ -55,11 +69,22 @@ export function GoToWaypointConfirmDialog({
   onCancel,
   onConfirm,
 }: GoToWaypointConfirmDialogProps) {
+  const dialogRef = useModalFocus<HTMLDivElement>({
+    open: waypoint !== null,
+    onClose: onCancel,
+  })
   if (waypoint === null) return null
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 px-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-[0_30px_120px_-30px_rgba(0,0,0,0.9)]">
+      <div
+        ref={dialogRef}
+        className="w-full max-w-md rounded-2xl border border-white/10 bg-zinc-950 p-6 shadow-[0_30px_120px_-30px_rgba(0,0,0,0.9)]"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`确认导航到 ${waypoint.name}`}
+        tabIndex={-1}
+      >
         <div className="text-lg font-black text-white">确认导航到「{waypoint.name}」</div>
         <div className="mt-3 space-y-1.5 text-sm text-zinc-400 font-mono">
           <div>map_id：{waypoint.map_id}</div>
@@ -69,12 +94,14 @@ export function GoToWaypointConfirmDialog({
         <p className="mt-4 text-xs text-amber-400/80">发布导航请求后机器狗将开始移动到目标点。请确认周围安全。</p>
         <div className="mt-6 flex justify-end gap-3">
           <button
+            type="button"
             className="rounded-xl border border-white/12 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-white hover:border-white/30 hover:bg-white/5"
             onClick={onCancel}
           >
             取消
           </button>
           <button
+            type="button"
             className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-sky-300 hover:border-sky-400 hover:bg-sky-500/20"
             onClick={() => onConfirm(waypoint)}
           >
@@ -90,6 +117,7 @@ type MappingStartDialogProps = {
   open: boolean
   sceneName: string
   error: string | null
+  preflightChecking: boolean
   sending: boolean
   onSceneNameChange: (value: string) => void
   onClearError: () => void
@@ -101,12 +129,18 @@ export function MappingStartDialog({
   open,
   sceneName,
   error,
+  preflightChecking,
   sending,
   onSceneNameChange,
   onClearError,
   onCancel,
   onConfirm,
 }: MappingStartDialogProps) {
+  const dialogRef = useModalFocus<HTMLDivElement>({
+    open,
+    onClose: onCancel,
+    closeOnEscape: !sending,
+  })
   if (!open || typeof document === 'undefined') return null
 
   return createPortal(
@@ -118,10 +152,24 @@ export function MappingStartDialog({
         }
       }}
     >
-      <div className="pcd-scene-modal-card" role="dialog" aria-modal="true" aria-label="请输入场景名称">
+      <div
+        ref={dialogRef}
+        className="pcd-scene-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="请输入场景名称"
+        tabIndex={-1}
+      >
         <div className="pcd-scene-modal-header">
           <strong>请输入场景名称</strong>
           <span>建图开始后会自动创建对应场景目录。</span>
+        </div>
+        <div className="pcd-mapping-start-warning" role="note">
+          <strong>启动建图前请保持设备静止</strong>
+          <span>
+            请将机器人放在平整地面，雷达保持正常安装姿态并完全静止。
+            点击开始后继续静止至少 5 秒，待实时点云稳定显示后再移动；固定前倾安装无需调平。
+          </span>
         </div>
         <label className="pcd-scene-modal-field">
           <span>场景名称</span>
@@ -145,7 +193,7 @@ export function MappingStartDialog({
           />
         </label>
         {error ? (
-          <div className="pcd-scene-modal-error">{error}</div>
+          <div className="pcd-scene-modal-error" role="alert">{error}</div>
         ) : null}
         <div className="pcd-scene-modal-actions">
           <button
@@ -162,7 +210,9 @@ export function MappingStartDialog({
             onClick={onConfirm}
             disabled={sending}
           >
-            {sending ? '启动中...' : '确认开始'}
+            {preflightChecking
+              ? '正在检查雷达连接...'
+              : sending ? '启动中，请勿移动...' : '已保持静止，开始建图'}
           </button>
         </div>
       </div>
@@ -184,6 +234,10 @@ export function MappingStopConfirmDialog({
   onCancel,
   onConfirm,
 }: MappingStopConfirmDialogProps) {
+  const dialogRef = useModalFocus<HTMLDivElement>({
+    open,
+    onClose: onCancel,
+  })
   if (!open || typeof document === 'undefined') return null
 
   return createPortal(
@@ -195,7 +249,14 @@ export function MappingStopConfirmDialog({
         }
       }}
     >
-      <div className="pcd-scene-modal-card" role="dialog" aria-modal="true" aria-label="确认停止建图">
+      <div
+        ref={dialogRef}
+        className="pcd-scene-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="确认停止建图"
+        tabIndex={-1}
+      >
         <div className="pcd-scene-modal-header">
           <strong>确认停止建图</strong>
           <span>

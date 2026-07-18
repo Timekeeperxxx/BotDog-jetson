@@ -1,15 +1,10 @@
-import { ArrowLeft, Plus, Trash2, X } from 'lucide-react'
+import { ArrowLeft, MapPinned, Plus, Trash2, X } from 'lucide-react'
 import type { TaskDraft, TaskDraftStep } from '../../types/taskWorkflow'
 import {
   getWorkflowStepTargetLabel,
   getWorkflowStepTypeLabel,
   POSTURE_LABELS,
 } from '../../pages/nav/navPageUtils'
-
-type MapOption = {
-  id: string
-  name: string
-}
 
 type WaypointOption = {
   id: string
@@ -19,8 +14,8 @@ type WaypointOption = {
 type Props = {
   mode: 'create' | 'edit'
   draft: TaskDraft
-  maps: MapOption[]
   selectedSceneId: string | null
+  selectedSceneName: string | null
   selectedSceneWaypoints: WaypointOption[]
   selectedSceneNavigable: boolean
   selectedSceneMessage: string | null
@@ -36,8 +31,8 @@ type Props = {
 export function TaskCreatorDrawer({
   mode,
   draft,
-  maps,
   selectedSceneId,
+  selectedSceneName,
   selectedSceneWaypoints,
   selectedSceneNavigable,
   selectedSceneMessage,
@@ -75,21 +70,17 @@ export function TaskCreatorDrawer({
             />
           </label>
 
-          <label className="pcd-form-row">
+          <div className="pcd-form-row">
             <span>绑定场景</span>
-            <select
-              className="pcd-task-value-select"
-              value={draft.mapId}
-              onChange={(event) => onDraftChange({ mapId: event.target.value, steps: [] })}
-            >
-              <option value="">请选择场景</option>
-              {maps.map((map) => (
-                <option key={map.id} value={map.id}>
-                  {map.name}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div className="pcd-task-scene-binding">
+              <MapPinned size={17} />
+              <div>
+                <strong>{selectedSceneName || '未选择场景'}</strong>
+                <small>{draft.mapId || '请先选择地图'}</small>
+              </div>
+              <em>随当前地图绑定</em>
+            </div>
+          </div>
         </div>
 
         <div className="pcd-task-flow-block">
@@ -180,7 +171,7 @@ export function TaskCreatorDrawer({
 
         <div className="pcd-task-editor-footer pcd-task-editor-footer-wide">
           <div className="pcd-task-editor-hint">
-            任务必须绑定场景，任务名称不能为空。点击左侧任务卡片进入编辑，步骤通过下拉框配置。
+            任务与当前地图固定绑定，只能使用该地图中的导航点。任务名称不能为空，步骤通过下拉框配置。
             {draft.mapId && draft.mapId === selectedSceneId ? ' 当前场景已加载。' : ''}
             {!selectedSceneNavigable && selectedSceneMessage ? ` ${selectedSceneMessage}` : ''}
           </div>

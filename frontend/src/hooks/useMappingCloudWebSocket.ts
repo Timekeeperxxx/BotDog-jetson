@@ -46,6 +46,7 @@ export function useMappingCloudWebSocket(active: boolean) {
     setState((prev) => ({
       ...prev,
       connected: false,
+      mappingCloudPoints: [],
       liveMappingCloudPoints: [],
     }))
   }, [])
