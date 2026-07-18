@@ -6,14 +6,16 @@ import signal
 import subprocess
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
 from typing import Any
 
 from .config import settings
+from .lidar_mount import lidar_mount_environment, lidar_mount_log_values
 from .logging_config import get_logger
 from .nav_bridge_state import get_ros_nav_bridge
+from .pcd_reader import normalize_pcd_header, parse_pcd_header
 from .services_nav_state import clear_global_path, clear_robot_pose, get_robot_pose, set_navigation_idle
 from .services_nav_localization import stop_cmd_vel_script, stop_navigation_processes
 from .services_nav_waypoints import upsert_origin_waypoint
@@ -35,9 +37,9 @@ SCENE_DIR_PATTERN = re.compile(r"^Scene(\d+)_")
 MAPPING_READY_FLAG_NAME = ".ground_generation_started"
 MAPPING_START_READY_TIMEOUT_SECONDS = 60
 MAPPING_START_READY_POLL_INTERVAL_SECONDS = 0.5
-# 必须长于 scripts/start_mapping.sh 里 trap cleanup 的最长等待时间，
-# 否则后端会先把整个进程组 SIGKILL，super_lio 来不及写出最终 map.pcd。
-MAPPING_STOP_WAIT_TIMEOUT_SECONDS = 180
+# 必须长于 terrain 保存 30 分钟上限及后续 SuperLIO/launch 清理时间，
+# 否则后端会提前终止脚本，ground 和 footprint 仍然来不及落盘。
+MAPPING_STOP_WAIT_TIMEOUT_SECONDS = 1950
 MAPPING_STOP_FORCE_KILL_WAIT_SECONDS = 5
 # 建图最短运行时间（秒），少于此时间停止时会额外提示
 MAPPING_MIN_RUNTIME_SECONDS = 90
@@ -109,6 +111,9 @@ class MappingSession:
     started_at: float
     runtime_pause_state: dict[str, bool]
     initial_origin_pose: dict[str, Any]
+    saving: bool = False
+    stop_requested_at: float | None = None
+    completion_event: threading.Event = field(default_factory=threading.Event, repr=False)
 
     def is_running(self) -> bool:
         return self.process.poll() is None
@@ -118,6 +123,7 @@ class MappingService:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._session: MappingSession | None = None
+        self._last_result: dict[str, Any] | None = None
 
     @staticmethod
     def _forward_stream(stream: Any, level: str, prefix: str) -> None:
@@ -154,7 +160,7 @@ class MappingService:
             ).start()
 
     def _cleanup_finished_session_unlocked(self) -> None:
-        if self._session is not None and not self._session.is_running():
+        if self._session is not None and not self._session.saving and not self._session.is_running():
             mapping_logger.info(
                 "建图进程已退出：scene_name={}，pid={}，退出码={}",
                 self._session.scene_name,
@@ -407,20 +413,34 @@ class MappingService:
         with self._lock:
             self._cleanup_finished_session_unlocked()
             if self._session is None:
+                if self._last_result is not None:
+                    return dict(self._last_result)
                 return {
                     "running": False,
+                    "saving": False,
+                    "saved": False,
                     "scene_name": None,
                     "map_dir": None,
                     "pid": None,
                     "started_at": None,
+                    "map_pcd_candidates": [],
+                    "ground_pcd_candidates": [],
+                    "pcd_files": [],
+                    "message": "建图未运行",
                 }
 
             return {
-                "running": True,
+                "running": not self._session.saving,
+                "saving": self._session.saving,
+                "saved": False,
                 "scene_name": self._session.scene_name,
                 "map_dir": str(self._session.map_dir),
                 "pid": self._session.process.pid,
                 "started_at": self._session.started_at,
+                "map_pcd_candidates": [],
+                "ground_pcd_candidates": [],
+                "pcd_files": [],
+                "message": "地图正在保存" if self._session.saving else "建图正在运行",
             }
 
     def start(self, scene_name: str) -> dict[str, Any]:
@@ -429,6 +449,8 @@ class MappingService:
         with self._lock:
             self._cleanup_finished_session_unlocked()
             if self._session is not None:
+                if self._session.saving:
+                    raise MappingError("地图保存正在进行中，请等待保存完成")
                 raise MappingError("建图已在进行中")
 
             if not START_MAPPING_SCRIPT.exists():
@@ -461,11 +483,18 @@ class MappingService:
                 mapping_logger.info("建图开始前已清空前端实时建图点云缓存")
             runtime_pause_state = self._pause_runtime_interferers()
             command = ["bash", str(START_MAPPING_SCRIPT), str(map_dir)]
+            try:
+                process_env = lidar_mount_environment()
+                mount_values = lidar_mount_log_values()
+            except ValueError as exc:
+                self._resume_runtime_interferers(runtime_pause_state)
+                raise MappingError(f"雷达安装标定无效，拒绝开始建图：{exc}") from exc
             mapping_logger.info(
-                "开始建图：scene_name={}，map_dir={}，command={}",
+                "开始建图：scene_name={}，map_dir={}，command={}，lidar_mount={}",
                 normalized_scene_name,
                 map_dir,
                 " ".join(command),
+                mount_values,
             )
 
             # stdout/stderr 直接丢弃，脚本内部用 tee 和 >> 写入 DEBUG_LOG。
@@ -476,6 +505,7 @@ class MappingService:
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=process_env,
             )
             start_wait_deadline = time.monotonic() + MAPPING_START_READY_TIMEOUT_SECONDS
             while time.monotonic() < start_wait_deadline:
@@ -498,6 +528,7 @@ class MappingService:
                         runtime_pause_state=runtime_pause_state,
                         initial_origin_pose=initial_origin_pose,
                     )
+                    self._last_result = None
                     mapping_logger.info(
                         "建图已进入 ground 生成阶段：scene_name={}，pid={}，map_dir={}，initial_origin={}",
                         map_dir.name,
@@ -530,11 +561,83 @@ class MappingService:
             self._resume_nav_bridge()
             raise MappingError("建图启动超时：ground 生成尚未开始，请查看 start_mapping_debug.log")
 
-    def stop(self) -> dict[str, Any]:
+    @staticmethod
+    def _saving_response(session: MappingSession) -> dict[str, Any]:
+        return {
+            "success": True,
+            "enabled": False,
+            "running": False,
+            "saving": True,
+            "saved": False,
+            "scene_name": session.scene_name,
+            "map_dir": str(session.map_dir),
+            "pid": session.process.pid,
+            "started_at": session.started_at,
+            "map_pcd_candidates": [],
+            "ground_pcd_candidates": [],
+            "pcd_files": [],
+            "origin_waypoint": None,
+            "origin_waypoint_error": None,
+            "message": "建图已停止，地图正在后台保存",
+        }
+
+    @staticmethod
+    def _validate_pcd_file(path: Path) -> tuple[bool, str | None]:
+        try:
+            size_bytes = path.stat().st_size
+            if size_bytes <= 0:
+                return False, "文件为空"
+            header, data_start_offset = parse_pcd_header(path)
+            normalized = normalize_pcd_header(header)
+            if normalized["point_count"] <= 0:
+                return False, "点数量为 0"
+            if normalized["data_type"] not in {"ascii", "binary", "binary_compressed"}:
+                return False, f"不支持的 DATA 类型: {normalized['data_type']}"
+            if data_start_offset >= size_bytes:
+                return False, "PCD 没有点数据"
+            return True, None
+        except Exception as exc:
+            return False, str(exc)
+
+    @classmethod
+    def _collect_pcd_files(
+        cls,
+        map_dir_path: Path,
+    ) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+        map_pcd_candidates: list[str] = []
+        ground_pcd_candidates: list[str] = []
+        pcd_files: list[dict[str, Any]] = []
+
+        if not map_dir_path.is_dir():
+            return map_pcd_candidates, ground_pcd_candidates, pcd_files
+
+        for fpath in sorted(map_dir_path.rglob("*.pcd")):
+            fname = fpath.name
+            valid, validation_error = cls._validate_pcd_file(fpath)
+            info = {
+                "name": fname,
+                "path": str(fpath),
+                "size_bytes": fpath.stat().st_size if fpath.exists() else 0,
+                "valid": valid,
+                "validation_error": validation_error,
+            }
+            pcd_files.append(info)
+            if not valid:
+                mapping_logger.warning("忽略无效 PCD：{}，原因={}", fpath, validation_error)
+                continue
+
+            lower_name = fname.lower()
+            if lower_name.endswith("ground.pcd"):
+                ground_pcd_candidates.append(fname)
+            elif lower_name.endswith("map.pcd"):
+                map_pcd_candidates.append(fname)
+
+        return map_pcd_candidates, ground_pcd_candidates, pcd_files
+
+    def stop(self, *, wait: bool = True) -> dict[str, Any]:
         with self._lock:
             self._cleanup_finished_session_unlocked()
             if self._session is None:
-                # 检查是否有孤立的 session（脚本已退出但未清理）
                 return {
                     "success": True,
                     "enabled": False,
@@ -550,36 +653,101 @@ class MappingService:
                     "message": "当前没有正在运行的建图进程",
                 }
 
-            process = self._session.process
-            pid = process.pid
-            scene_name = self._session.scene_name
-            map_dir = str(self._session.map_dir)
-            started_at = self._session.started_at
-            runtime_pause_state = self._session.runtime_pause_state
-            initial_origin_pose = self._session.initial_origin_pose
-            elapsed = time.time() - started_at
+            session = self._session
+            if session.saving:
+                if not wait:
+                    return self._saving_response(session)
+                existing_save = True
+            else:
+                existing_save = False
 
-            mapping_logger.info(
-                "停止建图：向脚本发送 SIGINT，触发 cleanup 按序停止进程...",
+            if not existing_save:
+                process = session.process
+                pid = process.pid
+                started_at = session.started_at
+                elapsed = time.time() - started_at
+                session.saving = True
+                session.stop_requested_at = time.time()
+
+                mapping_logger.info(
+                    "停止建图：向脚本发送 SIGINT，触发 cleanup 按序停止进程...",
+                )
+                mapping_logger.info(
+                    "  脚本 PID={}，已运行={:.0f}s，cleanup 顺序：terrain_analysis -> super_lio -> livox",
+                    pid,
+                    elapsed,
+                )
+
+                try:
+                    os.kill(pid, signal.SIGINT)
+                except ProcessLookupError:
+                    mapping_logger.warning("建图脚本已不存在：pid={}", pid)
+                except Exception as exc:
+                    mapping_logger.warning("发送 SIGINT 到建图脚本失败：pid={}，原因={}", pid, exc)
+
+        if existing_save:
+            wait_timeout = MAPPING_STOP_WAIT_TIMEOUT_SECONDS + 30
+            if not session.completion_event.wait(timeout=wait_timeout):
+                response = self._saving_response(session)
+                response["message"] = f"等待后台地图保存完成超时（{wait_timeout} 秒）"
+                return response
+            with self._lock:
+                return dict(self._last_result) if self._last_result is not None else self._saving_response(session)
+
+        if not wait:
+            threading.Thread(
+                target=self._finish_stop_safely,
+                args=(session,),
+                daemon=True,
+                name=f"mapping-save-{pid}",
+            ).start()
+            return self._saving_response(session)
+
+        return self._finish_stop_safely(session)
+
+    def _finish_stop_safely(self, session: MappingSession) -> dict[str, Any]:
+        try:
+            return self._finish_stop(session)
+        except Exception as exc:
+            mapping_logger.exception(
+                "地图保存收尾失败：scene_name={} pid={}，原因={}",
+                session.scene_name,
+                session.process.pid,
+                exc,
             )
-            mapping_logger.info(
-                "  脚本 PID={}，已运行={:.0f}s，cleanup 顺序：terrain_analysis -> super_lio -> livox",
-                pid,
-                elapsed,
-            )
+            result = {
+                "success": True,
+                "enabled": False,
+                "running": False,
+                "saving": False,
+                "saved": False,
+                "scene_name": session.scene_name,
+                "map_dir": str(session.map_dir),
+                "pid": session.process.pid,
+                "map_pcd_candidates": [],
+                "ground_pcd_candidates": [],
+                "pcd_files": [],
+                "origin_waypoint": None,
+                "origin_waypoint_error": None,
+                "message": f"地图保存收尾失败：{exc}",
+            }
+            self._resume_runtime_interferers(session.runtime_pause_state)
+            self._resume_nav_bridge()
+            with self._lock:
+                self._last_result = dict(result)
+                if self._session is session:
+                    self._session = None
+            return result
+        finally:
+            session.completion_event.set()
 
-            try:
-                os.kill(pid, signal.SIGINT)
-            except ProcessLookupError:
-                mapping_logger.warning("建图脚本已不存在：pid={}", pid)
-            except Exception as exc:
-                mapping_logger.warning("发送 SIGINT 到建图脚本失败：pid={}，原因={}", pid, exc)
-
-            # 清除 session 但不立即返回 —— 等待脚本 cleanup 完成
-            self._session = None
-
-        # ── 等待脚本退出（在 lock 外部，不阻塞 get_status 等查询） ──────────
-        map_dir_path = Path(map_dir)
+    def _finish_stop(self, session: MappingSession) -> dict[str, Any]:
+        process = session.process
+        pid = process.pid
+        scene_name = session.scene_name
+        map_dir = str(session.map_dir)
+        map_dir_path = session.map_dir
+        started_at = session.started_at
         forced = False
         try:
             process.wait(timeout=MAPPING_STOP_WAIT_TIMEOUT_SECONDS)
@@ -606,25 +774,12 @@ class MappingService:
                 except subprocess.TimeoutExpired:
                     mapping_logger.error("建图进程组 SIGKILL 后仍未退出")
                 forced = True
+        except Exception as exc:
+            mapping_logger.exception("等待建图保存进程退出失败：pid={}，原因={}", pid, exc)
+            forced = True
 
         # ── 检查 PCD 文件 ──────────────────────────────────────────────────
-        map_pcd_candidates: list[str] = []
-        ground_pcd_candidates: list[str] = []
-        pcd_files: list[dict[str, Any]] = []
-
-        if map_dir_path.is_dir():
-            for fpath in sorted(map_dir_path.rglob("*.pcd")):
-                fname = fpath.name
-                info = {
-                    "name": fname,
-                    "path": str(fpath),
-                    "size_bytes": fpath.stat().st_size if fpath.exists() else 0,
-                }
-                pcd_files.append(info)
-                if "map.pcd" in fname.lower():
-                    map_pcd_candidates.append(fname)
-                if "ground.pcd" in fname.lower():
-                    ground_pcd_candidates.append(fname)
+        map_pcd_candidates, ground_pcd_candidates, pcd_files = self._collect_pcd_files(map_dir_path)
 
         saved = len(map_pcd_candidates) > 0 and len(ground_pcd_candidates) > 0
         origin_waypoint: dict[str, Any] | None = None
@@ -634,10 +789,10 @@ class MappingService:
             try:
                 origin_waypoint = upsert_origin_waypoint(
                     scene_name,
-                    x=initial_origin_pose.get("x"),
-                    y=initial_origin_pose.get("y"),
-                    z=initial_origin_pose.get("z"),
-                    yaw=initial_origin_pose.get("yaw"),
+                    x=session.initial_origin_pose.get("x"),
+                    y=session.initial_origin_pose.get("y"),
+                    z=session.initial_origin_pose.get("z"),
+                    yaw=session.initial_origin_pose.get("yaw"),
                 )
                 message += "，已自动添加原点导航点"
                 mapping_logger.info(
@@ -648,7 +803,7 @@ class MappingService:
                     origin_waypoint.get("y"),
                     origin_waypoint.get("z"),
                     origin_waypoint.get("yaw"),
-                    initial_origin_pose.get("source"),
+                    session.initial_origin_pose.get("source"),
                 )
             except Exception as exc:
                 origin_waypoint_error = str(exc)
@@ -664,15 +819,12 @@ class MappingService:
         if forced:
             message += "（脚本被强制终止，文件可能不完整）"
 
-        for fname in ("map.pcd", "ground.pcd"):
-            fpath = map_dir_path / fname
-            if fpath.exists():
-                mapping_logger.info("文件已保存：{} ({} 字节)", fpath, fpath.stat().st_size)
-            else:
-                mapping_logger.warning("文件未生成：{}", fpath)
+        for file_info in pcd_files:
+            if file_info["valid"]:
+                mapping_logger.info("有效 PCD 已保存：{} ({} 字节)", file_info["path"], file_info["size_bytes"])
 
         # 恢复后端 ROS2 节点
-        self._resume_runtime_interferers(runtime_pause_state)
+        self._resume_runtime_interferers(session.runtime_pause_state)
         self._resume_nav_bridge()
 
         mapping_logger.info(
@@ -682,7 +834,7 @@ class MappingService:
             len(pcd_files),
         )
 
-        return {
+        result = {
             "success": True,
             "enabled": False,
             "running": False,
@@ -698,6 +850,11 @@ class MappingService:
             "origin_waypoint_error": origin_waypoint_error,
             "message": message,
         }
+        with self._lock:
+            self._last_result = dict(result)
+            if self._session is session:
+                self._session = None
+        return result
 
 
 _mapping_service = MappingService()

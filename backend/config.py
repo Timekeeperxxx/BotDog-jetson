@@ -109,12 +109,39 @@ class Settings(BaseSettings):
     PCD_FRAME_ID: str = 'map'
     PCD_PREVIEW_DEFAULT_POINTS: int = 100000
     PCD_PREVIEW_MAX_POINTS: int = 200000
+    # 主 3D 场景采用空间密度约束，而不是整图点数上限。
+    PCD_SCENE_PREVIEW_VOXEL_SIZE_M: float = 0.15
+    PCD_SCENE_PREVIEW_POINTS_PER_VOXEL: int = 2
+    PCD_SCENE_PREVIEW_CACHE_DIR: str = './data/pcd_scene_preview_cache'
+    PCD_SCENE_PREVIEW_CACHE_MAX_ENTRIES: int = 4
+    # Jetson 友好的分层点云缓存。源点云只在缓存构建阶段顺序扫描，
+    # 页面运行时仅按视野读取几十 KB 到数 MB 的瓦片。
+    PCD_SCENE_TILE_CACHE_DIR: str = './data/pcd_scene_tile_cache'
+    PCD_SCENE_TILE_SIZE_M: float = 16.0
+    PCD_SCENE_TILE_BALANCED_VOXEL_SIZE_M: float = 0.07
+    PCD_SCENE_TILE_BALANCED_POINTS_PER_VOXEL: int = 1
+    PCD_SCENE_TILE_PERFORMANCE_VOXEL_SIZE_M: float = 0.10
+    PCD_SCENE_TILE_PERFORMANCE_POINTS_PER_VOXEL: int = 1
+    PCD_SCENE_TILE_MAX_POINTS: int = 65536
+    PCD_SCENE_TILE_ROOT_POINTS: int = 160000
+    PCD_SCENE_TILE_BUILD_CHUNK_POINTS: int = 400000
+    PCD_SCENE_TILE_CACHE_MAX_SCENES: int = 2
+    PCD_SCENE_TILE_CACHE_MAX_BYTES: int = 12 * 1024 * 1024 * 1024
     NAV_WAYPOINT_STORE_DIR: str = './data/nav_waypoints'
     NAV_LOCALIZATION_STORE_DIR: str = './data/nav_localization'
     NAV_RUNTIME_DIR: str = './data/nav_runtime'
     NAV_TASK_STORE_DIR: str = './data/nav_tasks'
     NAV_WAYPOINT_GROUND_SNAP_MAX_DISTANCE_M: float = 1.0
     NAV_WAYPOINT_GROUND_SNAP_NEIGHBORS: int = 24
+    # 雷达在机器人 base_footprint 坐标系中的安装位姿（T_base_footprint_lidar）。
+    # 平移单位为米，姿态单位为度；俯仰角为正表示雷达朝前下倾。
+    # 建图和定位启动时会同时用于 LIO odom_robo 与 base_link -> base_footprint TF。
+    NAV_LIDAR_MOUNT_X_M: float = 0.0
+    NAV_LIDAR_MOUNT_Y_M: float = 0.0
+    NAV_LIDAR_MOUNT_Z_M: float = 0.90
+    NAV_LIDAR_MOUNT_ROLL_DEG: float = 0.0
+    NAV_LIDAR_MOUNT_PITCH_DEG: float = 19.48
+    NAV_LIDAR_MOUNT_YAW_DEG: float = 0.0
     # 建图保存成功后自动创建/更新“原点”导航点。
     # 优先使用建图启动后捕获到的初始 TF/位姿；读不到时用这里的 z/yaw 兜底。
     NAV_ORIGIN_WAYPOINT_Z: float = -0.83

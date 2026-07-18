@@ -37,9 +37,9 @@ async def shutdown_runtime_services(
     try:
         mapping_service = get_mapping_service()
         mapping_status = mapping_service.get_status()
-        if mapping_status["running"]:
+        if mapping_status["running"] or mapping_status.get("saving"):
             mapping_logger = get_logger("建图服务")
-            mapping_logger.info("应用关闭时停止建图流程")
+            mapping_logger.info("应用关闭时等待建图停止和地图保存流程完成")
             await asyncio.to_thread(mapping_service.stop)
     except Exception as exc:
         app_logger.warning("关闭建图服务时发生异常：{}", exc)

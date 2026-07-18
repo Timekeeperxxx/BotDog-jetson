@@ -11,6 +11,7 @@ from typing import Any
 
 from .config import settings
 from .logging_config import get_logger
+from .lidar_mount import lidar_mount_environment, lidar_mount_log_values
 from .repositories.json_store import atomic_write_json, read_json
 from .services_nav_localization_process import (
     _cmd_vel_estop_path,
@@ -37,6 +38,7 @@ from .services_nav_localization_scene import (
     save_current_scene,
     save_localization_pose,
 )
+from .services_radar_health import check_livox_network_preflight
 
 
 nav_logger = get_logger("导航定位服务")
@@ -171,6 +173,29 @@ def _tail_restart_log(max_bytes: int = 256_000) -> str:
             return log_file.read()
     except FileNotFoundError:
         return ""
+
+
+def _restart_startup_error_since(offset: int) -> str | None:
+    path = _restart_log_path()
+    try:
+        size = path.stat().st_size
+        read_offset = max(0, int(offset)) if size >= offset else 0
+        with path.open("r", encoding="utf-8", errors="ignore") as log_file:
+            log_file.seek(read_offset)
+            content = log_file.read()
+    except FileNotFoundError:
+        return None
+
+    messages: list[str] = []
+    marker = "[Navigation][错误]"
+    for line in content.splitlines():
+        marker_index = line.find(marker)
+        if marker_index < 0:
+            continue
+        message = line[marker_index + len(marker):].strip()
+        if message and message not in messages:
+            messages.append(message)
+    return "；".join(messages[-3:]) or None
 
 
 def inspect_relocation_initialization(timeout_s: float = 2.0) -> dict[str, Any]:
@@ -761,7 +786,7 @@ def stop_navigation_processes() -> dict[str, Any]:
         ("livox", _named_pid_path("livox"), ["ros2 launch livox_ros_driver2 msg_MID360_launch.py", "livox_ros_driver2_node"]),
         ("relocation", _named_pid_path("relocation"), ["ros2 launch super_lio relocation.py", "relocation_node"]),
         ("global_planner", _named_pid_path("global_planner"), ["ros2 launch global_planner path_planning_with_polygon.launch", "global_planner_node"]),
-        ("pcl_publisher", _named_pid_path("pcl_publisher"), ["/nav_bringup/nav_pcd_map_publisher.py"]),
+        ("pcl_publisher", _named_pid_path("pcl_publisher"), ["/nav_bringup/nav_pcd_map_publisher"]),
         ("p2p_move_base", _named_pid_path("p2p_move_base"), ["ros2 launch p2p_move_base go2_localization_launch.py", "clicked2goal.py", "p2p_move_base"]),
         ("scan_planner", _named_pid_path("scan_planner"), ["scan_planner_node"]),
         ("scan_controller", _named_pid_path("scan_controller"), ["closed_loop_controller"]),
@@ -862,6 +887,12 @@ def restart_navigation_localization() -> dict[str, Any]:
     if not script_path.is_file():
         raise FileNotFoundError(f"重启脚本不是文件: {script_path}")
 
+    radar_preflight = check_livox_network_preflight()
+    if not radar_preflight.get("ok"):
+        message = str(radar_preflight.get("message") or "雷达连接异常")
+        nav_logger.warning("导航定位启动前雷达检查失败：{}", message)
+        raise RuntimeError(message)
+
     with _restart_lock:
         scene = load_current_scene(strict=False)
         log_offset = get_restart_log_offset()
@@ -881,6 +912,13 @@ def restart_navigation_localization() -> dict[str, Any]:
         )
 
         try:
+            process_env = lidar_mount_environment()
+            mount_values = lidar_mount_log_values()
+        except ValueError as exc:
+            raise RuntimeError(f"雷达安装标定无效，拒绝启动导航定位：{exc}") from exc
+        nav_logger.info("导航定位使用雷达安装标定：{}", mount_values)
+
+        try:
             _restart_proc = subprocess.Popen(
                 ["bash", str(script_path), scene["scene_dir"]],
                 stdout=subprocess.PIPE,
@@ -889,17 +927,20 @@ def restart_navigation_localization() -> dict[str, Any]:
                 bufsize=1,
                 start_new_session=True,
                 cwd=str(_project_root()),
+                env=process_env,
             )
         except Exception:
             raise
 
+        output_thread: threading.Thread | None = None
         if _restart_proc.stdout is not None:
-            threading.Thread(
+            output_thread = threading.Thread(
                 target=_pump_restart_output,
                 args=(_restart_proc, log_path),
                 daemon=True,
                 name="restart-localization-log-pump",
-            ).start()
+            )
+            output_thread.start()
 
         # 上一轮 adapter/launch 可能仍在退出。若直接读取 PID 文件，会把旧 PID
         # 和旧 navigation_ready.json 当成本轮结果返回给前端。等待 navigation.pid
@@ -929,10 +970,17 @@ def restart_navigation_localization() -> dict[str, Any]:
             "nav_status_monitor_pid": _named_pid_path("nav_status_monitor"),
             "waypoint_navigator_pid": _named_pid_path("waypoint_navigator"),
         }
-        child_pids = _wait_for_pid_files(pid_files, timeout_s=20.0)
+        child_pids = _wait_for_pid_files(
+            pid_files,
+            timeout_s=20.0,
+            abort_if=lambda: _restart_proc.poll() is not None,
+        )
         unified_mode = "navigation_pid" in child_pids or "scan_planner_pid" in child_pids
         if unified_mode:
-            ready_deadline = time.monotonic() + float(os.environ.get("NAV_RESTART_READY_WAIT_S", "540"))
+            default_ready_wait_s = float(os.environ.get("NAV_READY_TIMEOUT_SECONDS", "120")) + 10.0
+            ready_deadline = time.monotonic() + float(
+                os.environ.get("NAV_RESTART_READY_WAIT_S", str(default_ready_wait_s))
+            )
             while not _navigation_ready_path().exists() and time.monotonic() < ready_deadline:
                 if _restart_proc.poll() is not None:
                     break
@@ -949,7 +997,13 @@ def restart_navigation_localization() -> dict[str, Any]:
         if not restart_running:
             startup_ready = False
             navigation_ready = False
-            errors.append("导航重启脚本已提前退出")
+            if output_thread is not None:
+                output_thread.join(timeout=1.0)
+            startup_error = _restart_startup_error_since(log_offset)
+            errors = [startup_error or "导航重启脚本已提前退出"]
+            error_message = errors[0]
+            nav_logger.error("导航定位重启失败：{}", error_message)
+            raise RuntimeError(error_message)
         health_result["health"]["restart_running"] = restart_running
         health_result["health"]["errors"] = errors
         if navigation_ready:

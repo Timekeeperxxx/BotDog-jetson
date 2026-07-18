@@ -98,3 +98,31 @@ def test_hot_auto_track_setting_updates_settings_and_service(monkeypatch) -> Non
         }
     finally:
         settings.AUTO_TRACK_VX = original_vx
+
+
+def test_lidar_mount_calibration_is_admin_managed_and_applies_to_next_start() -> None:
+    configs = ConfigService.DEFAULT_CONFIGS
+    expected = {
+        "nav_lidar_mount_x_m",
+        "nav_lidar_mount_y_m",
+        "nav_lidar_mount_z_m",
+        "nav_lidar_mount_roll_deg",
+        "nav_lidar_mount_pitch_deg",
+        "nav_lidar_mount_yaw_deg",
+    }
+
+    assert expected.issubset(configs)
+    assert all(configs[key]["category"] == "navigation" for key in expected)
+    assert all(configs[key]["is_hot_reloadable"] is True for key in expected)
+
+    original_height = settings.NAV_LIDAR_MOUNT_Z_M
+    try:
+        result = _apply_runtime_update("nav_lidar_mount_z_m", "0.85")
+        assert settings.NAV_LIDAR_MOUNT_Z_M == 0.85
+        assert result == {
+            "applied": True,
+            "target": "navigation",
+            "message": "已载入，下一次建图或定位启动时生效",
+        }
+    finally:
+        settings.NAV_LIDAR_MOUNT_Z_M = original_height

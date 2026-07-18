@@ -22,6 +22,15 @@ from backend.services_nav_state import get_nav_state
 from backend.services_ros_nav import RosNavBridge
 
 
+@pytest.fixture(autouse=True)
+def _connected_navigation_radar(monkeypatch):
+    monkeypatch.setattr(
+        services_nav_localization,
+        "check_livox_network_preflight",
+        lambda: {"ok": True, "message": "雷达物理链路正常"},
+    )
+
+
 def _make_pid_paths(root: Path) -> dict[str, Path]:
     return {
         "livox_pid": root / "livox.pid",
@@ -75,6 +84,20 @@ def test_wait_for_pid_files_returns_none_for_missing_files(tmp_path):
     assert result["global_planner_pid"] is None
     assert result["p2p_move_base_pid"] is None
     assert result["cmd_vel_pid"] is None
+
+
+def test_wait_for_pid_files_stops_when_restart_script_exits(tmp_path):
+    pid_paths = _make_pid_paths(tmp_path)
+    started_at = time.monotonic()
+
+    result = services_nav_localization._wait_for_pid_files(
+        pid_paths,
+        timeout_s=5.0,
+        abort_if=lambda: True,
+    )
+
+    assert all(pid is None for pid in result.values())
+    assert time.monotonic() - started_at < 0.5
 
 
 def test_localization_restart_response_preserves_initialpose_log_offset():
@@ -133,6 +156,26 @@ def test_inspect_relocation_initialization_unknown_without_marker(monkeypatch, t
 
     assert result["mode"] == "unknown"
     assert result["matched_map"] is None
+
+
+def test_restart_startup_error_only_returns_current_navigation_root_cause(monkeypatch, tmp_path):
+    log_path = tmp_path / "restart_navigation_localization.log"
+    old_content = "[Navigation][错误] 上一轮错误\n"
+    log_path.write_text(
+        old_content
+        + "[Navigation] map.pcd 格式检查通过\n"
+        + "[Navigation][错误] PCD 动态内存预检：预计导航峰值=8.00 GiB\n"
+        + "[Navigation][错误] 导航启动需要至少 12.00 GiB 可用内存\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(services_nav_localization, "_restart_log_path", lambda: log_path)
+
+    message = services_nav_localization._restart_startup_error_since(len(old_content))
+
+    assert message is not None
+    assert "上一轮错误" not in message
+    assert "预计导航峰值=8.00 GiB" in message
+    assert "导航启动需要至少 12.00 GiB" in message
 
 
 @pytest.mark.parametrize(
@@ -524,7 +567,7 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
     monkeypatch.setattr(
         services_nav_localization,
         "_wait_for_pid_files",
-        lambda paths, timeout_s=20.0: {
+        lambda paths, timeout_s=20.0, abort_if=None: {
             "livox_pid": 101,
             "relocation_pid": 102,
             "global_planner_pid": 103,
@@ -553,6 +596,10 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
 
     assert popen_calls
     assert popen_calls[0]["args"] == ["bash", str(script_path), str(scene_dir)]
+    process_env = popen_calls[0]["kwargs"]["env"]
+    assert process_env["NAV_LIDAR_MOUNT_Z_M"] == "0.9"
+    assert process_env["NAV_LIDAR_MOUNT_PITCH_DEG"] == "19.48"
+    assert process_env["NAV_LIDAR_MOUNT_X_M"] == "0.0"
     assert result["pid"] == 999
     assert result["scene_id"] == "Scene1_测试"
     assert str(result["map_pcd"]).endswith("map.pcd")
@@ -575,6 +622,28 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
     assert result["process_pids"]["cmd_vel"] is None
     assert result["health"]["cmd_vel_running"] is False
     assert result["message"] == "已启动重启脚本，导航可用"
+
+
+def test_restart_navigation_localization_rejects_disconnected_radar_before_launch(monkeypatch, tmp_path):
+    script_path = tmp_path / "restart_navigation_localization.sh"
+    script_path.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    monkeypatch.setattr(services_nav_localization, "_restart_script_path", lambda: script_path)
+    monkeypatch.setattr(
+        services_nav_localization,
+        "check_livox_network_preflight",
+        lambda: {
+            "ok": False,
+            "message": "雷达未连接：网卡 eno1 未建立物理链路，请检查 Livox MID360 供电和网线",
+        },
+    )
+
+    def unexpected_popen(*_args, **_kwargs):
+        raise AssertionError("雷达预检失败后不应启动导航子进程")
+
+    monkeypatch.setattr(services_nav_localization.subprocess, "Popen", unexpected_popen)
+
+    with pytest.raises(RuntimeError, match="网卡 eno1 未建立物理链路"):
+        services_nav_localization.restart_navigation_localization()
 
 
 def test_restart_navigation_localization_marks_missing_ground_unavailable(monkeypatch, tmp_path):
@@ -611,7 +680,7 @@ def test_restart_navigation_localization_marks_missing_ground_unavailable(monkey
     monkeypatch.setattr(
         services_nav_localization,
         "_wait_for_pid_files",
-        lambda paths, timeout_s=20.0: {
+        lambda paths, timeout_s=20.0, abort_if=None: {
             "livox_pid": 101,
             "relocation_pid": 102,
             "global_planner_pid": 103,
@@ -675,7 +744,7 @@ def test_restart_navigation_localization_detects_cmd_vel_test_publisher_residual
     monkeypatch.setattr(
         services_nav_localization,
         "_wait_for_pid_files",
-        lambda paths, timeout_s=20.0: {
+        lambda paths, timeout_s=20.0, abort_if=None: {
             "livox_pid": 101,
             "relocation_pid": 102,
             "global_planner_pid": 103,
@@ -758,7 +827,7 @@ def test_restart_navigation_localization_marks_missing_pid_false(monkeypatch, tm
     monkeypatch.setattr(
         services_nav_localization,
         "_wait_for_pid_files",
-        lambda paths, timeout_s=20.0: {
+        lambda paths, timeout_s=20.0, abort_if=None: {
             "livox_pid": 101,
             "relocation_pid": 102,
             "global_planner_pid": 103,
@@ -1001,6 +1070,9 @@ def test_restart_script_prefers_exact_scene_pcd_files():
     assert 'find_scene_pcd_file "$SCENE_DIR" "map.pcd" "map.pcd"' in adapter
     assert 'find_scene_pcd_file "$SCENE_DIR" "ground.pcd" "*ground.pcd"' in adapter
     assert '"footprint_fill.pcd|fill_footpoint.pcd"' in adapter
+    assert "navigation_failure_message" in adapter
+    assert "ros2 topic echo /livox/lidar --once" in adapter
+    assert 'NAV_READY_TIMEOUT_SECONDS="${NAV_READY_TIMEOUT_SECONDS:-120}"' in adapter
 
 
 def test_restart_navigation_script_resets_backend_python_and_qt_env():
@@ -1049,7 +1121,8 @@ def test_restart_navigation_script_uses_single_instance_and_unified_nodes():
     assert "stop_navigation_runtime_residuals 5" in adapter
     assert "assert_single_navigation_runtime" in adapter
     assert "navigation_runtime_process_patterns" in common
-    assert "nav_pcd_map_publisher.py" in common
+    assert "nav_pcd_map_publisher" in common
+    assert "nav_pcd_map_publisher.py" not in common
     assert "scan_initial_path_adapter.py" in common
     assert "scan_tf_pose_publisher.py" in common
     assert "waypoint_navigator_from_json.py" in common
@@ -1057,7 +1130,7 @@ def test_restart_navigation_script_uses_single_instance_and_unified_nodes():
     assert "stop_navigation_runtime_residuals 5" in stop_adapter
 
 
-def test_restart_navigation_script_scopes_ready_and_guards_pcd_capacity():
+def test_restart_navigation_script_scopes_ready_and_guards_pcd_memory():
     _, wrapper_common, adapter = _navigation_adapter_sources()
     botdog_root = Path(__file__).resolve().parents[1]
     common = (
@@ -1072,10 +1145,100 @@ def test_restart_navigation_script_scopes_ready_and_guards_pcd_capacity():
     assert '\\"run_id\\":\\"$RUN_ID\\"' in adapter
     assert 'validate_navigation_pcd_input "$MAP_PCD" "map.pcd"' in adapter
     assert 'validate_navigation_pcd_input "$GROUND_PCD" "ground.pcd"' in adapter
-    assert "NAV_MAX_RAW_PCD_BYTES" in common
-    assert "NAV_MAX_RAW_PCD_POINTS" in common
+    assert "validate_navigation_pcd_memory_budget" in adapter
+    assert "NAV_PCD_MEMORY_RESERVE_BYTES" in common
+    assert "MemAvailable:" in common
+    assert "NAV_MAX_RAW_PCD_BYTES" not in common
+    assert "NAV_MAX_RAW_PCD_POINTS" not in common
     assert 'NAV_ENABLE_SCAN_PLANNER="${NAV_ENABLE_SCAN_PLANNER:-true}"' in wrapper_common
     assert 'NAV_ENABLE_DYNAMIC_AVOIDANCE="${NAV_ENABLE_DYNAMIC_AVOIDANCE:-true}"' in wrapper_common
+
+
+@pytest.mark.parametrize(
+    ("available_kib", "expected_code", "expected_message"),
+    [
+        (10 * 1024 * 1024, 0, "检查通过"),
+        (6 * 1024 * 1024, 1, "导航启动需要至少"),
+    ],
+)
+def test_navigation_pcd_memory_budget_uses_current_available_memory(
+    tmp_path: Path,
+    available_kib: int,
+    expected_code: int,
+    expected_message: str,
+):
+    botdog_root = Path(__file__).resolve().parents[1]
+    common_path = (
+        botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "common.sh"
+    )
+    pcd_template = """# .PCD v0.7 - Point Cloud Data file format
+VERSION 0.7
+FIELDS x y z intensity
+SIZE 4 4 4 4
+TYPE F F F F
+COUNT 1 1 1 1
+WIDTH {points}
+HEIGHT 1
+POINTS {points}
+DATA binary
+"""
+    map_pcd = tmp_path / "map.pcd"
+    ground_pcd = tmp_path / "ground.pcd"
+    footprint_pcd = tmp_path / "footprint_fill.pcd"
+    map_pcd.write_text(pcd_template.format(points=27_377_647), encoding="ascii")
+    ground_pcd.write_text(pcd_template.format(points=3_993_965), encoding="ascii")
+    footprint_pcd.write_text(pcd_template.format(points=331_955), encoding="ascii")
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text(
+        f"MemTotal:       {16 * 1024 * 1024} kB\n"
+        f"MemAvailable:   {available_kib} kB\n",
+        encoding="ascii",
+    )
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "NAV_ENV_FILE": str(tmp_path / "missing.env"),
+            "NAV_MEMINFO_FILE": str(meminfo),
+            "ROBOT_NAV_MAP_ROOT": str(tmp_path / "maps"),
+            "ROBOT_NAV_LOG_ROOT": str(tmp_path / "logs"),
+            "ROBOT_NAV_RUNTIME_ROOT": str(tmp_path / "runtime"),
+        }
+    )
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; validate_navigation_pcd_memory_budget "$2" "$3" "$4"',
+            "pcd-memory-test",
+            str(common_path),
+            str(map_pcd),
+            str(ground_pcd),
+            str(footprint_pcd),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == expected_code
+    assert expected_message in result.stdout + result.stderr
+
+
+def test_navigation_uses_cpp_pcd_publisher_without_fixed_input_limits():
+    botdog_root = Path(__file__).resolve().parents[1]
+    bringup = botdog_root.parent / "Navigation" / "src" / "nav_bringup"
+    publisher = (bringup / "src" / "nav_pcd_map_publisher.cpp").read_text(encoding="utf-8")
+    launch = (bringup / "launch" / "planning.launch.py").read_text(encoding="utf-8")
+    config = (bringup / "config" / "global_planner.yaml").read_text(encoding="utf-8")
+
+    assert 'executable="nav_pcd_map_publisher"' in launch
+    assert "build_voxel_message" in publisher
+    assert "std::unordered_map<VoxelKey" in publisher
+    assert "每次只保留当前层" in publisher
+    assert "max_input_bytes" not in config
+    assert "max_input_points" not in config
 
 
 def test_global_planner_start_connection_matches_hybrid_cloud_resolution():

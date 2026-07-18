@@ -9,6 +9,7 @@ import pytest
 
 from backend import pcd_reader
 from backend import pcd_ground
+from backend import pcd_tiles
 from backend import services_pcd_maps as pcd_services
 from backend.services_nav_localization import save_localization_pose
 from backend.services_nav_tasks import list_nav_tasks, save_nav_task
@@ -58,6 +59,28 @@ DATA binary
         f.write(header.encode("utf-8"))
         for x, y, z, histogram in points:
             f.write(struct.pack("<ffffff", x, y, z, *histogram))
+
+
+def write_binary_pcd(
+    path: Path,
+    points: list[tuple[float, float, float, float]],
+) -> None:
+    header = f"""# .PCD v0.7 - Point Cloud Data file format
+VERSION 0.7
+FIELDS x y z intensity
+SIZE 4 4 4 4
+TYPE F F F F
+COUNT 1 1 1 1
+WIDTH {len(points)}
+HEIGHT 1
+VIEWPOINT 0 0 0 1 0 0 0
+POINTS {len(points)}
+DATA binary
+"""
+    with path.open("wb") as f:
+        f.write(header.encode("utf-8"))
+        for point in points:
+            f.write(struct.pack("<ffff", *point))
 
 
 def test_pcd_reader_handles_binary_count_fields_and_bounds(tmp_path):
@@ -268,6 +291,210 @@ def test_scene_binary_wire_format_preserves_all_preview_points(monkeypatch, tmp_
     assert sum(
         layer["byte_length"] for layer in header["layers"].values() if layer is not None
     ) == 4 * 3 * 4
+
+
+def test_scene_binary_without_global_limit_preserves_sparse_points(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    scene_root.mkdir()
+    scene = scene_root / "Scene10_全量点云"
+    scene.mkdir()
+    source_points = [
+        (float(index), float(index + 1), float(index + 2), float(index + 3))
+        for index in range(7)
+    ]
+    write_binary_pcd(scene / "map.pcd", source_points)
+    write_binary_pcd(scene / "ground.pcd", source_points)
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr(pcd_services.settings, "PCD_PREVIEW_DEFAULT_POINTS", 2)
+    monkeypatch.setattr(pcd_services.settings, "PCD_PREVIEW_MAX_POINTS", 2)
+    monkeypatch.setattr(pcd_services.settings, "PCD_SCENE_PREVIEW_VOXEL_SIZE_M", 0.15)
+    monkeypatch.setattr(pcd_services.settings, "PCD_SCENE_PREVIEW_POINTS_PER_VOXEL", 2)
+
+    payload = pcd_services.get_scene_preview_binary("Scene10_全量点云")
+    header_size = struct.unpack_from("<I", payload, len(pcd_services.PCD_SCENE_BINARY_MAGIC))[0]
+    header_start = len(pcd_services.PCD_SCENE_BINARY_MAGIC) + 4
+    header = json.loads(payload[header_start:header_start + header_size])
+
+    assert header["layers"]["wall"]["point_count"] == len(source_points)
+    assert header["layers"]["ground"]["point_count"] == len(source_points)
+    assert header["layers"]["wall"]["byte_length"] == len(source_points) * 3 * 4
+    assert header["layers"]["ground"]["byte_length"] == len(source_points) * 3 * 4
+
+
+def test_scene_binary_limits_density_per_voxel(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    scene_root.mkdir()
+    scene = scene_root / "Scene11_空间密度"
+    scene.mkdir()
+    clustered_points = [
+        (0.01, 0.01, 0.01, 1.0),
+        (0.02, 0.02, 0.02, 2.0),
+        (0.03, 0.03, 0.03, 3.0),
+        (0.04, 0.04, 0.04, 4.0),
+        (0.05, 0.05, 0.05, 5.0),
+        (1.00, 1.00, 1.00, 6.0),
+        (2.00, 2.00, 2.00, 7.0),
+    ]
+    write_binary_pcd(scene / "map.pcd", clustered_points)
+    write_binary_pcd(scene / "ground.pcd", clustered_points)
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr(pcd_services.settings, "PCD_SCENE_PREVIEW_VOXEL_SIZE_M", 0.15)
+    monkeypatch.setattr(pcd_services.settings, "PCD_SCENE_PREVIEW_POINTS_PER_VOXEL", 2)
+
+    payload = pcd_services.get_scene_preview_binary("Scene11_空间密度")
+    header_size = struct.unpack_from("<I", payload, len(pcd_services.PCD_SCENE_BINARY_MAGIC))[0]
+    header_start = len(pcd_services.PCD_SCENE_BINARY_MAGIC) + 4
+    header = json.loads(payload[header_start:header_start + header_size])
+
+    assert header["layers"]["wall"]["point_count"] == 4
+    assert header["layers"]["ground"]["point_count"] == 4
+    wall_header = header["layers"]["wall"]
+    assert wall_header["intensity_encoding"] == "uint8_percentile_2_98"
+    assert wall_header["intensity_byte_length"] == wall_header["point_count"]
+    point_data_offset = header_start + header_size
+    intensity_start = point_data_offset + wall_header["intensity_byte_offset"]
+    intensity = payload[intensity_start:intensity_start + wall_header["intensity_byte_length"]]
+    assert len(intensity) == 4
+    assert list(intensity) == sorted(intensity)
+
+
+def test_scene_binary_cache_key_tracks_source_version(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    cache_root = tmp_path / "preview-cache"
+    scene_root.mkdir()
+    scene = scene_root / "Scene12_缓存"
+    scene.mkdir()
+    map_path = scene / "map.pcd"
+    ground_path = scene / "ground.pcd"
+    write_ascii_pcd(map_path, [(0.0, 0.0, 0.0)])
+    write_ascii_pcd(ground_path, [(0.0, 0.0, 0.0)])
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr(pcd_services.settings, "PCD_SCENE_PREVIEW_CACHE_DIR", str(cache_root))
+    monkeypatch.setattr(pcd_services.settings, "PCD_SCENE_PREVIEW_CACHE_MAX_ENTRIES", 4)
+    monkeypatch.setattr(pcd_services.settings, "PCD_SCENE_PREVIEW_VOXEL_SIZE_M", 0.15)
+    monkeypatch.setattr(pcd_services.settings, "PCD_SCENE_PREVIEW_POINTS_PER_VOXEL", 2)
+
+    first_path = pcd_services.prepare_scene_preview_binary("Scene12_缓存")
+    same_path = pcd_services.prepare_scene_preview_binary("Scene12_缓存")
+    write_ascii_pcd(ground_path, [(0.0, 0.0, 0.0), (1.0, 1.0, 1.0)])
+    next_path = pcd_services.prepare_scene_preview_binary("Scene12_缓存")
+
+    assert first_path == same_path
+    assert first_path.is_file()
+    assert next_path.is_file()
+    assert next_path != first_path
+
+
+def test_iter_pcd_chunks_keeps_xyz_and_raw_intensity(tmp_path):
+    pcd_path = tmp_path / "chunked.pcd"
+    source_points = [
+        (float(index), float(index + 1), float(index + 2), float(index * 10))
+        for index in range(7)
+    ]
+    write_binary_pcd(pcd_path, source_points)
+    header, data_start_offset = pcd_reader.parse_pcd_header(pcd_path)
+
+    chunks = list(pcd_reader.iter_pcd_xyz_intensity_float32(
+        pcd_path,
+        header,
+        data_start_offset,
+        chunk_points=3,
+    ))
+
+    assert [len(points) for points, _ in chunks] == [3, 3, 1]
+    assert [float(value) for _, intensity in chunks for value in intensity] == [
+        point[3] for point in source_points
+    ]
+    assert [float(value) for points, _ in chunks for value in points[:, 0]] == [
+        point[0] for point in source_points
+    ]
+
+
+def test_scene_tile_manifest_builds_progressive_payloads(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    cache_root = tmp_path / "tile-cache"
+    scene_root.mkdir()
+    scene = scene_root / "Scene13_分层瓦片"
+    scene.mkdir()
+    wall_points = [
+        (0.01, 0.02, 0.03, 10.0),
+        (0.10, 0.20, 0.30, 20.0),
+        (1.10, 0.20, 0.40, 30.0),
+        (2.10, 0.20, 0.50, 40.0),
+        (4.10, 0.20, 0.60, 50.0),
+    ]
+    ground_points = [
+        (0.0, 0.0, -0.8, 1.0),
+        (2.0, 0.0, -0.8, 2.0),
+        (4.0, 0.0, -0.8, 3.0),
+    ]
+    write_binary_pcd(scene / "map.pcd", wall_points)
+    write_binary_pcd(scene / "ground.pcd", ground_points)
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr(pcd_tiles.settings, "SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr(pcd_tiles.settings, "PCD_SCENE_TILE_CACHE_DIR", str(cache_root))
+    monkeypatch.setattr(pcd_tiles.settings, "PCD_SCENE_TILE_SIZE_M", 2.0)
+    monkeypatch.setattr(pcd_tiles.settings, "PCD_SCENE_TILE_BALANCED_VOXEL_SIZE_M", 0.07)
+    monkeypatch.setattr(pcd_tiles.settings, "PCD_SCENE_TILE_BALANCED_POINTS_PER_VOXEL", 1)
+    monkeypatch.setattr(pcd_tiles.settings, "PCD_SCENE_TILE_PERFORMANCE_VOXEL_SIZE_M", 0.10)
+    monkeypatch.setattr(pcd_tiles.settings, "PCD_SCENE_TILE_PERFORMANCE_POINTS_PER_VOXEL", 1)
+    monkeypatch.setattr(pcd_tiles.settings, "PCD_SCENE_TILE_MAX_POINTS", 4096)
+    monkeypatch.setattr(pcd_tiles.settings, "PCD_SCENE_TILE_ROOT_POINTS", 10000)
+    monkeypatch.setattr(pcd_tiles.settings, "PCD_SCENE_TILE_BUILD_CHUNK_POINTS", 3)
+
+    manifest_path = pcd_tiles.prepare_scene_tile_manifest("Scene13_分层瓦片")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["version"] == pcd_tiles.PCD_TILE_CACHE_VERSION
+    assert manifest["scene_id"] == "Scene13_分层瓦片"
+    assert {item["role"] for item in manifest["root_tiles"]} == {"ground", "wall"}
+    assert {item["role"] for item in manifest["nodes"]} == {"ground", "wall"}
+    wall_node = next(item for item in manifest["nodes"] if item["role"] == "wall")
+    assert wall_node["performance"]["has_intensity"] is True
+    assert wall_node["balanced"]["has_intensity"] is True
+    assert wall_node["original"]["byte_length"] == wall_node["original"]["point_count"] * 13
+    wall_stats = manifest["stats"]["wall"]
+    assert wall_stats["original_points"] == len(wall_points)
+    assert wall_stats["performance_points"] <= wall_stats["balanced_points"] <= wall_stats["original_points"]
+
+    tile_path = pcd_tiles.resolve_scene_tile_file(
+        "Scene13_分层瓦片",
+        wall_node["original"]["file"],
+    )
+    payload = tile_path.read_bytes()
+    point_count = wall_node["original"]["point_count"]
+    first_three_point = struct.unpack_from("<fff", payload, 0)
+    # Payload is already transformed to Three.js coordinates: (x, z, -y).
+    assert first_three_point == pytest.approx((0.01, 0.03, -0.02))
+    assert len(payload) == point_count * 13
+
+
+def test_scene_tile_cache_key_tracks_source_version(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    cache_root = tmp_path / "tile-cache"
+    scene_root.mkdir()
+    scene = scene_root / "Scene14_瓦片缓存"
+    scene.mkdir()
+    map_path = scene / "map.pcd"
+    ground_path = scene / "ground.pcd"
+    write_binary_pcd(map_path, [(0.0, 0.0, 0.0, 1.0)])
+    write_binary_pcd(ground_path, [(0.0, 0.0, 0.0, 1.0)])
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr(pcd_tiles.settings, "SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr(pcd_tiles.settings, "PCD_SCENE_TILE_CACHE_DIR", str(cache_root))
+    monkeypatch.setattr(pcd_tiles.settings, "PCD_SCENE_TILE_BUILD_CHUNK_POINTS", 1000)
+
+    first = pcd_tiles.prepare_scene_tile_manifest("Scene14_瓦片缓存")
+    same = pcd_tiles.prepare_scene_tile_manifest("Scene14_瓦片缓存")
+    write_binary_pcd(ground_path, [
+        (0.0, 0.0, 0.0, 1.0),
+        (1.0, 1.0, 1.0, 2.0),
+    ])
+    changed = pcd_tiles.prepare_scene_tile_manifest("Scene14_瓦片缓存")
+
+    assert first == same
+    assert changed != first
+    assert changed.is_file()
 
 
 def test_snap_xy_to_ground_fits_local_ground_plane(monkeypatch, tmp_path):

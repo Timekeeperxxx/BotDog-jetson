@@ -9,6 +9,7 @@
 """
 
 import json
+from math import isfinite
 from typing import Any, Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -696,9 +697,11 @@ class ConfigService:
                 raise ValueError(f"配置值 {value} 必须是整数") from None
         elif value_type == "float":
             try:
-                float(value)
+                numeric_value = float(value)
+                if not isfinite(numeric_value):
+                    raise ValueError
             except (TypeError, ValueError):
-                raise ValueError(f"配置值 {value} 必须是数字") from None
+                raise ValueError(f"配置值 {value} 必须是有限数字") from None
 
         if key not in self.VALIDATION_RULES:
             return

@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import struct
 from pathlib import Path
+from collections.abc import Iterator
 from typing import Any
 
 try:
@@ -426,3 +427,404 @@ def read_pcd_preview(
     _preview_cache[cache_key] = result
     pcd_logger.debug("点云预览已缓存：{}，采样点数={}", path.name, len(result[0]))
     return result
+
+
+def read_pcd_xyz_float32(
+    path: Path,
+    header: dict[str, list[str]],
+    data_start_offset: int,
+    max_points: int | None = None,
+    voxel_size_m: float | None = None,
+    max_points_per_voxel: int = 1,
+) -> tuple[Any, dict[str, float]]:
+    points, _intensity, bounds = read_pcd_xyz_intensity_uint8(
+        path=path,
+        header=header,
+        data_start_offset=data_start_offset,
+        max_points=max_points,
+        voxel_size_m=voxel_size_m,
+        max_points_per_voxel=max_points_per_voxel,
+    )
+    return points, bounds
+
+
+def iter_pcd_xyz_intensity_float32(
+    path: Path,
+    header: dict[str, list[str]],
+    data_start_offset: int,
+    chunk_points: int = 400_000,
+) -> Iterator[tuple[Any, Any | None]]:
+    """Yield finite XYZ and optional raw intensity without loading a PCD whole.
+
+    Navigation scenes may contain multi-gigabyte PCD files.  The tile builder
+    therefore scans binary files through a memmap and ASCII files line by line.
+    Returned arrays are independent contiguous float32 chunks and are safe to
+    process after the iterator advances.
+    """
+    if not _NUMPY_AVAILABLE:
+        raise PcdMapError("分层点云构建需要 NumPy")
+
+    normalized = normalize_pcd_header(header)
+    chunk_size = max(1, int(chunk_points))
+    data_type = normalized["data_type"]
+    fields = header["FIELDS"]
+    field_lookup = {name: index for index, name in enumerate(fields)}
+    intensity_index = field_lookup.get("intensity")
+
+    def sanitize(
+        x_values: Any,
+        y_values: Any,
+        z_values: Any,
+        intensity_values: Any | None,
+    ) -> tuple[Any, Any | None] | None:
+        x = np.asarray(x_values, dtype=np.float32).reshape((-1,))
+        y = np.asarray(y_values, dtype=np.float32).reshape((-1,))
+        z = np.asarray(z_values, dtype=np.float32).reshape((-1,))
+        valid = (
+            np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+            & (np.abs(x) < 1e6) & (np.abs(y) < 1e6) & (np.abs(z) < 1e6)
+        )
+        if not np.any(valid):
+            return None
+        points = np.empty((int(np.count_nonzero(valid)), 3), dtype="<f4")
+        points[:, 0] = x[valid]
+        points[:, 1] = y[valid]
+        points[:, 2] = z[valid]
+        intensity = None
+        if intensity_values is not None:
+            raw_intensity = np.asarray(intensity_values, dtype=np.float32).reshape((-1,))
+            intensity = np.ascontiguousarray(raw_intensity[valid], dtype="<f4")
+        return points, intensity
+
+    if data_type == "ascii":
+        x_index = field_lookup["x"]
+        y_index = field_lookup["y"]
+        z_index = field_lookup["z"]
+        buffered: list[list[float]] = []
+        with path.open("rb") as source:
+            source.seek(data_start_offset)
+            for raw_line in source:
+                values = raw_line.decode("utf-8", errors="ignore").strip().split()
+                if len(values) < len(fields):
+                    continue
+                try:
+                    row = [
+                        float(values[x_index]),
+                        float(values[y_index]),
+                        float(values[z_index]),
+                    ]
+                    if intensity_index is not None:
+                        row.append(float(values[intensity_index]))
+                except (ValueError, IndexError):
+                    continue
+                buffered.append(row)
+                if len(buffered) < chunk_size:
+                    continue
+                packed = np.asarray(buffered, dtype=np.float32)
+                result = sanitize(
+                    packed[:, 0],
+                    packed[:, 1],
+                    packed[:, 2],
+                    packed[:, 3] if intensity_index is not None else None,
+                )
+                buffered = []
+                if result is not None:
+                    yield result
+        if buffered:
+            packed = np.asarray(buffered, dtype=np.float32)
+            result = sanitize(
+                packed[:, 0],
+                packed[:, 1],
+                packed[:, 2],
+                packed[:, 3] if intensity_index is not None else None,
+            )
+            if result is not None:
+                yield result
+        return
+
+    if data_type != "binary":
+        raise PcdMapError(f"当前分层点云不支持 DATA {data_type} PCD")
+
+    sizes = [int(value) for value in header.get("SIZE", [])]
+    types = [value.upper() for value in header.get("TYPE", [])]
+    counts = [int(value) for value in header.get("COUNT", ["1"] * len(fields))]
+    if not (len(fields) == len(sizes) == len(types) == len(counts)):
+        raise PcdMapError("PCD header 中 FIELDS/SIZE/TYPE/COUNT 数量不一致")
+    type_map: dict[str, dict[int, Any]] = {
+        "F": {4: np.float32, 8: np.float64},
+        "I": {1: np.int8, 2: np.int16, 4: np.int32, 8: np.int64},
+        "U": {1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64},
+    }
+    dtype_fields: list[tuple[Any, ...]] = []
+    try:
+        for field, size, scalar_type, count in zip(fields, sizes, types, counts):
+            value_type = type_map[scalar_type][size]
+            dtype_fields.append((field, value_type) if count == 1 else (field, value_type, (count,)))
+        record_dtype = np.dtype(dtype_fields)
+    except KeyError as exc:
+        raise PcdMapError("PCD binary 字段类型不受支持") from exc
+
+    point_count = max(0, int(normalized["point_count"]))
+    available_bytes = max(0, path.stat().st_size - data_start_offset)
+    readable_points = min(point_count, available_bytes // record_dtype.itemsize)
+    if readable_points <= 0:
+        raise PcdMapError("PCD 文件没有可解析点")
+    records = np.memmap(
+        path,
+        dtype=record_dtype,
+        mode="r",
+        offset=data_start_offset,
+        shape=(readable_points,),
+    )
+    try:
+        for start in range(0, readable_points, chunk_size):
+            selected = records[start:min(readable_points, start + chunk_size)]
+            result = sanitize(
+                selected["x"],
+                selected["y"],
+                selected["z"],
+                selected["intensity"] if "intensity" in fields else None,
+            )
+            if result is not None:
+                yield result
+    finally:
+        del records
+
+
+def read_pcd_xyz_intensity_uint8(
+    path: Path,
+    header: dict[str, list[str]],
+    data_start_offset: int,
+    max_points: int | None = None,
+    voxel_size_m: float | None = None,
+    max_points_per_voxel: int = 1,
+) -> tuple[Any, Any | None, dict[str, float]]:
+    """Read XYZ and, when available, percentile-normalized uint8 intensity.
+
+    ``max_points=None`` means all valid points. This path is intended for the
+    binary HTTP response so full PCD files do not expand into millions of
+    Python lists before being encoded again.
+    """
+    if not _NUMPY_AVAILABLE:
+        normalized = normalize_pcd_header(header)
+        point_limit = max(1, normalized["point_count"]) if max_points is None else max(1, max_points)
+        points, bounds = read_pcd_preview(
+            path=path,
+            header=header,
+            data_start_offset=data_start_offset,
+            max_points=point_limit,
+        )
+        return points, None, bounds
+
+    normalized = normalize_pcd_header(header)
+    data_type = normalized["data_type"]
+    point_limit = None if max_points is None else max(1, max_points)
+
+    if data_type != "binary":
+        effective_limit = max(1, normalized["point_count"]) if point_limit is None else point_limit
+        points, bounds = read_pcd_preview(
+            path=path,
+            header=header,
+            data_start_offset=data_start_offset,
+            max_points=effective_limit,
+        )
+        packed = np.asarray(points, dtype="<f4").reshape((-1, 3))
+        return spatial_downsample_xyz(packed, voxel_size_m, max_points_per_voxel), None, bounds
+
+    fields = header["FIELDS"]
+    sizes = [int(value) for value in header.get("SIZE", [])]
+    types = [value.upper() for value in header.get("TYPE", [])]
+    counts = [int(value) for value in header.get("COUNT", ["1"] * len(fields))]
+    if not (len(fields) == len(sizes) == len(types) == len(counts)):
+        raise PcdMapError("PCD header 中 FIELDS/SIZE/TYPE/COUNT 数量不一致")
+
+    # Multi-value fields need the general struct parser to preserve record
+    # alignment. This is uncommon for navigation maps but remains supported.
+    if any(count != 1 for count in counts):
+        effective_limit = max(1, normalized["point_count"]) if point_limit is None else point_limit
+        points, bounds = _read_binary_preview_python(
+            path,
+            header,
+            data_start_offset,
+            effective_limit,
+        )
+        packed = np.asarray(points, dtype="<f4").reshape((-1, 3))
+        return spatial_downsample_xyz(packed, voxel_size_m, max_points_per_voxel), None, bounds
+
+    type_map: dict[str, dict[int, Any]] = {
+        "F": {4: np.float32, 8: np.float64},
+        "I": {1: np.int8, 2: np.int16, 4: np.int32, 8: np.int64},
+        "U": {1: np.uint8, 2: np.uint16, 4: np.uint32, 8: np.uint64},
+    }
+    try:
+        np_dtype = np.dtype([(field, type_map[data_type][size]) for field, size, data_type in zip(fields, sizes, types)])
+    except KeyError as exc:
+        raise PcdMapError("PCD binary 字段类型不受支持") from exc
+
+    point_count = max(0, normalized["point_count"])
+    available_bytes = max(0, path.stat().st_size - data_start_offset)
+    readable_points = min(point_count, available_bytes // np_dtype.itemsize)
+    if readable_points <= 0:
+        raise PcdMapError("PCD 文件没有可解析点")
+
+    records = np.memmap(
+        path,
+        dtype=np_dtype,
+        mode="r",
+        offset=data_start_offset,
+        shape=(readable_points,),
+    )
+    if point_limit is None or point_limit >= readable_points:
+        selected = records
+    else:
+        step = max(1, math.ceil(point_count / point_limit))
+        target_count = min(point_limit, math.ceil(readable_points / step))
+        block_count = min(2_048, target_count)
+        base_block_size, extra_points = divmod(target_count, block_count)
+        skipped_points = readable_points - target_count
+        base_gap_size, extra_gaps = divmod(skipped_points, block_count)
+        chunks: list[Any] = []
+        cursor = 0
+        for block_index in range(block_count):
+            cursor += base_gap_size + (1 if block_index < extra_gaps else 0)
+            block_size = base_block_size + (1 if block_index < extra_points else 0)
+            chunks.append(records[cursor:cursor + block_size])
+            cursor += block_size
+        selected = np.concatenate(chunks)
+
+    all_x = np.asarray(selected["x"], dtype=np.float32)
+    all_y = np.asarray(selected["y"], dtype=np.float32)
+    all_z = np.asarray(selected["z"], dtype=np.float32)
+    all_intensity = (
+        np.asarray(selected["intensity"], dtype=np.float32)
+        if "intensity" in fields
+        else None
+    )
+    sane = (
+        np.isfinite(all_x) & np.isfinite(all_y) & np.isfinite(all_z)
+        & (np.abs(all_x) < 1e6) & (np.abs(all_y) < 1e6) & (np.abs(all_z) < 1e6)
+    )
+    all_x, all_y, all_z = all_x[sane], all_y[sane], all_z[sane]
+    if all_intensity is not None:
+        all_intensity = all_intensity[sane]
+    if len(all_x) == 0:
+        raise PcdMapError("PCD 文件没有可解析点")
+
+    points = np.empty((len(all_x), 3), dtype="<f4")
+    points[:, 0] = all_x
+    points[:, 1] = all_y
+    points[:, 2] = all_z
+    bounds = {
+        "min_x": float(all_x.min()),
+        "max_x": float(all_x.max()),
+        "min_y": float(all_y.min()),
+        "max_y": float(all_y.max()),
+        "min_z": float(all_z.min()),
+        "max_z": float(all_z.max()),
+    }
+    selected_indices = spatial_downsample_indices(points, voxel_size_m, max_points_per_voxel)
+    if selected_indices is not None:
+        points = np.ascontiguousarray(points[selected_indices], dtype="<f4")
+        if all_intensity is not None:
+            all_intensity = all_intensity[selected_indices]
+
+    intensity_uint8 = quantize_intensity_uint8(all_intensity)
+    return points, intensity_uint8, bounds
+
+
+def quantize_intensity_uint8(values: Any | None) -> Any | None:
+    """Normalize robust intensity percentiles into one byte per point."""
+    if not _NUMPY_AVAILABLE or values is None:
+        return None
+
+    intensity = np.asarray(values, dtype=np.float32).reshape((-1,))
+    if len(intensity) < 2:
+        return None
+
+    sample_stride = max(1, math.ceil(len(intensity) / 65_536))
+    sample = intensity[::sample_stride]
+    sample = sample[np.isfinite(sample)]
+    if len(sample) < 2:
+        return None
+
+    low, high = np.percentile(sample, [2.0, 98.0])
+    if not (np.isfinite(low) and np.isfinite(high)) or float(high - low) <= 1e-6:
+        return None
+
+    normalized = np.empty_like(intensity, dtype=np.float32)
+    np.subtract(intensity, np.float32(low), out=normalized)
+    np.multiply(normalized, np.float32(255.0 / float(high - low)), out=normalized)
+    np.clip(normalized, 0.0, 255.0, out=normalized)
+    np.nan_to_num(normalized, copy=False, nan=0.0, posinf=255.0, neginf=0.0)
+    return np.ascontiguousarray(normalized.astype(np.uint8))
+
+
+def spatial_downsample_indices(
+    points: Any,
+    voxel_size_m: float | None,
+    max_points_per_voxel: int = 1,
+) -> Any | None:
+    """Return retained source indices, or ``None`` when sampling is disabled."""
+    if not _NUMPY_AVAILABLE or voxel_size_m is None or voxel_size_m <= 0:
+        return None
+
+    packed = np.asarray(points, dtype="<f4").reshape((-1, 3))
+    point_count = len(packed)
+    per_voxel = max(1, int(max_points_per_voxel))
+    if point_count <= per_voxel:
+        return None
+
+    voxel_keys = np.floor(packed / float(voxel_size_m)).astype(np.int32)
+    key_min = voxel_keys.min(axis=0)
+    shifted = (voxel_keys - key_min).astype(np.int64)
+    dimensions = shifted.max(axis=0) + 1
+    grid_cell_count = int(dimensions[0]) * int(dimensions[1]) * int(dimensions[2])
+
+    if grid_cell_count <= np.iinfo(np.int64).max:
+        linear_keys = (
+            (shifted[:, 0] * dimensions[1] + shifted[:, 1]) * dimensions[2]
+            + shifted[:, 2]
+        )
+        order = np.argsort(linear_keys, kind="stable")
+        ordered_keys = linear_keys[order]
+        group_start_mask = np.empty(point_count, dtype=bool)
+        group_start_mask[0] = True
+        group_start_mask[1:] = ordered_keys[1:] != ordered_keys[:-1]
+    else:
+        order = np.lexsort((voxel_keys[:, 2], voxel_keys[:, 1], voxel_keys[:, 0]))
+        ordered_keys = voxel_keys[order]
+        group_start_mask = np.empty(point_count, dtype=bool)
+        group_start_mask[0] = True
+        group_start_mask[1:] = np.any(ordered_keys[1:] != ordered_keys[:-1], axis=1)
+
+    ordered_positions = np.arange(point_count, dtype=np.int64)
+    group_starts = np.maximum.accumulate(
+        np.where(group_start_mask, ordered_positions, 0),
+    )
+    ranks_in_voxel = ordered_positions - group_starts
+    return np.sort(order[ranks_in_voxel < per_voxel])
+
+
+def spatial_downsample_xyz(
+    points: Any,
+    voxel_size_m: float | None,
+    max_points_per_voxel: int = 1,
+) -> Any:
+    """Limit local density while preserving the cloud's global coverage.
+
+    Space is divided into fixed-size 3D voxels. Up to
+    ``max_points_per_voxel`` source points are retained in every occupied
+    voxel. There is deliberately no whole-map point-count ceiling.
+    """
+    if not _NUMPY_AVAILABLE:
+        return points
+
+    packed = np.asarray(points, dtype="<f4").reshape((-1, 3))
+    selected_indices = spatial_downsample_indices(
+        packed,
+        voxel_size_m,
+        max_points_per_voxel,
+    )
+    if selected_indices is None:
+        return packed
+    return np.ascontiguousarray(packed[selected_indices], dtype="<f4")

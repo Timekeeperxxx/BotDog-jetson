@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import shutil
 import struct
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +20,7 @@ from .pcd_reader import (
     normalize_pcd_header,
     parse_pcd_header,
     read_pcd_preview,
+    read_pcd_xyz_intensity_uint8,
 )
 from .repositories.json_store import read_json
 
@@ -24,6 +28,8 @@ from .repositories.json_store import read_json
 pcd_logger = get_logger("场景点云服务")
 SCENE_ID_PATTERN = re.compile(r"^Scene\d+_")
 PCD_SCENE_BINARY_MAGIC = b"BDPCD001"
+PCD_SCENE_BINARY_CACHE_VERSION = 2
+_scene_preview_cache_lock = threading.Lock()
 
 
 def _utc_from_timestamp(ts: float) -> str:
@@ -522,44 +528,88 @@ def get_scene_preview(scene_id: str, max_points: int | None = None) -> dict[str,
 
 
 def get_scene_preview_binary(scene_id: str, max_points: int | None = None) -> bytes:
-    """Encode the existing scene preview as a compact float32 payload.
+    """Encode a spatially density-limited scene as compact float32 data.
 
-    The point selection and count are exactly the same as ``get_scene_preview``;
-    only the wire representation changes. Offsets are relative to the binary
-    point-data section that follows the JSON header.
+    With no explicit legacy ``max_points``, every occupied 3D voxel retains up
+    to the configured number of points. There is no whole-scene point limit.
     """
     import numpy as np
 
-    preview = get_scene_preview(scene_id, max_points=max_points)
+    if max_points is not None:
+        max_points = max(1000, min(max_points, settings.PCD_PREVIEW_MAX_POINTS))
+        voxel_size_m = None
+        max_points_per_voxel = 1
+    else:
+        voxel_size_m = max(0.0, float(settings.PCD_SCENE_PREVIEW_VOXEL_SIZE_M))
+        max_points_per_voxel = max(1, int(settings.PCD_SCENE_PREVIEW_POINTS_PER_VOXEL))
+
+    scene_path = resolve_scene_path(scene_id)
+    files = find_scene_pcd_files(scene_path)
     binary_layers: dict[str, dict[str, Any] | None] = {}
     chunks: list[bytes] = []
+    layer_bounds: list[dict[str, float] | None] = []
     byte_offset = 0
 
     for role in ("ground", "wall", "footprint_fill"):
-        layer = preview["layers"][role]
-        if layer is None:
+        path = files[role]
+        if path is None:
             binary_layers[role] = None
             continue
 
-        points = np.asarray(layer["points"], dtype="<f4").reshape((-1, 3))
+        try:
+            pcd_header, data_start_offset = parse_pcd_header(path)
+            normalized = normalize_pcd_header(pcd_header)
+            if normalized["data_type"] not in ("ascii", "binary"):
+                raise PcdMapError(f"当前 Demo 暂不支持 DATA {normalized['data_type']} PCD")
+            points, intensity, bounds = read_pcd_xyz_intensity_uint8(
+                path=path,
+                header=pcd_header,
+                data_start_offset=data_start_offset,
+                max_points=max_points,
+                voxel_size_m=voxel_size_m,
+                max_points_per_voxel=max_points_per_voxel,
+            )
+            points = np.asarray(points, dtype="<f4").reshape((-1, 3))
+            if role != "wall":
+                intensity = None
+        except PcdMapError as exc:
+            pcd_logger.warning("场景 {} 的 {} 二进制点云读取失败：{}", scene_id, role, exc)
+            binary_layers[role] = None
+            continue
+
         chunk = points.tobytes(order="C")
+        intensity_chunk = (
+            np.asarray(intensity, dtype=np.uint8).reshape((-1,)).tobytes(order="C")
+            if intensity is not None and len(intensity) == len(points)
+            else b""
+        )
+        intensity_offset = byte_offset + len(chunk) if intensity_chunk else None
         binary_layers[role] = {
-            "role": layer["role"],
-            "file_name": layer["file_name"],
-            "bounds": layer["bounds"],
+            "role": role,
+            "file_name": path.name,
+            "bounds": bounds,
             "point_count": len(points),
             "byte_offset": byte_offset,
             "byte_length": len(chunk),
+            "intensity_byte_offset": intensity_offset,
+            "intensity_byte_length": len(intensity_chunk),
+            "intensity_encoding": "uint8_percentile_2_98" if intensity_chunk else None,
         }
         chunks.append(chunk)
-        byte_offset += len(chunk)
+        if intensity_chunk:
+            chunks.append(intensity_chunk)
+            padding = b"\0" * (-len(intensity_chunk) % 4)
+            if padding:
+                chunks.append(padding)
+        layer_bounds.append(bounds)
+        byte_offset += len(chunk) + len(intensity_chunk) + (-len(intensity_chunk) % 4)
 
     header = json.dumps(
         {
-            "scene_id": preview["scene_id"],
-            "frame_id": preview["frame_id"],
+            "scene_id": scene_id,
+            "frame_id": settings.PCD_FRAME_ID,
             "layers": binary_layers,
-            "bounds": preview["bounds"],
+            "bounds": _merge_bounds(layer_bounds),
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -567,3 +617,73 @@ def get_scene_preview_binary(scene_id: str, max_points: int | None = None) -> by
     # 保证后续 Float32 数据按 4 字节对齐；JSON 允许尾随空白。
     header += b" " * (-len(header) % 4)
     return PCD_SCENE_BINARY_MAGIC + struct.pack("<I", len(header)) + header + b"".join(chunks)
+
+
+def _scene_preview_cache_path(scene_id: str, max_points: int | None) -> Path:
+    scene_path = resolve_scene_path(scene_id)
+    files = find_scene_pcd_files(scene_path)
+    source_versions: dict[str, dict[str, Any] | None] = {}
+    for role, path in files.items():
+        if path is None:
+            source_versions[role] = None
+            continue
+        stat = path.stat()
+        source_versions[role] = {
+            "path": str(path.resolve()),
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+        }
+
+    cache_key = {
+        "version": PCD_SCENE_BINARY_CACHE_VERSION,
+        "scene_id": scene_id,
+        "frame_id": settings.PCD_FRAME_ID,
+        "max_points": max_points,
+        "voxel_size_m": None if max_points is not None else float(settings.PCD_SCENE_PREVIEW_VOXEL_SIZE_M),
+        "max_points_per_voxel": None if max_points is not None else int(settings.PCD_SCENE_PREVIEW_POINTS_PER_VOXEL),
+        "sources": source_versions,
+    }
+    digest = hashlib.sha256(
+        json.dumps(cache_key, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+    ).hexdigest()
+    scene_digest = hashlib.sha1(scene_id.encode("utf-8")).hexdigest()[:12]
+    cache_dir = Path(settings.PCD_SCENE_PREVIEW_CACHE_DIR).resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"{scene_digest}-{digest}.bin"
+
+
+def _trim_scene_preview_cache(cache_dir: Path) -> None:
+    max_entries = max(1, int(settings.PCD_SCENE_PREVIEW_CACHE_MAX_ENTRIES))
+    entries = sorted(
+        cache_dir.glob("*.bin"),
+        key=lambda path: path.stat().st_mtime_ns,
+        reverse=True,
+    )
+    for stale_path in entries[max_entries:]:
+        try:
+            stale_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def prepare_scene_preview_binary(scene_id: str, max_points: int | None = None) -> Path:
+    """Build once and return a cache file suitable for ``FileResponse``."""
+    cache_path = _scene_preview_cache_path(scene_id, max_points)
+    if cache_path.is_file():
+        return cache_path
+
+    with _scene_preview_cache_lock:
+        if cache_path.is_file():
+            return cache_path
+
+        payload = get_scene_preview_binary(scene_id, max_points=max_points)
+        temporary_path = cache_path.with_name(
+            f".{cache_path.name}.{os.getpid()}.{threading.get_ident()}.tmp",
+        )
+        try:
+            temporary_path.write_bytes(payload)
+            os.replace(temporary_path, cache_path)
+        finally:
+            temporary_path.unlink(missing_ok=True)
+        _trim_scene_preview_cache(cache_path.parent)
+        return cache_path

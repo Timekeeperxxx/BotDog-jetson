@@ -178,6 +178,10 @@ def test_restart_localization_clears_all_estop_layers_before_restart(monkeypatch
         lambda active, reason="": calls.append(("cmd_vel_estop", active, reason))
         or {"success": True, "active": active, "reason": reason},
     )
+    monkeypatch.setattr(
+        "backend.services_radar_health.check_livox_network_preflight",
+        lambda: {"ok": True, "message": "雷达物理链路正常"},
+    )
     monkeypatch.setattr("backend.state_machine_state.get_state_machine", lambda: DummyStateMachine())
     monkeypatch.setattr("backend.control_arbiter.get_control_arbiter", lambda: DummyArbiter())
     monkeypatch.setattr(nav_routes, "_cancel_pending_auto_track_resume", lambda reason: calls.append(("cancel_resume", reason)))

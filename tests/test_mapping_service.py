@@ -4,16 +4,37 @@ import asyncio
 import os
 import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 from backend.api.routes import nav as nav_routes
 from backend.auth.schemas import AuthUserInternal
 from backend import services_mapping as mapping_service_module
 from backend.services_nav_waypoints import list_waypoints
 from backend.schemas import MappingControlRequest
+
+
+ASCII_PCD_TEMPLATE = """# .PCD v0.7 - Point Cloud Data file format
+VERSION 0.7
+FIELDS x y z
+SIZE 4 4 4
+TYPE F F F
+COUNT 1 1 1
+WIDTH 1
+HEIGHT 1
+VIEWPOINT 0 0 0 1 0 0 0
+POINTS 1
+DATA ascii
+0 0 0
+"""
+
+
+def write_test_pcd(path: Path) -> None:
+    path.write_text(ASCII_PCD_TEMPLATE, encoding="utf-8")
 
 
 @pytest.fixture(autouse=True)
@@ -134,10 +155,12 @@ def test_start_mapping_creates_directory_and_launches_script(monkeypatch, tmp_pa
             guard_enabled_state["enabled"] = bool(value)
             tracker_calls.append(f"guard.enabled={bool(value)}")
 
-    def fake_popen(command, start_new_session=False, stdout=None, stderr=None, text=None, bufsize=None):
+    def fake_popen(command, start_new_session=False, stdout=None, stderr=None, text=None, bufsize=None, env=None):
         started.append((command, start_new_session))
         assert stdout == mapping_service_module.subprocess.DEVNULL
         assert stderr == mapping_service_module.subprocess.DEVNULL
+        assert env["NAV_LIDAR_MOUNT_Z_M"] == "0.9"
+        assert env["NAV_LIDAR_MOUNT_PITCH_DEG"] == "19.48"
         map_dir = Path(command[2])
         mapping_service_module.mapping_ready_flag_path(map_dir).write_text("ready\n", encoding="utf-8")
         return DummyProcess()
@@ -319,8 +342,8 @@ def test_stop_mapping_creates_origin_waypoint_after_saved(monkeypatch, tmp_path)
         map_dir = Path(command[2])
         map_dir.mkdir(parents=True, exist_ok=True)
         mapping_service_module.mapping_ready_flag_path(map_dir).write_text("ready\n", encoding="utf-8")
-        (map_dir / "map.pcd").write_text("map\n", encoding="utf-8")
-        (map_dir / "ground.pcd").write_text("ground\n", encoding="utf-8")
+        write_test_pcd(map_dir / "map.pcd")
+        write_test_pcd(map_dir / "ground.pcd")
         return DummyProcess()
 
     monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
@@ -378,8 +401,8 @@ def test_stop_mapping_creates_origin_waypoint_from_initial_pose(monkeypatch, tmp
         map_dir = Path(command[2])
         map_dir.mkdir(parents=True, exist_ok=True)
         mapping_service_module.mapping_ready_flag_path(map_dir).write_text("ready\n", encoding="utf-8")
-        (map_dir / "map.pcd").write_text("map\n", encoding="utf-8")
-        (map_dir / "ground.pcd").write_text("ground\n", encoding="utf-8")
+        write_test_pcd(map_dir / "map.pcd")
+        write_test_pcd(map_dir / "ground.pcd")
         return DummyProcess()
 
     monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
@@ -449,6 +472,89 @@ def test_stop_mapping_waits_longer_than_script_cleanup_before_force_kill(monkeyp
     ]
 
 
+def test_mapping_status_stays_saving_and_rejects_new_start_until_save_finishes(monkeypatch, tmp_path):
+    script = tmp_path / "start_mapping.sh"
+    script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    wait_started = threading.Event()
+    release_wait = threading.Event()
+
+    class BlockingProcess(DummyProcess):
+        def wait(self, timeout=None):
+            wait_started.set()
+            assert release_wait.wait(timeout=2)
+            self.returncode = 0
+            return 0
+
+    process = BlockingProcess()
+    monkeypatch.setattr(mapping_service_module, "MAPS_ROOT", tmp_path / "MAPS")
+    monkeypatch.setattr(mapping_service_module, "START_MAPPING_SCRIPT", script)
+
+    def fake_popen(command, *args, **kwargs):
+        map_dir = Path(command[2])
+        mapping_service_module.mapping_ready_flag_path(map_dir).write_text("ready\n", encoding="utf-8")
+        write_test_pcd(map_dir / "map.pcd")
+        write_test_pcd(map_dir / "terrain_map_test_ground.pcd")
+        return process
+
+    monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(mapping_service_module.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(mapping_service_module, "stop_navigation_processes", lambda: {"pids": []})
+    monkeypatch.setattr(mapping_service_module, "stop_cmd_vel_script", lambda: {"pid": None})
+
+    service = mapping_service_module.MappingService()
+    service.start("实验室一楼")
+    stop_result = service.stop(wait=False)
+
+    assert stop_result["saving"] is True
+    assert wait_started.wait(timeout=1)
+    status = service.get_status()
+    assert status["running"] is False
+    assert status["saving"] is True
+    assert status["scene_name"] == "Scene1_实验室一楼"
+    with pytest.raises(mapping_service_module.MappingError, match="保存正在进行中"):
+        service.start("另一个场景")
+    assert service.stop(wait=False)["saving"] is True
+
+    release_wait.set()
+    deadline = time.monotonic() + 2
+    while service.get_status()["saving"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    completed = service.get_status()
+    assert completed["saving"] is False
+    assert completed["saved"] is True
+    assert completed["map_pcd_candidates"] == ["map.pcd"]
+    assert completed["ground_pcd_candidates"] == ["terrain_map_test_ground.pcd"]
+
+
+def test_stop_mapping_rejects_empty_or_invalid_pcd_files(monkeypatch, tmp_path):
+    script = tmp_path / "start_mapping.sh"
+    script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    monkeypatch.setattr(mapping_service_module, "MAPS_ROOT", tmp_path / "MAPS")
+    monkeypatch.setattr(mapping_service_module, "START_MAPPING_SCRIPT", script)
+
+    def fake_popen(command, *args, **kwargs):
+        map_dir = Path(command[2])
+        mapping_service_module.mapping_ready_flag_path(map_dir).write_text("ready\n", encoding="utf-8")
+        (map_dir / "map.pcd").write_bytes(b"")
+        (map_dir / "ground.pcd").write_text("not a pcd\n", encoding="utf-8")
+        return DummyProcess()
+
+    monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(mapping_service_module.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(mapping_service_module, "stop_navigation_processes", lambda: {"pids": []})
+    monkeypatch.setattr(mapping_service_module, "stop_cmd_vel_script", lambda: {"pid": None})
+
+    service = mapping_service_module.MappingService()
+    service.start("损坏地图")
+    result = service.stop()
+
+    assert result["saved"] is False
+    assert result["map_pcd_candidates"] == []
+    assert result["ground_pcd_candidates"] == []
+    assert all(file_info["valid"] is False for file_info in result["pcd_files"])
+
+
 def test_mapping_route_uses_scene_name_and_stop(monkeypatch):
     calls: list[tuple[str, str | None]] = []
 
@@ -466,7 +572,8 @@ def test_mapping_route_uses_scene_name_and_stop(monkeypatch):
                 "message": "建图脚本已启动",
             }
 
-        def stop(self):
+        def stop(self, *, wait=True):
+            assert wait is False
             calls.append(("stop", None))
             return {
                 "success": True,
@@ -482,6 +589,10 @@ def test_mapping_route_uses_scene_name_and_stop(monkeypatch):
         return None
 
     monkeypatch.setattr(mapping_service_module, "get_mapping_service", lambda: DummyService())
+    monkeypatch.setattr(
+        "backend.services_radar_health.check_radar_preflight",
+        lambda: {"ok": True, "message": "雷达连接正常"},
+    )
     monkeypatch.setattr(nav_routes, "safe_write_audit_log", fake_audit_log)
     start_result = asyncio.run(
         nav_routes.nav_set_mapping_enabled(
@@ -503,6 +614,47 @@ def test_mapping_route_uses_scene_name_and_stop(monkeypatch):
     assert start_result["enabled"] is True
     assert stop_result["enabled"] is False
     assert calls == [("start", "实验室一楼"), ("stop", None)]
+
+
+def test_mapping_route_rejects_unhealthy_radar_before_runtime_changes(monkeypatch):
+    calls: list[str] = []
+
+    class DummyService:
+        def start(self, scene_name: str):
+            calls.append(f"start:{scene_name}")
+            raise AssertionError("雷达异常时不应进入建图服务")
+
+    monkeypatch.setattr(mapping_service_module, "get_mapping_service", lambda: DummyService())
+    monkeypatch.setattr(
+        "backend.services_radar_health.check_radar_preflight",
+        lambda: {
+            "ok": False,
+            "message": "雷达未连接：未发现原始数据 /livox/lidar",
+        },
+    )
+    monkeypatch.setattr(
+        nav_routes,
+        "_cancel_pending_auto_track_resume",
+        lambda _reason: calls.append("cancel_auto_track"),
+    )
+    monkeypatch.setattr(
+        nav_routes,
+        "_release_navigation_control",
+        lambda: calls.append("release_navigation"),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            nav_routes.nav_set_mapping_enabled(
+                MappingControlRequest(enabled=True, scene_name="实验室一楼"),
+                user=AuthUserInternal(id=1, username="operator", role="operator", token_version=1),
+                db=object(),
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "建图未启动：雷达未连接" in str(exc_info.value.detail)
+    assert calls == []
 
 
 def test_start_mapping_waits_for_ground_ready_flag(monkeypatch, tmp_path):
@@ -619,6 +771,9 @@ def test_start_mapping_wrapper_waits_for_unified_runtime_readiness():
     assert 'executable="super_lio_node"' in launch
     assert 'executable="nav_terrain_analysis"' in launch
     assert 'executable="nav_save_terrain_map"' in launch
+    assert "\n        lio_node,\n" in launch
+    assert "\n        terrain_analysis,\n" in launch
+    assert "\n        terrain_saver,\n" in launch
 
 
 def test_start_mapping_adapter_uses_current_workspace_and_absolute_map_dir():
@@ -636,27 +791,42 @@ def test_start_mapping_adapter_uses_current_workspace_and_absolute_map_dir():
     assert '"lio.map.save_map_dir": map_dir' in launch
 
 
-def test_start_mapping_adapter_requests_save_before_stopping_launch():
+def test_start_mapping_adapter_freezes_and_stops_lio_before_saving_terrain():
     botdog_root = Path(__file__).resolve().parents[1]
     navigation_root = botdog_root.parent / "Navigation"
     adapter = (navigation_root / "adapters" / "legacy_scripts" / "start_mapping.sh").read_text(encoding="utf-8")
     common = (navigation_root / "adapters" / "legacy_scripts" / "common.sh").read_text(encoding="utf-8")
 
     save_call = 'request_save_terrain_map "$LOG_FILE"'
+    pause_call = 'request_pause_super_lio "$LOG_FILE" "$SUPERLIO_PAUSE_TIMEOUT_SECONDS"'
     superlio_stop_call = 'kill -INT "$superlio_pid"'
     launch_stop_call = 'signal_launch_tree INT'
     assert save_call in adapter
+    assert pause_call in adapter
     assert superlio_stop_call in adapter
     assert launch_stop_call in adapter
-    assert adapter.index(save_call) < adapter.index(superlio_stop_call)
-    assert adapter.index(superlio_stop_call) < adapter.index(launch_stop_call)
-    assert 'timeout 45s ros2 service call /save_terrain_map' in common
+    assert adapter.index(pause_call) < adapter.index(superlio_stop_call)
+    assert adapter.index(superlio_stop_call) < adapter.index(save_call)
+    assert adapter.index(save_call) < adapter.rindex(launch_stop_call)
+    assert 'TERRAIN_SAVE_TIMEOUT_SECONDS="${TERRAIN_SAVE_TIMEOUT_SECONDS:-1800}"' in common
+    assert 'timeout "${TERRAIN_SAVE_TIMEOUT_SECONDS}s"' in common
+    assert "success[=:][[:space:]]*(True|true)" in common
+    assert "ros2 service call /lio/pause_mapping" in common
     assert 'setsid ros2 launch nav_bringup mapping.launch.py' in adapter
     assert 'find_launch_descendant "super_lio_node"' in adapter
     assert 'wait_for_process_exit "$superlio_pid" "$SUPERLIO_SAVE_TIMEOUT_SECONDS"' in adapter
     assert "CLEANING_UP=1" in adapter
     assert "trap - INT TERM EXIT" in adapter
     assert 'wait "$LAUNCH_PID"' in adapter
+    terrain_saver = (
+        navigation_root / "src" / "nav_terrain" / "src" / "nav_save_terrain_map.cpp"
+    ).read_text(encoding="utf-8")
+    assert "hasSuccessfulExplicitSave" in terrain_saver
+    assert "explicit_ground_save_succeeded_" in terrain_saver
+    assert terrain_saver.count("explicit_ground_save_succeeded_.store(true)") == 2
+    assert "ground 已由显式保存成功写盘，退出时跳过重复保存" in terrain_saver
+    assert "拒绝保存空 PCD" in terrain_saver
+    assert "退出时跳过重复写盘" in terrain_saver
 
 
 def test_start_mapping_adapter_gracefully_saves_map_on_sigint(tmp_path):
@@ -718,7 +888,9 @@ case "${1:-} ${2:-}" in
     printf 'std_srvs/srv/Trigger\n'
     ;;
   "service call")
-    printf 'FAKE_GROUND_PCD\n' > "$FAKE_MAP_DIR/terrain_map_test_ground.pcd"
+    if [ "${3:-}" = "/save_terrain_map" ]; then
+      printf 'FAKE_GROUND_PCD\n' > "$FAKE_MAP_DIR/terrain_map_test_ground.pcd"
+    fi
     printf 'response: success=True\n'
     ;;
   "launch nav_bringup")
@@ -792,7 +964,8 @@ esac
     assert stop_elapsed < 8, output
     assert (map_dir / "map.pcd").read_text(encoding="utf-8") == "FAKE_PCD\n"
     assert (map_dir / "terrain_map_test_ground.pcd").is_file()
-    assert output.count("正在按顺序保存 terrain_map 和 SuperLIO map.pcd") == 1
+    assert output.count("先冻结 SuperLIO，再保存 map.pcd 和 terrain_map") == 1
+    assert "SuperLIO 已冻结，不再接收或处理新雷达/IMU数据" in output
     assert "请求 SuperLIO 优雅退出并保存 map.pcd" in output
     assert "SuperLIO 地图已保存" in output
     assert "发送 SIGTERM" not in output

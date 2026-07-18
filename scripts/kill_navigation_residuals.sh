@@ -54,7 +54,7 @@ ROS_NEEDLES=(
   "/home/jetson/dddmr_navigation_new_local/install/dddmr_local_map/lib/dddmr_local_map/local_map_builder"
   "/home/jetson/Project/BOTDOG/Navigation/install/livox_ros_driver2/lib/livox_ros_driver2/livox_ros_driver2_node"
   "/home/jetson/Project/BOTDOG/Navigation/install/nav_lio/lib/nav_lio/relocation_node"
-  "/home/jetson/Project/BOTDOG/Navigation/install/nav_bringup/lib/nav_bringup/nav_pcd_map_publisher.py"
+  "/home/jetson/Project/BOTDOG/Navigation/install/nav_bringup/lib/nav_bringup/nav_pcd_map_publisher"
   "/home/jetson/Project/BOTDOG/Navigation/install/nav_bringup/lib/nav_bringup/scan_initial_path_adapter.py"
   "/home/jetson/Project/BOTDOG/Navigation/install/nav_bringup/lib/nav_bringup/scan_tf_pose_publisher.py"
   "/home/jetson/Project/BOTDOG/Navigation/install/nav_planner/lib/nav_planner/global_planner_node"
@@ -85,7 +85,7 @@ done
 
 sleep 1
 
-REMAINING="$(pgrep -af 'livox_ros_driver2_node|relocation_node|global_planner_node|nav_pcd_map_publisher.py|scan_initial_path_adapter.py|scan_tf_pose_publisher.py|scan_planner_node|closed_loop_controller|pcl_publisher|p2p_move_base_node|clicked2goal.py|local_map_builder|cmd_vel.py|msg_MID360_launch.py|go2_localization_launch.py|path_planning_with_polygon.launch|run_backend.py|start_backend.sh' || true)"
+REMAINING="$(pgrep -af 'livox_ros_driver2_node|relocation_node|global_planner_node|nav_pcd_map_publisher|scan_initial_path_adapter.py|scan_tf_pose_publisher.py|scan_planner_node|closed_loop_controller|pcl_publisher|p2p_move_base_node|clicked2goal.py|local_map_builder|cmd_vel.py|msg_MID360_launch.py|go2_localization_launch.py|path_planning_with_polygon.launch|run_backend.py|start_backend.sh' || true)"
 
 if [ -n "$REMAINING" ]; then
   echo "仍有残留进程："

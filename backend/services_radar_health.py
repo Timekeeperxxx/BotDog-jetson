@@ -6,7 +6,10 @@ import shutil
 import signal
 import subprocess
 import time
+from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from .config import settings
@@ -25,6 +28,11 @@ RADAR_TYPE_HINTS = (
     "livox_ros_driver2/msg/CustomMsg",
 )
 ROS2_COMMAND_TIMEOUT_S = 5.0
+RADAR_PREFLIGHT_COMMAND_TIMEOUT_S = 1.5
+RADAR_PREFLIGHT_DATA_TIMEOUT_S = 2.0
+RADAR_PREFLIGHT_SUCCESS_CACHE_S = 2.0
+LIVOX_DEFAULT_IP = "192.168.123.179"
+LIVOX_NETWORK_COMMAND_TIMEOUT_S = 1.0
 RADAR_MIN_NORMAL_HZ = 2.0
 RADAR_MIN_WARNING_HZ = 0.5
 LIVOX_DRIVER_COMMAND = ["ros2", "launch", "livox_ros_driver2", "msg_MID360_launch.py"]
@@ -32,6 +40,9 @@ LIVOX_DRIVER_TOPIC_WAIT_TIMEOUT_S = 18.0
 LIVOX_DRIVER_TOPIC_POLL_INTERVAL_S = 0.5
 LIVOX_DRIVER_STOP_TIMEOUT_S = 8.0
 RADAR_HEALTH_LOG_NAME = "radar_health.log"
+
+_radar_preflight_cache_lock = Lock()
+_radar_preflight_success_cache: tuple[float, dict[str, Any]] | None = None
 
 
 @dataclass(slots=True)
@@ -91,8 +102,112 @@ def _run_ros2(args: list[str], timeout: float = ROS2_COMMAND_TIMEOUT_S) -> Comma
     )
 
 
-def _list_topics() -> tuple[CommandResult, dict[str, str]]:
-    result = _run_ros2(["topic", "list", "-t"])
+def _run_system_command(args: list[str], timeout: float) -> CommandResult:
+    try:
+        completed = subprocess.run(
+            args,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return CommandResult(
+            returncode=124,
+            stdout=_coerce_output(exc.stdout),
+            stderr=_coerce_output(exc.stderr),
+            timed_out=True,
+        )
+    except FileNotFoundError:
+        return CommandResult(returncode=127, stdout="", stderr=f"command not found: {args[0]}")
+
+    return CommandResult(
+        returncode=completed.returncode,
+        stdout=completed.stdout or "",
+        stderr=completed.stderr or "",
+    )
+
+
+def _read_network_attribute(interface: str, attribute: str) -> str | None:
+    try:
+        return (Path("/sys/class/net") / interface / attribute).read_text(encoding="utf-8").strip()
+    except (OSError, ValueError):
+        return None
+
+
+def check_livox_network_preflight() -> dict[str, Any]:
+    """快速确认到 Livox 的有线物理链路，不依赖已经运行的 ROS 驱动。"""
+    target_ip = os.environ.get("LIVOX_LIDAR_IP", LIVOX_DEFAULT_IP).strip() or LIVOX_DEFAULT_IP
+    checks: list[dict[str, Any]] = []
+    ip_command = shutil.which("ip")
+    if not ip_command:
+        checks.append(_check_item("network_route", False, "failed", "未找到 ip 命令"))
+        return _radar_response(
+            checks=checks,
+            ok=False,
+            level="error",
+            message="雷达连接检查失败：系统缺少 ip 命令",
+        )
+
+    route_result = _run_system_command(
+        [ip_command, "-4", "route", "get", target_ip],
+        timeout=LIVOX_NETWORK_COMMAND_TIMEOUT_S,
+    )
+    route_text = f"{route_result.stdout}\n{route_result.stderr}".strip()
+    interface_match = re.search(r"(?:^|\s)dev\s+(\S+)", route_result.stdout)
+    interface = interface_match.group(1) if interface_match else None
+    route_ok = route_result.returncode == 0 and interface is not None
+    checks.append(
+        _check_item(
+            "network_route",
+            route_ok,
+            "normal" if route_ok else "failed",
+            f"雷达路由：{target_ip} -> {interface}" if route_ok else f"无法找到到雷达 {target_ip} 的网络路由",
+            {"target_ip": target_ip, "interface": interface, "output": route_text[-500:]},
+        )
+    )
+    if not route_ok or interface is None:
+        return _radar_response(
+            checks=checks,
+            ok=False,
+            level="error",
+            message=f"雷达未连接：无法找到到 Livox {target_ip} 的网络路由，请检查网卡配置",
+        )
+
+    operstate = _read_network_attribute(interface, "operstate")
+    carrier = _read_network_attribute(interface, "carrier")
+    link_ok = carrier == "1" and operstate not in {"down", "dormant", "notpresent", "lowerlayerdown"}
+    checks.append(
+        _check_item(
+            "physical_link",
+            link_ok,
+            "normal" if link_ok else "failed",
+            (
+                f"网卡 {interface} 物理链路正常"
+                if link_ok
+                else f"网卡 {interface} 未建立物理链路"
+            ),
+            {"interface": interface, "operstate": operstate, "carrier": carrier},
+        )
+    )
+    if not link_ok:
+        return _radar_response(
+            checks=checks,
+            ok=False,
+            level="error",
+            message=f"雷达未连接：网卡 {interface} 未建立物理链路，请检查 Livox MID360 供电和网线",
+        )
+
+    return _radar_response(
+        checks=checks,
+        ok=True,
+        level="normal",
+        message=f"雷达物理链路正常（{interface} -> {target_ip}）",
+    )
+
+
+def _list_topics(timeout: float = ROS2_COMMAND_TIMEOUT_S) -> tuple[CommandResult, dict[str, str]]:
+    result = _run_ros2(["topic", "list", "-t"], timeout=timeout)
     if result.returncode != 0:
         return result, {}
     return result, _parse_topic_list(result.stdout)
@@ -210,6 +325,193 @@ def _measure_topic_hz(topic: str) -> tuple[CommandResult, float | None, str, flo
     if last_result is None:
         last_result = CommandResult(returncode=1, stdout="", stderr="未执行频率检查")
     return last_result, None, last_label, time.monotonic() - total_started_at
+
+
+def _measure_topic_hz_quick(topic: str) -> tuple[CommandResult, float | None]:
+    """在很短的窗口内确认原始雷达 topic 确实有数据。
+
+    预检固定使用传感器 QoS，不做完整健康检查中的多轮回退，避免未连接
+    雷达时把“开始建图”阻塞十几秒。`ros2 topic hz` 会持续运行，因此正常的
+    超时返回中仍会带有已经测得的 average rate。
+    """
+    result = _run_ros2(
+        ["topic", "hz", topic, "--window", "2", "--qos-profile", "sensor_data"],
+        timeout=RADAR_PREFLIGHT_DATA_TIMEOUT_S,
+    )
+    return result, _parse_topic_hz(f"{result.stdout}\n{result.stderr}")
+
+
+def _radar_response(
+    *,
+    checks: list[dict[str, Any]],
+    ok: bool,
+    level: str,
+    message: str,
+    topic: str | None = None,
+    topic_type: str | None = None,
+    publisher_count: int | None = None,
+    subscription_count: int | None = None,
+    frequency_hz: float | None = None,
+) -> dict[str, Any]:
+    return {
+        "ok": ok,
+        "level": level,
+        "topic": topic,
+        "topic_type": topic_type,
+        "publisher_count": publisher_count,
+        "subscription_count": subscription_count,
+        "frequency_hz": frequency_hz,
+        "checked_at": utc_now_iso(),
+        "checks": checks,
+        "message": message,
+    }
+
+
+def check_radar_preflight(*, allow_cached_success: bool = True) -> dict[str, Any]:
+    """建图前的快速、无副作用雷达预检。
+
+    与完整健康检查不同，本函数不会临时启动 Livox 驱动，也不会等待驱动上线。
+    未连接时应快速返回，让调用方在修改导航/建图运行状态之前明确告警。
+    """
+    global _radar_preflight_success_cache
+
+    if allow_cached_success:
+        with _radar_preflight_cache_lock:
+            cached = _radar_preflight_success_cache
+            if cached is not None and time.monotonic() - cached[0] <= RADAR_PREFLIGHT_SUCCESS_CACHE_S:
+                return deepcopy(cached[1])
+
+    checks: list[dict[str, Any]] = []
+    ros2_path = shutil.which("ros2")
+    if not ros2_path:
+        checks.append(_check_item("ros2", False, "failed", "未找到 ros2 命令"))
+        return _radar_response(
+            checks=checks,
+            ok=False,
+            level="error",
+            message="雷达连接异常：ROS2 环境不可用",
+        )
+
+    checks.append(_check_item("ros2", True, "normal", f"ros2 可执行文件：{ros2_path}"))
+    topic_list_result, topics = _list_topics(timeout=RADAR_PREFLIGHT_COMMAND_TIMEOUT_S)
+    if topic_list_result.returncode != 0:
+        reason = "读取 ROS2 topic 列表超时" if topic_list_result.timed_out else "读取 ROS2 topic 列表失败"
+        checks.append(
+            _check_item(
+                "topic_list",
+                False,
+                "failed",
+                reason,
+                {"stderr": topic_list_result.stderr[-500:]},
+            )
+        )
+        return _radar_response(
+            checks=checks,
+            ok=False,
+            level="error",
+            message=f"雷达连接异常：{reason}",
+        )
+
+    topic, topic_type = _select_radar_topic(topics)
+    topic_ok = topic is not None
+    checks.append(
+        _check_item(
+            "topic_exists",
+            topic_ok,
+            "normal" if topic_ok else "failed",
+            f"发现雷达原始数据：{topic}" if topic else "未发现雷达原始数据 /livox/lidar",
+            {"topic_count": len(topics), "topic_sample": _topic_sample(topics, limit=6)},
+        )
+    )
+    if topic is None:
+        return _radar_response(
+            checks=checks,
+            ok=False,
+            level="error",
+            message="雷达未连接：未发现原始数据 /livox/lidar，请检查雷达供电、网线和驱动",
+        )
+
+    info_result = _run_ros2(
+        ["topic", "info", topic],
+        timeout=RADAR_PREFLIGHT_COMMAND_TIMEOUT_S,
+    )
+    publisher_count: int | None = None
+    subscription_count: int | None = None
+    if info_result.returncode == 0:
+        publisher_count, subscription_count = _parse_topic_info(info_result.stdout)
+    publisher_ok = publisher_count is not None and publisher_count > 0
+    checks.append(
+        _check_item(
+            "publisher",
+            publisher_ok,
+            "normal" if publisher_ok else "failed",
+            f"发布者数量：{publisher_count}" if publisher_count is not None else "无法确认雷达发布者",
+            {"subscription_count": subscription_count, "timed_out": info_result.timed_out},
+        )
+    )
+    if not publisher_ok:
+        return _radar_response(
+            checks=checks,
+            ok=False,
+            level="error",
+            topic=topic,
+            topic_type=topic_type,
+            publisher_count=publisher_count,
+            subscription_count=subscription_count,
+            message="雷达连接异常：/livox/lidar 没有有效发布者",
+        )
+
+    hz_result, frequency_hz = _measure_topic_hz_quick(topic)
+    frequency_ok = frequency_hz is not None and frequency_hz >= RADAR_MIN_WARNING_HZ
+    checks.append(
+        _check_item(
+            "frequency",
+            frequency_ok,
+            "normal" if frequency_ok else "failed",
+            (
+                f"已收到雷达数据：{frequency_hz:.2f} Hz"
+                if frequency_hz is not None
+                else f"{RADAR_PREFLIGHT_DATA_TIMEOUT_S:.0f} 秒内未收到雷达数据"
+            ),
+            {"timed_out": hz_result.timed_out},
+        )
+    )
+    if not frequency_ok:
+        message = (
+            f"雷达数据异常：频率仅 {frequency_hz:.2f} Hz"
+            if frequency_hz is not None
+            else "雷达无有效数据：短时间内未收到 /livox/lidar 点云，请检查雷达连接"
+        )
+        return _radar_response(
+            checks=checks,
+            ok=False,
+            level="error",
+            topic=topic,
+            topic_type=topic_type,
+            publisher_count=publisher_count,
+            subscription_count=subscription_count,
+            frequency_hz=frequency_hz,
+            message=message,
+        )
+
+    response = _radar_response(
+        checks=checks,
+        ok=True,
+        level="normal" if frequency_hz >= RADAR_MIN_NORMAL_HZ else "warning",
+        topic=topic,
+        topic_type=topic_type,
+        publisher_count=publisher_count,
+        subscription_count=subscription_count,
+        frequency_hz=frequency_hz,
+        message=(
+            "雷达连接正常"
+            if frequency_hz >= RADAR_MIN_NORMAL_HZ
+            else f"雷达已连接，但数据频率偏低：{frequency_hz:.2f} Hz"
+        ),
+    )
+    with _radar_preflight_cache_lock:
+        _radar_preflight_success_cache = (time.monotonic(), deepcopy(response))
+    return response
 
 
 def _has_livox_process() -> tuple[bool, list[str]]:

@@ -471,8 +471,14 @@ async def nav_restart_localization(
     from ...services_nav_localization import restart_navigation_localization
     from ...services_nav_state import reset_localization_tracking, set_navigation_idle
     from ...services_nav_task_runtime import clear_nav_task_runtime
+    from ...services_radar_health import check_livox_network_preflight
 
     try:
+        # 先做无副作用的物理链路检查。雷达未连接时不能先清任务、解除急停
+        # 或重置定位状态，否则一次失败的重启请求会破坏当前运行状态。
+        radar_preflight = await asyncio.to_thread(check_livox_network_preflight)
+        if not radar_preflight.get("ok"):
+            raise RuntimeError(str(radar_preflight.get("message") or "雷达连接异常"))
         _cancel_pending_auto_track_resume("nav_localization_restart")
         cmd_vel_estop = _clear_e_stop_for_localization_restart()
         _release_navigation_control()
@@ -570,10 +576,19 @@ async def nav_set_mapping_enabled(
 
     try:
         if body.enabled:
-            _cancel_pending_auto_track_resume("nav_mapping_start")
-            _release_navigation_control()
             if body.scene_name is None:
                 raise MappingError("请输入场景名称")
+            from ...services_radar_health import check_radar_preflight
+
+            try:
+                radar_health = await asyncio.to_thread(check_radar_preflight)
+            except Exception as exc:
+                raise MappingError(f"雷达健康检查失败，已阻止启动建图：{exc}") from exc
+            if not radar_health["ok"]:
+                raise MappingError(f"建图未启动：{radar_health['message']}")
+
+            _cancel_pending_auto_track_resume("nav_mapping_start")
+            _release_navigation_control()
             result = await asyncio.to_thread(mapping_service.start, body.scene_name)
             await safe_write_audit_log(
                 db,
@@ -586,7 +601,7 @@ async def nav_set_mapping_enabled(
             )
             return result
 
-        result = await asyncio.to_thread(mapping_service.stop)
+        result = await asyncio.to_thread(mapping_service.stop, wait=False)
         await safe_write_audit_log(
             db,
             level="INFO",
@@ -609,20 +624,25 @@ async def nav_get_mapping_status(
 
     status = await asyncio.to_thread(get_mapping_service().get_status)
     running = bool(status.get("running"))
+    saving = bool(status.get("saving"))
     return {
         "success": True,
         "enabled": running,
         "running": running,
-        "saving": False,
-        "saved": False,
+        "saving": saving,
+        "saved": bool(status.get("saved")),
         "scene_name": status.get("scene_name"),
         "map_dir": status.get("map_dir"),
         "pid": status.get("pid"),
         "started_at": status.get("started_at"),
-        "map_pcd_candidates": [],
-        "ground_pcd_candidates": [],
-        "pcd_files": [],
-        "message": "建图正在运行" if running else "建图未运行",
+        "map_pcd_candidates": status.get("map_pcd_candidates") or [],
+        "ground_pcd_candidates": status.get("ground_pcd_candidates") or [],
+        "pcd_files": status.get("pcd_files") or [],
+        "origin_waypoint": status.get("origin_waypoint"),
+        "origin_waypoint_error": status.get("origin_waypoint_error"),
+        "message": status.get("message") or (
+            "地图正在保存" if saving else "建图正在运行" if running else "建图未运行"
+        ),
     }
 
 

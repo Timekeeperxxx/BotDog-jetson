@@ -174,6 +174,13 @@ def _apply_runtime_update(key: str, value) -> dict:
             "message": "驱离任务服务未初始化，运行时未生效",
         }
 
+    if key.startswith("nav_lidar_mount_") and setting_name is not None:
+        return {
+            "applied": True,
+            "target": "navigation",
+            "message": "已载入，下一次建图或定位启动时生效",
+        }
+
     if setting_name is not None:
         return {
             "applied": True,

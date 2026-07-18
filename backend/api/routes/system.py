@@ -289,6 +289,17 @@ async def system_radar_health(
     return RadarHealthResponse(**result)
 
 
+@router.get("/api/v1/system/radar/preflight", response_model=RadarHealthResponse)
+async def system_radar_preflight(
+    user: AuthUserInternal = Depends(require_operator),
+) -> RadarHealthResponse:
+    """建图前快速确认雷达 topic、发布者和实时数据，不启动或等待驱动。"""
+    from ...services_radar_health import check_radar_preflight
+
+    result = await asyncio.to_thread(check_radar_preflight)
+    return RadarHealthResponse(**result)
+
+
 @router.post("/api/v1/system/pipeline/restart")
 async def restart_pipeline(
     user: AuthUserInternal = Depends(require_operator),

@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -128,7 +129,11 @@ def _wait_for_pid_file(path: Path, timeout_s: float = 30.0) -> int | None:
     return None
 
 
-def _wait_for_pid_files(paths: dict[str, Path], timeout_s: float = 20.0) -> dict[str, int | None]:
+def _wait_for_pid_files(
+    paths: dict[str, Path],
+    timeout_s: float = 20.0,
+    abort_if: Callable[[], bool] | None = None,
+) -> dict[str, int | None]:
     deadline = time.time() + timeout_s
     result: dict[str, int | None] = {name: None for name in paths}
 
@@ -138,6 +143,8 @@ def _wait_for_pid_files(paths: dict[str, Path], timeout_s: float = 20.0) -> dict
                 result[name] = _read_pid_file(path)
 
         if all(pid is not None for pid in result.values()):
+            break
+        if abort_if is not None and abort_if():
             break
 
         time.sleep(0.2)

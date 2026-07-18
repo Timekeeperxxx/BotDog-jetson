@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import FileResponse
 
 from ...auth.dependencies import require_admin, require_operator
 from ...auth.schemas import AuthUserInternal
@@ -162,18 +165,66 @@ async def nav_get_pcd_scene_preview(scene_id: str, max_points: int | None = None
 
 @router.get("/pcd-scenes/{scene_id}/preview.bin", response_class=Response)
 async def nav_get_pcd_scene_preview_binary(scene_id: str, max_points: int | None = None):
-    from ...services_pcd_maps import PcdMapError, get_scene_preview_binary
+    from ...services_pcd_maps import PcdMapError, prepare_scene_preview_binary
 
     try:
-        payload = get_scene_preview_binary(scene_id, max_points=max_points)
-        return Response(
-            content=payload,
+        # Full-resolution scenes can take noticeable CPU and memory bandwidth;
+        # keep the main asyncio loop responsive for robot pose/path WebSockets.
+        cache_path = await asyncio.to_thread(
+            prepare_scene_preview_binary,
+            scene_id,
+            max_points=max_points,
+        )
+        return FileResponse(
+            path=cache_path,
             media_type="application/vnd.botdog.pointcloud",
-            # Float32 点云已经很紧凑，避免 GZip 中间件再次消耗 CPU。
-            headers={"Content-Encoding": "identity"},
+            # Float32 已经紧凑；允许 ETag 重验证但避免旧场景长期驻留。
+            headers={
+                "Content-Encoding": "identity",
+                "Cache-Control": "no-cache",
+            },
         )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"场景目录不存在: {scene_id}")
+    except PcdMapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/pcd-scenes/{scene_id}/tiles/manifest")
+async def nav_get_pcd_scene_tile_manifest(scene_id: str):
+    from ...pcd_tiles import prepare_scene_tile_manifest
+    from ...services_pcd_maps import PcdMapError
+
+    try:
+        manifest_path = await asyncio.to_thread(prepare_scene_tile_manifest, scene_id)
+        return FileResponse(
+            path=manifest_path,
+            media_type="application/json",
+            headers={"Cache-Control": "no-cache"},
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PcdMapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/pcd-scenes/{scene_id}/tiles/{tile_file}")
+async def nav_get_pcd_scene_tile(scene_id: str, tile_file: str):
+    from ...pcd_tiles import resolve_scene_tile_file
+    from ...services_pcd_maps import PcdMapError
+
+    try:
+        tile_path = await asyncio.to_thread(resolve_scene_tile_file, scene_id, tile_file)
+        return FileResponse(
+            path=tile_path,
+            media_type="application/vnd.botdog.pointcloud-tile",
+            headers={
+                "Content-Encoding": "identity",
+                "Cache-Control": "public, max-age=31536000, immutable",
+            },
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     except PcdMapError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
