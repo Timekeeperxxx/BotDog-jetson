@@ -16,6 +16,7 @@ from .lidar_mount import lidar_mount_environment, lidar_mount_log_values
 from .logging_config import get_logger
 from .nav_bridge_state import get_ros_nav_bridge
 from .pcd_reader import normalize_pcd_header, parse_pcd_header
+from .repositories.json_store import read_json
 from .services_nav_state import clear_global_path, clear_robot_pose, get_robot_pose, set_navigation_idle
 from .services_nav_localization import stop_cmd_vel_script, stop_navigation_processes
 from .services_nav_waypoints import upsert_origin_waypoint
@@ -101,6 +102,16 @@ def build_scene_dir_name(scene_name: str) -> str:
 
 def mapping_ready_flag_path(map_dir: Path) -> Path:
     return map_dir / MAPPING_READY_FLAG_NAME
+
+
+def _mapping_startup_error(map_dir: Path) -> str | None:
+    status = read_json(Path(settings.NAV_RUNTIME_DIR) / "mapping_status.json", {})
+    if not isinstance(status, dict):
+        return None
+    if status.get("stage") != "error" or str(status.get("map_dir") or "") != str(map_dir):
+        return None
+    message = str(status.get("message") or "").strip()
+    return message or None
 
 
 @dataclass(slots=True)
@@ -550,8 +561,10 @@ class MappingService:
                 if return_code is not None:
                     self._resume_runtime_interferers(runtime_pause_state)
                     self._resume_nav_bridge()
+                    startup_error = _mapping_startup_error(map_dir)
                     raise MappingError(
-                        f"建图启动失败：ground 生成尚未开始，脚本已退出（退出码={return_code}）"
+                        startup_error
+                        or f"建图启动失败：ground 生成尚未开始，脚本已退出（退出码={return_code}）"
                     )
 
                 time.sleep(MAPPING_START_READY_POLL_INTERVAL_SECONDS)

@@ -294,11 +294,10 @@ def _parse_topic_hz(output: str) -> float | None:
 
 
 def _measure_topic_hz(topic: str) -> tuple[CommandResult, float | None, str, float]:
-    attempts = [
-        ("sensor_data", ["topic", "hz", topic, "--window", "5", "--qos-profile", "sensor_data"]),
-        ("best_effort", ["topic", "hz", topic, "--window", "5", "--qos-reliability", "best_effort"]),
-        ("default", ["topic", "hz", topic, "--window", "5"]),
-    ]
+    # ROS2 Humble 的 `ros2 topic hz` 不支持 --qos-profile / --qos-reliability；
+    # 传入这些参数会直接以 returncode=2 退出。Livox CustomMsg 使用默认订阅
+    # 已能正常测得频率，因此只执行兼容 Humble 的命令。
+    attempts = [("default", ["topic", "hz", topic, "--window", "5"])]
 
     last_result: CommandResult | None = None
     last_label = "default"
@@ -317,8 +316,7 @@ def _measure_topic_hz(topic: str) -> tuple[CommandResult, float | None, str, flo
 
         last_result = result
         last_label = label
-        # sensor_data 是 Livox 这类传感器 topic 的正确 QoS。若它已经订阅超时，
-        # 继续用默认 QoS 通常只会拉长接口等待时间。
+        # `ros2 topic hz` 是持续命令；超时只代表采样窗口结束，不代表没数据。
         if result.timed_out:
             break
 
@@ -330,12 +328,12 @@ def _measure_topic_hz(topic: str) -> tuple[CommandResult, float | None, str, flo
 def _measure_topic_hz_quick(topic: str) -> tuple[CommandResult, float | None]:
     """在很短的窗口内确认原始雷达 topic 确实有数据。
 
-    预检固定使用传感器 QoS，不做完整健康检查中的多轮回退，避免未连接
-    雷达时把“开始建图”阻塞十几秒。`ros2 topic hz` 会持续运行，因此正常的
-    超时返回中仍会带有已经测得的 average rate。
+    使用 Humble 兼容参数，避免不支持的 QoS 选项导致已连接雷达被误判。
+    `ros2 topic hz` 会持续运行，因此正常的超时返回中仍会带有已经测得的
+    average rate。
     """
     result = _run_ros2(
-        ["topic", "hz", topic, "--window", "2", "--qos-profile", "sensor_data"],
+        ["topic", "hz", topic, "--window", "2"],
         timeout=RADAR_PREFLIGHT_DATA_TIMEOUT_S,
     )
     return result, _parse_topic_hz(f"{result.stdout}\n{result.stderr}")

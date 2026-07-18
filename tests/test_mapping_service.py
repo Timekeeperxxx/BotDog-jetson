@@ -590,7 +590,7 @@ def test_mapping_route_uses_scene_name_and_stop(monkeypatch):
 
     monkeypatch.setattr(mapping_service_module, "get_mapping_service", lambda: DummyService())
     monkeypatch.setattr(
-        "backend.services_radar_health.check_radar_preflight",
+        "backend.services_radar_health.check_livox_network_preflight",
         lambda: {"ok": True, "message": "雷达连接正常"},
     )
     monkeypatch.setattr(nav_routes, "safe_write_audit_log", fake_audit_log)
@@ -626,7 +626,7 @@ def test_mapping_route_rejects_unhealthy_radar_before_runtime_changes(monkeypatc
 
     monkeypatch.setattr(mapping_service_module, "get_mapping_service", lambda: DummyService())
     monkeypatch.setattr(
-        "backend.services_radar_health.check_radar_preflight",
+        "backend.services_radar_health.check_livox_network_preflight",
         lambda: {
             "ok": False,
             "message": "雷达未连接：未发现原始数据 /livox/lidar",
@@ -745,6 +745,24 @@ def test_start_mapping_fails_if_ground_never_starts(monkeypatch, tmp_path):
     assert set(sleep_calls) == {0.5}
 
 
+def test_mapping_startup_error_returns_current_map_radar_failure(monkeypatch, tmp_path):
+    map_dir = tmp_path / "MAPS" / "Scene1_test"
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir()
+    (runtime_dir / "mapping_status.json").write_text(
+        '{"running":false,"stage":"error","map_dir":"'
+        + str(map_dir)
+        + '","message":"雷达无有效数据：8 秒内未收到 /livox/lidar 点云"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(mapping_service_module.settings, "NAV_RUNTIME_DIR", str(runtime_dir))
+
+    assert mapping_service_module._mapping_startup_error(map_dir) == (
+        "雷达无有效数据：8 秒内未收到 /livox/lidar 点云"
+    )
+    assert mapping_service_module._mapping_startup_error(tmp_path / "other") is None
+
+
 def test_start_mapping_wrapper_waits_for_unified_runtime_readiness():
     botdog_root = Path(__file__).resolve().parents[1]
     wrapper = (botdog_root / "scripts" / "start_mapping.sh").read_text(encoding="utf-8")
@@ -757,6 +775,8 @@ def test_start_mapping_wrapper_waits_for_unified_runtime_readiness():
 
     assert 'source "$SCRIPT_DIR/navigation_adapter_common.sh"' in wrapper
     assert "run_navigation_adapter start_mapping.sh" in wrapper
+    assert "wait_for_livox_data" in adapter
+    assert "ros2 topic echo /livox/lidar --once" in adapter
     assert 'session_type="mapping"' in (
         botdog_root / "scripts" / "navigation_adapter_common.sh"
     ).read_text(encoding="utf-8")
@@ -892,6 +912,9 @@ case "${1:-} ${2:-}" in
       printf 'FAKE_GROUND_PCD\n' > "$FAKE_MAP_DIR/terrain_map_test_ground.pcd"
     fi
     printf 'response: success=True\n'
+    ;;
+  "topic echo")
+    printf '123456789\n'
     ;;
   "launch nav_bringup")
     printf 'livox/lidar publish use livox custom format\n'

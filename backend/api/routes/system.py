@@ -293,10 +293,10 @@ async def system_radar_health(
 async def system_radar_preflight(
     user: AuthUserInternal = Depends(require_operator),
 ) -> RadarHealthResponse:
-    """建图前快速确认雷达 topic、发布者和实时数据，不启动或等待驱动。"""
-    from ...services_radar_health import check_radar_preflight
+    """建图前快速确认雷达物理链路，不要求 Livox 驱动已经运行。"""
+    from ...services_radar_health import check_livox_network_preflight
 
-    result = await asyncio.to_thread(check_radar_preflight)
+    result = await asyncio.to_thread(check_livox_network_preflight)
     return RadarHealthResponse(**result)
 
 

@@ -578,10 +578,13 @@ async def nav_set_mapping_enabled(
         if body.enabled:
             if body.scene_name is None:
                 raise MappingError("请输入场景名称")
-            from ...services_radar_health import check_radar_preflight
+            from ...services_radar_health import check_livox_network_preflight
 
             try:
-                radar_health = await asyncio.to_thread(check_radar_preflight)
+                # 空闲状态下 Livox 驱动不会常驻，/livox/lidar 此时不存在是正常的。
+                # 建图前只能做无驱动依赖的物理链路预检；真实点云由建图脚本
+                # 启动驱动后再校验，不能在驱动启动前要求 topic 已存在。
+                radar_health = await asyncio.to_thread(check_livox_network_preflight)
             except Exception as exc:
                 raise MappingError(f"雷达健康检查失败，已阻止启动建图：{exc}") from exc
             if not radar_health["ok"]:

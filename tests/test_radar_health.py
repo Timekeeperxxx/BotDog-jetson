@@ -98,6 +98,23 @@ def test_radar_preflight_accepts_live_radar_data(monkeypatch):
     assert result["message"] == "雷达连接正常"
 
 
+def test_quick_frequency_check_uses_humble_compatible_arguments(monkeypatch):
+    calls: list[tuple[list[str], float]] = []
+
+    def fake_run_ros2(args, timeout):
+        calls.append((args, timeout))
+        return _command_result(stdout="average rate: 10.000\n", timed_out=True)
+
+    monkeypatch.setattr(radar_health, "_run_ros2", fake_run_ros2)
+
+    _result, frequency = radar_health._measure_topic_hz_quick("/livox/lidar")
+
+    assert frequency == 10.0
+    assert calls == [
+        (["topic", "hz", "/livox/lidar", "--window", "2"], radar_health.RADAR_PREFLIGHT_DATA_TIMEOUT_S)
+    ]
+
+
 def test_radar_preflight_reuses_recent_success_to_avoid_duplicate_startup_delay(monkeypatch):
     topic_list_calls = 0
 
