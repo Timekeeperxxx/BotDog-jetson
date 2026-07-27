@@ -36,6 +36,11 @@ def _validate_task_step_payload(step: dict[str, Any]) -> None:
             raise NavTaskError("posture_control 步骤 posture 必须是 stand 或 crouch")
         return
 
+    if step_type == "auto_track_control":
+        if not isinstance(step.get("enabled"), bool):
+            raise NavTaskError("auto_track_control 步骤 enabled 必须是布尔值")
+        return
+
     raise NavTaskError(f"不支持的任务步骤类型: {step_type or '<empty>'}")
 
 

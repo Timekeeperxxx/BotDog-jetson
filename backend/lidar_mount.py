@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from math import isfinite
+from math import cos, isfinite, radians, sin
 from typing import Mapping
 
 from .config import settings
@@ -70,3 +70,39 @@ def lidar_mount_log_values() -> dict[str, float]:
         "pitch_deg": values["NAV_LIDAR_MOUNT_PITCH_DEG"],
         "yaw_deg": values["NAV_LIDAR_MOUNT_YAW_DEG"],
     }
+
+
+def base_pose_to_lidar_initial_position(
+    *,
+    x: float,
+    y: float,
+    z: float,
+    roll: float = 0.0,
+    pitch: float = 0.0,
+    yaw: float = 0.0,
+) -> tuple[float, float, float]:
+    """Convert a map->base_footprint position to the mounted LiDAR position."""
+    values = lidar_mount_values()
+    mount_x = values["NAV_LIDAR_MOUNT_X_M"]
+    mount_y = values["NAV_LIDAR_MOUNT_Y_M"]
+    mount_z = values["NAV_LIDAR_MOUNT_Z_M"]
+
+    cr, sr = cos(roll), sin(roll)
+    cp, sp = cos(pitch), sin(pitch)
+    cy, sy = cos(yaw), sin(yaw)
+    rotated_x = (
+        (cy * cp) * mount_x
+        + (cy * sp * sr - sy * cr) * mount_y
+        + (cy * sp * cr + sy * sr) * mount_z
+    )
+    rotated_y = (
+        (sy * cp) * mount_x
+        + (sy * sp * sr + cy * cr) * mount_y
+        + (sy * sp * cr - cy * sr) * mount_z
+    )
+    rotated_z = (
+        (-sp) * mount_x
+        + (cp * sr) * mount_y
+        + (cp * cr) * mount_z
+    )
+    return (float(x) + rotated_x, float(y) + rotated_y, float(z) + rotated_z)

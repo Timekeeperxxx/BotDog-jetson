@@ -14,13 +14,14 @@ from typing import Any
 from .control_arbiter import ControlArbiter
 from .control_service import ControlService
 from .logging_config import get_logger
+from .navigation_velocity_protocol import (
+    NAVIGATION_VELOCITY_PACKET,
+    NAVIGATION_VELOCITY_TIMEOUT_S,
+    NAVIGATION_VELOCITY_UDP_HOST,
+    NAVIGATION_VELOCITY_UDP_PORT,
+)
 from .tracking_types import ControlOwner
 
-
-NAVIGATION_VELOCITY_UDP_HOST = "127.0.0.1"
-NAVIGATION_VELOCITY_UDP_PORT = 52345
-NAVIGATION_VELOCITY_TIMEOUT_S = 0.5
-NAVIGATION_VELOCITY_PACKET = struct.Struct("ddd")
 
 DATAGRAM_ACCEPTED = "accepted"
 DATAGRAM_REJECTED_SOURCE = "rejected_source"

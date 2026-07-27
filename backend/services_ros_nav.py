@@ -57,9 +57,10 @@ INITIAL_POSE_SUBSCRIBER_WAIT_S = 5.0
 GOAL_PUBLISH_COUNT = 3
 GOAL_PUBLISH_INTERVAL_S = 0.15
 # A go-to request deliberately publishes nav_start=false before the new goal.
-# The cancellation acknowledgement for that old run can arrive after the new
-# nav_start=true and must not release the freshly acquired NAVIGATION owner.
-NAV_START_IDLE_RELEASE_GRACE_S = 2.0
+# Terminal acknowledgements from that old run (including a latched SCAN
+# planner failure) can arrive after the new nav_start=true and must not release
+# the freshly acquired NAVIGATION owner.
+NAV_START_TERMINAL_RELEASE_GRACE_S = 2.0
 
 
 class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
@@ -90,6 +91,17 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._global_path_subscription: Any | None = None
         self._execution_path_subscription: Any | None = None
         self._nav_status_subscription: Any | None = None
+        self._auto_track_control_subscription: Any | None = None
+        self._obstacle_status_subscription: Any | None = None
+        # /nav/obstacle_status 持续阻断跟踪：阻断状态首次出现的时间与是否已告警。
+        self._obstacle_blocked_since: float | None = None
+        self._obstacle_alert_sent = False
+        # 自动重发目标：SCAN 连续重规划失败计满上限后会丢弃目标进入
+        # WAIT_TARGET，此后它直接丢弃 replan_request，链路纯事件驱动，
+        # 只有一个新 goal 能唤醒（goal -> 全局路径 -> /initial_path）。
+        self._last_goal_waypoint: dict[str, Any] | None = None
+        self._regoal_attempts = 0
+        self._last_regoal_at = 0.0
         self._estop_publisher: Any | None = None
         self._initial_pose_publisher: Any | None = None
         self._publisher_lock = threading.RLock()
@@ -100,7 +112,12 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._last_global_path_signature: tuple[Any, ...] | None = None
         self._last_execution_path_broadcast_at = 0.0
         self._last_execution_path_signature: tuple[Any, ...] | None = None
-        self._navigation_idle_release_blocked_until = 0.0
+        self._navigation_terminal_release_blocked_until = 0.0
+        # True only while BotDog expects ROS navigation to own the base.  This
+        # lets a later healthy `moving` heartbeat repair an owner that was
+        # dropped by a racing terminal acknowledgement, without stealing the
+        # base after an explicit stop or E-stop.
+        self._navigation_control_expected = False
         # /nav_status reports every reached waypoint.  During a multi-waypoint
         # task those are progress events, not terminal navigation events.
         self._navigation_task_active = False
@@ -159,6 +176,8 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             self._setup_global_path_subscription(Path)
             self._setup_execution_path_subscription(Path)
             self._setup_nav_status_subscription()
+            self._setup_obstacle_status_subscription()
+            self._setup_auto_track_control_subscription()
             self._setup_cloud_subscription()
 
             if self._use_tf_pose():
@@ -354,8 +373,9 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         # run can acknowledge `canceled` while publish_goal_xyz_yaw is still
         # publishing the new goal, i.e. before nav_start=true is sent.
         # Explicit stop/E-stop routes release their owner directly.
-        self._navigation_idle_release_blocked_until = (
-            time.monotonic() + NAV_START_IDLE_RELEASE_GRACE_S
+        self._navigation_control_expected = bool(enabled)
+        self._navigation_terminal_release_blocked_until = (
+            time.monotonic() + NAV_START_TERMINAL_RELEASE_GRACE_S
         )
         return result
 
@@ -419,6 +439,13 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         )
 
     def publish_goal_xyz_yaw(self, waypoint: dict[str, Any]) -> dict[str, Any]:
+        result = self._publish_goal_xyz_yaw_inner(waypoint)
+        if result.get("success"):
+            # 记住最近一次目标，供持续阻断自动重发；reached/estop 时清除。
+            self._last_goal_waypoint = dict(waypoint)
+        return result
+
+    def _publish_goal_xyz_yaw_inner(self, waypoint: dict[str, Any]) -> dict[str, Any]:
         return publish_goal_xyz_yaw_message(
             node=self._node,
             xyz_publisher=self._goal_xyz_publisher,
@@ -588,6 +615,239 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             settings.ROS_NAV_STATUS_TOPIC,
         )
 
+    def _setup_obstacle_status_subscription(self) -> None:
+        if self._node is None:
+            return
+
+        try:
+            from std_msgs.msg import String
+        except Exception as exc:
+            raise RuntimeError(f"obstacle_status 消息类型不可用: {exc}") from exc
+
+        self._obstacle_status_subscription = self._node.create_subscription(
+            String,
+            settings.ROS_NAV_OBSTACLE_STATUS_TOPIC,
+            self._handle_obstacle_status_message,
+            10,
+        )
+        nav_logger.info(
+            "ROS2 obstacle_status 订阅已启动：topic={}",
+            settings.ROS_NAV_OBSTACLE_STATUS_TOPIC,
+        )
+
+    # 动态避障监控器把持续阻断上报为 replan_requested，但该请求只会触发
+    # SCAN 的局部重规划；走廊被彻底堵死时机器人会原地无限等待。这里作为
+    # 应用层兜底：阻断持续超过阈值就向前端推送 ALERT_RAISED 告警。
+    _OBSTACLE_STUCK_STATUSES = frozenset(
+        {"blocked", "replan_requested", "waiting_replan", "clearing", "sensor_lost"}
+    )
+
+    def _handle_obstacle_status_message(self, msg: Any) -> None:
+        raw_data = str(getattr(msg, "data", "") or "").strip()
+        if not raw_data:
+            return
+
+        try:
+            payload = json.loads(raw_data)
+        except Exception as exc:
+            nav_logger.warning("obstacle_status JSON 解析失败：{}", exc)
+            return
+        if not isinstance(payload, dict):
+            return
+
+        status = str(payload.get("status") or "").strip().lower()
+        now = time.time()
+
+        if status not in self._OBSTACLE_STUCK_STATUSES:
+            if self._obstacle_alert_sent:
+                blocked_seconds = round(
+                    now - (self._obstacle_blocked_since or now), 1
+                )
+                self._submit_alert(
+                    event_type="NAVIGATION",
+                    event_code="NAV_BLOCK_CLEARED",
+                    severity="info",
+                    message=f"导航阻断已解除（持续 {blocked_seconds} 秒），恢复执行",
+                )
+                nav_logger.info(
+                    "导航阻断已解除：status={}，持续 {} 秒", status, blocked_seconds
+                )
+            self._obstacle_blocked_since = None
+            self._obstacle_alert_sent = False
+            self._regoal_attempts = 0
+            return
+
+        if self._obstacle_blocked_since is None:
+            self._obstacle_blocked_since = now
+        blocked_duration = now - self._obstacle_blocked_since
+
+        if (
+            not self._obstacle_alert_sent
+            and blocked_duration >= settings.NAV_OBSTACLE_ALERT_SECONDS
+        ):
+            self._obstacle_alert_sent = True
+            if status == "sensor_lost":
+                event_code = "NAV_SENSOR_LOST"
+                message = (
+                    f"导航传感器数据持续超时 {round(blocked_duration, 1)} 秒，"
+                    "机器人已停车，请检查雷达与定位链路"
+                )
+            else:
+                event_code = "NAV_PATH_BLOCKED"
+                message = (
+                    f"导航路径持续受阻 {round(blocked_duration, 1)} 秒，"
+                    "局部绕行未找到出路，可能需要人工处理或更换目标点"
+                )
+            self._submit_alert(
+                event_type="NAVIGATION",
+                event_code=event_code,
+                severity="warning",
+                message=message,
+                obstacle_status=status,
+                nearest_obstacle_distance=payload.get("nearest_obstacle_distance"),
+            )
+            nav_logger.warning("导航持续受阻告警已发送：{}", message)
+
+        if self._obstacle_alert_sent:
+            self._maybe_auto_regoal(now, blocked_duration, status)
+
+    def _maybe_auto_regoal(
+        self, now: float, blocked_duration: float, status: str
+    ) -> None:
+        """持续阻断超过阈值时重发最近一次目标点，唤醒已丢弃目标的 SCAN。
+
+        SCAN 重规划失败计满 max_replan_fail_count 后进入 WAIT_TARGET 并丢弃
+        目标；该状态下 replan_request 被直接忽略，只有新 goal（-> 全局路径
+        -> /initial_path）能救活规划链。任务模式由 waypoint 导航器自行重试，
+        这里不介入。
+        """
+        if not settings.NAV_OBSTACLE_AUTO_REGOAL_ENABLED:
+            return
+        if status == "sensor_lost":
+            return  # 传感器断流时重发目标毫无意义
+        if blocked_duration < settings.NAV_OBSTACLE_REGOAL_SECONDS:
+            return
+        if bool(getattr(self, "_navigation_task_active", False)):
+            return
+        waypoint = self._last_goal_waypoint
+        if not waypoint:
+            return
+        if self._regoal_attempts >= settings.NAV_OBSTACLE_REGOAL_MAX_ATTEMPTS:
+            return
+        if now - self._last_regoal_at < settings.NAV_OBSTACLE_REGOAL_COOLDOWN_SECONDS:
+            return
+
+        self._regoal_attempts += 1
+        self._last_regoal_at = now
+        try:
+            self.publish_goal_xyz_yaw(dict(waypoint))
+        except Exception as exc:
+            nav_logger.warning("自动重发目标点失败：{}", exc)
+            return
+        message = (
+            f"导航持续受阻 {round(blocked_duration, 1)} 秒，已自动重发目标点"
+            f"（第 {self._regoal_attempts}/"
+            f"{settings.NAV_OBSTACLE_REGOAL_MAX_ATTEMPTS} 次）"
+        )
+        nav_logger.warning("{}", message)
+        self._submit_alert(
+            event_type="NAVIGATION",
+            event_code="NAV_AUTO_REGOAL",
+            severity="info",
+            message=message,
+        )
+
+    def _setup_auto_track_control_subscription(self) -> None:
+        if self._node is None:
+            return
+
+        try:
+            from std_msgs.msg import String
+        except Exception as exc:
+            raise RuntimeError(f"自动跟踪联动消息类型不可用: {exc}") from exc
+
+        self._auto_track_control_subscription = self._node.create_subscription(
+            String,
+            settings.ROS_NAV_AUTO_TRACK_CONTROL_TOPIC,
+            self._handle_auto_track_control_message,
+            10,
+        )
+        nav_logger.info(
+            "ROS2 导航自动跟踪联动订阅已启动：topic={}",
+            settings.ROS_NAV_AUTO_TRACK_CONTROL_TOPIC,
+        )
+
+    def _handle_auto_track_control_message(self, msg: Any) -> None:
+        raw_data = str(getattr(msg, "data", "") or "").strip()
+        if not raw_data:
+            nav_logger.warning("导航自动跟踪联动消息为空")
+            return
+
+        try:
+            payload = json.loads(raw_data)
+        except Exception as exc:
+            nav_logger.warning("导航自动跟踪联动 JSON 解析失败：{}", exc)
+            return
+
+        if not isinstance(payload, dict) or not isinstance(payload.get("enabled"), bool):
+            nav_logger.warning("导航自动跟踪联动消息结构错误：enabled 必须是布尔值")
+            return
+
+        enabled = bool(payload["enabled"])
+        task_id = str(payload.get("task_id") or "").strip() or None
+        step_index = payload.get("step_index")
+        try:
+            self._loop.call_soon_threadsafe(
+                self._apply_auto_track_workflow_control,
+                enabled,
+                task_id,
+                step_index,
+            )
+        except RuntimeError as exc:
+            nav_logger.warning("导航自动跟踪联动调度失败：{}", exc)
+
+    def _apply_auto_track_workflow_control(
+        self,
+        enabled: bool,
+        task_id: str | None,
+        step_index: Any,
+    ) -> None:
+        try:
+            from .api.routes.nav_auto_track_helpers import apply_auto_track_workflow_control
+
+            result = apply_auto_track_workflow_control(enabled)
+        except Exception as exc:
+            nav_logger.exception(
+                "任务流程自动跟踪联动执行失败：task_id={} step_index={} enabled={} error={}",
+                task_id,
+                step_index,
+                enabled,
+                exc,
+            )
+            return
+
+        event = {
+            "task_id": task_id,
+            "step_index": step_index,
+            "enabled": enabled,
+            "state": result.get("state"),
+            "success": bool(
+                result.get(
+                    "success",
+                    bool(result.get("enabled")) == enabled,
+                )
+            ),
+            "message": result.get("message"),
+        }
+        self._submit_broadcast("nav.auto_track_control", event)
+        nav_logger.info(
+            "任务流程自动跟踪联动已执行：task_id={} step_index={} enabled={} state={}",
+            task_id,
+            step_index,
+            enabled,
+            result.get("state"),
+        )
+
     def _handle_global_path_message(self, msg: Any) -> None:
         try:
             path = self._extract_global_path(msg)
@@ -675,8 +935,17 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         task_complete = bool(payload.get("task_complete", False))
         task_active = bool(getattr(self, "_navigation_task_active", False))
         status = str(nav_status.get("status") or "").strip().lower()
+        planner_hard_failure = (
+            str(nav_status.get("error_code") or "").strip().upper()
+            == "SCAN_REPLAN_FAILED"
+        )
 
-        if task_active and not task_complete and status in {"reached", "idle", "error"}:
+        if (
+            task_active
+            and not task_complete
+            and status in {"reached", "idle", "error"}
+            and not planner_hard_failure
+        ):
             current_status = get_nav_state().get("navigation_status") or {}
             nav_status["status"] = "navigating"
             nav_status["task_id"] = nav_status.get("task_id") or current_status.get("task_id")
@@ -687,12 +956,54 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             else:
                 nav_status["message"] = "任务航点切换中"
 
+        if self._ignore_terminal_status_during_navigation_handoff(nav_status):
+            return
+
         updated_status = update_navigation_status(nav_status)
+        self._restore_navigation_control_on_active_status(nav_status)
         self._release_navigation_control_on_terminal_status(
             nav_status,
             task_complete=task_complete,
         )
         self._submit_broadcast("nav.navigation_status", updated_status)
+
+    def _ignore_terminal_status_during_navigation_handoff(
+        self,
+        nav_status: dict[str, Any],
+    ) -> bool:
+        status = str(nav_status.get("status") or "").strip().lower()
+        if status not in {"reached", "idle", "error"}:
+            return False
+        if time.monotonic() >= float(
+            getattr(self, "_navigation_terminal_release_blocked_until", 0.0)
+        ):
+            return False
+
+        nav_logger.info(
+            "忽略新导航交接窗口内的旧终态回执，保留当前导航状态和控制权："
+            "status={} error_code={}",
+            status,
+            nav_status.get("error_code"),
+        )
+        return True
+
+    def _restore_navigation_control_on_active_status(
+        self,
+        nav_status: dict[str, Any],
+    ) -> None:
+        status = str(nav_status.get("status") or "").strip().lower()
+        if status != "navigating" or not bool(
+            getattr(self, "_navigation_control_expected", False)
+        ):
+            return
+        try:
+            from .nav_auto_track_coordinator import get_nav_auto_track_coordinator
+
+            coordinator = get_nav_auto_track_coordinator()
+            if coordinator is not None:
+                coordinator.request_navigation_control()
+        except Exception as exc:
+            nav_logger.debug("恢复导航控制权失败：{}", exc)
 
     def _release_navigation_control_on_terminal_status(
         self,
@@ -704,6 +1015,27 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         if status not in {"reached", "idle", "error", "estop"}:
             return
         if (
+            status != "estop"
+            and time.monotonic()
+            < float(
+                getattr(
+                    self,
+                    "_navigation_terminal_release_blocked_until",
+                    0.0,
+                )
+            )
+        ):
+            nav_logger.info(
+                "忽略新导航交接窗口内的旧终态回执，保留 NAVIGATION 控制权："
+                "status={}",
+                status,
+            )
+            return
+        if status in {"reached", "estop"}:
+            # 目标已完成或被急停，不再是自动重发的对象。
+            self._last_goal_waypoint = None
+            self._regoal_attempts = 0
+        if (
             bool(getattr(self, "_navigation_task_active", False))
             and not task_complete
             and status != "estop"
@@ -713,15 +1045,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
                 status,
             )
             return
-        if (
-            status == "idle"
-            and time.monotonic()
-            < float(getattr(self, "_navigation_idle_release_blocked_until", 0.0))
-        ):
-            nav_logger.info(
-                "忽略新导航启动窗口内的旧任务 idle 回执，保留 NAVIGATION 控制权"
-            )
-            return
+        self._navigation_control_expected = False
         if task_complete or status == "estop":
             self._navigation_task_active = False
         try:
@@ -975,6 +1299,30 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         )
         if event_type == "nav.mapping_cloud":
             self._mapping_cloud_broadcast_future = future
+        future.add_done_callback(self._log_broadcast_error)
+
+    def _submit_alert(
+        self,
+        *,
+        event_type: str,
+        event_code: str,
+        severity: str,
+        message: str,
+        **extra: Any,
+    ) -> None:
+        # ALERT_RAISED 走前端既有告警 UI，无需新增前端事件类型。
+        if self._loop.is_closed():
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            self._broadcaster.broadcast_alert(
+                event_type=event_type,
+                event_code=event_code,
+                severity=severity,
+                message=message,
+                **extra,
+            ),
+            self._loop,
+        )
         future.add_done_callback(self._log_broadcast_error)
 
     def _broadcaster_for_event(self, event_type: str) -> EventBroadcaster:

@@ -100,7 +100,7 @@ def _restart_script_path() -> Path:
 
 
 def _cmd_vel_script_path() -> Path:
-    return _project_root().parent / "test_cmd_vel_fixed.sh"
+    return _project_root() / "scripts" / "start_cmd_vel_udp_sender.sh"
 
 
 def _restart_log_path() -> Path:
@@ -696,6 +696,7 @@ def stop_cmd_vel_script() -> dict[str, Any]:
 def start_cmd_vel_script() -> dict[str, Any]:
     pid_file = _cmd_vel_pid_path()
     log_file = _runtime_dir() / "cmd_vel.log"
+    ready_file = _runtime_dir() / "cmd_vel_sender.ready"
     script_path = _cmd_vel_script_path()
     estop_result = get_cmd_vel_estop_status()
     if bool(estop_result.get("active")):
@@ -741,15 +742,17 @@ def start_cmd_vel_script() -> dict[str, Any]:
         raise RuntimeError(f"cmd_vel 启动脚本不是文件: {script_path}")
 
     log_file.parent.mkdir(parents=True, exist_ok=True)
+    ready_file.unlink(missing_ok=True)
     env = os.environ.copy()
     env["BOTDOG_CMD_VEL_ESTOP_FILE"] = str(_cmd_vel_estop_path())
+    env["BOTDOG_CMD_VEL_READY_FILE"] = str(ready_file)
     with log_file.open("a", encoding="utf-8") as stdout:
         proc = subprocess.Popen(
             ["bash", str(script_path)],
             stdout=stdout,
             stderr=subprocess.STDOUT,
             start_new_session=True,
-            cwd=str(_project_root().parent),
+            cwd=str(_project_root()),
             env=env,
         )
 
@@ -758,10 +761,14 @@ def start_cmd_vel_script() -> dict[str, Any]:
     while time.monotonic() - wait_started_at < 5.0:
         if proc.poll() is not None:
             raise RuntimeError(f"cmd_vel 桥接启动失败，请查看 {log_file}")
-        if time.monotonic() - wait_started_at >= 3.0:
+        if ready_file.exists():
             ready = True
             break
         time.sleep(0.2)
+
+    if not ready:
+        _kill_pid_tree(proc.pid, signal.SIGTERM)
+        raise RuntimeError(f"cmd_vel 桥接启动超时，请查看 {log_file}")
 
     atomic_write_json(pid_file, proc.pid)
     ready_wait_s = round(time.monotonic() - wait_started_at, 2)
@@ -775,7 +782,7 @@ def start_cmd_vel_script() -> dict[str, Any]:
         "ready": ready,
         "ready_wait_s": ready_wait_s,
         "estop": estop_result,
-        "message": f"cmd_vel 桥接已启动并等待 {ready_wait_s:.1f}s",
+        "message": f"cmd_vel ROS2→UDP sender 已启动并等待 {ready_wait_s:.1f}s",
     }
 
 

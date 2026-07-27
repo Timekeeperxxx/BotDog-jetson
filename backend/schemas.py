@@ -451,6 +451,24 @@ class MappingControlResponse(BaseModel):
     message: str | None = None
 
 
+class RosbagRecordingControlRequest(BaseModel):
+    enabled: bool
+
+
+class RosbagRecordingResponse(BaseModel):
+    success: bool
+    enabled: bool
+    running: bool = False
+    pid: int | None = None
+    output_dir: str | None = None
+    log_path: str | None = None
+    started_at: float | None = None
+    lidar_mode: str | None = None
+    mapping_active_at_start: bool = False
+    saved: bool | None = None
+    message: str
+
+
 class NavTaskStepDTO(BaseModel):
     type: str
     waypointId: str | None = None
@@ -461,6 +479,7 @@ class NavTaskStepDTO(BaseModel):
     yaw: float | None = None
     frameId: str | None = None
     posture: str | None = None
+    enabled: bool | None = None
 
 
 class NavTaskDefinitionDTO(BaseModel):

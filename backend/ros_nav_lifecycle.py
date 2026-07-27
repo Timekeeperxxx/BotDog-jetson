@@ -147,6 +147,7 @@ class RosNavLifecycleMixin:
             self._global_path_subscription = None
             self._execution_path_subscription = None
             self._nav_status_subscription = None
+            self._auto_track_control_subscription = None
             self._estop_publisher = None
             self._initial_pose_publisher = None
             self._cloud_subscription = None

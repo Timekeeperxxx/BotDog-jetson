@@ -24,15 +24,15 @@ from .services_nav_waypoints import upsert_origin_waypoint
 
 mapping_logger = get_logger("建图服务")
 
-MAPS_ROOT = Path("/home/jetson/Project/BOTDOG/MAPS")
-START_MAPPING_SCRIPT = Path("/home/jetson/Project/BOTDOG/BotDog/scripts/start_mapping.sh")
-VIDEO_PIPELINE_SCRIPT = Path("/home/jetson/Project/BOTDOG/BotDog/scripts/run-pipeline.sh")
+MAPS_ROOT = Path(settings.SCENE_MAP_ROOT)
+START_MAPPING_SCRIPT = Path("/home/jetson/Projects/BotDog/scripts/start_mapping.sh")
+VIDEO_PIPELINE_SCRIPT = Path("/home/jetson/Projects/BotDog/scripts/run-pipeline.sh")
 VIDEO_PIPELINE_PID_FILES = (
-    Path("/home/jetson/Project/BOTDOG/BotDog/logs/mediamtx.pid"),
-    Path("/home/jetson/Project/BOTDOG/BotDog/logs/ffmpeg_cam1.pid"),
-    Path("/home/jetson/Project/BOTDOG/BotDog/logs/ffmpeg_cam2.pid"),
-    Path("/home/jetson/Project/BOTDOG/BotDog/logs/ffmpeg_cam3.pid"),
-    Path("/home/jetson/Project/BOTDOG/BotDog/logs/ffmpeg_cam4.pid"),
+    Path("/home/jetson/Projects/BotDog/logs/mediamtx.pid"),
+    Path("/home/jetson/Projects/BotDog/logs/ffmpeg_cam1.pid"),
+    Path("/home/jetson/Projects/BotDog/logs/ffmpeg_cam2.pid"),
+    Path("/home/jetson/Projects/BotDog/logs/ffmpeg_cam3.pid"),
+    Path("/home/jetson/Projects/BotDog/logs/ffmpeg_cam4.pid"),
 )
 SCENE_DIR_PATTERN = re.compile(r"^Scene(\d+)_")
 MAPPING_READY_FLAG_NAME = ".ground_generation_started"

@@ -41,15 +41,21 @@ def _legacy_pose_file(map_id: str) -> Path:
     return _store_dir() / f"{safe_json_path_name(map_id)}.json"
 
 
-def _pose_files(map_id: str) -> list[Path]:
-    primary = _safe_pose_file(map_id)
+def _pose_file_candidates(map_id: str) -> list[Path]:
+    primary = _store_dir() / f"{stable_json_path_name(map_id)}.json"
     legacy = _legacy_pose_file(map_id)
     return [primary] if primary == legacy else [primary, legacy]
 
 
+def _pose_files(map_id: str) -> list[Path]:
+    resolve_scene_ground_path(map_id)
+    return _pose_file_candidates(map_id)
+
+
 def delete_scene_localization_data(map_id: str) -> dict[str, Any]:
     deleted_files: list[str] = []
-    for path in _pose_files(map_id):
+    # 删除场景只需清理关联 JSON；失败建图没有 ground.pcd 也必须可删除。
+    for path in _pose_file_candidates(map_id):
         if not path.exists():
             continue
         data = read_json(path, None)

@@ -166,7 +166,9 @@ def normalize_nav_status(
         message = "导航任务已暂停，正在自动跟踪陌生人"
         target_waypoint_id = interrupted.get("target_waypoint_id") or target_waypoint_id
         target_name = interrupted.get("target_name") or target_name
-    if mapped_status == "error":
+    # A planner-emergency report is already a precise diagnosis.  Do not
+    # replace it with a stale global-planner log diagnosis.
+    if mapped_status == "error" and error_code != "SCAN_REPLAN_FAILED":
         diagnosis = diagnose_navigation_failure()
         if diagnosis is not None:
             message = str(diagnosis["message"])

@@ -47,12 +47,71 @@ def task_auto_track_requested(task: dict[str, Any]) -> bool:
     return bool(settings.NAV_AUTO_TRACK_DURING_NAV_ENABLED and settings.NAV_AUTO_TRACK_AUTO_ENABLE)
 
 
-def ensure_auto_track_enabled_for_navigation(task: dict[str, Any]) -> dict[str, Any]:
-    if not task_auto_track_requested(task):
+def task_has_auto_track_control(task: dict[str, Any]) -> bool:
+    return any(
+        isinstance(step, dict) and str(step.get("type") or "").strip() == "auto_track_control"
+        for step in list(task.get("steps") or [])
+    )
+
+
+def apply_auto_track_workflow_control(enabled: bool) -> dict[str, Any]:
+    from ...auto_track_service import get_auto_track_service
+    from ...control_arbiter import get_control_arbiter
+    from ...guard_mission_service import get_guard_mission_service
+
+    auto_track = get_auto_track_service()
+    if auto_track is None:
         return {
-            "requested": False,
+            "success": False,
+            "requested": True,
             "enabled": False,
             "state": None,
+            "message": "自动跟踪服务未初始化",
+        }
+
+    current_status = auto_track.get_status()
+    if enabled:
+        arbiter = get_control_arbiter()
+        if arbiter is not None:
+            arbiter.release_manual_override()
+
+        guard_mission = get_guard_mission_service()
+        if guard_mission is not None and guard_mission.enabled:
+            guard_mission.enabled = False
+
+        if hasattr(auto_track, "enable_for_navigation"):
+            auto_track.enable_for_navigation()
+        else:
+            auto_track.enable()
+        if hasattr(auto_track, "resume"):
+            auto_track.resume()
+    elif bool(current_status.get("enabled")):
+        auto_track.disable()
+
+    status = auto_track.get_status()
+    return {
+        "success": bool(status.get("enabled")) == enabled,
+        "requested": True,
+        "enabled": bool(status.get("enabled")),
+        "state": status.get("state"),
+        "message": "任务流程已开启自动跟踪" if enabled else "任务流程已关闭自动跟踪",
+    }
+
+
+def ensure_auto_track_enabled_for_navigation(task: dict[str, Any]) -> dict[str, Any]:
+    if task_has_auto_track_control(task):
+        result = apply_auto_track_workflow_control(False)
+        return {
+            **result,
+            "requested": False,
+            "message": "自动跟踪由任务流程控制，等待执行联动步骤",
+        }
+
+    if not task_auto_track_requested(task):
+        result = apply_auto_track_workflow_control(False)
+        return {
+            **result,
+            "requested": False,
             "message": "导航跟踪联动未开启",
         }
 

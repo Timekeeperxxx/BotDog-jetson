@@ -194,7 +194,10 @@ def _find_pids_by_needles(needles: list[str]) -> list[int]:
 
 
 def _find_cmd_vel_pids() -> list[int]:
+    project_root = Path(__file__).resolve().parents[1]
     return _find_pids_by_needles([
+        str(project_root / "scripts" / "start_cmd_vel_udp_sender.sh"),
+        str(project_root / "scripts" / "cmd_vel_ros2_udp_sender.py"),
         "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel.py",
         "/home/jetson/Project/BOTDOG/test_cmd_vel_fixed.sh",
         "/home/jetson/Project/BOTDOG/unitree_sdk2_python/example/scripts/cmd_vel_udp_bridge.py",

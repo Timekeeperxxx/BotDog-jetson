@@ -26,13 +26,17 @@ from ...schemas import (
     NavTaskUpsertRequest,
     NavTaskStopResponse,
     NavWaypointGoToResponse,
+    RosbagRecordingControlRequest,
+    RosbagRecordingResponse,
 )
 from ...nav_bridge_state import get_ros_nav_bridge
 from .nav_auto_track_helpers import (
+    apply_auto_track_workflow_control as _apply_auto_track_workflow_control,
     cancel_pending_auto_track_resume as _cancel_pending_auto_track_resume,
     ensure_auto_track_enabled_for_navigation as _ensure_auto_track_enabled_for_navigation,
     release_navigation_control as _release_navigation_control,
     request_navigation_control as _request_navigation_control,
+    task_has_auto_track_control as _task_has_auto_track_control,
 )
 from .nav_pcd_routes import (
     nav_create_waypoint,
@@ -51,6 +55,7 @@ from .nav_pcd_routes import (
 
 router = APIRouter(prefix="/api/v1/nav", tags=["nav"])
 router.include_router(pcd_router)
+_sensor_session_lock = asyncio.Lock()
 
 
 class NavAutoTrackModeRequest(BaseModel):
@@ -319,8 +324,10 @@ async def nav_stop_task(
         raise HTTPException(status_code=503, detail="ROS2 导航桥未初始化")
 
     try:
-        _task = get_nav_task(task_id)
+        task = get_nav_task(task_id)
         _cancel_pending_auto_track_resume("nav_task_stop")
+        if _task_has_auto_track_control(task):
+            _apply_auto_track_workflow_control(False)
         try:
             task_stop_result = bridge.publish_navigation_task_start(False)
         except RuntimeError:
@@ -410,6 +417,7 @@ async def nav_set_localization_pose(
     from ...services_nav_localization import inspect_relocation_initialization, save_localization_pose
     from ...services_nav_state import reset_localization_tracking, update_localization_status
     from ...services_pcd_maps import PcdMapError
+    from ...lidar_mount import base_pose_to_lidar_initial_position
 
     bridge = get_ros_nav_bridge()
     if bridge is None:
@@ -418,10 +426,18 @@ async def nav_set_localization_pose(
     try:
         reset_localization_tracking("已发送重定位请求，等待 TF 恢复")
         pose = save_localization_pose(body.model_dump())
-        initial_pose_result = bridge.publish_initial_pose(
+        lidar_x, lidar_y, lidar_z = base_pose_to_lidar_initial_position(
             x=pose["x"],
             y=pose["y"],
             z=pose["z"],
+            roll=pose["roll"],
+            pitch=pose["pitch"],
+            yaw=pose["yaw"],
+        )
+        initial_pose_result = bridge.publish_initial_pose(
+            x=lidar_x,
+            y=lidar_y,
+            z=lidar_z,
             roll=pose["roll"],
             pitch=pose["pitch"],
             yaw=pose["yaw"],
@@ -437,8 +453,9 @@ async def nav_set_localization_pose(
     relocation_init = inspect_relocation_initialization(timeout_s=2.0)
     relocation_message = relocation_init["message"]
     message = (
-        f"已发布 initial_pose: "
-        f"x={pose['x']:.3f}, y={pose['y']:.3f}, z={pose['z']:.3f}, "
+        f"已发布 initial_pose: base_footprint="
+        f"[{pose['x']:.3f}, {pose['y']:.3f}, {pose['z']:.3f}], "
+        f"lidar=[{lidar_x:.3f}, {lidar_y:.3f}, {lidar_z:.3f}], "
         f"roll={pose['roll']:.3f}, pitch={pose['pitch']:.3f}, yaw={pose['yaw']:.3f}；"
         f"{relocation_message}"
     )
@@ -570,11 +587,26 @@ async def nav_set_mapping_enabled(
     user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
+    async with _sensor_session_lock:
+        return await _nav_set_mapping_enabled_locked(body, user, db)
+
+
+async def _nav_set_mapping_enabled_locked(
+    body: MappingControlRequest,
+    user: AuthUserInternal,
+    db,
+):
     from ...services_mapping import MappingError, get_mapping_service
+    from ...services_rosbag_recording import get_rosbag_recording_service
 
     mapping_service = get_mapping_service()
+    recording_service = get_rosbag_recording_service()
 
     try:
+        stopped_recording = await asyncio.to_thread(
+            recording_service.stop_before_mapping_transition,
+            reason="mapping_start" if body.enabled else "mapping_stop",
+        )
         if body.enabled:
             if body.scene_name is None:
                 raise MappingError("请输入场景名称")
@@ -593,6 +625,8 @@ async def nav_set_mapping_enabled(
             _cancel_pending_auto_track_resume("nav_mapping_start")
             _release_navigation_control()
             result = await asyncio.to_thread(mapping_service.start, body.scene_name)
+            if stopped_recording is not None:
+                result["message"] = f"已先停止录包；{result.get('message') or '建图已启动'}"
             await safe_write_audit_log(
                 db,
                 level="INFO",
@@ -605,6 +639,8 @@ async def nav_set_mapping_enabled(
             return result
 
         result = await asyncio.to_thread(mapping_service.stop, wait=False)
+        if stopped_recording is not None:
+            result["message"] = f"已先停止录包；{result.get('message') or '正在停止建图并保存地图'}"
         await safe_write_audit_log(
             db,
             level="INFO",
@@ -647,6 +683,55 @@ async def nav_get_mapping_status(
             "地图正在保存" if saving else "建图正在运行" if running else "建图未运行"
         ),
     }
+
+
+@router.post("/rosbag/set-enabled", response_model=RosbagRecordingResponse)
+async def nav_set_rosbag_recording_enabled(
+    body: RosbagRecordingControlRequest,
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    from ...services_mapping import get_mapping_service
+    from ...services_rosbag_recording import RosbagRecordingError, get_rosbag_recording_service
+
+    async with _sensor_session_lock:
+        mapping_status = await asyncio.to_thread(get_mapping_service().get_status)
+        mapping_running = bool(mapping_status.get("running"))
+        mapping_saving = bool(mapping_status.get("saving"))
+        recording_service = get_rosbag_recording_service()
+        try:
+            if body.enabled:
+                if mapping_saving:
+                    raise RosbagRecordingError("地图正在保存，暂不能开始录包")
+                result = await asyncio.to_thread(recording_service.start, mapping_active=mapping_running)
+                operation = "start"
+            else:
+                result = await asyncio.to_thread(recording_service.stop, reason="user")
+                operation = "stop"
+        except RosbagRecordingError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+        await safe_write_audit_log(
+            db,
+            level="INFO",
+            module="BACKEND",
+            message=(
+                f"用户={user.username} 角色={user.role} 操作=nav.rosbag.{operation} "
+                f"目录={result.get('output_dir') or '-'} 雷达模式={result.get('lidar_mode') or '-'} "
+                f"结果=success"
+            ),
+        )
+        return result
+
+
+@router.get("/rosbag/status", response_model=RosbagRecordingResponse)
+async def nav_get_rosbag_recording_status(
+    user: AuthUserInternal = Depends(require_operator),
+):
+    from ...services_rosbag_recording import get_rosbag_recording_service
+
+    del user
+    return await asyncio.to_thread(get_rosbag_recording_service().get_status)
 
 
 @router.post("/pcd-maps/{map_id}/waypoints/{waypoint_id}")

@@ -8,6 +8,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import AnyUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -80,22 +81,42 @@ class Settings(BaseSettings):
     AI_EXIT_ON_FRAME_TIMEOUT: bool = True
     AI_EVENT_SEND_TIMEOUT_SECONDS: float = 0.03
     AI_MAX_FRAME_AGE_SECONDS: float = 0.35
-    AI_PATROL_SKIP: int = 2  # 巡逻态跳帧（5fps / 2 = 2.5fps 推理）
+    AI_PATROL_SKIP: int = 1  # 巡逻态不跳帧；5fps 相机每帧检测以降低框延迟
     AI_AUTO_TRACK_SKIP: int = 1  # 自动跟踪启用时全速检测，提高锁定/重发现稳定性
     AI_SUSPECT_SKIP: int = 1  # 疑似目标全速推理
+    # 目标检测与姿态模型完成首次顺序预热后并发推理，缩短同一帧总处理时间。
+    AI_PARALLEL_INFERENCE_ENABLED: bool = True
     AI_STABLE_HITS: int = 5  # 连续命中阈值
     AI_RESET_MISSES: int = 20  # 连续未命中重置阈值
     AI_COOLDOWN_SECONDS: float = 5.0  # 冷却时间
     AI_SIMULATE_DETECTION: bool = False
     AI_SIMULATE_PROB: float = 0.02
     AI_DEVICE: str = 'auto'  # auto / cpu / cuda / cuda:0
-    AI_MODEL_PATH: str = 'models/helmet.engine'  # YOLO 模型路径
+    AI_MODEL_PATH: str = '/home/jetson/Projects/Models/helmet.engine'  # YOLO 模型路径
     AI_CONFIDENCE_THRESHOLD: float = 0.4  # 推理置信度阈值
     AI_TARGET_CLASSES: list[str] = ['person', 'head', 'helmet']  # 目标类别
     AI_USE_BYTETRACK: bool = False
+    # 独立于巡检任务和自动跟踪，持续进行只读视觉分析；不会下发机器人运动命令。
+    AI_CONTINUOUS_DETECTION_ENABLED: bool = False
     # 是否在普通巡检/session 运行时启用旧的被动 AI 告警。
     # 关闭后，AI 只在自动跟踪或驱离模式需要视觉结果时拉流推理，避免抢占主视频链路。
     AI_PASSIVE_SESSION_DETECTION_ENABLED: bool = True
+
+    # 姿态检测支路：COCO 17 点骨架 + 轻量时序状态机。
+    POSE_ENABLED: bool = False
+    POSE_MODEL_PATH: str = '/home/jetson/Projects/Models/yolo11n-pose.engine'
+    POSE_DEVICE: str = 'auto'
+    POSE_INFERENCE_IMGSZ: int = 640
+    POSE_CONFIDENCE_THRESHOLD: float = 0.35
+    POSE_KEYPOINT_CONFIDENCE: float = 0.35
+    POSE_MIN_VISIBLE_KEYPOINTS: int = 5
+    POSE_FRAME_SKIP: int = 1
+    POSE_STABLE_HITS: int = 3
+    POSE_CROUCH_SECONDS: float = 4.0
+    POSE_LOITER_SECONDS: float = 20.0
+    POSE_EVENT_COOLDOWN_SECONDS: float = 15.0
+    POSE_TRACK_TTL_SECONDS: float = 3.0
+    POSE_OVERLAY_INTERVAL_SECONDS: float = 0.2
 
     # 抓拍存储目录（用于 /api/v1/static）
     SNAPSHOT_DIR: str = 'data/snapshots'
@@ -103,9 +124,16 @@ class Settings(BaseSettings):
     # 录像存储目录（用于 /api/v1/static/recordings）
     RECORDING_DIR: str = "data/recordings"
 
+    # 先飞 Z2-Mini 云台私有协议（TCP Server）。
+    Z2MINI_HOST: str = "192.168.123.108"
+    Z2MINI_CONTROL_PORT: int = 2332
+    Z2MINI_TIMEOUT_SECONDS: float = 2.0
+    Z2MINI_JOG_SECONDS: float = 0.45
+    Z2MINI_DEFAULT_PICTURE_MODE: Literal["visible", "thermal"] = "visible"
+
     # ==================== 导航巡逻 / PCD 点云地图 Demo ====================
     PCD_MAP_ROOT: str = '/home/jetson/superlio/Super-LIO/src/super_lio/map'
-    SCENE_MAP_ROOT: str = '/home/jetson/Project/BOTDOG/MAPS'
+    SCENE_MAP_ROOT: str = '/home/jetson/Projects/Maps'
     PCD_FRAME_ID: str = 'map'
     PCD_PREVIEW_DEFAULT_POINTS: int = 100000
     PCD_PREVIEW_MAX_POINTS: int = 200000
@@ -167,6 +195,7 @@ class Settings(BaseSettings):
     # Task workflow triggering is deliberately separate from /nav_start.
     # /nav_start also gates single-waypoint navigation, controllers and safety.
     ROS_NAV_TASK_START_TOPIC: str = '/nav_task_start'
+    ROS_NAV_AUTO_TRACK_CONTROL_TOPIC: str = '/nav/task/auto_track_control'
     ROS_NAV_GOAL_TOPIC: str = '/goal_pose'
     ROS_NAV_GOAL_XYZ_TOPIC: str = '/clicked_point'
     ROS_NAV_GOAL_YAW_TOPIC: str = 'goal_yaw'
@@ -181,6 +210,14 @@ class Settings(BaseSettings):
     ROS_NAV_MAPPING_CLOUD_TOPIC: str = '/lio/cloud_world'
     ROS_NAV_MAPPING_TOPIC: str = '/mapping_start'
     ROS_NAV_STATUS_TOPIC: str = '/nav_status'
+    # 动态避障监控器的状态 topic；持续阻断超过阈值秒数后推送 ALERT_RAISED。
+    ROS_NAV_OBSTACLE_STATUS_TOPIC: str = '/nav/obstacle_status'
+    NAV_OBSTACLE_ALERT_SECONDS: float = 15.0
+    # 持续阻断自动重发目标：SCAN 失败计满后丢弃目标锁死，重发 goal 唤醒。
+    NAV_OBSTACLE_AUTO_REGOAL_ENABLED: bool = True
+    NAV_OBSTACLE_REGOAL_SECONDS: float = 25.0
+    NAV_OBSTACLE_REGOAL_COOLDOWN_SECONDS: float = 30.0
+    NAV_OBSTACLE_REGOAL_MAX_ATTEMPTS: int = 3
 
     # 阶段 6：网页控制服务配置
     # 适配器类型：simulation（仅打印日志）| mavlink（真实硬件）
@@ -294,7 +331,16 @@ class Settings(BaseSettings):
     AUTO_TRACK_STOP_SNAPSHOT_ENABLED: bool = True  # 跟踪停止时是否补拍终止证据图
     AUTO_TRACK_YAW_PULSE_MS: float = 0.0           # 脉冲转向时长（ms），0=禁用，推荐80~150ms
     AUTO_TRACK_VX: float = 0.4                    # 自动跟踪前进/后退速度（m/s）
-    AUTO_TRACK_VYAW: float = 0.22                  # 自动跟踪偏航转速（rad/s），低于手动控制以减少过冲
+    AUTO_TRACK_VYAW: float = 0.35                  # 自动跟踪偏航转速（rad/s），需高于 B2 实机偏航死区
+    # 云台视觉伺服：先让相机保持目标，再让机身追随相机视线。
+    AUTO_TRACK_GIMBAL_ENABLED: bool = True
+    AUTO_TRACK_GIMBAL_BODY_DEADBAND_DEG: float = 5.0
+    AUTO_TRACK_GIMBAL_FORWARD_DEADBAND_DEG: float = 5.0
+    AUTO_TRACK_GIMBAL_HORIZONTAL_FOV_DEG: float = 60.0
+    AUTO_TRACK_GIMBAL_SERVO_GAIN: float = 0.75
+    AUTO_TRACK_GIMBAL_PIXEL_DEADBAND_PX: int = 45
+    AUTO_TRACK_GIMBAL_COMMAND_INTERVAL_MS: float = 80.0
+    AUTO_TRACK_GIMBAL_MIN_BODY_VYAW: float = 0.35
 
     # 宇树 B2 硬件适配器配置
     UNITREE_NETWORK_IFACE: str = 'eno1'       # 连接 B2 的网卡名（eth0/enp2s0/Ethernet）

@@ -72,6 +72,15 @@ def _materialize_step(_scene_id: str, step: dict[str, Any]) -> dict[str, Any]:
             "posture": posture,
         }
 
+    if step_type == "auto_track_control":
+        enabled = step.get("enabled")
+        if not isinstance(enabled, bool):
+            raise NavTaskError("auto_track_control 步骤 enabled 必须是布尔值")
+        return {
+            "type": "auto_track_control",
+            "enabled": enabled,
+        }
+
     raise NavTaskError(f"不支持的任务步骤类型: {step_type or '<empty>'}")
 
 

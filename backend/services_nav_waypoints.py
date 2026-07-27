@@ -29,10 +29,15 @@ def _legacy_waypoint_file(map_id: str) -> Path:
     return _store_dir() / f"{safe_json_path_name(map_id)}.json"
 
 
-def _waypoint_files(map_id: str) -> list[Path]:
-    primary = _safe_waypoint_file(map_id)
+def _waypoint_file_candidates(map_id: str) -> list[Path]:
+    primary = _store_dir() / f"{stable_json_path_name(map_id)}.json"
     legacy = _legacy_waypoint_file(map_id)
     return [primary] if primary == legacy else [primary, legacy]
+
+
+def _waypoint_files(map_id: str) -> list[Path]:
+    resolve_scene_ground_path(map_id)
+    return _waypoint_file_candidates(map_id)
 
 
 def list_waypoints(map_id: str) -> dict[str, Any]:
@@ -79,7 +84,9 @@ def delete_scene_waypoint_data(map_id: str) -> dict[str, Any]:
     updated_files: list[str] = []
     removed_items = 0
 
-    for path in _waypoint_files(map_id):
+    # 删除失败或未完成的建图场景时可能没有 ground.pcd。这里只需按场景 ID
+    # 定位关联 JSON，不应复用读取导航点时的点云完整性校验。
+    for path in _waypoint_file_candidates(map_id):
         if not path.exists():
             continue
         data = read_json(path, None)
