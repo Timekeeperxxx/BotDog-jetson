@@ -14,7 +14,15 @@ export type WorkflowPostureControlStep = {
   posture: 'stand' | 'crouch'
 }
 
-export type WorkflowStep = WorkflowNavigateWaypointStep | WorkflowPostureControlStep
+export type WorkflowAutoTrackControlStep = {
+  type: 'auto_track_control'
+  enabled: boolean
+}
+
+export type WorkflowStep =
+  | WorkflowNavigateWaypointStep
+  | WorkflowPostureControlStep
+  | WorkflowAutoTrackControlStep
 
 export type TaskDefinition = {
   id: string

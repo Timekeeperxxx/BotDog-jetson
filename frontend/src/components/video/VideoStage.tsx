@@ -1,11 +1,14 @@
 import { useState } from 'react';
-import { Camera, Gauge, Maximize2, Minimize2, Play, Square, Video, VideoOff } from 'lucide-react';
+import { Camera, Eye, EyeOff, Gauge, Maximize2, Minimize2, Play, SlidersHorizontal, Square, Video, VideoOff } from 'lucide-react';
 import { TrackOverlay } from '../TrackOverlay1';
+import { CameraControlPanel } from './CameraControlPanel';
 import { CameraVideo } from './CameraVideo';
 import { OmniMonitorEntry } from './OmniMonitorEntry';
 import { OmniMonitorOverlay } from './OmniMonitorOverlay';
 import { VideoHud } from './VideoHud';
 import type { VideoStageProps } from './types';
+
+const AI_OVERLAY_STORAGE_KEY = 'botdog.show-ai-overlay.v2';
 
 export function VideoStage({
   videoRef,
@@ -38,15 +41,31 @@ export function VideoStage({
   onVideoProfileChange,
 }: VideoStageProps) {
   const [isOmniOpen, setIsOmniOpen] = useState(false);
+  const [isCameraControlOpen, setIsCameraControlOpen] = useState(false);
+  const [showAiOverlay, setShowAiOverlay] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem(AI_OVERLAY_STORAGE_KEY) === 'true';
+  });
 
-  const mainOverlayEnabled = autoTrackEnabled || guardEnabled;
+  const toggleAiOverlay = () => {
+    setShowAiOverlay((current) => {
+      const next = !current;
+      window.localStorage.setItem(AI_OVERLAY_STORAGE_KEY, String(next));
+      return next;
+    });
+  };
+
+  const mainOverlayEnabled = autoTrackEnabled
+    || guardEnabled
+    || Boolean(trackOverlay?.poses?.length)
+    || Boolean(trackOverlay?.detections?.length);
   const stageResolutionChip = resolutionChip || (videoResolution.height ? `${videoResolution.height}p` : '--');
 
   return (
     <div className="flex-1 flex min-h-0 relative">
       <div className={`flex-1 bg-black relative overflow-hidden transition-all duration-300 ${isUiFullscreen ? 'fixed inset-0 z-[100]' : 'border-r border-white/20'}`}>
         <CameraVideo videoRef={videoRef} />
-        {trackOverlay && mainOverlayEnabled && (
+        {showAiOverlay && trackOverlay && mainOverlayEnabled && (
           <TrackOverlay data={trackOverlay} videoRef={videoRef} />
         )}
         {whepStatus.status !== 'connected' && (
@@ -105,7 +124,12 @@ export function VideoStage({
           isMissionRunning={isMissionRunning}
         />
 
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-2xl px-6 z-30 pointer-events-auto">
+        <CameraControlPanel
+          open={isCameraControlOpen}
+          onClose={() => setIsCameraControlOpen(false)}
+        />
+
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-4xl px-6 z-30 pointer-events-auto">
           <div className="bg-black border-2 border-white/30 p-3 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,1)] flex items-center justify-between px-8">
             <div className="flex items-center space-x-5 text-white">
               <button onClick={toggleFullscreen} className="p-2 hover:bg-white hover:text-black rounded-lg transition-all" title={isUiFullscreen ? '退出全屏' : '全屏'}>
@@ -139,6 +163,32 @@ export function VideoStage({
               >
                 <Gauge size={22} />
                 <span className="text-[10px] font-black">{videoProfile === 'remote' ? '低延迟' : '高清'}</span>
+              </button>
+              <button
+                onClick={() => setIsCameraControlOpen((value) => !value)}
+                className={`p-2 rounded-lg transition-all ${
+                  isCameraControlOpen
+                    ? 'bg-cyan-300 text-black'
+                    : 'hover:bg-white hover:text-black'
+                }`}
+                title="相机调节"
+                aria-label="相机调节"
+                aria-expanded={isCameraControlOpen}
+              >
+                <SlidersHorizontal size={22} />
+              </button>
+              <button
+                onClick={toggleAiOverlay}
+                className={`p-2 rounded-lg transition-all ${
+                  showAiOverlay
+                    ? 'bg-emerald-300/15 text-emerald-200 hover:bg-emerald-300/25'
+                    : 'text-white/40 hover:bg-white hover:text-black'
+                }`}
+                title={showAiOverlay ? '隐藏 AI 检测框' : '显示 AI 检测框'}
+                aria-label={showAiOverlay ? '隐藏 AI 检测框' : '显示 AI 检测框'}
+                aria-pressed={showAiOverlay}
+              >
+                {showAiOverlay ? <Eye size={22} /> : <EyeOff size={22} />}
               </button>
             </div>
             <div className="flex items-center space-x-3">

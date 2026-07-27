@@ -32,6 +32,20 @@ describe('NavToolStrip task controls', () => {
     expect(mappingButton).toBeDisabled()
     expect(mappingButton.querySelector('.lucide-loader-circle')).toBeInTheDocument()
   })
+
+  it('switches the rosbag control between start and stop states', () => {
+    const { rerender } = render(<NavToolStrip {...createToolStripProps()} />)
+    expect(screen.getByRole('button', { name: '开始录包' })).toBeEnabled()
+
+    rerender(<NavToolStrip {...createToolStripProps({
+      mappingActive: true,
+      rosbagRunning: true,
+      rosbagUsesMappingLidar: true,
+    })} />)
+    const stopButton = screen.getByRole('button', { name: '停止录包' })
+    expect(stopButton).toHaveClass('is-active')
+    expect(stopButton).toHaveAttribute('title', expect.stringContaining('复用建图中的雷达驱动'))
+  })
 })
 
 function createToolStripProps(
@@ -56,6 +70,9 @@ function createToolStripProps(
     pcdLayerVisibility: { map: true, ground: true, footprint: true },
     pointCloudQualityMode: 'auto',
     radarChecking: false,
+    rosbagLoading: false,
+    rosbagRunning: false,
+    rosbagUsesMappingLidar: false,
     resultMessage: null,
     robotPoseAvailable: true,
     selectedSceneNavigable: true,
@@ -65,6 +82,7 @@ function createToolStripProps(
     webglSupported: true,
     wallColorMode: 'solid',
     onCheckRadar: vi.fn(),
+    onToggleRosbag: vi.fn(),
     onStopSelectedTask: vi.fn(),
     onToggleFollowRobot: vi.fn(),
     onToggleKeyboardControl: vi.fn(),

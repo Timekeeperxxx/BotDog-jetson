@@ -18,6 +18,7 @@ import {
   ArrowLeftFromLine,
   ArrowRightFromLine,
   AlertCircle,
+  Keyboard,
 } from 'lucide-react';
 import { useRobotControl, type RobotCommand, type RobotCommandOptions } from '../hooks/useRobotControl';
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore';
@@ -64,10 +65,13 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
   const canOperate = hasAuthSession() && hasRole('operator');
   const { startCommand, stopCommand, isControlling, lastResult, currentCmd, resultMessage } =
     useRobotControl();
+  const [controlEnabled, setControlEnabled] = useState(false);
   const [linearSpeed, setLinearSpeed] = useState(DEFAULT_LINEAR_SPEED);
   const [turnSpeed, setTurnSpeed] = useState(DEFAULT_TURN_SPEED);
   const linearSpeedRef = useRef(DEFAULT_LINEAR_SPEED);
   const turnSpeedRef = useRef(DEFAULT_TURN_SPEED);
+  const controlUnavailable = isDisabled || !canOperate;
+  const controlsLocked = controlUnavailable || !controlEnabled;
 
   const getCommandOptions = useCallback((cmd: RobotCommand): RobotCommandOptions => {
     if (cmd === 'forward' || cmd === 'backward') {
@@ -104,19 +108,23 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
   }, []);
 
   const handlePointerDown = (cmd: RobotCommand) => (e: React.PointerEvent) => {
-    if (isDisabled || !canOperate) return;
+    if (controlsLocked) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     startControlCommand(cmd);
   };
 
   const handlePointerUp = () => {
-    if (isDisabled || !canOperate) return;
-    stopCommand();
+    if (isControlling) stopCommand();
+  };
+
+  const handleToggleControl = () => {
+    if (controlUnavailable) return;
+    setControlEnabled((value) => !value);
   };
 
   // 键盘控制逻辑
   useEffect(() => {
-    if (isDisabled || !canOperate) {
+    if (controlsLocked) {
       if (isControlling) stopCommand();
       return;
     }
@@ -181,7 +189,7 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [adjustKeyboardSpeed, isDisabled, canOperate, isControlling, currentCmd, startControlCommand, stopCommand]);
+  }, [adjustKeyboardSpeed, controlsLocked, isControlling, currentCmd, startControlCommand, stopCommand]);
 
   const resultColor =
     lastResult?.result === 'ACCEPTED'
@@ -191,13 +199,36 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
       : 'text-yellow-400';
 
   return (
-    <div className={`select-none ${isDisabled || !canOperate ? 'opacity-40 pointer-events-none' : ''}`}>
+    <div className="select-none">
       {/* 标题栏 */}
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-[9px] font-black uppercase tracking-widest text-white/70">
           移动控制
         </span>
-        {isControlling && (
+        <button
+          type="button"
+          onClick={handleToggleControl}
+          disabled={controlUnavailable}
+          aria-pressed={controlEnabled}
+          title={
+            isDisabled
+              ? '急停状态下无法开启控制'
+              : !canOperate
+                ? '登录后可开启手动控制'
+                : controlEnabled
+                  ? '关闭鼠标和键盘控制'
+                  : '开启鼠标和键盘控制'
+          }
+          className={`flex h-5 items-center gap-1 rounded border px-1.5 text-[8px] font-black tracking-tight transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
+            controlEnabled
+              ? 'border-emerald-400/70 bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25'
+              : 'border-white/20 bg-zinc-900 text-white/60 hover:border-white/50 hover:text-white'
+          }`}
+        >
+          <Keyboard size={10} />
+          <span>{controlEnabled ? '关闭控制' : '开启控制'}</span>
+        </button>
+        {controlEnabled && isControlling && (
           <span className="flex items-center gap-1">
             <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
             <span className="text-[8px] font-black text-emerald-400">{currentCmd}</span>
@@ -220,6 +251,7 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
           return (
             <button
               key={cmd}
+              disabled={controlsLocked}
               onPointerDown={handlePointerDown(cmd)}
               onPointerUp={handlePointerUp}
               onPointerLeave={handlePointerUp}
@@ -228,11 +260,13 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
                 flex flex-col items-center justify-center gap-0.5
                 h-8 rounded border
                 font-black text-[7px] uppercase tracking-tight
-                transition-all duration-100 cursor-pointer select-none touch-none
+                transition-all duration-100 cursor-pointer select-none touch-none disabled:cursor-not-allowed
                 ${
-                  currentCmd === cmd && isControlling
+                  controlEnabled && currentCmd === cmd && isControlling
                     ? 'bg-white text-black border-white shadow-[0_0_8px_white]'
-                    : 'bg-zinc-800/80 text-white/60 border-white/15 hover:border-white/50 hover:text-white'
+                    : controlsLocked
+                      ? 'bg-zinc-900/70 text-white/25 border-white/10'
+                      : 'bg-zinc-800/80 text-white/60 border-white/15 hover:border-white/50 hover:text-white'
                 }
               `}
             >
@@ -260,11 +294,17 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
             </>
           ) : (
             <span className="text-white/60 w-full text-center tracking-tighter">
-              {canOperate ? 'W/S/Q/E 控制，方向键调速' : '登录后可进行手动控制'}
+              {!canOperate
+                ? '登录后可进行手动控制'
+                : isDisabled
+                  ? '急停状态，手动控制已锁定'
+                  : controlEnabled
+                    ? 'W/S/Q/E 控制，方向键调速'
+                    : '请先开启控制，防止误触'}
             </span>
           )}
         </div>
-        {canOperate && (
+        {canOperate && controlEnabled && !isDisabled && (
           <div className="flex items-center justify-between text-[8px] text-white/60">
             <span>前后 {formatSpeed(linearSpeed)} m/s</span>
             <span>转向 {formatSpeed(turnSpeed)} rad/s</span>

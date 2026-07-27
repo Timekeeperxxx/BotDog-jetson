@@ -18,6 +18,10 @@ export interface TrackDecision {
   bbox?: number[];
   anchor?: number[];
   track_id?: number;
+  camera_yaw_deg?: number | null;
+  body_heading_error_deg?: number | null;
+  gimbal_target_yaw_deg?: number | null;
+  gimbal_connected?: boolean;
 }
 
 const apiPost = (path: string, body?: object) =>

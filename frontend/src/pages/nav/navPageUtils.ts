@@ -16,6 +16,7 @@ import type {
   TaskDefinition,
   TaskDraft,
   TaskDraftStep,
+  WorkflowAutoTrackControlStep,
   WorkflowNavigateWaypointStep,
   WorkflowPostureControlStep,
   WorkflowStep,
@@ -51,11 +52,17 @@ export const emptyTaskDraft: TaskDraft = {
 export const WORKFLOW_STEP_TYPE_LABELS: Record<WorkflowStep['type'], string> = {
   navigate_waypoint: '导航到定点',
   posture_control: '姿态控制',
+  auto_track_control: '自动跟踪联动',
 }
 
 export const POSTURE_LABELS: Record<'stand' | 'crouch', string> = {
   stand: '站立',
   crouch: '蹲下',
+}
+
+export const AUTO_TRACK_CONTROL_LABELS: Record<'enabled' | 'disabled', string> = {
+  enabled: '开启自动跟踪',
+  disabled: '关闭自动跟踪',
 }
 
 export function resolveTaskSceneId(task: Pick<TaskDefinition, 'sceneId' | 'mapId'>) {
@@ -93,6 +100,12 @@ export function createDraftStepByType(type: WorkflowStep['type']): TaskDraftStep
     return {
       type: 'posture_control',
       posture: 'stand',
+    }
+  }
+  if (type === 'auto_track_control') {
+    return {
+      type: 'auto_track_control',
+      enabled: true,
     }
   }
   return {
@@ -157,6 +170,12 @@ export function patchTaskDraftStep(
                 ...(patch as Partial<WorkflowPostureControlStep>),
                 posture: (patch as Partial<WorkflowPostureControlStep>).posture ?? item.posture,
               }
+            : item.type === 'auto_track_control'
+              ? {
+                  ...item,
+                  ...(patch as Partial<WorkflowAutoTrackControlStep>),
+                  enabled: (patch as Partial<WorkflowAutoTrackControlStep>).enabled ?? item.enabled,
+                }
             : {
                 ...item,
                 ...(patch as Partial<WorkflowNavigateWaypointStep>),
@@ -380,6 +399,14 @@ export function buildTaskDraftFromTask(task: TaskDefinition): TaskDraft {
         type: 'posture_control',
         posture: step.posture,
       })
+      continue
+    }
+
+    if (step.type === 'auto_track_control' && typeof step.enabled === 'boolean') {
+      steps.push({
+        type: 'auto_track_control',
+        enabled: step.enabled,
+      })
     }
   }
 
@@ -414,6 +441,14 @@ export function buildWorkflowStepsFromDraft(steps: TaskDraftStep[]): WorkflowSte
       workflowSteps.push({
         type: 'posture_control',
         posture: step.posture,
+      })
+      continue
+    }
+
+    if (step.type === 'auto_track_control' && typeof step.enabled === 'boolean') {
+      workflowSteps.push({
+        type: 'auto_track_control',
+        enabled: step.enabled,
       })
     }
   }
@@ -458,6 +493,17 @@ export function validateWorkflowStepsFromDraft(
       workflowSteps.push({
         type: 'posture_control',
         posture: step.posture,
+      })
+      continue
+    }
+
+    if (step.type === 'auto_track_control') {
+      if (typeof step.enabled !== 'boolean') {
+        return { ok: false, message: `${stepLabel}自动跟踪联动步骤必须选择开启或关闭` }
+      }
+      workflowSteps.push({
+        type: 'auto_track_control',
+        enabled: step.enabled,
       })
       continue
     }
@@ -544,6 +590,9 @@ export function getWorkflowStepTargetLabel(step: TaskDraftStep | WorkflowStep, w
   if (step.type === 'posture_control') {
     return POSTURE_LABELS[step.posture]
   }
+  if (step.type === 'auto_track_control') {
+    return AUTO_TRACK_CONTROL_LABELS[step.enabled ? 'enabled' : 'disabled']
+  }
 
   const waypointName = waypoints.find((waypoint) => waypoint.id === step.waypointId)?.name
   return waypointName || step.waypointName || step.waypointId || '未选择导航点'
@@ -558,6 +607,9 @@ export function summarizeWorkflowSteps(steps: Array<TaskDraftStep | WorkflowStep
       }
       if (step.type === 'posture_control') {
         return POSTURE_LABELS[step.posture] || '姿态控制'
+      }
+      if (step.type === 'auto_track_control') {
+        return AUTO_TRACK_CONTROL_LABELS[step.enabled ? 'enabled' : 'disabled']
       }
       return '无效步骤'
     })

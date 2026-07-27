@@ -126,12 +126,16 @@ describe('navPageUtils', () => {
     expect(
       buildWorkflowStepsFromDraft([
         { type: 'navigate_waypoint', waypointId: '  wp-1  ' },
+        { type: 'auto_track_control', enabled: true },
         { type: 'posture_control', posture: 'crouch' },
+        { type: 'auto_track_control', enabled: false },
         { type: 'navigate_waypoint', waypointId: '' },
       ]),
     ).toEqual([
       { type: 'navigate_waypoint', waypointId: 'wp-1' },
+      { type: 'auto_track_control', enabled: true },
       { type: 'posture_control', posture: 'crouch' },
+      { type: 'auto_track_control', enabled: false },
     ])
   })
 
@@ -139,12 +143,14 @@ describe('navPageUtils', () => {
     expect(
       validateWorkflowStepsFromDraft([
         { type: 'navigate_waypoint', waypointId: 'wp-1' },
+        { type: 'auto_track_control', enabled: true },
         { type: 'posture_control', posture: 'stand' },
       ]),
     ).toEqual({
       ok: true,
       steps: [
         { type: 'navigate_waypoint', waypointId: 'wp-1', waypointName: undefined, x: undefined, y: undefined, z: undefined, yaw: undefined, frameId: undefined },
+        { type: 'auto_track_control', enabled: true },
         { type: 'posture_control', posture: 'stand' },
       ],
     })
@@ -159,14 +165,18 @@ describe('navPageUtils', () => {
       summarizeWorkflowSteps(
         [
           { type: 'navigate_waypoint', waypointId: 'wp-1', waypointName: '巡检点1' },
+          { type: 'auto_track_control', enabled: true },
           { type: 'posture_control', posture: 'stand' },
+          { type: 'auto_track_control', enabled: false },
           { type: 'posture_control', posture: 'crouch' },
         ],
         [{ id: 'wp-1', name: '巡检点1' }],
       ),
-    ).toBe('导航到巡检点1 -> 站立 -> 蹲下')
+    ).toBe('导航到巡检点1 -> 开启自动跟踪 -> 站立 -> 关闭自动跟踪 -> 蹲下')
     expect(getWorkflowStepTypeLabel('navigate_waypoint')).toBe('导航到定点')
+    expect(getWorkflowStepTypeLabel('auto_track_control')).toBe('自动跟踪联动')
     expect(getWorkflowStepTargetLabel({ type: 'posture_control', posture: 'stand' })).toBe('站立')
+    expect(getWorkflowStepTargetLabel({ type: 'auto_track_control', enabled: false })).toBe('关闭自动跟踪')
     expect(taskContainsPostureControl({ steps: [{ type: 'posture_control', posture: 'stand' }] })).toBe(true)
   })
 
@@ -177,8 +187,10 @@ describe('navPageUtils', () => {
         mapId: 'scene-a',
         steps: [
           { type: 'navigate_waypoint', waypointId: 'wp-1' },
+          { type: 'auto_track_control', enabled: true },
           { type: 'posture_control', posture: 'stand' },
           { type: 'navigate_waypoint', waypointId: 'wp-2' },
+          { type: 'auto_track_control', enabled: false },
         ],
       },
       scenes: [sceneA],
@@ -204,6 +216,7 @@ describe('navPageUtils', () => {
           yaw: undefined,
           frameId: undefined,
         },
+        { type: 'auto_track_control', enabled: true },
         { type: 'posture_control', posture: 'stand' },
         {
           type: 'navigate_waypoint',
@@ -215,6 +228,7 @@ describe('navPageUtils', () => {
           yaw: undefined,
           frameId: undefined,
         },
+        { type: 'auto_track_control', enabled: false },
       ])
     }
   })
@@ -304,5 +318,21 @@ describe('navPageUtils', () => {
         { type: 'posture_control' },
       ).steps,
     ).toEqual([{ type: 'posture_control', posture: 'stand' }])
+
+    expect(
+      patchTaskDraftStep(
+        { name: 'n', mapId: 'map-a', steps: [{ type: 'posture_control', posture: 'stand' }] },
+        0,
+        { type: 'auto_track_control' },
+      ).steps,
+    ).toEqual([{ type: 'auto_track_control', enabled: true }])
+
+    expect(
+      patchTaskDraftStep(
+        { name: 'n', mapId: 'map-a', steps: [{ type: 'auto_track_control', enabled: true }] },
+        0,
+        { enabled: false },
+      ).steps,
+    ).toEqual([{ type: 'auto_track_control', enabled: false }])
   })
 })

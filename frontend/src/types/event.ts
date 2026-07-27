@@ -45,9 +45,15 @@ export interface AIStatus {
   frame_age_ms?: number;
   processing_ms?: number;
   detect_ms?: number;
+  pose_ms?: number;
   postprocess_ms?: number;
   end_to_end_ms?: number;
   frame_timeout_reason?: string | null;
+  pose_status?: 'disabled' | 'ready' | 'failed';
+  pose_frames_processed?: number;
+  pose_events_count?: number;
+  parallel_inference_enabled?: boolean;
+  inference_warmed_up?: boolean;
 }
 
 // ──── 自动跟踪相关类型 ────────────────────────────────────────────────────────
@@ -92,6 +98,12 @@ export interface AutoTrackStatus {
   control_arbiter: ArbiterStatus;
   multi_target_mode: boolean;
   candidate_count: number;
+  gimbal_tracking_enabled?: boolean;
+  gimbal_connected?: boolean;
+  camera_yaw_deg?: number | null;
+  body_heading_error_deg?: number | null;
+  gimbal_target_yaw_deg?: number | null;
+  gimbal_error?: string | null;
 }
 
 export interface KnownTarget {

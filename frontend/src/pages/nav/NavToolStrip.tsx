@@ -40,6 +40,9 @@ type NavToolStripProps = {
   pcdLayerVisibility: PcdLayerVisibility
   pointCloudQualityMode: PointCloudQualityMode
   radarChecking: boolean
+  rosbagLoading: boolean
+  rosbagRunning: boolean
+  rosbagUsesMappingLidar: boolean
   resultMessage: string | null
   robotPoseAvailable: boolean
   selectedSceneNavigable: boolean
@@ -49,6 +52,7 @@ type NavToolStripProps = {
   webglSupported: boolean
   wallColorMode: WallColorMode
   onCheckRadar: () => void
+  onToggleRosbag: () => void
   onStopSelectedTask: () => void
   onToggleFollowRobot: () => void
   onToggleKeyboardControl: () => void
@@ -80,6 +84,9 @@ export function NavToolStrip({
   pcdLayerVisibility,
   pointCloudQualityMode,
   radarChecking,
+  rosbagLoading,
+  rosbagRunning,
+  rosbagUsesMappingLidar,
   resultMessage,
   robotPoseAvailable,
   selectedSceneNavigable,
@@ -89,6 +96,7 @@ export function NavToolStrip({
   webglSupported,
   wallColorMode,
   onCheckRadar,
+  onToggleRosbag,
   onStopSelectedTask,
   onToggleFollowRobot,
   onToggleKeyboardControl,
@@ -263,11 +271,32 @@ export function NavToolStrip({
         <button
           className="pcd-tool-button"
           onClick={onCheckRadar}
-          disabled={!canOperate || radarChecking}
+          disabled={!canOperate || radarChecking || rosbagLoading}
           title="检查雷达 ROS2 topic、发布者和数据频率"
         >
           {radarChecking ? <Loader2 size={15} className="pcd-spin" /> : <Radar size={15} />}
           <span>{radarChecking ? '检查中' : '检查雷达'}</span>
+        </button>
+        <button
+          className={`pcd-tool-button ${rosbagRunning ? 'is-active' : ''}`}
+          onClick={onToggleRosbag}
+          disabled={!canOperate || rosbagLoading || radarChecking}
+          title={
+            rosbagRunning
+              ? rosbagUsesMappingLidar
+                ? '停止录包；当前录包复用建图中的雷达驱动'
+                : '停止录包并安全写入 metadata.yaml'
+              : mappingActive
+                ? '开始录包，复用当前建图的雷达驱动'
+                : '开始录包；空闲时会按需启动雷达驱动'
+          }
+        >
+          {rosbagLoading
+            ? <Loader2 size={15} className="pcd-spin" />
+            : rosbagRunning
+              ? <CircleStop size={15} />
+              : <Save size={15} />}
+          <span>{rosbagLoading ? '处理中' : rosbagRunning ? '停止录包' : '开始录包'}</span>
         </button>
         <button
           className={`pcd-tool-button ${navAutoTrackEnabled ? 'is-active' : ''}`}

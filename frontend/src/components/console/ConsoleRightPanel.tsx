@@ -58,6 +58,7 @@ export function ConsoleRightPanel({
       <div className="border-t border-white/20 bg-zinc-950 shrink-0">
         <div className="px-3 py-2">
           <ControlPad
+            key={systemStatus?.status === 'E_STOP_TRIGGERED' ? 'estop-locked' : 'control-ready'}
             isDisabled={systemStatus?.status === 'E_STOP_TRIGGERED'}
             bottomCenterSlot={
               <button

@@ -7,9 +7,11 @@ import {
   deletePcdScene,
   checkRadarHealth,
   getNavAutoTrackMode,
+  getRosbagRecordingStatus,
   restartNavigationLocalization,
   setLocalizationPose,
   setNavAutoTrackMode,
+  setRosbagRecordingEnabled,
   triggerNavEmergencyStop,
   waitInitialposeReady,
   waitNavigationRuntimeReady,
@@ -26,6 +28,7 @@ import type {
   NavWaypoint,
   PcdSceneItem,
   PointCloudQualityMode,
+  RosbagRecordingResponse,
   WallColorMode,
 } from '../types/pcdMap'
 import { validateWaypointName } from '../utils/navWaypointValidation'
@@ -78,6 +81,8 @@ export function PcdMapDemoPage() {
   const [estopSending, setEstopSending] = useState(false)
   const [restartLocalizationSending, setRestartLocalizationSending] = useState(false)
   const [radarChecking, setRadarChecking] = useState(false)
+  const [rosbagLoading, setRosbagLoading] = useState(false)
+  const [rosbagStatus, setRosbagStatus] = useState<RosbagRecordingResponse | null>(null)
   const [navAutoTrackEnabled, setNavAutoTrackEnabled] = useState(false)
   const [navAutoTrackLoading, setNavAutoTrackLoading] = useState(false)
   const [relocationPrompt, setRelocationPrompt] = useState<RelocationPromptState>({
@@ -195,6 +200,32 @@ export function PcdMapDemoPage() {
     void syncNavAutoTrackMode()
     return () => {
       cancelled = true
+    }
+  }, [addLog, canOperate])
+
+  useEffect(() => {
+    if (!canOperate) {
+      setRosbagStatus(null)
+      return
+    }
+
+    let cancelled = false
+    const syncRosbagStatus = async (reportError: boolean) => {
+      try {
+        const status = await getRosbagRecordingStatus()
+        if (!cancelled) setRosbagStatus(status)
+      } catch (error) {
+        if (!cancelled && reportError) {
+          addLog(error instanceof Error ? error.message : '读取录包状态失败', 'error')
+        }
+      }
+    }
+
+    void syncRosbagStatus(true)
+    const timer = window.setInterval(() => void syncRosbagStatus(false), 2000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
     }
   }, [addLog, canOperate])
 
@@ -643,6 +674,26 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, canOperate, radarChecking])
 
+  const handleToggleRosbag = useCallback(async () => {
+    if (!canOperate) {
+      addLog('当前无操作权限，无法控制录包', 'error')
+      return
+    }
+    if (rosbagLoading) return
+
+    const enabled = !rosbagStatus?.running
+    setRosbagLoading(true)
+    try {
+      const result = await setRosbagRecordingEnabled(enabled)
+      setRosbagStatus(result)
+      addLog(result.message, result.saved === false ? 'error' : 'info')
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : `${enabled ? '开始' : '停止'}录包失败`, 'error')
+    } finally {
+      setRosbagLoading(false)
+    }
+  }, [addLog, canOperate, rosbagLoading, rosbagStatus?.running])
+
   const handleToggleNavAutoTrack = useCallback(async () => {
     if (!canOperate) {
       addLog('当前无操作权限，无法切换导航自动跟踪', 'error')
@@ -775,6 +826,9 @@ export function PcdMapDemoPage() {
             pcdLayerVisibility={pcdLayerVisibility}
             pointCloudQualityMode={pointCloudQualityMode}
             radarChecking={radarChecking}
+            rosbagLoading={rosbagLoading}
+            rosbagRunning={Boolean(rosbagStatus?.running)}
+            rosbagUsesMappingLidar={rosbagStatus?.lidar_mode === 'mapping'}
             resultMessage={resultMessage}
             robotPoseAvailable={Boolean(robotPose)}
             selectedSceneNavigable={selectedSceneNavigable}
@@ -784,6 +838,7 @@ export function PcdMapDemoPage() {
             webglSupported={webglSupported}
             wallColorMode={wallColorMode}
             onCheckRadar={() => void handleCheckRadar()}
+            onToggleRosbag={() => void handleToggleRosbag()}
             onStopSelectedTask={handleStopSelectedTask}
             onToggleFollowRobot={handleToggleFollowRobot}
             onToggleKeyboardControl={handleToggleKeyboardControl}

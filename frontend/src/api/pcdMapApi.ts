@@ -6,6 +6,7 @@ import type {
   NavWaypoint,
   NavWaypointCreatePayload,
   MappingControlResponse,
+  RosbagRecordingResponse,
   RadarHealthResponse,
   PcdSceneListResponse,
   NavCurrentScene,
@@ -532,6 +533,21 @@ export function setMappingEnabled(
 
 export function getMappingStatus(): Promise<MappingControlResponse> {
   return requestJson(getApiUrl('/api/v1/nav/mapping/status'))
+}
+
+export function setRosbagRecordingEnabled(enabled: boolean): Promise<RosbagRecordingResponse> {
+  return requestJson(
+    getApiUrl('/api/v1/nav/rosbag/set-enabled'),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    },
+  )
+}
+
+export function getRosbagRecordingStatus(): Promise<RosbagRecordingResponse> {
+  return requestJson(getApiUrl('/api/v1/nav/rosbag/status'))
 }
 
 export function checkRadarHealth(): Promise<RadarHealthResponse> {

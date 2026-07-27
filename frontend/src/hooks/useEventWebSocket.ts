@@ -93,7 +93,32 @@ export function useEventWebSocket(): EventHookState {
           }
 
           if (message.msg_type === 'TRACK_OVERLAY' && message.payload) {
-            setTrackOverlay(message.payload as unknown as TrackOverlayData);
+            const payload = message.payload as unknown as TrackOverlayData;
+            setTrackOverlay((previous) => ({
+              ...payload,
+              poses: previous?.poses,
+              keypoint_confidence: previous?.keypoint_confidence,
+            }));
+            return;
+          }
+
+          if (message.msg_type === 'POSE_OVERLAY' && message.payload) {
+            const payload = message.payload as unknown as Pick<
+              TrackOverlayData,
+              'frame_w' | 'frame_h' | 'detections' | 'poses' | 'keypoint_confidence'
+            >;
+            setTrackOverlay((previous) => ({
+              persons: previous?.persons ?? [],
+              active_bbox: previous?.active_bbox ?? null,
+              command: previous?.command ?? null,
+              reason: previous?.reason ?? '',
+              state: previous?.state ?? 'POSE',
+              deadband_px: previous?.deadband_px ?? 0,
+              anchor_y_stop_ratio: previous?.anchor_y_stop_ratio ?? 1,
+              forward_area_ratio: previous?.forward_area_ratio ?? 1,
+              ...previous,
+              ...payload,
+            }));
             return;
           }
 

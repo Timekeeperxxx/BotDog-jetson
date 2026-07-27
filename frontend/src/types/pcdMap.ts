@@ -248,6 +248,20 @@ export type MappingControlResponse = {
   message: string | null
 }
 
+export type RosbagRecordingResponse = {
+  success: boolean
+  enabled: boolean
+  running: boolean
+  pid: number | null
+  output_dir: string | null
+  log_path: string | null
+  started_at: number | null
+  lidar_mode: 'mapping' | 'existing' | 'owned' | null
+  mapping_active_at_start: boolean
+  saved: boolean | null
+  message: string
+}
+
 export type RadarHealthCheck = {
   name: string
   ok: boolean

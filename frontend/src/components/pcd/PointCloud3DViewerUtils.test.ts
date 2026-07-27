@@ -19,8 +19,8 @@ import {
 
 describe('B2 SCAN collision-body overlay', () => {
   it('matches the Navigation double-cylinder footprint', () => {
-    expect(SCAN_BODY_CYLINDER_RADIUS).toBe(0.25)
-    expect(SCAN_BODY_CYLINDER_OFFSETS).toEqual([-0.225, -0.675])
+    expect(SCAN_BODY_CYLINDER_RADIUS).toBe(0.27)
+    expect(SCAN_BODY_CYLINDER_OFFSETS).toEqual([-0.22, -0.63])
     expect(SCAN_BODY_CYLINDER_HEIGHT).toBe(0.43)
     expect(SCAN_BODY_CYLINDER_CENTER_Z_OFFSET + SCAN_BODY_CYLINDER_HEIGHT / 2).toBeCloseTo(0.10)
     expect(SCAN_BODY_CYLINDER_CENTER_Z_OFFSET - SCAN_BODY_CYLINDER_HEIGHT / 2).toBeCloseTo(-0.33)

@@ -110,6 +110,7 @@ export function TaskCreatorDrawer({
                       >
                         <option value="navigate_waypoint">{getWorkflowStepTypeLabel('navigate_waypoint')}</option>
                         <option value="posture_control">{getWorkflowStepTypeLabel('posture_control')}</option>
+                        <option value="auto_track_control">{getWorkflowStepTypeLabel('auto_track_control')}</option>
                       </select>
                       {step.type === 'navigate_waypoint' ? (
                         <select
@@ -125,7 +126,7 @@ export function TaskCreatorDrawer({
                             </option>
                           ))}
                         </select>
-                      ) : (
+                      ) : step.type === 'posture_control' ? (
                         <select
                           className="pcd-task-value-select"
                           value={step.posture}
@@ -136,6 +137,18 @@ export function TaskCreatorDrawer({
                         >
                           <option value="stand">{POSTURE_LABELS.stand}</option>
                           <option value="crouch">{POSTURE_LABELS.crouch}</option>
+                        </select>
+                      ) : (
+                        <select
+                          className="pcd-task-value-select"
+                          value={step.enabled ? 'enabled' : 'disabled'}
+                          onChange={(event) =>
+                            onDraftStepChange(index, { enabled: event.target.value === 'enabled' })
+                          }
+                          disabled={!draft.mapId}
+                        >
+                          <option value="enabled">开启自动跟踪</option>
+                          <option value="disabled">关闭自动跟踪</option>
                         </select>
                       )}
                     </div>
@@ -172,6 +185,7 @@ export function TaskCreatorDrawer({
         <div className="pcd-task-editor-footer pcd-task-editor-footer-wide">
           <div className="pcd-task-editor-hint">
             任务与当前地图固定绑定，只能使用该地图中的导航点。任务名称不能为空，步骤通过下拉框配置。
+            自动跟踪联动会在流程执行到该步骤时立即开启或关闭。
             {draft.mapId && draft.mapId === selectedSceneId ? ' 当前场景已加载。' : ''}
             {!selectedSceneNavigable && selectedSceneMessage ? ` ${selectedSceneMessage}` : ''}
           </div>

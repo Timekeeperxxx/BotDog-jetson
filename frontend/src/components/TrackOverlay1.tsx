@@ -20,6 +20,17 @@ export interface TrackOverlayData {
     is_stranger?: boolean | null;
     safety_status?: string | null;
   }[];
+  poses?: {
+    track_id: number;
+    bbox: number[];
+    confidence: number;
+    posture: string;
+    posture_confidence: number;
+    inside_zone: boolean;
+    dwell_seconds: number;
+    keypoints: number[][];
+  }[];
+  keypoint_confidence?: number;
   persons: {
     bbox: number[];
     conf: number;
@@ -184,6 +195,83 @@ export function TrackOverlay({ data, videoRef }: Props) {
         ctx.fillText(tagText, rx + 4, y2 * sy + 10);
       }
       
+      ctx.restore();
+    }
+
+    // ─── 3.2. COCO 17 点人体骨架与姿态标签 ──────────────────────
+    const skeletonEdges = [
+      [5, 6], [5, 7], [7, 9], [6, 8], [8, 10],
+      [5, 11], [6, 12], [11, 12],
+      [11, 13], [13, 15], [12, 14], [14, 16],
+      [0, 1], [0, 2], [1, 3], [2, 4],
+    ];
+    const postureLabels: Record<string, string> = {
+      standing: '站立',
+      crouching: '蹲伏',
+      lying: '倒地/躺卧',
+      climbing_suspected: '疑似攀爬',
+      unknown: '姿态待确认',
+    };
+    const postureColors: Record<string, string> = {
+      standing: 'rgba(50,220,180,0.95)',
+      crouching: 'rgba(255,180,40,0.98)',
+      lying: 'rgba(255,70,70,0.98)',
+      climbing_suspected: 'rgba(255,40,120,0.98)',
+      unknown: 'rgba(180,190,210,0.8)',
+    };
+    const keypointThreshold = data.keypoint_confidence ?? 0.35;
+
+    for (const pose of data.poses ?? []) {
+      const color = postureColors[pose.posture] ?? postureColors.unknown;
+      const points = pose.keypoints;
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 2;
+
+      for (const [startIndex, endIndex] of skeletonEdges) {
+        const start = points[startIndex];
+        const end = points[endIndex];
+        if (
+          !start || !end
+          || (start[2] ?? 0) < keypointThreshold
+          || (end[2] ?? 0) < keypointThreshold
+        ) continue;
+        ctx.beginPath();
+        ctx.moveTo(start[0] * sx, start[1] * sy);
+        ctx.lineTo(end[0] * sx, end[1] * sy);
+        ctx.stroke();
+      }
+
+      for (const point of points) {
+        if (!point || (point[2] ?? 0) < keypointThreshold) continue;
+        ctx.beginPath();
+        ctx.arc(point[0] * sx, point[1] * sy, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (Array.isArray(pose.bbox) && pose.bbox.length === 4) {
+        const [x1, y1, x2, y2] = pose.bbox;
+        ctx.setLineDash([5, 3]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = color;
+        ctx.strokeRect(
+          x1 * sx,
+          y1 * sy,
+          (x2 - x1) * sx,
+          (y2 - y1) * sy,
+        );
+        ctx.setLineDash([]);
+        const label = `${postureLabels[pose.posture] ?? pose.posture} #${pose.track_id}`;
+        ctx.font = 'bold 11px sans-serif';
+        const labelWidth = ctx.measureText(label).width + 10;
+        const labelX = x1 * sx;
+        const labelY = Math.max(16, y1 * sy - 20);
+        ctx.fillStyle = 'rgba(10,10,15,0.78)';
+        ctx.fillRect(labelX, labelY, labelWidth, 18);
+        ctx.fillStyle = color;
+        ctx.fillText(label, labelX + 5, labelY + 13);
+      }
       ctx.restore();
     }
 
