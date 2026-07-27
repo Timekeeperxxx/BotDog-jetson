@@ -248,10 +248,93 @@ def test_nav_status_invalid_json_is_ignored(monkeypatch):
     assert broadcast_calls == []
 
 
+def test_nav_auto_track_workflow_message_applies_control_on_backend_loop(monkeypatch):
+    broadcast_calls: list[tuple[str, dict[str, object]]] = []
+    bridge = _make_bridge(monkeypatch, broadcast_calls)
+    control_calls: list[bool] = []
+
+    class ImmediateLoop:
+        @staticmethod
+        def call_soon_threadsafe(callback, *args):
+            callback(*args)
+
+    bridge._loop = ImmediateLoop()
+    monkeypatch.setattr(
+        "backend.api.routes.nav_auto_track_helpers.apply_auto_track_workflow_control",
+        lambda enabled: (
+            control_calls.append(enabled)
+            or {
+                "requested": True,
+                "enabled": enabled,
+                "state": "IDLE" if enabled else "DISABLED",
+                "message": "ok",
+            }
+        ),
+    )
+
+    bridge._handle_auto_track_control_message(
+        SimpleNamespace(
+            data=json.dumps(
+                {
+                    "type": "auto_track_control",
+                    "enabled": True,
+                    "task_id": "task_001",
+                    "step_index": 2,
+                }
+            )
+        )
+    )
+
+    assert control_calls == [True]
+    assert broadcast_calls == [
+        (
+            "nav.auto_track_control",
+            {
+                "task_id": "task_001",
+                "step_index": 2,
+                "enabled": True,
+                "state": "IDLE",
+                "success": True,
+                "message": "ok",
+            },
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "",
+        "{not json",
+        json.dumps({"enabled": "true"}),
+        json.dumps([]),
+    ],
+)
+def test_nav_auto_track_workflow_invalid_message_is_ignored(monkeypatch, payload):
+    broadcast_calls: list[tuple[str, dict[str, object]]] = []
+    bridge = _make_bridge(monkeypatch, broadcast_calls)
+    scheduled_calls: list[object] = []
+    bridge._loop = SimpleNamespace(
+        call_soon_threadsafe=lambda *args: scheduled_calls.append(args)
+    )
+
+    bridge._handle_auto_track_control_message(SimpleNamespace(data=payload))
+
+    assert scheduled_calls == []
+    assert broadcast_calls == []
+
+
 def test_stale_idle_after_new_nav_start_does_not_release_navigation(monkeypatch):
     broadcast_calls: list[tuple[str, dict[str, object]]] = []
     bridge = _make_bridge(monkeypatch, broadcast_calls)
-    bridge._navigation_idle_release_blocked_until = time.monotonic() + 2.0
+    bridge._navigation_terminal_release_blocked_until = time.monotonic() + 2.0
+    bridge._navigation_control_expected = True
+    update_navigation_status(
+        {
+            "status": "navigating",
+            "message": "新目标导航中",
+        }
+    )
     release_calls: list[str] = []
 
     class DummyCoordinator:
@@ -276,12 +359,14 @@ def test_stale_idle_after_new_nav_start_does_not_release_navigation(monkeypatch)
     )
 
     assert release_calls == []
+    assert get_nav_state()["navigation_status"]["status"] == "navigating"
 
 
 def test_idle_after_nav_start_grace_releases_navigation(monkeypatch):
     broadcast_calls: list[tuple[str, dict[str, object]]] = []
     bridge = _make_bridge(monkeypatch, broadcast_calls)
-    bridge._navigation_idle_release_blocked_until = time.monotonic() - 1.0
+    bridge._navigation_terminal_release_blocked_until = time.monotonic() - 1.0
+    bridge._navigation_control_expected = True
     release_calls: list[str] = []
 
     class DummyCoordinator:
@@ -306,6 +391,122 @@ def test_idle_after_nav_start_grace_releases_navigation(monkeypatch):
     )
 
     assert release_calls == ["release"]
+    assert bridge._navigation_control_expected is False
+
+
+def test_stale_scan_failure_after_new_nav_start_does_not_release_or_replace_status(
+    monkeypatch,
+):
+    broadcast_calls: list[tuple[str, dict[str, object]]] = []
+    bridge = _make_bridge(monkeypatch, broadcast_calls)
+    bridge._navigation_terminal_release_blocked_until = time.monotonic() + 2.0
+    bridge._navigation_control_expected = True
+    update_navigation_status(
+        {
+            "status": "navigating",
+            "message": "新目标导航中",
+        }
+    )
+    release_calls: list[str] = []
+
+    class DummyCoordinator:
+        def release_navigation_control(self) -> None:
+            release_calls.append("release")
+
+    monkeypatch.setattr(
+        "backend.nav_auto_track_coordinator.get_nav_auto_track_coordinator",
+        lambda: DummyCoordinator(),
+    )
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(
+            data=json.dumps(
+                {
+                    "status": "failed",
+                    "message": "上一轮 SCAN 重规划失败",
+                    "error_code": "SCAN_REPLAN_FAILED",
+                    "timestamp": 1770000005.0,
+                }
+            )
+        )
+    )
+
+    assert release_calls == []
+    assert broadcast_calls == []
+    state = get_nav_state()["navigation_status"]
+    assert state["status"] == "navigating"
+    assert state["message"] == "新目标导航中"
+
+
+def test_moving_status_restores_expected_navigation_control(monkeypatch):
+    broadcast_calls: list[tuple[str, dict[str, object]]] = []
+    bridge = _make_bridge(monkeypatch, broadcast_calls)
+    bridge._navigation_terminal_release_blocked_until = 0.0
+    bridge._navigation_control_expected = True
+    request_calls: list[str] = []
+
+    class DummyCoordinator:
+        def request_navigation_control(self) -> None:
+            request_calls.append("request")
+
+        def release_navigation_control(self) -> None:
+            raise AssertionError("moving status must not release navigation")
+
+    monkeypatch.setattr(
+        "backend.nav_auto_track_coordinator.get_nav_auto_track_coordinator",
+        lambda: DummyCoordinator(),
+    )
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(
+            data=json.dumps(
+                {
+                    "status": "moving",
+                    "message": "局部规划已恢复",
+                    "timestamp": 1770000006.0,
+                }
+            )
+        )
+    )
+
+    assert request_calls == ["request"]
+    assert get_nav_state()["navigation_status"]["status"] == "navigating"
+
+
+def test_moving_status_after_explicit_stop_does_not_restore_navigation_control(
+    monkeypatch,
+):
+    broadcast_calls: list[tuple[str, dict[str, object]]] = []
+    bridge = _make_bridge(monkeypatch, broadcast_calls)
+    bridge._navigation_terminal_release_blocked_until = 0.0
+    bridge._navigation_control_expected = False
+    request_calls: list[str] = []
+
+    class DummyCoordinator:
+        def request_navigation_control(self) -> None:
+            request_calls.append("request")
+
+        def release_navigation_control(self) -> None:
+            raise AssertionError("moving status must not be terminal")
+
+    monkeypatch.setattr(
+        "backend.nav_auto_track_coordinator.get_nav_auto_track_coordinator",
+        lambda: DummyCoordinator(),
+    )
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(
+            data=json.dumps(
+                {
+                    "status": "moving",
+                    "message": "停止后的迟到消息",
+                    "timestamp": 1770000007.0,
+                }
+            )
+        )
+    )
+
+    assert request_calls == []
 
 
 def test_tf_pose_uses_receive_time_for_freshness(monkeypatch):

@@ -53,6 +53,24 @@ def test_nav_task_schema_accepts_posture_control_step():
     assert task.steps[0].waypointId is None
 
 
+def test_nav_task_schema_accepts_auto_track_control_step():
+    task = NavTaskDefinitionDTO(
+        id="task_auto_track",
+        name="跟踪联动任务",
+        mapId="Scene1",
+        mapName="Scene1",
+        createdAt="2026-05-11T10:00:00.000Z",
+        steps=[
+            {"type": "auto_track_control", "enabled": True},
+            {"type": "auto_track_control", "enabled": False},
+        ],
+    )
+
+    assert task.steps[0].type == "auto_track_control"
+    assert task.steps[0].enabled is True
+    assert task.steps[1].enabled is False
+
+
 def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
     scene_root = tmp_path / "MAPS"
     task_root = tmp_path / "tasks"
@@ -131,6 +149,14 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
                 "type": "posture_control",
                 "posture": "stand",
             },
+            {
+                "type": "auto_track_control",
+                "enabled": True,
+            },
+            {
+                "type": "auto_track_control",
+                "enabled": False,
+            },
         ],
     }
     save_nav_task(task)
@@ -187,6 +213,14 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
             "type": "posture_control",
             "posture": "stand",
         },
+        {
+            "type": "auto_track_control",
+            "enabled": True,
+        },
+        {
+            "type": "auto_track_control",
+            "enabled": False,
+        },
     ]
 
 
@@ -223,6 +257,26 @@ def test_save_nav_task_rejects_invalid_posture(monkeypatch, tmp_path):
                 "createdAt": "2026-05-11T10:00:00.000Z",
                 "steps": [
                     {"type": "posture_control", "posture": "sit"},
+                ],
+            }
+        )
+
+
+@pytest.mark.parametrize("enabled", [None, "true", 1])
+def test_save_nav_task_rejects_invalid_auto_track_control(monkeypatch, tmp_path, enabled):
+    monkeypatch.setattr("backend.services_nav_tasks.settings.NAV_TASK_STORE_DIR", str(tmp_path / "tasks"))
+
+    with pytest.raises(NavTaskError, match="auto_track_control 步骤 enabled 必须是布尔值"):
+        save_nav_task(
+            {
+                "id": "task_bad_auto_track",
+                "name": "错误跟踪联动任务",
+                "mapId": "Scene1",
+                "sceneId": "Scene1",
+                "mapName": "Scene1",
+                "createdAt": "2026-05-11T10:00:00.000Z",
+                "steps": [
+                    {"type": "auto_track_control", "enabled": enabled},
                 ],
             }
         )

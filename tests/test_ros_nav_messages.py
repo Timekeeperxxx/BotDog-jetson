@@ -60,3 +60,24 @@ def test_normalize_nav_status_uses_failure_diagnosis():
     assert status["status"] == "error"
     assert status["error_code"] == "GLOBAL_PLANNER_GOAL_NOT_ON_GROUND"
     assert status["message"] == "目标点不在 global_planner 的地面点云附近"
+
+
+def test_normalize_nav_status_preserves_scan_emergency_diagnosis():
+    status = normalize_nav_status(
+        {
+            "status": "failed",
+            "message": "SCAN 起点或局部路径位于障碍物内，已安全停车",
+            "error_code": "SCAN_REPLAN_FAILED",
+        },
+        status_topic="/nav_status",
+        current_navigation_status=lambda: {},
+        diagnose_navigation_failure=lambda: {
+            "error_code": "GLOBAL_PLANNER_GOAL_NOT_ON_GROUND",
+            "message": "stale diagnosis",
+        },
+        interrupted_navigation=lambda: None,
+    )
+
+    assert status["status"] == "error"
+    assert status["error_code"] == "SCAN_REPLAN_FAILED"
+    assert status["message"] == "SCAN 起点或局部路径位于障碍物内，已安全停车"

@@ -5,7 +5,11 @@ import math
 import pytest
 
 from backend.config import settings
-from backend.lidar_mount import lidar_mount_environment, lidar_mount_values
+from backend.lidar_mount import (
+    base_pose_to_lidar_initial_position,
+    lidar_mount_environment,
+    lidar_mount_values,
+)
 
 
 def test_lidar_mount_environment_exports_all_calibration_values(monkeypatch) -> None:
@@ -27,6 +31,36 @@ def test_lidar_mount_environment_exports_all_calibration_values(monkeypatch) -> 
         "NAV_LIDAR_MOUNT_PITCH_DEG": "19.48",
         "NAV_LIDAR_MOUNT_YAW_DEG": "-2.0",
     }
+
+
+def test_base_pose_to_lidar_initial_position_adds_mount_height(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "NAV_LIDAR_MOUNT_X_M", 0.0)
+    monkeypatch.setattr(settings, "NAV_LIDAR_MOUNT_Y_M", 0.0)
+    monkeypatch.setattr(settings, "NAV_LIDAR_MOUNT_Z_M", 0.9)
+
+    position = base_pose_to_lidar_initial_position(
+        x=-4.25,
+        y=0.69,
+        z=0.076,
+        yaw=2.08,
+    )
+
+    assert position == pytest.approx((-4.25, 0.69, 0.976))
+
+
+def test_base_pose_to_lidar_initial_position_rotates_xy_offset(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "NAV_LIDAR_MOUNT_X_M", 0.2)
+    monkeypatch.setattr(settings, "NAV_LIDAR_MOUNT_Y_M", 0.0)
+    monkeypatch.setattr(settings, "NAV_LIDAR_MOUNT_Z_M", 0.9)
+
+    position = base_pose_to_lidar_initial_position(
+        x=1.0,
+        y=2.0,
+        z=0.1,
+        yaw=math.pi / 2.0,
+    )
+
+    assert position == pytest.approx((1.0, 2.2, 1.0))
 
 
 def test_lidar_mount_environment_preserves_float_type_for_zero(monkeypatch) -> None:

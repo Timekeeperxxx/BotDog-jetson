@@ -567,7 +567,7 @@ def test_mapping_route_uses_scene_name_and_stop(monkeypatch):
                 "enabled": True,
                 "running": True,
                 "scene_name": scene_dir_name,
-                "map_dir": f"/home/jetson/Project/BOTDOG/MAPS/{scene_dir_name}",
+                "map_dir": f"/home/jetson/Projects/Maps/{scene_dir_name}",
                 "pid": 4321,
                 "message": "建图脚本已启动",
             }
@@ -610,7 +610,7 @@ def test_mapping_route_uses_scene_name_and_stop(monkeypatch):
     )
 
     assert start_result["scene_name"] == "Scene1_实验室一楼"
-    assert start_result["map_dir"] == "/home/jetson/Project/BOTDOG/MAPS/Scene1_实验室一楼"
+    assert start_result["map_dir"] == "/home/jetson/Projects/Maps/Scene1_实验室一楼"
     assert start_result["enabled"] is True
     assert stop_result["enabled"] is False
     assert calls == [("start", "实验室一楼"), ("stop", None)]

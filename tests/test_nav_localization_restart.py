@@ -1072,6 +1072,7 @@ def test_restart_script_prefers_exact_scene_pcd_files():
     assert '"footprint_fill.pcd|fill_footpoint.pcd"' in adapter
     assert "navigation_failure_message" in adapter
     assert "ros2 topic echo /livox/lidar --once" in adapter
+    assert "--no-daemon --spin-time 2" in adapter
     assert 'NAV_READY_TIMEOUT_SECONDS="${NAV_READY_TIMEOUT_SECONDS:-120}"' in adapter
 
 

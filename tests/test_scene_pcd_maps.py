@@ -669,3 +669,34 @@ def test_delete_scene_removes_related_json_without_deleting_collided_waypoints(m
     legacy_data = json.loads(legacy_waypoint_file.read_text(encoding="utf-8"))
     assert legacy_data["items"] == [{"id": "legacy-other", "map_id": other_scene_id, "name": "旧其他点"}]
     assert [task["id"] for task in list_nav_tasks()["items"]] == ["task-scene20-other"]
+
+
+def test_delete_incomplete_scene_without_ground_pcd(monkeypatch, tmp_path):
+    scene_root = tmp_path / "MAPS"
+    waypoint_root = tmp_path / "waypoints"
+    localization_root = tmp_path / "localization"
+    task_root = tmp_path / "tasks"
+    runtime_root = tmp_path / "runtime"
+    scene_root.mkdir()
+
+    scene_id = "Scene21_失败建图"
+    scene = scene_root / scene_id
+    scene.mkdir()
+
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(scene_root))
+    monkeypatch.setattr(pcd_services.settings, "NAV_RUNTIME_DIR", str(runtime_root))
+    monkeypatch.setattr("backend.services_nav_waypoints.settings.NAV_WAYPOINT_STORE_DIR", str(waypoint_root))
+    monkeypatch.setattr(
+        "backend.services_nav_localization.settings.NAV_LOCALIZATION_STORE_DIR",
+        str(localization_root),
+    )
+    monkeypatch.setattr("backend.services_nav_tasks.settings.NAV_TASK_STORE_DIR", str(task_root))
+
+    result = pcd_services.delete_pcd_scene(scene_id)
+
+    assert result["success"] is True
+    assert result["scene_id"] == scene_id
+    assert not scene.exists()
+    assert result["cleanup"]["waypoints"]["removed_items"] == 0
+    assert result["cleanup"]["localization"]["deleted_files"] == []
+    assert result["cleanup"]["tasks"]["removed_count"] == 0

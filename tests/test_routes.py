@@ -146,6 +146,17 @@ CONTROL_ROUTES = [
     ("POST", "/api/v1/control/e-stop/reset"),
 ]
 
+GIMBAL_ROUTES = [
+    ("GET", "/api/v1/gimbal/status"),
+    ("POST", "/api/v1/gimbal/mode"),
+    ("POST", "/api/v1/gimbal/center"),
+    ("POST", "/api/v1/gimbal/position"),
+    ("POST", "/api/v1/gimbal/jog"),
+    ("POST", "/api/v1/gimbal/zoom"),
+    ("POST", "/api/v1/gimbal/picture-mode"),
+    ("POST", "/api/v1/gimbal/settings"),
+]
+
 FOCUS_ZONE_ROUTES = [
     ("GET", "/api/v1/focus-zones"),
     ("POST", "/api/v1/focus-zones"),
@@ -291,6 +302,14 @@ def test_control_route_registered(route_index: dict, method: str, path: str) -> 
     """control 路由拆分后必须保持 method 与 path 不变。"""
     assert (method, path) in route_index, (
         f"{method} {path} 未注册 ── control 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", GIMBAL_ROUTES)
+def test_gimbal_route_registered(route_index: dict, method: str, path: str) -> None:
+    """Z2-Mini 云台状态与控制路由必须保持注册。"""
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── gimbal 路由可能在拆分中丢失"
     )
 
 

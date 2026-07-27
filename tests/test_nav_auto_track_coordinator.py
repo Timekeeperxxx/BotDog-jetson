@@ -11,6 +11,7 @@ from backend.control_arbiter import ControlArbiter, set_control_arbiter
 from backend.nav_auto_track_coordinator import NavAutoTrackCoordinator
 from backend.services_nav_state import clear_robot_pose, get_nav_state, set_navigation_idle, update_navigation_status, update_robot_pose
 from backend.tracking_types import ControlOwner
+from backend.api.routes.nav_auto_track_helpers import ensure_auto_track_enabled_for_navigation
 
 
 class DummyBridge:
@@ -221,3 +222,38 @@ def test_nav_auto_track_mode_endpoint_enables_tracking_during_active_navigation(
     assert settings.NAV_AUTO_TRACK_DURING_NAV_ENABLED is False
     assert settings.NAV_AUTO_TRACK_AUTO_ENABLE is False
     assert calls == ["enable", "audit", "disable", "audit"]
+
+
+def test_explicit_auto_track_workflow_starts_disabled_until_control_step(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class DummyAutoTrack:
+        enabled = True
+
+        def disable(self) -> None:
+            self.enabled = False
+            calls.append("disable")
+
+        def get_status(self) -> dict[str, object]:
+            return {
+                "enabled": self.enabled,
+                "state": "IDLE" if self.enabled else "DISABLED",
+            }
+
+    dummy = DummyAutoTrack()
+    monkeypatch.setattr("backend.auto_track_service.get_auto_track_service", lambda: dummy)
+
+    result = ensure_auto_track_enabled_for_navigation(
+        {
+            "id": "task_001",
+            "steps": [
+                {"type": "navigate_waypoint", "waypointId": "wp-a"},
+                {"type": "auto_track_control", "enabled": True},
+            ],
+        }
+    )
+
+    assert calls == ["disable"]
+    assert result["requested"] is False
+    assert result["enabled"] is False
+    assert "任务流程控制" in result["message"]

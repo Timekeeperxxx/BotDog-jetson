@@ -192,6 +192,32 @@ def test_completed_task_releases_navigation_control(monkeypatch):
     assert released == [True]
 
 
+def test_scan_emergency_is_not_hidden_by_active_task(monkeypatch):
+    updates = []
+    monkeypatch.setattr(
+        "backend.services_ros_nav.update_navigation_status",
+        lambda status: updates.append(status) or status,
+    )
+
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._navigation_task_active = True
+    bridge._normalize_nav_status = lambda _payload: {
+        "status": "error",
+        "task_id": "task-1",
+        "message": "SCAN 已安全停车",
+        "error_code": "SCAN_REPLAN_FAILED",
+    }
+    bridge._submit_broadcast = lambda *_args: None
+    bridge._release_navigation_control_on_terminal_status = lambda *_args, **_kwargs: None
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(data=json.dumps({"status": "failed"}))
+    )
+
+    assert updates[-1]["status"] == "error"
+    assert updates[-1]["error_code"] == "SCAN_REPLAN_FAILED"
+
+
 def test_mapping_cloud_points_are_limited():
     points = np.arange(30, dtype=np.float32).reshape((10, 3))
 

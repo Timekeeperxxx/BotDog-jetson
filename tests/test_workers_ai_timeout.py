@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,28 @@ class _HangingDetector:
 class _FastDetector:
     def detect_many(self, frame: bytes) -> list[DetectionResult]:
         return []
+
+class _BarrierDetector:
+    def __init__(self, barrier: threading.Barrier) -> None:
+        self._barrier = barrier
+
+    def detect_many(self, frame: bytes) -> list[DetectionResult]:
+        self._barrier.wait(timeout=0.5)
+        return []
+
+
+class _BarrierPoseDetector:
+    def __init__(self, barrier: threading.Barrier) -> None:
+        self._barrier = barrier
+
+    def detect(self, frame: bytes) -> list[object]:
+        self._barrier.wait(timeout=0.5)
+        return []
+
+
+class _FakePoseEventEngine:
+    def update(self, *args: Any, **kwargs: Any) -> tuple[list[object], list[object]]:
+        return [], []
 
 
 class _FakeAutoTrack:
@@ -84,6 +107,9 @@ def _worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AIWorker:
     monkeypatch.setattr(workers_ai.settings, "AI_PATROL_SKIP", 2)
     monkeypatch.setattr(workers_ai.settings, "AI_AUTO_TRACK_SKIP", 1)
     monkeypatch.setattr(workers_ai.settings, "AI_SUSPECT_SKIP", 1)
+    monkeypatch.setattr(workers_ai.settings, "AI_PARALLEL_INFERENCE_ENABLED", True)
+    monkeypatch.setattr(workers_ai.settings, "AI_CONTINUOUS_DETECTION_ENABLED", False)
+    monkeypatch.setattr(workers_ai.settings, "POSE_ENABLED", False)
     worker = AIWorker(
         session_factory=_SessionFactory(),
         state_machine=object(),
@@ -191,6 +217,17 @@ def test_ai_frame_skip_uses_patrol_skip_without_tracking(
     assert worker._get_frame_skip() == 2
 
 
+def test_ai_continuous_detection_runs_without_task_or_tracking(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "AI_CONTINUOUS_DETECTION_ENABLED", True)
+
+    assert worker._current_task_id is None
+    assert worker._is_mission_active() is True
+
+
 def test_ai_frame_skip_uses_auto_track_skip_while_finding_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -268,6 +305,66 @@ async def test_ai_frame_processing_records_latency_metrics(
     assert broadcast_metrics == [
         (545, worker._last_processing_ms, worker._last_end_to_end_ms)
     ]
+
+
+@pytest.mark.asyncio
+async def test_ai_detector_and_pose_run_concurrently_after_warmup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    barrier = threading.Barrier(2)
+    worker._detector = _BarrierDetector(barrier)
+    worker._pose_detector = _BarrierPoseDetector(barrier)  # type: ignore[assignment]
+    worker._pose_event_engine = _FakePoseEventEngine()  # type: ignore[assignment]
+    worker._detector_warmed_up = True
+    worker._pose_warmed_up = True
+    monkeypatch.setattr(workers_ai.settings, "POSE_FRAME_SKIP", 1)
+
+    async def noop(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "_process_detection", noop)
+    monkeypatch.setattr(worker, "_process_pose_events", noop)
+    monkeypatch.setattr(worker, "_broadcast_pose_overlay", noop)
+
+    await asyncio.wait_for(
+        worker._detect_and_process_frame(b"\0", frame_index=546),
+        timeout=1.0,
+    )
+
+    assert worker._frames_processed == 1
+    assert worker._pose_frames_processed == 1
+    assert worker._last_detect_ms >= 0
+    assert worker._last_pose_ms >= 0
+
+
+@pytest.mark.asyncio
+async def test_ai_pose_skip_keeps_detector_running_every_frame(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    worker._detector = _FastDetector()
+    monkeypatch.setattr(workers_ai.settings, "POSE_FRAME_SKIP", 2)
+
+    class _UnexpectedPoseDetector:
+        def detect(self, frame: bytes) -> list[object]:
+            raise AssertionError("odd source frame must skip pose inference")
+
+    worker._pose_detector = _UnexpectedPoseDetector()  # type: ignore[assignment]
+    worker._pose_event_engine = _FakePoseEventEngine()  # type: ignore[assignment]
+
+    async def noop(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "_process_detection", noop)
+
+    await worker._detect_and_process_frame(b"\0", frame_index=547)
+
+    assert worker._frames_processed == 1
+    assert worker._pose_frames_processed == 0
+    assert worker._last_pose_ms == 0.0
 
 
 @pytest.mark.asyncio
