@@ -13,6 +13,16 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 PID_DIR="$ROOT_DIR/logs"
 
+# 视频硬件配置独立于后端 .env；手工启动和 systemd 启动共用同一份配置。
+# 可用 PIPELINE_ENV_FILE 覆盖，设为空字符串则跳过配置文件。
+PIPELINE_ENV_FILE="${PIPELINE_ENV_FILE-$ROOT_DIR/config/pipeline.env}"
+if [ -n "$PIPELINE_ENV_FILE" ] && [ -f "$PIPELINE_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$PIPELINE_ENV_FILE"
+  set +a
+fi
+
 # RTSP/MediaMTX 是机载本地链路，禁止继承桌面代理。
 # 否则 GStreamer 可能把相机 RTSP 请求发到 ALL_PROXY/HTTP_PROXY，
 # 地面端代理或网络一抖就会让本机 cam publisher 掉线。
@@ -20,11 +30,18 @@ unset http_proxy https_proxy ftp_proxy all_proxy
 unset HTTP_PROXY HTTPS_PROXY FTP_PROXY ALL_PROXY
 
 MEDIAMTX="${MEDIAMTX_EXE:-$ROOT_DIR/scripts/mediamtx}"
-# cam1：Z2 Mini 云台相机 RTSP 地址
-CAMERA_RTSP_URL="${CAMERA_RTSP_URL:-rtsp://192.168.123.100:554/}"
+# cam1：Z2 Mini 云台相机 RTSP 地址（可由 config/pipeline.env 覆盖）
+CAMERA_RTSP_URL="${CAMERA_RTSP_URL:-rtsp://192.168.123.108:554/}"
 CAMERA_RETRY_DELAY="${CAMERA_RETRY_DELAY:-2}"
 FFMPEG_LOGLEVEL="${FFMPEG_LOGLEVEL:-warning}"
+# Z2-Mini GCU 私有协议控制。CAM1_OSD=off/on；设为 keep 则不改相机当前状态。
+CAM1_OSD="${CAM1_OSD:-off}"
+CAM1_CONTROL_PORT="${CAM1_CONTROL_PORT:-2332}"
+CAM1_CONTROL_TIMEOUT="${CAM1_CONTROL_TIMEOUT:-2}"
+CAM1_CONTROL_RETRIES="${CAM1_CONTROL_RETRIES:-5}"
 CAM1_FPS="${CAM1_FPS:-30}"
+CAM1_WIDTH="${CAM1_WIDTH:-1280}"
+CAM1_HEIGHT="${CAM1_HEIGHT:-720}"
 CAM1_THREADS="${CAM1_THREADS:-2}"
 CAM1_BITRATE="${CAM1_BITRATE:-2500k}"
 CAM1_GST_BITRATE="${CAM1_GST_BITRATE:-2500000}"
@@ -42,8 +59,8 @@ CAM1_INPUT_CODEC="${CAM1_INPUT_CODEC:-h264}"
 #   auto          优先硬件 H.264 编码，失败再回退 libx264
 #   h264_v4l2m2m  V4L2 mem2mem 硬件编码，Jetson 上通常显著降低 CPU
 #   h264_omx      OpenMAX H.264 硬件编码，作为旧 Jetson/FFmpeg 备选
-#   libx264       重建稳定时间戳；当前 Z2 Mini 的已验证默认路径
-CAM1_ENCODER="${CAM1_ENCODER:-libx264}"
+#   libx264       软件回退路径
+CAM1_ENCODER="${CAM1_ENCODER:-gst-nvenc}"
 # 可选强制硬件解码，例如 HEVC 摄像头可设 CAM1_DECODER=hevc_nvv4l2dec。
 # 默认 auto 交给 FFmpeg 探测，避免摄像头编码变化时拉流失败。
 CAM1_DECODER="${CAM1_DECODER:-auto}"
@@ -235,6 +252,11 @@ setsid env \
   CAMERA_RTSP_URL="$CAMERA_RTSP_URL" \
   CAMERA_RETRY_DELAY="$CAMERA_RETRY_DELAY" \
   FFMPEG_LOGLEVEL="$FFMPEG_LOGLEVEL" \
+  CAM1_HOST="$CAM1_HOST" \
+  CAM1_OSD="$CAM1_OSD" \
+  CAM1_CONTROL_PORT="$CAM1_CONTROL_PORT" \
+  CAM1_CONTROL_TIMEOUT="$CAM1_CONTROL_TIMEOUT" \
+  CAM1_CONTROL_RETRIES="$CAM1_CONTROL_RETRIES" \
   CAM1_THREADS="$CAM1_THREADS" \
   CAM1_BITRATE="$CAM1_BITRATE" \
   CAM1_GST_BITRATE="$CAM1_GST_BITRATE" \
@@ -246,13 +268,43 @@ setsid env \
   CAM1_GST_LATENCY="$CAM1_GST_LATENCY" \
   CAM1_INPUT_CODEC="$CAM1_INPUT_CODEC" \
   CAM1_FPS="$CAM1_FPS" \
+  CAM1_WIDTH="$CAM1_WIDTH" \
+  CAM1_HEIGHT="$CAM1_HEIGHT" \
   CAM1_ENCODER="$CAM1_ENCODER" \
   CAM1_DECODER="$CAM1_DECODER" \
   bash -c '
+  configure_cam1_osd() {
+    case "$CAM1_OSD" in
+      keep)
+        return 0
+        ;;
+      on|off)
+        ;;
+      *)
+        echo "[$(date "+%F %T")] Invalid CAM1_OSD=${CAM1_OSD}; expected on, off or keep" >> "$ROOT_DIR/logs/ffmpeg.log"
+        return 0
+        ;;
+    esac
+
+    if python3 "$ROOT_DIR/scripts/z2mini-control.py" \
+      --host "$CAM1_HOST" \
+      --port "$CAM1_CONTROL_PORT" \
+      --osd "$CAM1_OSD" \
+      --timeout "$CAM1_CONTROL_TIMEOUT" \
+      --retries "$CAM1_CONTROL_RETRIES" \
+      --retry-delay 1 \
+      >> "$ROOT_DIR/logs/ffmpeg.log" 2>&1; then
+      echo "[$(date "+%F %T")] Z2-Mini OSD ${CAM1_OSD} verified" >> "$ROOT_DIR/logs/ffmpeg.log"
+    else
+      echo "[$(date "+%F %T")] WARN: could not configure Z2-Mini OSD; video startup will continue" >> "$ROOT_DIR/logs/ffmpeg.log"
+    fi
+  }
+
   run_cam1_ffmpeg() {
     local encoder="$1"
     local decoder_args=()
     local encoder_args=()
+    local filter_args=()
 
     if [ "$CAM1_DECODER" != "auto" ] && [ -n "$CAM1_DECODER" ]; then
       decoder_args=(-c:v "$CAM1_DECODER")
@@ -265,27 +317,27 @@ setsid env \
         )
         ;;
       h264_v4l2m2m)
+        filter_args=(-vf "scale=${CAM1_WIDTH}:${CAM1_HEIGHT}:flags=fast_bilinear")
         encoder_args=(
           -c:v h264_v4l2m2m
           -b:v "$CAM1_BITRATE" -maxrate "$CAM1_MAXRATE" -bufsize "$CAM1_BUFSIZE"
           -g "$CAM1_GOP" -bf 0 -pix_fmt yuv420p
-          -r "$CAM1_FPS"
         )
         ;;
       h264_omx)
+        filter_args=(-vf "scale=${CAM1_WIDTH}:${CAM1_HEIGHT}:flags=fast_bilinear")
         encoder_args=(
           -c:v h264_omx -profile baseline
           -b:v "$CAM1_BITRATE" -bufsize "$CAM1_BUFSIZE"
           -g "$CAM1_GOP" -bf 0 -pix_fmt yuv420p
-          -r "$CAM1_FPS"
         )
         ;;
       libx264)
+        filter_args=(-vf "scale=${CAM1_WIDTH}:${CAM1_HEIGHT}:flags=fast_bilinear")
         encoder_args=(
           -c:v libx264 -preset ultrafast -tune zerolatency -threads "$CAM1_THREADS"
           -b:v "$CAM1_BITRATE" -maxrate "$CAM1_MAXRATE" -bufsize "$CAM1_BUFSIZE"
           -g "$CAM1_GOP" -bf 0 -pix_fmt yuv420p
-          -r "$CAM1_FPS"
         )
         ;;
       *)
@@ -301,14 +353,16 @@ setsid env \
       -stimeout 5000000 -use_wallclock_as_timestamps 1 \
       "${decoder_args[@]}" \
       -i "$CAMERA_RTSP_URL" \
+      "${filter_args[@]}" \
       "${encoder_args[@]}" \
+      -vsync passthrough \
       -muxdelay 0 -muxpreload 0 \
       -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam \
       >> "$ROOT_DIR/logs/ffmpeg.log" 2>&1
   }
 
   run_cam1_gst_nvenc() {
-    local depay_element parse_element
+    local depay_element input_caps
 
     if ! command -v gst-launch-1.0 >/dev/null 2>&1; then
       echo "[$(date "+%F %T")] gst-launch-1.0 not found, fallback to FFmpeg" >> "$ROOT_DIR/logs/ffmpeg.log"
@@ -326,11 +380,11 @@ setsid env \
     case "$CAM1_INPUT_CODEC" in
       h264|avc)
         depay_element=rtph264depay
-        parse_element=h264parse
+        input_caps="video/x-h264,stream-format=(string)byte-stream,alignment=(string)au"
         ;;
       h265|hevc)
         depay_element=rtph265depay
-        parse_element=h265parse
+        input_caps="video/x-h265,stream-format=(string)byte-stream,alignment=(string)au"
         ;;
       *)
         echo "[$(date "+%F %T")] Unsupported CAM1_INPUT_CODEC=${CAM1_INPUT_CODEC}" >> "$ROOT_DIR/logs/ffmpeg.log"
@@ -338,21 +392,20 @@ setsid env \
         ;;
     esac
 
-    echo "[$(date "+%F %T")] Starting FFmpeg cam1 (input=${CAM1_INPUT_CODEC}, encoder=gst-nvenc, decoder=nvv4l2decoder)..." >> "$ROOT_DIR/logs/ffmpeg.log"
+    echo "[$(date "+%F %T")] Starting cam1 (input=${CAM1_INPUT_CODEC}, encoder=gst-nvenc, output=${CAM1_WIDTH}x${CAM1_HEIGHT}, decoder=nvv4l2decoder)..." >> "$ROOT_DIR/logs/ffmpeg.log"
     gst-launch-1.0 -q \
       rtspsrc location="$CAMERA_RTSP_URL" protocols=tcp latency="$CAM1_GST_LATENCY" drop-on-latency=true do-retransmission=false tcp-timeout=5000000 ! \
-      "$depay_element" ! "$parse_element" ! watchdog timeout=10000 ! \
+      "$depay_element" ! "$input_caps" ! \
       queue max-size-buffers=30 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
       nvv4l2decoder enable-max-performance=true ! \
-      nvvidconv ! "video/x-raw(memory:NVMM),format=(string)NV12" ! \
-      nvv4l2h264enc bitrate="$CAM1_GST_BITRATE" vbv-size="$CAM1_GST_VBV_SIZE" control-rate=1 num-B-Frames=0 num-Ref-Frames=1 poc-type=2 iframeinterval="$CAM1_GOP" idrinterval="$CAM1_GOP" insert-sps-pps=true maxperf-enable=true preset-level=1 ! \
-      h264parse config-interval=-1 ! watchdog timeout=10000 ! \
+      nvvidconv ! "video/x-raw(memory:NVMM),width=(int)${CAM1_WIDTH},height=(int)${CAM1_HEIGHT},format=(string)NV12" ! \
+      nvv4l2h264enc bitrate="$CAM1_GST_BITRATE" vbv-size="$CAM1_GST_VBV_SIZE" control-rate=1 num-B-Frames=0 num-Ref-Frames=1 poc-type=2 iframeinterval="$CAM1_GOP" idrinterval="$CAM1_GOP" insert-sps-pps=true insert-vui=true maxperf-enable=true preset-level=1 ! \
       "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au" ! \
       fdsink fd=1 sync=false async=false \
       2>> "$ROOT_DIR/logs/ffmpeg.log" | \
     ffmpeg -hide_banner -nostats -loglevel "$FFMPEG_LOGLEVEL" \
       -fflags nobuffer -flags low_delay -use_wallclock_as_timestamps 1 \
-      -probesize 1000000 -analyzeduration 1000000 -f h264 -i pipe:0 \
+      -probesize 1000000 -analyzeduration 1000000 -framerate "$CAM1_FPS" -f h264 -i pipe:0 \
       -c:v copy -muxdelay 0 -muxpreload 0 -flush_packets 1 \
       -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam \
       >> "$ROOT_DIR/logs/ffmpeg.log" 2>&1
@@ -372,6 +425,7 @@ setsid env \
   }
 
   while true; do
+    configure_cam1_osd
     if [ "$CAM1_ENCODER" = "auto" ]; then
       run_cam1_gst_nvenc_with_optional_fallback || run_cam1_ffmpeg h264_v4l2m2m || run_cam1_ffmpeg h264_omx || true
     elif [ "$CAM1_ENCODER" = "gst-nvenc" ]; then
@@ -437,18 +491,17 @@ if [ "$CAM_REMOTE_ENABLED" = "1" ]; then
 
       gst-launch-1.0 -q \
         rtspsrc location="$CAM_REMOTE_SOURCE" protocols=tcp latency=30 drop-on-latency=true do-retransmission=false tcp-timeout=5000000 ! \
-        rtph264depay ! h264parse ! watchdog timeout=10000 ! \
+        rtph264depay ! "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au" ! \
         queue max-size-buffers=30 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
         nvv4l2decoder enable-max-performance=true ! \
         nvvidconv ! "video/x-raw(memory:NVMM),width=(int)${CAM_REMOTE_WIDTH},height=(int)${CAM_REMOTE_HEIGHT},format=(string)NV12" ! \
-        nvv4l2h264enc bitrate="$CAM_REMOTE_GST_BITRATE" vbv-size="$CAM_REMOTE_GST_VBV_SIZE" control-rate=1 num-B-Frames=0 num-Ref-Frames=1 poc-type=2 iframeinterval="$CAM_REMOTE_GOP" idrinterval="$CAM_REMOTE_GOP" insert-sps-pps=true maxperf-enable=true preset-level=1 ! \
-        h264parse config-interval=-1 ! watchdog timeout=10000 ! \
+        nvv4l2h264enc bitrate="$CAM_REMOTE_GST_BITRATE" vbv-size="$CAM_REMOTE_GST_VBV_SIZE" control-rate=1 num-B-Frames=0 num-Ref-Frames=1 poc-type=2 iframeinterval="$CAM_REMOTE_GOP" idrinterval="$CAM_REMOTE_GOP" insert-sps-pps=true insert-vui=true maxperf-enable=true preset-level=1 ! \
         "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au" ! \
         fdsink fd=1 sync=false async=false \
         2>> "$ROOT_DIR/logs/ffmpeg_cam_remote.log" | \
       ffmpeg -hide_banner -nostats -loglevel "$FFMPEG_LOGLEVEL" \
         -fflags nobuffer -flags low_delay -use_wallclock_as_timestamps 1 \
-        -probesize 1000000 -analyzeduration 1000000 -f h264 -i pipe:0 \
+        -probesize 1000000 -analyzeduration 1000000 -framerate "$CAM_REMOTE_FPS" -f h264 -i pipe:0 \
         -c:v copy -muxdelay 0 -muxpreload 0 -flush_packets 1 \
         -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam_remote \
         >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log" 2>&1

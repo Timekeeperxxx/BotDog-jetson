@@ -41,7 +41,7 @@ echo ">>> 复制 service 文件到 /etc/systemd/system/ ..."
 sed "s|/home/orangepi|/home/${CURRENT_USER}|g; s|User=orangepi|User=${CURRENT_USER}|g" \
   "$SCRIPT_DIR/botdog-backend.service" | tr -d '\r' > /etc/systemd/system/botdog-backend.service
 
-sed "s|/home/orangepi|/home/${CURRENT_USER}|g; s|User=orangepi|User=${CURRENT_USER}|g" \
+sed "s|@BOTDOG_USER@|${CURRENT_USER}|g; s|@BOTDOG_PROJECT_DIR@|${PROJECT_DIR}|g" \
   "$SCRIPT_DIR/botdog-pipeline.service" | tr -d '\r' > /etc/systemd/system/botdog-pipeline.service
 
 echo ">>> 重载 systemd daemon ..."

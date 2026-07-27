@@ -371,8 +371,9 @@ config/
 ### 视频管线
 
 ```
-HM30 IP 摄像头 (192.168.144.25:8554)
-    → FFmpeg 拉流 → MediaMTX cam → WHEP → 浏览器主画面
+Z2 Mini 云台相机 (192.168.123.108:554，H.264 2560x1440)
+    → GStreamer Jetson 硬件转码 (H.264 1920x1080)
+    → MediaMTX cam → WHEP → 浏览器主画面
 
 USB 摄像头 C920 (/dev/video1)
     → FFmpeg V4L2 采集 → MediaMTX cam2 → WHEP → 浏览器 PiP
@@ -394,11 +395,14 @@ ffmpeg -f v4l2 -input_format mjpeg -framerate 30 -video_size 1280x720 \
 ### 验证 WHEP 流
 
 ```bash
-# 查看 MediaMTX 路径状态
-curl http://127.0.0.1:8889/v3/paths/list | python3 -m json.tool
+# 验证本机主流
+ffprobe -v error -rtsp_transport tcp \
+  -show_entries stream=codec_name,width,height -of compact=p=0:nk=1 \
+  rtsp://127.0.0.1:8554/cam
 
-# cam2 WHEP 地址
-# http://<ARM64_HOST>:8889/cam2/whep
+# 验证 WHEP 端点（预期 HTTP 204）
+curl -o /dev/null -w '%{http_code}\n' -X OPTIONS \
+  http://127.0.0.1:8889/cam/whep
 ```
 
 ### 远程访问 WHEP
@@ -410,7 +414,7 @@ http://192.168.144.104:8000
 http://100.x.y.z:8000
 ```
 
-Tailscale 访问时，客户端必须能访问 Jetson 的 `8000`、`8889`，以及 MediaMTX WebRTC 媒体端口（默认 UDP `8189`）。如果使用公网域名或公网 IP，经 NAT/端口转发访问，还需要在 [config/mediamtx.yml](/home/jetson/Project/BOTDOG/BotDog/config/mediamtx.yml) 的 `webrtcAdditionalHosts` 中加入该公网域名或公网 IP，例如：
+Tailscale 访问时，客户端必须能访问 Jetson 的 `8000`、`8889`，以及 MediaMTX WebRTC 媒体端口（默认 UDP `8189`）。如果使用公网域名或公网 IP，经 NAT/端口转发访问，还需要在 `config/mediamtx.yml` 的 `webrtcAdditionalHosts` 中加入该公网域名或公网 IP，例如：
 
 ```yaml
 webrtcAdditionalHosts: [botdog.example.com]

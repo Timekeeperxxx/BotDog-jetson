@@ -139,6 +139,10 @@ bash scripts/start_backend.sh
 # 默认账号见 backend/.env，首次部署请修改 AUTH_ADMIN_PASSWORD / JWT_SECRET
 ```
 
+视频硬件参数统一放在 `config/pipeline.env`。先飞 Z2-Mini 默认通过
+`CAM1_OSD=off` 在流水线启动及相机重连时关闭固件内置 OSD；如需保留相机当前
+状态可设为 `keep`，需要重新显示则设为 `on`。
+
 ---
 
 ## 控制方式
@@ -200,6 +204,7 @@ BotDog/
 │
 ├── scripts/
 │   ├── run-pipeline.sh   # 视频流水线（FFmpeg + MediaMTX）
+│   ├── z2mini-control.py # Z2-Mini GCU 控制（当前用于 OSD 开关）
 │   ├── start_backend.sh  # 后端启动脚本
 │   └── install-services.sh  # systemd 服务安装
 │

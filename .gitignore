@@ -71,9 +71,12 @@ scripts/logs/
 
 # Runtime logs
 /logs/
+/log/
 
 # Secrets (never commit)
 backend/.env
+backend/.env.*
+!backend/.env.example
 
 # OS
 .DS_Store
@@ -91,6 +94,7 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.bak
+*.bak*
 *.swp
 *~.nib
 tmp/
