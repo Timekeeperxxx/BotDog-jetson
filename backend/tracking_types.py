@@ -154,3 +154,4 @@ class TrackDecision:
     command: Optional[str] = None     # "left"/"right"/"forward"/"stop"/None
     should_send: bool = False         # 是否实际下发（节流/防抖判断后）
     reason: str = ""
+    heading_error_deg: Optional[float] = None  # 目标相对机身方位；云台协同时使用

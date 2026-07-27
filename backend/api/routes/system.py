@@ -38,7 +38,7 @@ from ...services_system import (
 
 router = APIRouter(tags=["system"])
 
-_PIPELINE_SCRIPT = Path("/home/jetson/Project/BOTDOG/BotDog/scripts/run-pipeline.sh")
+_PIPELINE_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "run-pipeline.sh"
 _pipeline_restart_proc: subprocess.Popen[str] | None = None
 _pipeline_restart_lock = threading.Lock()
 _PROJECT_ROOT = _PIPELINE_SCRIPT.parents[1]

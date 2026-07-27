@@ -136,11 +136,9 @@ class StateMachine:
     def reset_emergency_stop(self) -> None:
         """重置紧急制动状态（仅限管理员操作）。"""
         if self._state == SystemState.E_STOP_TRIGGERED:
-            old_state = self._state
-            self._evaluate_state()  # 重新评估正常状态
-            logger.info("状态切换：{} -> {}", old_state, self._state)
+            self._evaluate_state(ignore_emergency_stop=True)
 
-    def _evaluate_state(self) -> None:
+    def _evaluate_state(self, *, ignore_emergency_stop: bool = False) -> None:
         """
         评估并更新系统状态。
 
@@ -153,7 +151,7 @@ class StateMachine:
         6. 否则转为 STANDBY
         """
         # 如果处于紧急制动状态，保持不变
-        if self._state == SystemState.E_STOP_TRIGGERED:
+        if self._state == SystemState.E_STOP_TRIGGERED and not ignore_emergency_stop:
             return
 
         # 与 update_heartbeat 使用同一时间基准（Unix 时间戳）

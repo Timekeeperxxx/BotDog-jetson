@@ -24,11 +24,13 @@ from typing import Optional
 
 from .config import settings
 from .logging_config import get_logger
+from .pose_detection import PoseEventEngine, PoseObservation, UltralyticsPoseDetector
 from .workers_ai_processing import AIWorkerProcessingMixin
 
 model_logger = get_logger("AI模型")
 video_logger = get_logger("AI视频")
 ai_logger = get_logger("AI识别")
+pose_logger = get_logger("姿态识别")
 ffmpeg_logger = get_logger("AI视频").bind(raw_ffmpeg=True)
 
 
@@ -263,8 +265,23 @@ class AIWorker(AIWorkerProcessingMixin):
         self._last_frame_age_ms = 0.0
         self._last_processing_ms = 0.0
         self._last_detect_ms = 0.0
+        self._last_pose_ms = 0.0
         self._last_postprocess_ms = 0.0
         self._last_end_to_end_ms = 0.0
+        self._pose_frames_processed = 0
+        self._pose_events_count = 0
+        self._last_pose_overlay_broadcast = 0.0
+        self._pose_status = "disabled"
+        self._pose_detector: UltralyticsPoseDetector | None = None
+        self._pose_event_engine: PoseEventEngine | None = None
+        # 姿态模型同时提供可靠的人体框。当安全帽检测模型漏掉 person 时，
+        # 缓存最近一批姿态框，供两次姿态推理之间的检测帧兜底使用。
+        self._latest_pose_observations: list[PoseObservation] = []
+        self._latest_pose_observations_at: float = 0.0
+        self._pose_person_grace_seconds: float = 0.8
+        self._parallel_inference_enabled = bool(settings.AI_PARALLEL_INFERENCE_ENABLED)
+        self._detector_warmed_up = False
+        self._pose_warmed_up = False
         self._startup_status = "waiting"
         self._startup_detail = (
             f"等待 RTSP 连接：rtsp={self._current_rtsp_url}，fps={settings.AI_FPS}，"
@@ -300,19 +317,58 @@ class AIWorker(AIWorkerProcessingMixin):
                 self._startup_status = "failed"
                 self._startup_detail = f"YOLO 模型加载失败：{exc}"
 
+        if settings.POSE_ENABLED:
+            try:
+                self._pose_detector = UltralyticsPoseDetector(
+                    model_path=settings.POSE_MODEL_PATH,
+                    device=settings.POSE_DEVICE,
+                    confidence=settings.POSE_CONFIDENCE_THRESHOLD,
+                    inference_imgsz=settings.POSE_INFERENCE_IMGSZ,
+                    frame_width=self._frame_width,
+                    frame_height=self._frame_height,
+                )
+                self._pose_event_engine = PoseEventEngine(
+                    keypoint_confidence=settings.POSE_KEYPOINT_CONFIDENCE,
+                    min_visible_keypoints=settings.POSE_MIN_VISIBLE_KEYPOINTS,
+                    stable_hits=settings.POSE_STABLE_HITS,
+                    crouch_seconds=settings.POSE_CROUCH_SECONDS,
+                    loiter_seconds=settings.POSE_LOITER_SECONDS,
+                    event_cooldown_seconds=settings.POSE_EVENT_COOLDOWN_SECONDS,
+                    track_ttl_seconds=settings.POSE_TRACK_TTL_SECONDS,
+                )
+                self._pose_status = "ready"
+                pose_logger.info(
+                    "姿态模型已就绪：path={}，device={}，imgsz={}，stable_hits={}",
+                    settings.POSE_MODEL_PATH,
+                    self._pose_detector.device,
+                    settings.POSE_INFERENCE_IMGSZ,
+                    settings.POSE_STABLE_HITS,
+                )
+            except Exception as exc:
+                import traceback
+
+                self._pose_status = "failed"
+                pose_logger.error("姿态模型加载失败，姿态支路已降级：{}", exc)
+                pose_logger.debug("姿态模型加载堆栈：\n{}", traceback.format_exc())
+
     def get_startup_status(self) -> dict[str, str]:
         return {
             "status": self._startup_status,
-            "detail": self._startup_detail,
+            "detail": f"{self._startup_detail}，pose={self._pose_status}",
         }
 
     async def start(self, stop_event: asyncio.Event) -> None:
         ai_logger.info(
-            "AI Worker 已启动：fps={}，分辨率={}x{}，rtsp_sources={}",
+            "AI Worker 已启动：fps={}，分辨率={}x{}，rtsp_sources={}，pose={}，"
+            "patrol_skip={}，pose_skip={}，parallel_inference={}",
             settings.AI_FPS,
             self._frame_width,
             self._frame_height,
             self._rtsp_urls,
+            self._pose_status,
+            self._patrol_skip,
+            settings.POSE_FRAME_SKIP,
+            self._parallel_inference_enabled,
         )
         retry_delay = max(0.5, settings.AI_FFMPEG_RETRY_MIN_SECONDS)
         max_retry_delay = max(retry_delay, settings.AI_FFMPEG_RETRY_MAX_SECONDS)
@@ -521,7 +577,7 @@ class AIWorker(AIWorkerProcessingMixin):
             )
         try:
             await asyncio.wait_for(
-                self._detect_and_process_frame(frame),
+                self._detect_and_process_frame(frame, frame_index),
                 timeout=self._frame_process_timeout_s,
             )
         except asyncio.TimeoutError as exc:
@@ -553,24 +609,124 @@ class AIWorker(AIWorkerProcessingMixin):
             self._last_frame_timeout_reason = None
             await self._maybe_broadcast_status()
 
-    async def _detect_and_process_frame(self, frame: bytes) -> None:
-        # 调用 detect_many 返回所有候选结果
-        t_start = time.monotonic()
-        if hasattr(self._detector, 'detect_many'):
-            detections = await asyncio.to_thread(self._detector.detect_many, frame)
-        else:
-            # _SimulatedDetector/_NullDetector 回退到 detect() 兼容
-            single = await asyncio.to_thread(self._detector.detect, frame)
-            detections = [single] if single else []
-        t_detect_end = time.monotonic()
-        self._last_detect_ms = round((t_detect_end - t_start) * 1000, 1)
+    async def _detect_and_process_frame(self, frame: bytes, frame_index: int) -> None:
+        pose_due = (
+            self._pose_detector is not None
+            and self._pose_event_engine is not None
+            and frame_index % max(1, int(settings.POSE_FRAME_SKIP)) == 0
+        )
+        # TensorRT engine 的第一次 predict() 会惰性创建执行上下文。先分别顺序预热，
+        # 后续才允许两个独立 engine 并发，避免 CUDA 初始化竞争。
+        run_parallel = (
+            pose_due
+            and self._parallel_inference_enabled
+            and self._detector_warmed_up
+            and self._pose_warmed_up
+        )
+        pose_task: asyncio.Task[tuple[list, float, float]] | None = None
+        pose_task_consumed = False
+        if run_parallel:
+            pose_task = asyncio.create_task(self._infer_pose(frame))
 
-        await self._process_detection(detections, frame, t_start, t_detect_end)
-        t_done = time.monotonic()
-        self._last_postprocess_ms = round((t_done - t_detect_end) * 1000, 1)
-        self._frames_processed += 1
-        if detections:
-            self._detections_count += 1
+        # 调用 detect_many 返回所有候选结果。
+        t_start = time.monotonic()
+        try:
+            if hasattr(self._detector, 'detect_many'):
+                detections = await asyncio.to_thread(self._detector.detect_many, frame)
+            else:
+                # _SimulatedDetector/_NullDetector 回退到 detect() 兼容
+                single = await asyncio.to_thread(self._detector.detect, frame)
+                detections = [single] if single else []
+            t_detect_end = time.monotonic()
+            self._last_detect_ms = round((t_detect_end - t_start) * 1000, 1)
+            self._detector_warmed_up = True
+
+            if pose_due:
+                if pose_task is None:
+                    raw_poses, pose_started_at, pose_ms = await self._infer_pose(frame)
+                else:
+                    raw_poses, pose_started_at, pose_ms = await pose_task
+                    pose_task_consumed = True
+                self._pose_warmed_up = True
+                self._last_pose_ms = pose_ms
+
+                from .zone_service import get_zone_service
+
+                observations, pose_events = self._pose_event_engine.update(
+                    raw_poses,
+                    zone_gate=get_zone_service(),
+                    now=pose_started_at,
+                )
+                if observations:
+                    self._latest_pose_observations = observations
+                    self._latest_pose_observations_at = time.monotonic()
+                elif (
+                    time.monotonic() - self._latest_pose_observations_at
+                    > self._pose_person_grace_seconds
+                ):
+                    self._latest_pose_observations = []
+                self._pose_frames_processed += 1
+                self._pose_events_count += len(pose_events)
+                await self._process_pose_events(pose_events, frame)
+                await self._broadcast_pose_overlay(observations, detections)
+            else:
+                self._last_pose_ms = 0.0
+
+            detections = self._merge_pose_person_fallback(
+                detections,
+                self._latest_pose_observations,
+            )
+            await self._process_detection(detections, frame, t_start, t_detect_end)
+
+            t_done = time.monotonic()
+            self._last_postprocess_ms = round((t_done - t_detect_end) * 1000, 1)
+            self._frames_processed += 1
+            if detections:
+                self._detections_count += 1
+        finally:
+            # 检测支路异常或外层超时取消时，也要取走姿态 Task 的结果/异常，
+            # 防止后台留下未回收 Task。to_thread 底层调用不可强杀，但不会入队旧帧。
+            if pose_task is not None and not pose_task_consumed:
+                if not pose_task.done():
+                    pose_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await pose_task
+
+    @staticmethod
+    def _merge_pose_person_fallback(
+        detections: list[DetectionResult],
+        observations: list[PoseObservation],
+    ) -> list[DetectionResult]:
+        """普通检测漏掉 person 时，用姿态模型的人体框补齐。
+
+        head/helmet 仍来自安全帽模型，因此自动跟踪的“有头且无安全帽”
+        规则保持不变。只在整帧没有 person 时兜底，避免双模型产生重复人体框。
+        """
+        if any(detection.label == "person" for detection in detections):
+            return detections
+        if not observations:
+            return detections
+
+        return [
+            *detections,
+            *[
+                DetectionResult(
+                    label="person",
+                    confidence=observation.confidence,
+                    bbox=observation.bbox,
+                    track_id=observation.track_id,
+                )
+                for observation in observations
+            ],
+        ]
+
+    async def _infer_pose(self, frame: bytes) -> tuple[list, float, float]:
+        if self._pose_detector is None:
+            return [], time.monotonic(), 0.0
+        pose_started_at = time.monotonic()
+        raw_poses = await asyncio.to_thread(self._pose_detector.detect, frame)
+        pose_ms = round((time.monotonic() - pose_started_at) * 1000, 1)
+        return raw_poses, pose_started_at, pose_ms
 
     async def _start_ffmpeg(self) -> asyncio.subprocess.Process:
         command = [

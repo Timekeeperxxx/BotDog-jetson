@@ -26,6 +26,7 @@ from .startup_summary import StartupSummary
 from .ws_broadcaster import WebSocketBroadcaster
 from .ws_event_broadcaster import EventBroadcaster
 from .ws_runtime_state import set_ws_runtime
+from .z2mini_gimbal import GcuProtocolError, get_z2mini_gimbal
 from .zone_service import ZoneService, set_zone_service
 
 telemetry_logger = get_logger("机器人遥测")
@@ -35,6 +36,7 @@ zone_logger = get_logger("重点区服务")
 auto_track_logger = get_logger("自动跟踪")
 guard_logger = get_logger("驱离任务")
 control_logger = get_logger("机器人控制")
+gimbal_logger = get_logger("云台控制")
 
 
 async def initialize_runtime_services(
@@ -165,7 +167,34 @@ async def initialize_runtime_services(
             f"适配器={settings.CONTROL_ADAPTER_TYPE}，watchdog={settings.CONTROL_WATCHDOG_TIMEOUT_MS}ms",
         )
 
-    # 5) 重点区、自动跟踪、驱离
+    # 5) 相机默认使用纯可见光，避免设备重启后停在热成像或画中画。
+    gimbal_service = get_z2mini_gimbal()
+    try:
+        picture_status = await gimbal_service.set_picture_mode(
+            settings.Z2MINI_DEFAULT_PICTURE_MODE
+        )
+        gimbal_logger.info(
+            "Z2-Mini 默认画面已应用：mode={}，code={}",
+            picture_status.picture_mode,
+            picture_status.picture_mode_code,
+        )
+        startup_summary.set(
+            "Z2-Mini 相机",
+            "ready",
+            (
+                f"默认画面={picture_status.picture_mode}，"
+                f"模式码={picture_status.picture_mode_code}"
+            ),
+        )
+    except (OSError, GcuProtocolError, ValueError) as exc:
+        gimbal_logger.warning("Z2-Mini 默认画面设置失败：{}", exc)
+        startup_summary.set(
+            "Z2-Mini 相机",
+            "degraded",
+            f"默认画面设置失败：{exc}",
+        )
+
+    # 6) 重点区、自动跟踪、驱离
     _zone_service = ZoneService()
     async with session_factory() as zone_session:
         await _zone_service.load_from_db(zone_session)
@@ -247,18 +276,35 @@ async def initialize_runtime_services(
         stop_snapshot_enabled=settings.AUTO_TRACK_STOP_SNAPSHOT_ENABLED,
         default_enabled=settings.AUTO_TRACK_ENABLED,
         yaw_pulse_ms=settings.AUTO_TRACK_YAW_PULSE_MS,
+        gimbal_enabled=settings.AUTO_TRACK_GIMBAL_ENABLED,
+        gimbal_body_deadband_deg=settings.AUTO_TRACK_GIMBAL_BODY_DEADBAND_DEG,
+        gimbal_forward_deadband_deg=settings.AUTO_TRACK_GIMBAL_FORWARD_DEADBAND_DEG,
+        gimbal_horizontal_fov_deg=settings.AUTO_TRACK_GIMBAL_HORIZONTAL_FOV_DEG,
+        gimbal_servo_gain=settings.AUTO_TRACK_GIMBAL_SERVO_GAIN,
+        gimbal_pixel_deadband_px=settings.AUTO_TRACK_GIMBAL_PIXEL_DEADBAND_PX,
+        gimbal_command_interval_ms=settings.AUTO_TRACK_GIMBAL_COMMAND_INTERVAL_MS,
+        gimbal_min_body_vyaw=settings.AUTO_TRACK_GIMBAL_MIN_BODY_VYAW,
+        gimbal_service=(
+            gimbal_service
+            if settings.AUTO_TRACK_GIMBAL_ENABLED
+            else None
+        ),
         target_manager=_target_manager,
         control_arbiter=_arbiter,
     )
     set_auto_track_service(_auto_track_service)
     auto_track_logger.info(
-        "自动跟踪服务已初始化：默认启用={}，多目标模式=true",
+        "自动跟踪服务已初始化：默认启用={}，多目标模式=true，云台协同={}",
         settings.AUTO_TRACK_ENABLED,
+        settings.AUTO_TRACK_GIMBAL_ENABLED,
     )
     startup_summary.set(
         "自动跟踪",
         "ready",
-        f"默认启用={settings.AUTO_TRACK_ENABLED}，多目标模式=true",
+        (
+            f"默认启用={settings.AUTO_TRACK_ENABLED}，多目标模式=true，"
+            f"云台协同={settings.AUTO_TRACK_GIMBAL_ENABLED}"
+        ),
     )
 
     _guard_mission_service = GuardMissionService(

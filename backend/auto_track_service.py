@@ -42,6 +42,7 @@ from .tracking_types import (
     ControlOwner,
 )
 from .follow_decision_engine import FollowDecisionEngine
+from .gimbal_follow_controller import GimbalGuidance, calculate_gimbal_guidance
 from .zone_service import ZoneService
 
 if TYPE_CHECKING:
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     from .ws_event_broadcaster import EventBroadcaster
     from .target_manager import TargetManager
     from .control_arbiter import ControlArbiter
+    from .z2mini_gimbal import Z2MiniGimbal
 
 
 class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
@@ -84,6 +86,15 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         stop_snapshot_enabled: bool = True,
         default_enabled: bool = False,
         yaw_pulse_ms: float = 0.0,
+        gimbal_enabled: bool = False,
+        gimbal_body_deadband_deg: float = 5.0,
+        gimbal_forward_deadband_deg: float = 5.0,
+        gimbal_horizontal_fov_deg: float = 60.0,
+        gimbal_servo_gain: float = 0.75,
+        gimbal_pixel_deadband_px: int = 20,
+        gimbal_command_interval_ms: float = 180.0,
+        gimbal_min_body_vyaw: float = 0.10,
+        gimbal_service: "Z2MiniGimbal | None" = None,
         # 阶段 2 可选依赖
         target_manager: "TargetManager | None" = None,
         control_arbiter: "ControlArbiter | None" = None,
@@ -125,6 +136,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
 
         # ── 活跃目标（FOLLOWING / LOST 阶段） ──────────────────────────────
         self._active_target: Optional[ActiveTarget] = None
+        self._control_bbox: Optional[tuple[int, int, int, int]] = None
         self._stop_reason: Optional[TrackStopReason] = None
 
         # 阶段 2 多目标管理
@@ -142,6 +154,38 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         self._forward_area_ratio = forward_area_ratio
         self._anchor_y_stop_ratio = anchor_y_stop_ratio
         self._yaw_pulse_s: float = yaw_pulse_ms / 1000.0
+        self._gimbal_enabled = bool(gimbal_enabled)
+        self._gimbal_service = gimbal_service
+        self._gimbal_body_deadband_deg = max(0.5, float(gimbal_body_deadband_deg))
+        self._gimbal_forward_deadband_deg = max(
+            0.5,
+            min(15.0, float(gimbal_forward_deadband_deg)),
+        )
+        self._gimbal_horizontal_fov_deg = max(10.0, min(170.0, float(gimbal_horizontal_fov_deg)))
+        self._gimbal_servo_gain = max(0.0, min(1.5, float(gimbal_servo_gain)))
+        self._gimbal_pixel_deadband_px = max(0, int(gimbal_pixel_deadband_px))
+        self._gimbal_command_interval_s = max(0.05, float(gimbal_command_interval_ms) / 1000.0)
+        self._gimbal_min_body_vyaw = max(0.05, min(0.8, float(gimbal_min_body_vyaw)))
+        self._last_gimbal_command_time = 0.0
+        self._last_gimbal_yaw_velocity_dps = 0.0
+        self._gimbal_centered_hits = 0
+        self._body_turn_active = False
+        self._body_aligned_hits = 0
+        self._initial_alignment_complete = False
+        self._tracking_phase = "IDLE"
+        self._gimbal_alignment_mode_set = False
+        self._alignment_turn_started_at: float | None = None
+        self._alignment_speed_override: float | None = None
+        self._alignment_motion_confirmed = False
+        self._alignment_motion_failed = False
+        self._observed_body_yaw_speed_dps: float | None = None
+        self._alignment_command_vyaw: float | None = None
+        self._gimbal_connected = False
+        self._camera_yaw_deg: float | None = None
+        self._body_heading_error_deg: float | None = None
+        self._gimbal_target_yaw_deg: float | None = None
+        self._gimbal_error: str | None = None
+        self._last_gimbal_error_log_time = 0.0
 
         # 调试状态
         self._last_status_broadcast: float = 0.0
@@ -161,7 +205,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         logger.info(
             f"[AutoTrackService] 初始化完成，默认启用={default_enabled}，"
             f"stable_hits={self._stable_hits}，lost_timeout_frames={lost_timeout_frames}，"
-            f"yaw_pulse_ms={yaw_pulse_ms}"
+            f"yaw_pulse_ms={yaw_pulse_ms}，gimbal_follow={self._gimbal_enabled}"
         )
 
     # ─── 公共控制接口 ────────────────────────────────────────────────────────
@@ -193,6 +237,8 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         self._state = AutoTrackState.DISABLED
         if self._control_arbiter:
             self._control_arbiter.release_control(ControlOwner.AUTO_TRACK)
+        if self._gimbal_enabled and self._gimbal_service is not None:
+            asyncio.create_task(self._stop_gimbal_yaw())
 
     def pause(self) -> None:
         if not self._enabled:
@@ -259,6 +305,26 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             elif key == "auto_track_yaw_pulse_ms":
                 self._yaw_pulse_s = max(0.0, float(value)) / 1000.0
                 logger.info(f"[AutoTrackService] 热更新 yaw_pulse_ms={value}")
+            elif key == "auto_track_gimbal_enabled":
+                self._gimbal_enabled = str(value).strip().lower() in {"1", "true", "yes", "on"}
+                logger.info(f"[AutoTrackService] 热更新 gimbal_enabled={self._gimbal_enabled}")
+            elif key == "auto_track_gimbal_body_deadband_deg":
+                self._gimbal_body_deadband_deg = max(0.5, float(value))
+            elif key == "auto_track_gimbal_forward_deadband_deg":
+                self._gimbal_forward_deadband_deg = max(
+                    0.5,
+                    min(15.0, float(value)),
+                )
+            elif key == "auto_track_gimbal_horizontal_fov_deg":
+                self._gimbal_horizontal_fov_deg = max(10.0, min(170.0, float(value)))
+            elif key == "auto_track_gimbal_servo_gain":
+                self._gimbal_servo_gain = max(0.0, min(1.5, float(value)))
+            elif key == "auto_track_gimbal_pixel_deadband_px":
+                self._gimbal_pixel_deadband_px = max(0, int(value))
+            elif key == "auto_track_gimbal_command_interval_ms":
+                self._gimbal_command_interval_s = max(0.05, float(value) / 1000.0)
+            elif key == "auto_track_gimbal_min_body_vyaw":
+                self._gimbal_min_body_vyaw = max(0.05, min(0.8, float(value)))
             elif key in {"auto_track_vx", "auto_track_vyaw"}:
                 # 速度在每次下发命令时直接从 settings 读取，路由已完成同步。
                 logger.info(f"[AutoTrackService] 热更新 {key}={value}")
@@ -292,6 +358,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             "paused": self._paused,
             "standalone_enabled": self._standalone_enabled,
             "state": self._state.value,
+            "tracking_phase": self._tracking_phase,
             "active_target": target_info,
             "stop_reason": self._stop_reason.value if self._stop_reason else None,
             "last_command": self._last_command,
@@ -301,6 +368,17 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             "video_lost": self._video_lost_since is not None,
             "video_lost_reason": self._video_lost_reason,
             "control_arbiter": arbiter_status,
+            "gimbal_tracking_enabled": self._gimbal_enabled,
+            "gimbal_connected": self._gimbal_connected,
+            "camera_yaw_deg": self._camera_yaw_deg,
+            "camera_forward_deadband_deg": self._gimbal_forward_deadband_deg,
+            "body_heading_error_deg": self._body_heading_error_deg,
+            "gimbal_target_yaw_deg": self._gimbal_target_yaw_deg,
+            "gimbal_error": self._gimbal_error,
+            "observed_body_yaw_speed_dps": self._observed_body_yaw_speed_dps,
+            "alignment_command_vyaw": self._alignment_command_vyaw,
+            "alignment_motion_confirmed": self._alignment_motion_confirmed,
+            "alignment_motion_failed": self._alignment_motion_failed,
         }
 
     async def notify_video_lost(self, reason: str = "unknown") -> None:
@@ -459,11 +537,16 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                 "command": self._last_command,
                 "reason": self._last_decision_reason or "",
                 "state": self._state.value,
+                "tracking_phase": self._tracking_phase,
                 "frame_w": self._frame_width,
                 "frame_h": self._frame_height,
                 "deadband_px": self._yaw_deadband_px,
                 "anchor_y_stop_ratio": self._anchor_y_stop_ratio,
                 "forward_area_ratio": self._forward_area_ratio,
+                "gimbal_tracking_enabled": self._gimbal_enabled,
+                "gimbal_connected": self._gimbal_connected,
+                "camera_yaw_deg": self._camera_yaw_deg,
+                "body_heading_error_deg": self._body_heading_error_deg,
             })
 
         await self._maybe_broadcast_debug_status()
@@ -587,8 +670,15 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         # 在当前帧中找到目标；track_id 抖动时用 bbox 空间重关联兜底。
         matched = self._find_target_match(persons, target)
         if matched is None:
-            # 目标短暂丢帧时只进入 LOST 等待重识别，不立即 stop。
-            # 真正连续丢失到阈值后由 _on_lost 统一停机和释放控制权。
+            # 视觉闭环断开后立即停机身，避免沿上一条转向命令继续旋转。
+            await self._send_command_safe("stop")
+            await self._stop_gimbal_yaw()
+            self._gimbal_centered_hits = 0
+            self._body_turn_active = False
+            self._body_aligned_hits = 0
+            self._initial_alignment_complete = False
+            self._tracking_phase = "LOST"
+            self._reset_alignment_motion_observation()
             target.lost_count = 1
             self._state = AutoTrackState.LOST
             logger.info(
@@ -597,8 +687,14 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             self._write_frame_log(persons, reason="FOLLOWING→LOST")
             return
 
-        # 更新目标状态
         target.bbox = matched.bbox
+        # 控制坐标单独做 EMA；保留原始 bbox 供身份重关联和状态展示使用。
+        self._control_bbox = _smooth_bbox(
+            self._control_bbox or matched.bbox,
+            matched.bbox,
+            alpha=0.45,
+        )
+        control_bbox = self._control_bbox
         x1, y1, x2, y2 = matched.bbox
         anchor = ((x1 + x2) // 2, y2)
         target.anchor_point = anchor
@@ -623,14 +719,175 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             await self._send_command_safe("stop")
         else:
             target.out_of_zone_count = 0
+            guidance: GimbalGuidance | None = None
+            if self._gimbal_enabled:
+                # 初始对齐阶段冻结云台世界朝向，只允许机器狗旋转去追云台。
+                if not self._initial_alignment_complete:
+                    self._tracking_phase = "ALIGNING"
+                    guidance = await self._get_gimbal_guidance(
+                        control_bbox,
+                        prepare_alignment=True,
+                    )
+                    if guidance is None:
+                        await self._send_command_safe("stop")
+                        return
+
+                    camera_yaw_deg = float(self._camera_yaw_deg or 0.0)
+                    alignment_deadband_deg = self._gimbal_forward_deadband_deg
+                    if abs(camera_yaw_deg) <= alignment_deadband_deg:
+                        self._body_aligned_hits += 1
+                    else:
+                        self._body_aligned_hits = 0
+
+                    if self._body_aligned_hits >= 3:
+                        await self._send_command_safe("stop")
+                        await self._finish_gimbal_alignment()
+                        self._initial_alignment_complete = True
+                        self._tracking_phase = "FOLLOWING"
+                        self._reset_alignment_motion_observation()
+                        self._last_decision_reason = "机身已正对摄像头，下一帧开始跟踪"
+                        return
+
+                    if abs(camera_yaw_deg) <= alignment_deadband_deg:
+                        await self._send_command_safe("stop")
+                        self._reset_alignment_motion_observation()
+                        self._last_decision_reason = (
+                            f"ALIGNING 等待稳定：camera_yaw={camera_yaw_deg:.2f}°，"
+                            f"deadband=±{alignment_deadband_deg:.1f}°，"
+                            f"stable={self._body_aligned_hits}/3"
+                        )
+                        return
+
+                    command = "left" if camera_yaw_deg < 0.0 else "right"
+                    observed_yaw_speed_dps = self._read_body_yaw_speed_dps()
+                    yaw_speed = self._alignment_body_yaw_speed(
+                        camera_yaw_deg,
+                        observed_yaw_speed_dps,
+                    )
+                    if yaw_speed is None:
+                        await self._send_command_safe("stop")
+                        self._last_decision_reason = (
+                            "ALIGNING 底盘未响应转向命令，已停止："
+                            f"camera_yaw={camera_yaw_deg:.2f}°，"
+                            f"observed_yaw_speed={observed_yaw_speed_dps}"
+                        )
+                        await self._broadcast_event("TRACK_DECISION", {
+                            "command": "stop",
+                            "should_send": True,
+                            "reason": self._last_decision_reason,
+                            "phase": self._tracking_phase,
+                            "track_id": target.track_id,
+                            "camera_yaw_deg": camera_yaw_deg,
+                            "observed_body_yaw_speed_dps": observed_yaw_speed_dps,
+                            "alignment_motion_failed": True,
+                        })
+                        return
+                    await self._send_command_safe(
+                        command,
+                        yaw_speed=yaw_speed,
+                    )
+                    self._last_decision_reason = (
+                        f"ALIGNING 云台保持不动，机身追摄像头："
+                        f"camera_yaw={camera_yaw_deg:.2f}° command={command} "
+                        f"vyaw={yaw_speed:.2f}rad/s "
+                        f"measured={observed_yaw_speed_dps}"
+                    )
+                    await self._broadcast_event("TRACK_DECISION", {
+                        "command": command,
+                        "should_send": True,
+                        "reason": self._last_decision_reason,
+                        "phase": self._tracking_phase,
+                        "track_id": target.track_id,
+                        "camera_yaw_deg": camera_yaw_deg,
+                        "yaw_speed": yaw_speed,
+                        "observed_body_yaw_speed_dps": observed_yaw_speed_dps,
+                        "alignment_motion_confirmed": self._alignment_motion_confirmed,
+                    })
+                    return
+
+                guidance = await self._get_gimbal_guidance(
+                    control_bbox,
+                    prepare_alignment=False,
+                )
+                if guidance is None:
+                    reason = f"云台视线不可用，禁止盲目前进：{self._gimbal_error or 'unknown'}"
+                    should_send_stop = self._last_command != "stop"
+                    if should_send_stop:
+                        await self._send_command_safe("stop")
+                    self._last_decision_reason = reason
+                    await self._broadcast_event("TRACK_DECISION", {
+                        "command": "stop",
+                        "should_send": should_send_stop,
+                        "reason": reason,
+                        "bbox": list(control_bbox),
+                        "anchor": list(target.anchor_point),
+                        "track_id": target.track_id,
+                        "gimbal_connected": self._gimbal_connected,
+                    })
+                    self._write_frame_log(
+                        persons,
+                        command="stop",
+                        should_send=True,
+                        reason=reason,
+                        bbox=control_bbox,
+                        anchor=target.anchor_point,
+                    )
+                    return
+
+                camera_yaw_deg = float(self._camera_yaw_deg or 0.0)
+                if abs(camera_yaw_deg) > self._gimbal_forward_deadband_deg:
+                    # 运行中人为转动云台或云台发生漂移时，先停止底盘，再锁住
+                    # 相机当前世界朝向，重新让机身追到相机方向。未对齐时严禁前进。
+                    await self._send_command_safe("stop")
+                    self._initial_alignment_complete = False
+                    self._body_aligned_hits = 0
+                    self._tracking_phase = "ALIGNING"
+                    self._reset_alignment_motion_observation()
+                    try:
+                        await self._prepare_gimbal_alignment()
+                    except Exception as exc:
+                        self._set_gimbal_error(str(exc))
+                    self._last_decision_reason = (
+                        "检测到相机偏离机身正前方，重新只转机身对齐："
+                        f"camera_yaw={camera_yaw_deg:.2f}°，"
+                        f"deadband=±{self._gimbal_forward_deadband_deg:.1f}°"
+                    )
+                    logger.info(
+                        f"[AutoTrackService] FOLLOWING→ALIGNING: "
+                        f"camera_yaw={camera_yaw_deg:.2f}°"
+                    )
+                    await self._broadcast_event("TRACK_DECISION", {
+                        "command": "stop",
+                        "should_send": True,
+                        "reason": self._last_decision_reason,
+                        "phase": self._tracking_phase,
+                        "track_id": target.track_id,
+                        "camera_yaw_deg": camera_yaw_deg,
+                        "camera_forward_deadband_deg": self._gimbal_forward_deadband_deg,
+                    })
+                    return
+
+                # 对齐后云台保持 head_follow，不发送任何非零云台速度。
+                # 人物在画面中的左右偏差全部换算成相对机身方位，只转机器狗。
+                self._tracking_phase = "FOLLOWING"
+
             # 生成控制命令
             decision = self._decision_engine.decide(
-                bbox=matched.bbox,
+                bbox=control_bbox,
                 image_width=self._frame_width,
                 image_height=self._frame_height,
+                # 云台不再转动时，完整的目标方位就是：
+                # 云台相对机身 yaw + 人物相对画面中心的角度。
+                heading_error_deg=guidance.body_heading_error_deg if guidance else None,
+                heading_deadband_deg=self._gimbal_body_deadband_deg,
             )
             if decision.should_send and decision.command:
-                await self._send_command_safe(decision.command)
+                yaw_speed = (
+                    self._body_yaw_speed(decision.heading_error_deg)
+                    if decision.command in ("left", "right")
+                    else None
+                )
+                await self._send_command_safe(decision.command, yaw_speed=yaw_speed)
                 if self._yaw_pulse_s > 0 and decision.command in ("left", "right"):
                     asyncio.create_task(self._send_stop_after(self._yaw_pulse_s))
 
@@ -639,18 +896,190 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                 "command": decision.command,
                 "should_send": decision.should_send,
                 "reason": decision.reason,
-                "bbox": list(matched.bbox),
+                "phase": self._tracking_phase,
+                "bbox": list(control_bbox),
                 "anchor": list(target.anchor_point),
                 "track_id": target.track_id,
+                "camera_yaw_deg": self._camera_yaw_deg,
+                "body_heading_error_deg": decision.heading_error_deg,
+                "gimbal_target_yaw_deg": self._gimbal_target_yaw_deg,
             })
             self._write_frame_log(
                 persons,
                 command=decision.command,
                 should_send=decision.should_send,
                 reason=decision.reason,
-                bbox=matched.bbox,
+                bbox=control_bbox,
                 anchor=target.anchor_point,
             )
+
+    async def _get_gimbal_guidance(
+        self,
+        bbox: tuple[int, int, int, int],
+        *,
+        prepare_alignment: bool = False,
+    ) -> GimbalGuidance | None:
+        """读取真实云台角度并计算目标相对机身方位。
+
+        ``prepare_alignment`` 只在初始对齐阶段使用，将云台切到
+        head_lock 保持当前世界朝向。对齐完成后只读状态，不再发送
+        任何非零云台速度。
+        """
+        if self._gimbal_service is None:
+            self._set_gimbal_error("云台服务未初始化")
+            return None
+
+        try:
+            if prepare_alignment:
+                await self._prepare_gimbal_alignment()
+            status = await self._gimbal_service.status()
+            if not status.connected:
+                self._set_gimbal_error("云台状态为未连接")
+                return None
+
+            self._gimbal_connected = True
+            self._gimbal_error = None
+            self._camera_yaw_deg = status.relative_yaw_deg
+            guidance = calculate_gimbal_guidance(
+                bbox=bbox,
+                image_width=self._frame_width,
+                camera_yaw_deg=status.relative_yaw_deg,
+                zoom_ratio=status.zoom_ratio,
+                horizontal_fov_deg=self._gimbal_horizontal_fov_deg,
+                servo_gain=self._gimbal_servo_gain,
+                pixel_deadband_px=self._gimbal_pixel_deadband_px,
+            )
+            self._body_heading_error_deg = guidance.body_heading_error_deg
+            # 视觉跟踪期间不再存在云台转动路径；这里只读角度。
+            self._gimbal_target_yaw_deg = None
+            return guidance
+        except Exception as exc:
+            self._set_gimbal_error(str(exc))
+            return None
+
+    async def _prepare_gimbal_alignment(self) -> None:
+        """锁住摄像头当前世界朝向，随后只允许机身追到该方向。"""
+        if self._gimbal_alignment_mode_set or self._gimbal_service is None:
+            return
+        await self._gimbal_service.jog(
+            pitch_velocity_dps=0.0,
+            yaw_velocity_dps=0.0,
+        )
+        await self._gimbal_service.set_mode("head_lock")
+        self._last_gimbal_yaw_velocity_dps = 0.0
+        self._gimbal_alignment_mode_set = True
+
+    async def _finish_gimbal_alignment(self) -> None:
+        """机身对齐后进入云台随动模式，后续只转机器狗。"""
+        if self._gimbal_service is None:
+            return
+        await self._gimbal_service.jog(
+            pitch_velocity_dps=0.0,
+            yaw_velocity_dps=0.0,
+        )
+        await self._gimbal_service.set_mode("head_follow")
+        self._last_gimbal_yaw_velocity_dps = 0.0
+        self._gimbal_alignment_mode_set = False
+
+    def _set_gimbal_error(self, message: str) -> None:
+        self._gimbal_connected = False
+        self._gimbal_error = message
+        now = time.monotonic()
+        if now - self._last_gimbal_error_log_time >= 5.0:
+            self._last_gimbal_error_log_time = now
+            logger.warning(f"[AutoTrackService] 云台视线不可用，自动跟踪停车：{message}")
+
+    def _body_yaw_speed(self, heading_error_deg: float | None) -> float | None:
+        if heading_error_deg is None:
+            return None
+        max_speed = max(0.0, min(0.8, float(settings.AUTO_TRACK_VYAW)))
+        if self._gimbal_enabled:
+            # B2 实机在 0.18~0.22rad/s 下会接受 SDK 命令但不产生可见转动。
+            # 初始对齐必须高于该死区；仍限制在 0.5rad/s 内避免过快甩尾。
+            max_speed = min(max_speed, 0.5)
+        if max_speed == 0.0:
+            return 0.0
+        effective_min_speed = (
+            max(0.35, self._gimbal_min_body_vyaw)
+            if self._gimbal_enabled
+            else self._gimbal_min_body_vyaw
+        )
+        min_speed = min(max_speed, effective_min_speed)
+        proportional = abs(heading_error_deg) / 45.0 * max_speed
+        return round(max(min_speed, min(max_speed, proportional)), 3)
+
+    def _read_body_yaw_speed_dps(self) -> float | None:
+        """读取 B2 实际偏航速度；数据缺失或过期时不做误判。"""
+        try:
+            from .workers_unitree_telemetry import get_unitree_telemetry_diagnostics
+
+            sport = get_unitree_telemetry_diagnostics().get("sport")
+            if not sport or float(sport.get("age_s", 99.0)) > 0.5:
+                return None
+            return round(float(sport.get("yaw_speed", 0.0)) * 180.0 / 3.141592653589793, 2)
+        except (TypeError, ValueError):
+            return None
+
+    def _alignment_body_yaw_speed(
+        self,
+        heading_error_deg: float,
+        observed_yaw_speed_dps: float | None,
+    ) -> float | None:
+        """初始对齐速度，并用实机遥测识别“命令已发但底盘未动”。"""
+        now = time.monotonic()
+        self._observed_body_yaw_speed_dps = observed_yaw_speed_dps
+        if self._alignment_turn_started_at is None:
+            self._alignment_turn_started_at = now
+            logger.info(
+                f"[AutoTrackService] ALIGNING 开始机身转向："
+                f"camera_yaw={heading_error_deg:.2f}°"
+            )
+
+        if observed_yaw_speed_dps is not None and abs(observed_yaw_speed_dps) >= 2.0:
+            self._alignment_motion_confirmed = True
+
+        elapsed = now - self._alignment_turn_started_at
+        base_speed = float(self._body_yaw_speed(heading_error_deg) or 0.0)
+        if (
+            observed_yaw_speed_dps is not None
+            and not self._alignment_motion_confirmed
+            and elapsed >= 1.0
+            and self._alignment_speed_override is None
+        ):
+            self._alignment_speed_override = max(
+                base_speed,
+                min(0.5, float(settings.UNITREE_B2_VYAW)),
+            )
+            logger.warning(
+                f"[AutoTrackService] ALIGNING 底盘 1 秒内未产生偏航，"
+                f"转速提升至 {self._alignment_speed_override:.2f}rad/s"
+            )
+
+        if (
+            observed_yaw_speed_dps is not None
+            and not self._alignment_motion_confirmed
+            and elapsed >= 3.0
+        ):
+            if not self._alignment_motion_failed:
+                logger.error(
+                    f"[AutoTrackService] ALIGNING 底盘连续 3 秒无偏航响应，停止转向："
+                    f"command_vyaw={self._alignment_speed_override or base_speed:.2f}rad/s"
+                )
+            self._alignment_motion_failed = True
+            self._alignment_command_vyaw = None
+            return None
+
+        speed = self._alignment_speed_override or base_speed
+        self._alignment_command_vyaw = speed
+        return speed
+
+    def _reset_alignment_motion_observation(self) -> None:
+        self._alignment_turn_started_at = None
+        self._alignment_speed_override = None
+        self._alignment_motion_confirmed = False
+        self._alignment_motion_failed = False
+        self._observed_body_yaw_speed_dps = None
+        self._alignment_command_vyaw = None
 
     async def _on_lost(
         self,
@@ -676,6 +1105,10 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             if await self._stop_if_target_has_helmet(target, matched, helmet_person_ids, helmets, frame, task_id):
                 return
             self._state = AutoTrackState.FOLLOWING
+            self._tracking_phase = "AIMING"
+            self._initial_alignment_complete = False
+            self._body_aligned_hits = 0
+            self._reset_alignment_motion_observation()
             logger.info(
                 f"[AutoTrackService] LOST→FOLLOWING: 重新发现 track_id={target.track_id}"
             )
@@ -697,6 +1130,23 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             await self._stop_with_snapshot(TrackStopReason.TARGET_LOST, frame, task_id)
         # 否则保持 LOST，下帧继续
 
+    async def _stop_gimbal_yaw(self) -> None:
+        """停止云台水平运动并保持当前位置，不在无目标时盲目回零。"""
+        if not self._gimbal_enabled or self._gimbal_service is None:
+            return
+        try:
+            await self._gimbal_service.jog(
+                pitch_velocity_dps=0.0,
+                yaw_velocity_dps=0.0,
+            )
+            # jog(0, 0) 会把 Z2-Mini 切回 head_follow；下次重新锁人时
+            # 必须再次显式进入 head_lock，不能沿用旧的内存标记。
+            self._gimbal_alignment_mode_set = False
+        except Exception as exc:
+            self._set_gimbal_error(str(exc))
+        finally:
+            self._last_gimbal_yaw_velocity_dps = 0.0
+
 # ─── 全局单例 ────────────────────────────────────────────────────────────────
 
 _auto_track_service: Optional[AutoTrackService] = None
@@ -709,3 +1159,16 @@ def get_auto_track_service() -> Optional[AutoTrackService]:
 def set_auto_track_service(service: AutoTrackService) -> None:
     global _auto_track_service
     _auto_track_service = service
+
+
+def _smooth_bbox(
+    previous: tuple[int, int, int, int],
+    current: tuple[int, int, int, int],
+    *,
+    alpha: float,
+) -> tuple[int, int, int, int]:
+    alpha = max(0.0, min(1.0, alpha))
+    return tuple(
+        int(round(old * (1.0 - alpha) + new * alpha))
+        for old, new in zip(previous, current)
+    )

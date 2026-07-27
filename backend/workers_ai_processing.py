@@ -12,12 +12,14 @@ from .alert_service import get_alert_service
 from .config import settings
 from .logging_config import get_logger
 from .models import InspectionTask
+from .pose_detection import PoseEvent, PoseObservation
 from .schemas import utc_now_iso
 from .tracking_types import DetectionResult as TrackDetectionResult
 from .ws_event_broadcaster import get_event_broadcaster
 
 video_logger = get_logger("AI视频")
 ai_logger = get_logger("AI识别")
+pose_logger = get_logger("姿态识别")
 
 
 class AIWorkerProcessingMixin:
@@ -77,6 +79,10 @@ class AIWorkerProcessingMixin:
         return None
 
     def _is_mission_active(self) -> bool:
+        # 持续分析仅保持视频推理支路运行，不会启用 AutoTrackService，
+        # 因此不会向机器人下发任何运动命令。
+        if settings.AI_CONTINUOUS_DETECTION_ENABLED:
+            return True
         # 移除对 self._state_machine.state == SystemState.IN_MISSION 的强依赖。
         # 只要存在运行中的任务，且 RTSP 摄像头推流正常，AI 就会开始分析画面。
         if self._current_task_id is not None and settings.AI_PASSIVE_SESSION_DETECTION_ENABLED:
@@ -262,6 +268,124 @@ class AIWorkerProcessingMixin:
                 session=session,
             )
 
+    async def _process_pose_events(
+        self,
+        events: list[PoseEvent],
+        frame: bytes,
+    ) -> None:
+        if not events:
+            return
+
+        event_meta = {
+            "POSE_CLIMBING_SUSPECTED": (
+                "E_POSE_CLIMBING_SUSPECTED",
+                "CRITICAL",
+                "检测到人员疑似攀爬",
+            ),
+            "POSE_LYING": (
+                "E_POSE_LYING",
+                "CRITICAL",
+                "检测到人员疑似倒地",
+            ),
+            "POSE_CROUCHING": (
+                "E_POSE_CROUCHING",
+                "WARNING",
+                "检测到重点区域人员持续蹲伏",
+            ),
+            "POSE_LOITERING": (
+                "E_POSE_LOITERING",
+                "WARNING",
+                "检测到重点区域人员长时间停留",
+            ),
+        }
+        gps = self._get_latest_gps()
+        alert_service = get_alert_service()
+
+        for event in events:
+            code, severity, label = event_meta.get(
+                event.event_type,
+                (f"E_{event.event_type}", "WARNING", "检测到异常人体姿态"),
+            )
+            image_path, image_url = await self._save_snapshot(frame)
+            pose_logger.info(
+                "异常姿态已自动抓拍：event={}，track_id={}，path={}",
+                event.event_type,
+                event.track_id,
+                image_path,
+            )
+            duration = max(0.0, event.duration_seconds)
+            message = (
+                f"{label}：track_id={event.track_id}，"
+                f"持续={duration:.1f}s"
+            )
+            async with self._session_factory() as session:
+                await alert_service.handle_ai_event(
+                    event_type=event.event_type,
+                    event_code=code,
+                    severity=severity,
+                    message=message,
+                    confidence=event.confidence,
+                    file_path=str(image_path),
+                    image_url=image_url,
+                    gps_lat=gps[0],
+                    gps_lon=gps[1],
+                    task_id=self._current_task_id
+                    if isinstance(self._current_task_id, int)
+                    else None,
+                    session=session,
+                )
+
+    async def _broadcast_pose_overlay(
+        self,
+        observations: list[PoseObservation],
+        detections: list[DetectionResult],
+    ) -> None:
+        now = asyncio.get_event_loop().time()
+        interval = max(0.05, float(settings.POSE_OVERLAY_INTERVAL_SECONDS))
+        if now - self._last_pose_overlay_broadcast < interval:
+            return
+        self._last_pose_overlay_broadcast = now
+
+        broadcaster = get_event_broadcaster()
+        if broadcaster.connection_count == 0:
+            return
+
+        message = {
+            "msg_type": "POSE_OVERLAY",
+            "timestamp": utc_now_iso(),
+            "payload": {
+                "frame_w": self._frame_width,
+                "frame_h": self._frame_height,
+                "keypoint_confidence": settings.POSE_KEYPOINT_CONFIDENCE,
+                "detections": [
+                    {
+                        "bbox": list(detection.bbox)
+                        if detection.bbox is not None
+                        else [],
+                        "conf": round(detection.confidence, 4),
+                        "class_name": detection.label,
+                        "track_id": getattr(detection, "track_id", -1),
+                    }
+                    for detection in detections
+                    if detection.bbox is not None
+                ],
+                "poses": [observation.as_overlay() for observation in observations],
+            },
+        }
+
+        async with broadcaster._lock:
+            failed = []
+            for connection in broadcaster._connections:
+                try:
+                    await asyncio.wait_for(
+                        connection.send_json(message),
+                        timeout=self._event_send_timeout_s,
+                    )
+                except Exception:
+                    failed.append(connection)
+            for connection in failed:
+                broadcaster._connections.discard(connection)
+
     async def _save_snapshot(self, frame: bytes) -> tuple[Path, str]:
         return await asyncio.to_thread(self._save_snapshot_sync, frame)
 
@@ -333,9 +457,18 @@ class AIWorkerProcessingMixin:
                     "frame_age_ms": self._last_frame_age_ms,
                     "processing_ms": self._last_processing_ms,
                     "detect_ms": self._last_detect_ms,
+                    "pose_ms": self._last_pose_ms,
                     "postprocess_ms": self._last_postprocess_ms,
                     "end_to_end_ms": self._last_end_to_end_ms,
                     "frame_timeout_reason": self._last_frame_timeout_reason,
+                    "pose_status": self._pose_status,
+                    "pose_frames_processed": self._pose_frames_processed,
+                    "pose_events_count": self._pose_events_count,
+                    "parallel_inference_enabled": self._parallel_inference_enabled,
+                    "inference_warmed_up": (
+                        self._detector_warmed_up
+                        and (self._pose_detector is None or self._pose_warmed_up)
+                    ),
                 },
             }
 

@@ -64,6 +64,10 @@ class AutoTrackRuntimeMixin:
         )
         self._candidates.clear()
         self._state = AutoTrackState.FOLLOWING
+        self._tracking_phase = "AIMING"
+        self._initial_alignment_complete = False
+        self._body_aligned_hits = 0
+        self._reset_alignment_motion_observation()
         self._decision_engine.reset()
 
         logger.info(
@@ -88,9 +92,20 @@ class AutoTrackRuntimeMixin:
         self._active_target = None
         self._candidates.clear()
         self._last_iou_bbox = None
+        self._control_bbox = None
         self._decision_engine.reset()
         self._last_command = None
         self._last_decision_reason = None
+        self._body_heading_error_deg = None
+        self._gimbal_target_yaw_deg = None
+        self._last_gimbal_yaw_velocity_dps = 0.0
+        self._gimbal_centered_hits = 0
+        self._body_turn_active = False
+        self._body_aligned_hits = 0
+        self._initial_alignment_complete = False
+        self._tracking_phase = "IDLE"
+        self._gimbal_alignment_mode_set = False
+        self._reset_alignment_motion_observation()
 
     def _do_stop(
         self,
@@ -150,7 +165,12 @@ class AutoTrackRuntimeMixin:
         await asyncio.sleep(delay_s)
         await self._send_command_safe("stop")
 
-    async def _send_command_safe(self, cmd: str) -> None:
+    async def _send_command_safe(
+        self,
+        cmd: str,
+        *,
+        yaw_speed: float | None = None,
+    ) -> None:
         """通过 ControlService 发送命令，发前检查 ControlArbiter 权限。"""
         try:
             if cmd != "stop" and self._control_arbiter is not None:
@@ -174,7 +194,10 @@ class AutoTrackRuntimeMixin:
             if cmd in {"forward", "backward"}:
                 await self._control_service.handle_command(cmd, vx=settings.AUTO_TRACK_VX)
             elif cmd in {"left", "right"}:
-                await self._control_service.handle_command(cmd, vyaw=settings.AUTO_TRACK_VYAW)
+                await self._control_service.handle_command(
+                    cmd,
+                    vyaw=settings.AUTO_TRACK_VYAW if yaw_speed is None else yaw_speed,
+                )
             else:
                 await self._control_service.handle_command(cmd)
         except Exception as exc:

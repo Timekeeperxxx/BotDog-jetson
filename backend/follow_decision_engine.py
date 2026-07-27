@@ -67,6 +67,9 @@ class FollowDecisionEngine:
         bbox: tuple[int, int, int, int],
         image_width: int,
         image_height: int,
+        *,
+        heading_error_deg: float | None = None,
+        heading_deadband_deg: float = 5.0,
     ) -> TrackDecision:
         """
         根据目标 bbox 生成控制决策。
@@ -78,6 +81,9 @@ class FollowDecisionEngine:
 
         Returns:
             TrackDecision（command + should_send + reason）
+
+        ``heading_error_deg`` 存在时表示已经融合了相机相对 yaw 与画面角误差。
+        此时转向和是否允许前进只按该机身方位判断，不再假定相机固定朝前。
         """
         x1, y1, x2, y2 = bbox
         target_cx = (x1 + x2) // 2
@@ -86,6 +92,29 @@ class FollowDecisionEngine:
 
         # ── 计算水平偏差 ──────────────────────────────────────────────────
         err_x = target_cx - image_cx
+        use_camera_heading = heading_error_deg is not None
+        heading_deadband_deg = max(0.0, float(heading_deadband_deg))
+        turn_required = (
+            abs(heading_error_deg) > heading_deadband_deg
+            if use_camera_heading
+            else abs(err_x) > self._yaw_deadband_px
+        )
+
+        def turn_command() -> str:
+            if use_camera_heading:
+                return "left" if heading_error_deg < 0 else "right"
+            return "left" if err_x < 0 else "right"
+
+        def turn_reason(prefix: str = "") -> str:
+            if use_camera_heading:
+                detail = (
+                    f"目标相对机身方位={heading_error_deg:.2f}°"
+                    f"（死区={heading_deadband_deg:.2f}°）"
+                )
+            else:
+                detail = f"水平偏差 err_x={err_x}px（死区={self._yaw_deadband_px}px）"
+            return f"{prefix}{detail}"
+
         bbox_area = (x2 - x1) * (y2 - y1)
         frame_area = image_width * image_height
         area_ratio = bbox_area / frame_area if frame_area > 0 else 0.0
@@ -108,19 +137,24 @@ class FollowDecisionEngine:
             if not self._distance_stop_confirmed:
                 raw_cmd = "stop"
                 reason = f"{distance_reason}，先停止前进"
-            elif abs(err_x) > self._yaw_deadband_px:
-                raw_cmd = "left" if err_x < 0 else "right"
-                reason = f"{distance_reason}，原地转向修正水平偏差 err_x={err_x}px"
+            elif turn_required:
+                raw_cmd = turn_command()
+                reason = turn_reason(f"{distance_reason}，原地转向：")
             else:
                 raw_cmd = "stop"
                 reason = f"{distance_reason}，保持停止"
-        elif abs(err_x) > self._yaw_deadband_px:
-            # 目标偏左/右，转向
-            raw_cmd = "left" if err_x < 0 else "right"
-            reason = f"水平偏差 err_x={err_x}px（死区={self._yaw_deadband_px}px）"
+        elif turn_required:
+            raw_cmd = turn_command()
+            reason = turn_reason()
         else:
             raw_cmd = "forward"
-            reason = f"目标面积较小（{area_ratio:.3f} < {self._forward_area_ratio}），继续前进"
+            if use_camera_heading:
+                reason = (
+                    f"机身已对准目标（{heading_error_deg:.2f}°），"
+                    f"目标面积较小（{area_ratio:.3f} < {self._forward_area_ratio}），继续前进"
+                )
+            else:
+                reason = f"目标面积较小（{area_ratio:.3f} < {self._forward_area_ratio}），继续前进"
 
         # ── 方向防抖 ──────────────────────────────────────────────────────
         # 对于 left/right 切换，连续相同命令才真正下发
@@ -137,6 +171,7 @@ class FollowDecisionEngine:
                     command=raw_cmd,
                     should_send=False,
                     reason=f"防抖等待 {self._pending_count}/{self._direction_debounce_frames} 帧",
+                    heading_error_deg=heading_error_deg,
                 )
         else:
             # forward/stop 不需要防抖，直接处理
@@ -152,6 +187,7 @@ class FollowDecisionEngine:
                     command=raw_cmd,
                     should_send=False,
                     reason=f"节流等待（间隔={self._command_interval_s * 1000:.0f}ms）",
+                    heading_error_deg=heading_error_deg,
                 )
 
         # ── 允许下发 ──────────────────────────────────────────────────────
@@ -159,7 +195,12 @@ class FollowDecisionEngine:
         self._last_sent_command = raw_cmd
         if self._distance_hold and raw_cmd == "stop":
             self._distance_stop_confirmed = True
-        return TrackDecision(command=raw_cmd, should_send=True, reason=reason)
+        return TrackDecision(
+            command=raw_cmd,
+            should_send=True,
+            reason=reason,
+            heading_error_deg=heading_error_deg,
+        )
 
     def reset(self) -> None:
         """重置内部状态（目标切换或跟踪停止时调用）。"""
