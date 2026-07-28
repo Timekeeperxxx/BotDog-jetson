@@ -56,6 +56,8 @@ from .nav_pcd_routes import (
 router = APIRouter(prefix="/api/v1/nav", tags=["nav"])
 router.include_router(pcd_router)
 _sensor_session_lock = asyncio.Lock()
+_go_to_waypoint_lock = asyncio.Lock()
+_go_to_waypoint_inflight: set[tuple[str, str]] = set()
 
 
 class NavAutoTrackModeRequest(BaseModel):
@@ -743,7 +745,6 @@ async def nav_go_to_waypoint(
     db=Depends(get_db),
 ):
     from ...control_service import get_control_service
-    from ...services_nav_state import update_navigation_status
     from ...services_nav_waypoints import get_waypoint
     from ...services_pcd_maps import PcdMapError
     from ...services_nav_localization import start_cmd_vel_script, stop_cmd_vel_script
@@ -761,71 +762,76 @@ async def nav_go_to_waypoint(
     except PcdMapError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    try:
-        _ensure_localization_ready_for_navigation()
-        _ensure_navigation_runtime_ready()
-        try:
-            stop_task_result = bridge.publish_navigation_task_start(False)
-        except RuntimeError:
-            stop_task_result = None
-        stop_task_nav_result = bridge.publish_navigation_start(False)
-        control_service = get_control_service()
-        if control_service is None:
-            raise RuntimeError("控制服务未就绪")
-        motion_prepare_result = await control_service.prepare_navigation_motion()
-        cmd_vel_result = start_cmd_vel_script()
-        _request_navigation_control()
-        try:
-            goal_result = bridge.publish_goal_xyz_yaw(waypoint)
-            nav_start_result = bridge.publish_navigation_start(True)
-        except RuntimeError:
-            stop_cmd_vel_script()
-            _release_navigation_control()
-            raise
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+    target_key = (map_id, waypoint_id)
+    if target_key in _go_to_waypoint_inflight:
+        raise HTTPException(
+            status_code=409,
+            detail=f"导航目标正在处理中，请勿重复提交: map={map_id} waypoint={waypoint_id}",
+        )
+    # The check and insertion contain no await, so they are atomic with respect
+    # to other FastAPI tasks running on this event loop.
+    _go_to_waypoint_inflight.add(target_key)
 
-    await safe_write_audit_log(
-        db,
-        level="INFO",
-        module="BACKEND",
-        message=(
-            f"用户={user.username} 角色={user.role} 操作=nav.go_to "
-            f"目标={waypoint_id} map={map_id} 结果=success "
-            f"clicked_point_topic={goal_result['xyz_topic']} yaw_topic={goal_result['yaw_topic']} "
-            f"stop_task_nav_topic={stop_task_nav_result['topic']} "
-            f"stop_task_topic={stop_task_result['topic'] if stop_task_result else 'unavailable'} "
-            f"nav_start={nav_start_result['data']} cmd_vel_pid={cmd_vel_result.get('pid')}"
-        ),
-    )
-    update_navigation_status(
-        {
-            "status": "navigating",
-            "target_waypoint_id": waypoint["id"],
-            "target_name": waypoint["name"],
-            "message": (
-                f"已发布 clicked_point 和 goal_yaw: {waypoint['name']} "
-                f"x={float(waypoint['x']):.3f}, "
-                f"y={float(waypoint['y']):.3f}, "
-                f"z={float(waypoint.get('z', 0.0)):.3f}, "
-                f"yaw={float(waypoint.get('yaw', 0.0)):.3f}"
+    try:
+        try:
+            _ensure_localization_ready_for_navigation()
+            _ensure_navigation_runtime_ready()
+            try:
+                stop_task_result = bridge.publish_navigation_task_start(False)
+            except RuntimeError:
+                stop_task_result = None
+
+            # B2 mode preparation and goal publication form one ordered unit.
+            # asyncio.Lock is FIFO for waiting tasks, so a later distinct target
+            # cannot overtake an earlier one and leave the robot on a stale goal.
+            async with _go_to_waypoint_lock:
+                control_service = get_control_service()
+                if control_service is None:
+                    raise RuntimeError("控制服务未就绪")
+                motion_prepare_result = await control_service.prepare_navigation_motion()
+                cmd_vel_result = start_cmd_vel_script()
+                _request_navigation_control()
+                try:
+                    goal_result = await asyncio.to_thread(
+                        bridge.publish_goal_xyz_yaw,
+                        waypoint,
+                    )
+                except (RuntimeError, ValueError):
+                    stop_cmd_vel_script()
+                    _release_navigation_control()
+                    raise
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        await safe_write_audit_log(
+            db,
+            level="INFO",
+            module="BACKEND",
+            message=(
+                f"用户={user.username} 角色={user.role} 操作=nav.go_to "
+                f"目标={waypoint_id} map={map_id} 结果=success "
+                f"clicked_point_topic={goal_result['xyz_topic']} yaw_topic={goal_result['yaw_topic']} "
+                f"stop_task_topic={stop_task_result['topic'] if stop_task_result else 'unavailable'} "
+                f"goal_z={float(goal_result['z']):.3f} "
+                f"nav_start=not_published cmd_vel_pid={cmd_vel_result.get('pid')}"
             ),
+        )
+        return {
+            "success": True,
+            "topic": goal_result["xyz_topic"],
+            "waypoint_id": waypoint["id"],
+            "xyz_topic": goal_result["xyz_topic"],
+            "yaw_topic": goal_result["yaw_topic"],
+            "goal": goal_result,
+            "stop_task": stop_task_result,
+            "cmd_vel": cmd_vel_result,
+            "motion_prepare": motion_prepare_result,
+            "message": "新单点目标已替换旧目标，正在规划路径",
         }
-    )
-    return {
-        "success": True,
-        "topic": goal_result["xyz_topic"],
-        "waypoint_id": waypoint["id"],
-        "xyz_topic": goal_result["xyz_topic"],
-        "yaw_topic": goal_result["yaw_topic"],
-        "goal": goal_result,
-        "stop_task_nav": stop_task_nav_result,
-        "stop_task": stop_task_result,
-        "nav_start": nav_start_result,
-        "cmd_vel": cmd_vel_result,
-        "motion_prepare": motion_prepare_result,
-        "message": "已发布 clicked_point 和 goal_yaw",
-    }
+    finally:
+        _go_to_waypoint_inflight.discard(target_key)
 
 
 @router.post("/e-stop")

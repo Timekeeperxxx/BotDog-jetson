@@ -1,9 +1,15 @@
 """持续阻断告警：/nav/obstacle_status 兜底逻辑的单元测试。"""
 
 import json
+import threading
 from types import SimpleNamespace
 
 from backend import services_ros_nav as module_under_test
+from backend.services_nav_state import (
+    get_nav_state,
+    set_navigation_idle,
+    update_navigation_status,
+)
 from backend.services_ros_nav import RosNavBridge
 
 
@@ -24,6 +30,7 @@ class Harness:
         self._last_goal_waypoint = None
         self._regoal_attempts = 0
         self._last_regoal_at = 0.0
+        self._goal_submission_lock = threading.RLock()
         self.alerts: list[dict] = []
         self.regoals: list[dict] = []
 
@@ -238,6 +245,89 @@ def test_no_regoal_on_sensor_lost(monkeypatch) -> None:
     assert harness.regoals == []
 
 
+def test_no_regoal_while_replacement_goal_is_still_planning(monkeypatch) -> None:
+    _regoal_settings(monkeypatch)
+
+    for planning_status in ("queued", "planning"):
+        harness = Harness()
+        harness._last_goal_waypoint = {"x": 1.0, "y": 2.0, "z": -0.5}
+        harness._latest_planning_status = planning_status
+
+        _at(monkeypatch, 1000.0)
+        harness._handle_obstacle_status_message(_msg("blocked"))
+        _at(monkeypatch, 1030.0)
+        harness._handle_obstacle_status_message(_msg("replan_requested"))
+
+        assert harness.regoals == []
+        assert harness._regoal_attempts == 0
+
+
+def test_no_regoal_while_goal_generation_is_submitted(monkeypatch) -> None:
+    harness = Harness()
+    harness._last_goal_waypoint = {"x": 1.0, "y": 2.0, "z": -0.5}
+    harness._planning_status_awaiting_new_generation = True
+    _regoal_settings(monkeypatch)
+
+    _at(monkeypatch, 1000.0)
+    harness._handle_obstacle_status_message(_msg("blocked"))
+    _at(monkeypatch, 1030.0)
+    harness._handle_obstacle_status_message(_msg("replan_requested"))
+
+    assert harness.regoals == []
+    assert harness._regoal_attempts == 0
+
+
+def test_auto_regoal_rechecks_planning_state_after_submission_lock(
+    monkeypatch,
+) -> None:
+    class Gate:
+        def __init__(self) -> None:
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def __enter__(self):
+            self.entered.set()
+            if not self.release.wait(2.0):
+                raise TimeoutError("test did not release goal submission lock")
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    harness = Harness()
+    old_waypoint = {"id": "old", "x": 1.0, "y": 2.0, "z": -0.5}
+    new_waypoint = {"id": "new", "x": 3.0, "y": 4.0, "z": -0.5}
+    harness._last_goal_waypoint = old_waypoint
+    harness._latest_planning_status = "failed"
+    gate = Gate()
+    harness._goal_submission_lock = gate
+    _regoal_settings(monkeypatch)
+
+    errors = []
+
+    def auto_regoal() -> None:
+        try:
+            harness._maybe_auto_regoal(1030.0, 30.0, "blocked")
+        except Exception as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    worker = threading.Thread(target=auto_regoal, daemon=True)
+    worker.start()
+    assert gate.entered.wait(1.0)
+
+    # Simulate a web goal completing its protected state hand-off while the
+    # old automatic retry is waiting for the same submission lock.
+    harness._last_goal_waypoint = new_waypoint
+    harness._planning_status_awaiting_new_generation = True
+    gate.release.set()
+    worker.join(1.0)
+
+    assert not worker.is_alive()
+    assert errors == []
+    assert harness.regoals == []
+    assert harness._regoal_attempts == 0
+
+
 def test_clear_resets_regoal_attempts(monkeypatch) -> None:
     harness = Harness()
     harness._last_goal_waypoint = {"x": 1.0, "y": 2.0}
@@ -279,3 +369,56 @@ def test_malformed_payload_is_ignored(monkeypatch) -> None:
 
     assert harness.alerts == []
     assert harness._obstacle_blocked_since is None
+
+
+def test_obstacle_status_is_broadcast_as_blocked_and_restored(monkeypatch) -> None:
+    set_navigation_idle()
+    update_navigation_status(
+        {
+            "status": "path_ready",
+            "target_waypoint_id": "wp-1",
+            "target_name": "目标",
+            "message": "路径已生成",
+        }
+    )
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._last_goal_waypoint = {"id": "wp-1"}
+    bridge._navigation_task_active = False
+    bridge._navigation_status_before_blocked = None
+    bridge._obstacle_blocked_since = None
+    bridge._obstacle_alert_sent = False
+    bridge._regoal_attempts = 0
+    bridge._last_regoal_at = 0.0
+    bridge._submit_alert = lambda **_kwargs: None
+    broadcasts = []
+    bridge._submit_broadcast = lambda event_type, payload: broadcasts.append(
+        (event_type, payload)
+    )
+    monkeypatch.setattr(
+        module_under_test.settings,
+        "NAV_OBSTACLE_ALERT_SECONDS",
+        15.0,
+    )
+
+    bridge._handle_obstacle_status_message(
+        _msg(
+            "replan_requested",
+            message="轨迹离开同层 ground 可通行区域，已请求重规划",
+        )
+    )
+
+    blocked = get_nav_state()["navigation_status"]
+    assert blocked["status"] == "blocked"
+    assert blocked["error_code"] == "NAV_PATH_BLOCKED"
+    assert "同层 ground" in blocked["message"]
+
+    bridge._handle_obstacle_status_message(_msg("clear"))
+
+    restored = get_nav_state()["navigation_status"]
+    assert restored["status"] == "path_ready"
+    assert restored["error_code"] is None
+    assert [
+        payload["status"]
+        for event, payload in broadcasts
+        if event == "nav.navigation_status"
+    ] == ["blocked", "path_ready"]

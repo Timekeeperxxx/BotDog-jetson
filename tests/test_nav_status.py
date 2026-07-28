@@ -141,6 +141,36 @@ def test_nav_status_moving_without_task_id_preserves_active_task(monkeypatch):
     assert broadcast_calls[0][1]["task_id"] == "task_001"
 
 
+def test_nav_status_without_waypoint_context_preserves_latest_single_goal(monkeypatch):
+    broadcast_calls: list[tuple[str, dict[str, object]]] = []
+    bridge = _make_bridge(monkeypatch, broadcast_calls)
+    update_navigation_status(
+        {
+            "status": "planning",
+            "target_waypoint_id": "wp-lower-floor",
+            "target_name": "下一层目标",
+            "message": "正在规划",
+        }
+    )
+
+    bridge._handle_nav_status_message(
+        SimpleNamespace(
+            data=json.dumps(
+                {
+                    "status": "accepted",
+                    "message": "目标已接收",
+                    "timestamp": 1770000000.789,
+                }
+            )
+        )
+    )
+
+    state = get_nav_state()["navigation_status"]
+    assert state["status"] == "navigating"
+    assert state["target_waypoint_id"] == "wp-lower-floor"
+    assert state["target_name"] == "下一层目标"
+
+
 def test_nav_status_failed_preserves_error_fields(monkeypatch):
     broadcast_calls: list[tuple[str, dict[str, object]]] = []
     bridge = _make_bridge(monkeypatch, broadcast_calls)

@@ -88,6 +88,14 @@ def publish_goal_xyz_yaw(
     from std_msgs.msg import Float64
 
     yaw = float(waypoint.get("yaw", 0.0))
+    x = float(waypoint["x"])
+    y = float(waypoint["y"])
+    if "z" not in waypoint or waypoint["z"] is None:
+        raise ValueError("导航点缺少同层 z 高度，拒绝按 z=0 发布")
+    original_z = float(waypoint["z"])
+    publish_z = planner_goal_z(original_z)
+    if not all(math.isfinite(value) for value in (x, y, original_z, publish_z, yaw)):
+        raise ValueError("导航目标 x/y/z/yaw 必须是有限数值")
 
     yaw_msg = Float64()
     yaw_msg.data = yaw
@@ -95,10 +103,9 @@ def publish_goal_xyz_yaw(
     point_msg = PointStamped()
     point_msg.header.stamp = node.get_clock().now().to_msg()
     point_msg.header.frame_id = str(waypoint.get("frame_id") or frame_id)
-    point_msg.point.x = float(waypoint["x"])
-    point_msg.point.y = float(waypoint["y"])
-    original_z = float(waypoint.get("z", 0.0))
-    point_msg.point.z = planner_goal_z(original_z)
+    point_msg.point.x = x
+    point_msg.point.y = y
+    point_msg.point.z = publish_z
 
     actual_publish_count = 0
     for index in range(publish_count):

@@ -160,6 +160,15 @@ def normalize_nav_status(
     waypoint_id = _to_optional_str(payload.get("waypoint_id"))
     target_waypoint_id = _to_optional_str(payload.get("target_waypoint_id")) or waypoint_id
     target_name = _to_optional_str(payload.get("target_name") or payload.get("waypoint_name"))
+    current_nav_status = current_navigation_status()
+    if mapped_status in {"navigating", "reached", "error", "estop", "paused"}:
+        target_waypoint_id = (
+            target_waypoint_id
+            or _to_optional_str(current_nav_status.get("target_waypoint_id"))
+        )
+        target_name = target_name or _to_optional_str(
+            current_nav_status.get("target_name")
+        )
     message = _to_optional_str(payload.get("message")) or ""
     error_code = _to_optional_str(payload.get("error_code"))
     if interrupted is not None:
@@ -179,7 +188,6 @@ def normalize_nav_status(
 
     payload_task_id = _to_optional_str(payload.get("task_id"))
     if payload_task_id is None and mapped_status in {"navigating", "paused"}:
-        current_nav_status = current_navigation_status()
         current_task_id = _to_optional_str(current_nav_status.get("task_id"))
         current_status = str(current_nav_status.get("status") or "").strip().lower()
         if current_task_id and current_status in {"navigating", "paused"}:

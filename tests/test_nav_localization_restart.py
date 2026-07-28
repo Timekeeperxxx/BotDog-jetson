@@ -1235,9 +1235,14 @@ def test_navigation_uses_cpp_pcd_publisher_without_fixed_input_limits():
     config = (bringup / "config" / "global_planner.yaml").read_text(encoding="utf-8")
 
     assert 'executable="nav_pcd_map_publisher"' in launch
-    assert "build_voxel_message" in publisher
+    assert "PointCloud voxel_downsample" in publisher
+    assert "PointCloud2 build_message" in publisher
     assert "std::unordered_map<VoxelKey" in publisher
     assert "每次只保留当前层" in publisher
+    downsample = publisher.index("voxel_downsample(*raw_cloud")
+    bridge = publisher.index("bridge_planground_gaps(downsampled_cloud")
+    serialize = publisher.index("build_message(downsampled_cloud")
+    assert downsample < bridge < serialize
     assert "max_input_bytes" not in config
     assert "max_input_points" not in config
 
@@ -1253,7 +1258,11 @@ def test_global_planner_start_connection_matches_hybrid_cloud_resolution():
         / "global_planner.yaml"
     ).read_text(encoding="utf-8")
 
-    assert "ground_down_sample: 0.3" in planner_config
+    # B2 full-footprint support must use the dense 0.10 m ground cloud.
+    # Hybrid search owns a separate coarse copy, whose output is validated
+    # edge-by-edge against that dense support surface.
+    assert "ground_down_sample: 0.1" in planner_config
+    assert "hybrid_downsample_leaf_size: 0.20" in planner_config
     assert "a_star_expanding_radius: 0.2" in planner_config
     assert "planground_search_radius: 0.2" in planner_config
     assert "hybrid_max_ground_bridge_length: 0.25" in planner_config
@@ -1270,7 +1279,10 @@ def test_hybrid_astar_maps_planning_indices_to_perception_ground():
     assert "getNodeWeight(perception_ground_index)" in astar
     assert "get_min_dGraphValue(current_expanding_index)" not in astar
     assert "if (start_neighbors.empty())" in hybrid
-    assert "using connected planground fallback" in hybrid
+    assert "reference_path_available" in hybrid
+    assert "if (reference_valid && edge_validator_)" in hybrid
+    assert "edge_validator_(" in hybrid
+    assert "Using validated fill_footprint reference directly" in hybrid
 
 
 def test_restart_navigation_script_exposes_initialpose_stage_before_runtime_tf():

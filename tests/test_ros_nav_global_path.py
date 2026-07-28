@@ -14,6 +14,11 @@ from backend.ros_nav_cloud import (
     merge_mapping_cloud_voxels,
 )
 from backend.services_ros_nav import RosNavBridge
+from backend.services_nav_state import (
+    get_nav_state,
+    set_navigation_idle,
+    update_navigation_status,
+)
 
 
 def test_extract_global_path_uses_path_points_and_map_frame():
@@ -115,6 +120,58 @@ def test_execution_path_broadcast_tracks_live_path_without_duplicates(monkeypatc
     assert bridge._should_broadcast_execution_path(changed_path) is False
     assert bridge._should_broadcast_execution_path(changed_path) is True
     assert bridge._should_broadcast_execution_path(changed_path) is False
+
+
+def test_global_path_updates_navigation_status_to_path_ready():
+    set_navigation_idle()
+    update_navigation_status(
+        {
+            "status": "planning",
+            "target_waypoint_id": "wp-new",
+            "target_name": "新目标",
+            "message": "正在规划",
+        }
+    )
+    bridge = RosNavBridge.__new__(RosNavBridge)
+    bridge._last_goal_waypoint = {"id": "wp-new"}
+    bridge._navigation_task_active = False
+    bridge._last_global_path_broadcast_at = 0.0
+    bridge._last_global_path_signature = None
+    bridge._last_execution_path_broadcast_at = 0.0
+    bridge._last_execution_path_signature = None
+    broadcasts = []
+    bridge._submit_broadcast = lambda event_type, payload: broadcasts.append(
+        (event_type, payload)
+    )
+    bridge._handle_global_path_message(
+        SimpleNamespace(
+            header=SimpleNamespace(
+                frame_id="map",
+                stamp=SimpleNamespace(sec=123, nanosec=0),
+            ),
+            poses=[
+                SimpleNamespace(
+                    pose=SimpleNamespace(
+                        position=SimpleNamespace(x=1.0, y=2.0, z=-0.4)
+                    )
+                ),
+                SimpleNamespace(
+                    pose=SimpleNamespace(
+                        position=SimpleNamespace(x=2.0, y=3.0, z=-0.4)
+                    )
+                ),
+            ],
+        )
+    )
+
+    status = get_nav_state()["navigation_status"]
+    assert status["status"] == "path_ready"
+    assert status["target_waypoint_id"] == "wp-new"
+    assert status["path_point_count"] == 2
+    assert any(
+        event == "nav.navigation_status" and payload["status"] == "path_ready"
+        for event, payload in broadcasts
+    )
 
 
 def test_intermediate_task_waypoint_keeps_navigation_control(monkeypatch):

@@ -192,15 +192,15 @@ class Settings(BaseSettings):
     ROS_NAV_BROADCAST_HZ: float = 10.0
     ROS_NAV_PAGE_OPEN_TOPIC: str = '/lidar_start'
     ROS_NAV_START_TOPIC: str = '/nav_start'
-    # Task workflow triggering is deliberately separate from /nav_start.
-    # /nav_start also gates single-waypoint navigation, controllers and safety.
+    # /nav_start is the inspection-task execution gate. A single go-to is
+    # replaced directly by a fresh clicked_point + goal_yaw and never toggles it.
     ROS_NAV_TASK_START_TOPIC: str = '/nav_task_start'
     ROS_NAV_AUTO_TRACK_CONTROL_TOPIC: str = '/nav/task/auto_track_control'
     ROS_NAV_GOAL_TOPIC: str = '/goal_pose'
     ROS_NAV_GOAL_XYZ_TOPIC: str = '/clicked_point'
     ROS_NAV_GOAL_YAW_TOPIC: str = 'goal_yaw'
-    # global_planner 对 clicked_point 先做 3D 半径搜索；当前源码中的向下搜索不会产出有效目标。
-    # 默认保持真实 ground z，不抬高目标点，避免把原本可规划的点排除在 0.5m 搜索半径外。
+    # global_planner 对 clicked_point 做 3D 半径搜索。单点目标必须携带导航点
+    # 保存的显式同层 ground z；缺失/非有限 z 会被拒绝，绝不默认成 0。
     ROS_NAV_GOAL_Z_SEARCH_OFFSET_M: float = 0.0
     ROS_NAV_GLOBAL_PATH_TOPIC: str = '/global_path'
     ROS_NAV_EXECUTION_PATH_TOPIC: str = '/scan/execution_path'
@@ -210,6 +210,9 @@ class Settings(BaseSettings):
     ROS_NAV_MAPPING_CLOUD_TOPIC: str = '/lio/cloud_world'
     ROS_NAV_MAPPING_TOPIC: str = '/mapping_start'
     ROS_NAV_STATUS_TOPIC: str = '/nav_status'
+    # global_planner 的逐代规划状态（queued/planning/path_ready/failed/rejected）。
+    # elapsed_seconds 仅用于展示；BotDog 不据此设置规划超时。
+    ROS_NAV_PLANNING_STATUS_TOPIC: str = '/nav/planning_status'
     # 动态避障监控器的状态 topic；持续阻断超过阈值秒数后推送 ALERT_RAISED。
     ROS_NAV_OBSTACLE_STATUS_TOPIC: str = '/nav/obstacle_status'
     NAV_OBSTACLE_ALERT_SECONDS: float = 15.0

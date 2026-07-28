@@ -232,6 +232,7 @@ _SPECS = [
     _definition("ROS_NAV_MAPPING_CLOUD_TOPIC", "ros", "建图实时点云 Topic"),
     _definition("ROS_NAV_MAPPING_TOPIC", "ros", "建图开关 Topic"),
     _definition("ROS_NAV_STATUS_TOPIC", "ros", "导航状态 Topic"),
+    _definition("ROS_NAV_PLANNING_STATUS_TOPIC", "ros", "全局规划逐代状态 Topic"),
 
     # 文件存储
     _definition("SNAPSHOT_DIR", "storage", "抓拍图片存储目录"),

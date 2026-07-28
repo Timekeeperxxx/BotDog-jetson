@@ -27,3 +27,13 @@ def test_waypoint_with_planner_goal_z_keeps_ground_z_for_diagnostics():
     assert result["planner_goal_z"] == pytest.approx(-1.69)
     assert result["planner_goal_z_offset_m"] == 0.0
     assert waypoint["z"] == -1.69
+
+
+@pytest.mark.parametrize("waypoint", [{}, {"z": None}, {"z": float("nan")}])
+def test_waypoint_goal_requires_explicit_finite_same_floor_z(waypoint):
+    with pytest.raises(ValueError, match="z"):
+        waypoint_with_planner_goal_z(waypoint)
+
+
+def test_planner_goal_z_allows_explicit_zero_height():
+    assert planner_goal_z(0.0) == pytest.approx(0.0)
