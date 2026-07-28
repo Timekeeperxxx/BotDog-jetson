@@ -24,6 +24,8 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 - 前端调用 `/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to`
 - 后端发布目标点位置信息到 clicked_point 对应 topic，语义上等价于 `goal_xyz`
 - 后端同步发布 `goal_yaw`
+- 每个目标只发布一次；新目标替换旧目标并立即清除前端缓存的旧路径
+- 目标 z 使用导航点保存的显式、有限同层 ground 高度，缺失时拒绝发布
 - **go-to 不发布 `/nav_start`**
 
 补充说明：
@@ -112,6 +114,21 @@ BotDog 后端负责接收前端导航相关操作，并把操作转换成 ROS2 t
 当前真实链路是：
 
 - ROS2 通过 `/nav_status std_msgs/msg/String` 向后端推送导航状态 JSON
+- global_planner 通过 `ROS_NAV_PLANNING_STATUS_TOPIC`（默认
+  `/nav/planning_status`，`std_msgs/msg/String`，transient-local/reliable）
+  推送 `queued/planning/path_ready/failed/rejected`
+- 规划状态 JSON 必须包含 `status`、`message`、非负整数 `generation` 和非负
+  `elapsed_seconds`
+- 后端以最新 generation 为准；新目标提交后，在新 generation 被确认前拒绝
+  旧 generation 的迟到终态。global_planner 重启则通过 ROS publisher GID
+  切换允许 generation 从零重新计数
+- `queued/planning` 映射为前端 `planning`，`path_ready` 映射为
+  `path_ready`，`failed/rejected` 映射为 `error`
+- `path_ready` 不覆盖动态避障产生的 `blocked`；阻断解除后再恢复
+  `path_ready`
+- `elapsed_seconds` 只用于显示实际耗时。BotDog 不设置规划超时，也不会因
+  搜索超过固定秒数自行报告失败；只有规划器明确发布 `failed/rejected`
+  才显示错误
 - 后端订阅 `/nav_status`，解析后更新 `navigation_status`
 - 后端向前端广播 WebSocket 事件 `nav.navigation_status`
 - 前端通过现有导航 WebSocket 更新导航状态展示
