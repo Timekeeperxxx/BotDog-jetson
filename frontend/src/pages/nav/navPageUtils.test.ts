@@ -12,6 +12,7 @@ import {
   findTaskById,
   formatSpeed,
   formatRestartHealthLog,
+  getNavigationStatusNotice,
   getRelocationNotice,
   getWorkflowStepTargetLabel,
   getWorkflowStepTypeLabel,
@@ -120,6 +121,26 @@ describe('navPageUtils', () => {
         health: null,
       }),
     ).toContain('导航定位已重启')
+  })
+
+  it.each([
+    ['planning', '正在规划路径', 'waiting'],
+    ['path_ready', '路径已生成', 'ready'],
+    ['blocked', '导航受阻', 'error'],
+  ])('maps %s navigation state to a visible notice', (status, title, kind) => {
+    expect(
+      getNavigationStatusNotice({
+        status,
+        target_waypoint_id: 'wp-1',
+        target_name: '目标点',
+        message: `state=${status}`,
+        timestamp: 1,
+      }),
+    ).toEqual({
+      title,
+      message: `state=${status}`,
+      kind,
+    })
   })
 
   it('builds workflow steps from task draft steps', () => {

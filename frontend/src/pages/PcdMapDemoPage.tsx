@@ -49,6 +49,7 @@ import { NavPageHeader, NavRightRail } from './nav/NavPageShell'
 import { NavToolStrip, type PcdLayerVisibility } from './nav/NavToolStrip'
 import {
   formatRestartHealthLog,
+  getNavigationStatusNotice,
   getRelocationNotice,
   summarizeLocalizationStatus,
 } from './nav/navPageUtils'
@@ -78,6 +79,9 @@ export function PcdMapDemoPage() {
   const [followRobot, setFollowRobot] = useState(false)
   const [toolMode, setToolMode] = useState<'none' | 'obstacle' | 'pose'>('none')
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
+  const [goToSending, setGoToSending] = useState(false)
+  const goToInFlightRef = useRef(false)
+  const goToRequestSequenceRef = useRef(0)
   const [estopSending, setEstopSending] = useState(false)
   const [restartLocalizationSending, setRestartLocalizationSending] = useState(false)
   const [radarChecking, setRadarChecking] = useState(false)
@@ -112,7 +116,8 @@ export function PcdMapDemoPage() {
   const localizationNotice = localizationStatus && localizationStatus.status !== 'ok'
     ? { title: '定位状态', message: summarizeLocalizationStatus(localizationStatus.status, localizationStatus.message) }
     : null
-  const stateNotice = relocationNotice ?? waypointModeNotice ?? poseModeNotice ?? localizationNotice
+  const navigationNotice = getNavigationStatusNotice(navigationStatus)
+  const stateNotice = relocationNotice ?? waypointModeNotice ?? poseModeNotice ?? localizationNotice ?? navigationNotice
   const stateNoticeKind = relocationPrompt.status !== 'idle'
     ? relocationPrompt.status === 'nav-waiting'
       ? 'waiting'
@@ -123,7 +128,7 @@ export function PcdMapDemoPage() {
       ? 'ready'
       : localizationNotice
         ? 'waiting'
-        : 'idle'
+        : navigationNotice?.kind ?? 'idle'
   const currentNotice = operationNotice?.kind === 'error'
     ? operationNotice
     : stateNotice ?? operationNotice
@@ -422,30 +427,79 @@ export function PcdMapDemoPage() {
 
   // 中间层：拦截 go-to，先弹确认框
   const requestGoToWaypoint = useCallback((waypointId: string) => {
-    if (!canOperate) return
+    if (!canOperate || goToInFlightRef.current) return
     const waypoint = waypoints.find((item) => item.id === waypointId)
     if (!waypoint) return
     setGoToConfirm(waypoint)
   }, [canOperate, waypoints])
 
   const handleGoToWaypoint = useCallback(async (waypointId: string) => {
-    if (!selectedSceneId) return
+    if (goToInFlightRef.current) return
+    if (!selectedSceneId) {
+      setGoToConfirm(null)
+      return
+    }
     if (!canOperate || !selectedSceneNavigable) {
       addLog('当前场景缺少 ground.pcd，不能用于导航', 'error')
+      setGoToConfirm(null)
       return
     }
 
+    const waypoint = waypoints.find((item) => item.id === waypointId)
+    if (!waypoint) {
+      addLog(`导航点不存在：${waypointId}`, 'error')
+      setGoToConfirm(null)
+      return
+    }
+
+    goToInFlightRef.current = true
+    const requestSequence = ++goToRequestSequenceRef.current
+    const isCurrentRequest = () => requestSequence === goToRequestSequenceRef.current
+    setGoToSending(true)
     setNavigatingWaypointId(waypointId)
+    setInitialState({
+      globalPath: null,
+      executionPath: null,
+      navigationStatus: {
+        status: 'planning',
+        target_waypoint_id: waypoint.id,
+        target_name: waypoint.name,
+        message: (
+          `新目标已替换旧目标，正在规划：`
+          + `x=${waypoint.x.toFixed(3)}, y=${waypoint.y.toFixed(3)}, z=${waypoint.z.toFixed(3)}`
+        ),
+        timestamp: Date.now() / 1000,
+        source: '/clicked_point',
+      },
+    })
     try {
       const result = await goToWaypoint(selectedSceneId, waypointId)
-      const waypoint = waypoints.find((item) => item.id === waypointId)
-      addLog(`已发布导航目标 ${waypoint?.name || waypointId} 到 ${result.topic}`)
+      if (!isCurrentRequest()) return
+      addLog(`已发布导航目标 ${waypoint.name} 到 ${result.topic}`)
     } catch (error) {
-      addLog(error instanceof Error ? error.message : '发布导航目标失败', 'error')
+      if (!isCurrentRequest()) return
+      const message = error instanceof Error ? error.message : '发布导航目标失败'
+      setInitialState({
+        navigationStatus: {
+          status: 'error',
+          target_waypoint_id: waypoint.id,
+          target_name: waypoint.name,
+          message,
+          timestamp: Date.now() / 1000,
+          error_code: 'GOAL_PUBLISH_FAILED',
+          source: 'frontend',
+        },
+      })
+      addLog(message, 'error')
     } finally {
-      setNavigatingWaypointId(null)
+      if (isCurrentRequest()) {
+        goToInFlightRef.current = false
+        setGoToSending(false)
+        setNavigatingWaypointId(null)
+        setGoToConfirm((current) => current?.id === waypointId ? null : current)
+      }
     }
-  }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable, waypoints])
+  }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable, setInitialState, waypoints])
 
   const handleEmergencyStop = useCallback(async () => {
     if (!canOperate) return
@@ -859,6 +913,7 @@ export function PcdMapDemoPage() {
           executionPath={displayedExecutionPath}
           globalPath={displayedGlobalPath}
           layers={rightRailLayers}
+          goToSending={goToSending}
           navigatingWaypointId={navigatingWaypointId}
           robotPose={robotPose}
           sceneNavigable={selectedSceneNavigable}
@@ -888,11 +943,11 @@ export function PcdMapDemoPage() {
       />
       <GoToWaypointConfirmDialog
         waypoint={goToConfirm}
-        onCancel={() => setGoToConfirm(null)}
-        onConfirm={(waypoint) => {
-          setGoToConfirm(null)
-          void handleGoToWaypoint(waypoint.id)
+        sending={goToSending}
+        onCancel={() => {
+          if (!goToInFlightRef.current) setGoToConfirm(null)
         }}
+        onConfirm={(waypoint) => void handleGoToWaypoint(waypoint.id)}
       />
       <MappingStartDialog
         open={mappingDialogOpen}

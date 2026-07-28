@@ -60,18 +60,21 @@ export function SceneDeleteConfirmDialog({
 
 type GoToWaypointConfirmDialogProps = {
   waypoint: NavWaypoint | null
+  sending: boolean
   onCancel: () => void
   onConfirm: (waypoint: NavWaypoint) => void
 }
 
 export function GoToWaypointConfirmDialog({
   waypoint,
+  sending,
   onCancel,
   onConfirm,
 }: GoToWaypointConfirmDialogProps) {
   const dialogRef = useModalFocus<HTMLDivElement>({
     open: waypoint !== null,
     onClose: onCancel,
+    closeOnEscape: !sending,
   })
   if (waypoint === null) return null
 
@@ -95,17 +98,19 @@ export function GoToWaypointConfirmDialog({
         <div className="mt-6 flex justify-end gap-3">
           <button
             type="button"
-            className="rounded-xl border border-white/12 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-white hover:border-white/30 hover:bg-white/5"
+            className="rounded-xl border border-white/12 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-white hover:border-white/30 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={sending}
             onClick={onCancel}
           >
             取消
           </button>
           <button
             type="button"
-            className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-sky-300 hover:border-sky-400 hover:bg-sky-500/20"
+            className="rounded-xl border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-[11px] font-black uppercase tracking-[0.18em] text-sky-300 hover:border-sky-400 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={sending}
             onClick={() => onConfirm(waypoint)}
           >
-            确认导航
+            {sending ? '正在提交…' : '确认导航'}
           </button>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import type { LocalizationRestartResponse } from '../../api/pcdMapApi'
-import type { GlobalPath, RobotPose } from '../../types/navState'
+import type { GlobalPath, NavigationStatus, RobotPose } from '../../types/navState'
 import type { PcdSceneItem } from '../../types/pcdMap'
 export {
   DEFAULT_LINEAR_SPEED,
@@ -226,6 +226,41 @@ export function getRelocationNotice(prompt: RelocationPromptState) {
 export function summarizeLocalizationStatus(status: string, message: string) {
   if (status === 'ok') return message
   return compactRuntimeMessage(message)
+}
+
+export type NavigationStatusNotice = {
+  title: string
+  message: string
+  kind: 'info' | 'waiting' | 'ready' | 'error'
+}
+
+export function getNavigationStatusNotice(
+  navigationStatus: NavigationStatus | null,
+): NavigationStatusNotice | null {
+  if (!navigationStatus) return null
+  const message = navigationStatus.message || '等待导航状态'
+
+  switch (navigationStatus.status) {
+    case 'planning':
+      return { title: '正在规划路径', message, kind: 'waiting' }
+    case 'path_ready':
+      return { title: '路径已生成', message, kind: 'ready' }
+    case 'blocked':
+      return { title: '导航受阻', message, kind: 'error' }
+    case 'navigating':
+      return { title: '正在导航', message, kind: 'info' }
+    case 'paused':
+      return { title: '导航已暂停', message, kind: 'waiting' }
+    case 'reached':
+      return { title: '已到达目标', message, kind: 'ready' }
+    case 'error':
+    case 'estop':
+      return { title: '导航异常', message, kind: 'error' }
+    case 'idle':
+      return null
+    default:
+      return { title: '导航状态', message, kind: 'info' }
+  }
 }
 
 export function trimGlobalPathByRobotPose(globalPath: GlobalPath | null, robotPose: RobotPose | null): GlobalPath | null {

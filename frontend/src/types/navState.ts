@@ -33,6 +33,9 @@ export type NavigationStatus = {
   distance_to_goal?: number | null
   error_code?: string | null
   source?: string | null
+  planning_status?: 'queued' | 'planning' | 'path_ready' | 'failed' | 'rejected' | 'submitted' | null
+  planning_generation?: number | null
+  planning_elapsed_seconds?: number | null
 }
 
 export type LocalizationStatus = {

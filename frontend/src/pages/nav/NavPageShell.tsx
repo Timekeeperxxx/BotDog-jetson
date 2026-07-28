@@ -90,6 +90,7 @@ type NavRightRailProps = {
   executionPath: GlobalPath | null
   globalPath: GlobalPath | null
   layers: PointCloudLayer[]
+  goToSending: boolean
   navigatingWaypointId: string | null
   robotPose: RobotPose | null
   sceneNavigable: boolean
@@ -110,6 +111,7 @@ export function NavRightRail({
   executionPath,
   globalPath,
   layers,
+  goToSending,
   navigatingWaypointId,
   robotPose,
   sceneNavigable,
@@ -140,6 +142,7 @@ export function NavRightRail({
       />
       <NavWaypointPanel
         waypoints={waypoints}
+        goToSending={goToSending}
         navigatingWaypointId={navigatingWaypointId}
         sceneNavigable={sceneNavigable}
         onGoTo={onGoToWaypoint}
