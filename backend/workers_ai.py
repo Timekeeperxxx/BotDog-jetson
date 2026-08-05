@@ -31,6 +31,7 @@ model_logger = get_logger("AI模型")
 video_logger = get_logger("AI视频")
 ai_logger = get_logger("AI识别")
 pose_logger = get_logger("姿态识别")
+weapon_logger = get_logger("武器识别")
 ffmpeg_logger = get_logger("AI视频").bind(raw_ffmpeg=True)
 
 
@@ -49,6 +50,10 @@ class DetectionResult:
     confidence: float
     bbox: Optional[tuple[int, int, int, int]] = None
     track_id: int = -1  # YOLO ByteTrack 分配的跨帧 ID
+    identity_id: int | None = None
+    display_name: str | None = None
+    face_status: str | None = None
+    face_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -128,8 +133,25 @@ class _YoloDetector(_BaseDetector):
         # self._model.to(resolved_device)
         self._device = resolved_device
 
-        # 缓存模型类别名映射
-        self._class_names: dict[int, str] = self._model.names
+        # 缓存模型类别名映射。不得把 cls=0 写死为 person：独立武器模型的
+        # cls=0 是 guns，类别应始终以模型元数据为准。
+        raw_names = self._model.names
+        if isinstance(raw_names, dict):
+            self._class_names = {
+                int(class_id): str(class_name)
+                for class_id, class_name in raw_names.items()
+            }
+        else:
+            self._class_names = {
+                class_id: str(class_name)
+                for class_id, class_name in enumerate(raw_names)
+            }
+        missing_classes = self._target_classes.difference(self._class_names.values())
+        if missing_classes:
+            raise ValueError(
+                f"模型类别缺失：expected={sorted(self._target_classes)}，"
+                f"actual={sorted(self._class_names.values())}"
+            )
         model_logger.info(
             "YOLO 模型已就绪：类别数={}，检测目标={}，bytetrack={}",
             len(self._class_names),
@@ -181,7 +203,7 @@ class _YoloDetector(_BaseDetector):
         detections = []
         for box in results[0].boxes:
             cls_id = int(box.cls[0])
-            cls_name = "person" if cls_id == 0 else self._class_names.get(cls_id, str(cls_id))
+            cls_name = self._class_names.get(cls_id, str(cls_id))
             conf = float(box.conf[0])
 
             if cls_name not in self._target_classes:
@@ -218,6 +240,13 @@ class AIWorker(AIWorkerProcessingMixin):
         self._mavlink_gateway = mavlink_gateway
         self._snapshot_dir = snapshot_dir
 
+        from .lightweight_tracker import LightweightIouTracker
+
+        self._lightweight_tracker = LightweightIouTracker(
+            frame_width=settings.AI_FRAME_WIDTH,
+            max_age_frames=max(15, settings.AI_FPS * 3),
+        )
+
         self._frame_width = settings.AI_FRAME_WIDTH
         self._frame_height = settings.AI_FRAME_HEIGHT
         self._frame_size = self._frame_width * self._frame_height * 3
@@ -252,6 +281,13 @@ class AIWorker(AIWorkerProcessingMixin):
         self._last_retry_log_at = 0.0
         self._rtsp_urls = self._build_rtsp_urls()
         self._rtsp_url_index = 0
+        self._ffmpeg_max_rss_bytes = max(
+            128, int(settings.AI_FFMPEG_MAX_RSS_MB)
+        ) * 1024 * 1024
+        self._ffmpeg_memory_check_interval_s = max(
+            0.2, float(settings.AI_FFMPEG_MEMORY_CHECK_INTERVAL_SECONDS)
+        )
+        self._ffmpeg_peak_rss_bytes = 0
         self._frame_process_timeout_s = max(1.0, float(settings.AI_FRAME_PROCESS_TIMEOUT_SECONDS))
         self._max_frame_age_s = max(0.05, float(settings.AI_MAX_FRAME_AGE_SECONDS))
         self._event_send_timeout_s = max(0.005, float(settings.AI_EVENT_SEND_TIMEOUT_SECONDS))
@@ -274,6 +310,20 @@ class AIWorker(AIWorkerProcessingMixin):
         self._pose_status = "disabled"
         self._pose_detector: UltralyticsPoseDetector | None = None
         self._pose_event_engine: PoseEventEngine | None = None
+        self._weapon_status = "disabled"
+        self._weapon_detector: _YoloDetector | None = None
+        self._weapon_frame_skip = max(1, int(settings.WEAPON_FRAME_SKIP))
+        self._weapon_active_until = 0.0
+        self._weapon_hits = {
+            class_name: 0 for class_name in settings.WEAPON_TARGET_CLASSES
+        }
+        self._weapon_last_alert_at = {
+            class_name: 0.0 for class_name in settings.WEAPON_TARGET_CLASSES
+        }
+        self._weapon_frames_processed = 0
+        self._weapon_detections_count = 0
+        self._weapon_alerts_count = 0
+        self._last_weapon_ms = 0.0
         # 姿态模型同时提供可靠的人体框。当安全帽检测模型漏掉 person 时，
         # 缓存最近一批姿态框，供两次姿态推理之间的检测帧兜底使用。
         self._latest_pose_observations: list[PoseObservation] = []
@@ -282,6 +332,7 @@ class AIWorker(AIWorkerProcessingMixin):
         self._parallel_inference_enabled = bool(settings.AI_PARALLEL_INFERENCE_ENABLED)
         self._detector_warmed_up = False
         self._pose_warmed_up = False
+        self._weapon_warmed_up = False
         self._startup_status = "waiting"
         self._startup_detail = (
             f"等待 RTSP 连接：rtsp={self._current_rtsp_url}，fps={settings.AI_FPS}，"
@@ -316,6 +367,35 @@ class AIWorker(AIWorkerProcessingMixin):
                 self._detector = _NullDetector()
                 self._startup_status = "failed"
                 self._startup_detail = f"YOLO 模型加载失败：{exc}"
+
+        if settings.WEAPON_ENABLED and not settings.AI_SIMULATE_DETECTION:
+            try:
+                self._weapon_detector = _YoloDetector(
+                    model_path=settings.WEAPON_MODEL_PATH,
+                    device=settings.WEAPON_DEVICE,
+                    confidence=settings.WEAPON_CONFIDENCE_THRESHOLD,
+                    target_classes=settings.WEAPON_TARGET_CLASSES,
+                    frame_width=self._frame_width,
+                    frame_height=self._frame_height,
+                    inference_imgsz=settings.WEAPON_INFERENCE_IMGSZ,
+                    use_bytetrack=False,
+                )
+                self._weapon_status = "ready"
+                weapon_logger.info(
+                    "武器模型已就绪：path={}，device={}，imgsz={}，classes={}，frame_skip={}",
+                    settings.WEAPON_MODEL_PATH,
+                    settings.WEAPON_DEVICE,
+                    settings.WEAPON_INFERENCE_IMGSZ,
+                    settings.WEAPON_TARGET_CLASSES,
+                    self._weapon_frame_skip,
+                )
+            except Exception as exc:
+                import traceback
+
+                self._weapon_status = "failed"
+                self._weapon_detector = None
+                weapon_logger.error("武器模型加载失败，武器支路已降级：{}", exc)
+                weapon_logger.debug("武器模型加载堆栈：\n{}", traceback.format_exc())
 
         if settings.POSE_ENABLED:
             try:
@@ -354,20 +434,26 @@ class AIWorker(AIWorkerProcessingMixin):
     def get_startup_status(self) -> dict[str, str]:
         return {
             "status": self._startup_status,
-            "detail": f"{self._startup_detail}，pose={self._pose_status}",
+            "detail": (
+                f"{self._startup_detail}，pose={self._pose_status}，"
+                f"weapon={self._weapon_status}"
+            ),
         }
 
     async def start(self, stop_event: asyncio.Event) -> None:
         ai_logger.info(
             "AI Worker 已启动：fps={}，分辨率={}x{}，rtsp_sources={}，pose={}，"
-            "patrol_skip={}，pose_skip={}，parallel_inference={}",
+            "weapon={}，patrol_skip={}，pose_skip={}，weapon_skip={}，"
+            "parallel_inference={}",
             settings.AI_FPS,
             self._frame_width,
             self._frame_height,
             self._rtsp_urls,
             self._pose_status,
+            self._weapon_status,
             self._patrol_skip,
             settings.POSE_FRAME_SKIP,
+            self._weapon_frame_skip,
             self._parallel_inference_enabled,
         )
         retry_delay = max(0.5, settings.AI_FFMPEG_RETRY_MIN_SECONDS)
@@ -426,9 +512,18 @@ class AIWorker(AIWorkerProcessingMixin):
 
         async def reader_task() -> None:
             frame_index = 0
+            minimum_emit_period_s = 1.0 / max(1, int(settings.AI_FPS))
+            last_emit_at = 0.0
             try:
                 while not stop_event.is_set():
                     frame = await process.stdout.readexactly(self._frame_size)
+                    read_at = time.monotonic()
+                    # 持续读空 FFmpeg stdout，避免反压到解码器；仅把达到 AI_FPS
+                    # 周期的最新帧送入推理。限频不再依赖相机错误的 H.264 时间基。
+                    if last_emit_at and read_at - last_emit_at < minimum_emit_period_s:
+                        self._queued_frames_dropped += 1
+                        continue
+                    last_emit_at = read_at
                     if self._ffmpeg_stream_unavailable and not self._stream_restored_logged:
                         self._stream_restored_logged = True
                         self._ffmpeg_stream_unavailable = False
@@ -442,7 +537,7 @@ class AIWorker(AIWorkerProcessingMixin):
                     self._latest_frame_index = frame_index
                     self._queued_frames_dropped += await self._put_latest_frame(
                         frame_queue,
-                        _AIFrame(data=frame, index=frame_index, read_at=time.monotonic()),
+                        _AIFrame(data=frame, index=frame_index, read_at=read_at),
                     )
             except asyncio.IncompleteReadError:
                 if self._ffmpeg_last_exit_reason == "unknown":
@@ -451,6 +546,9 @@ class AIWorker(AIWorkerProcessingMixin):
         reader = asyncio.create_task(reader_task())
         mission_watchdog = asyncio.create_task(
             self._stop_ffmpeg_when_mission_inactive(process, stop_event)
+        )
+        memory_watchdog = asyncio.create_task(
+            self._stop_ffmpeg_on_memory_limit(process, stop_event)
         )
 
         try:
@@ -489,10 +587,13 @@ class AIWorker(AIWorkerProcessingMixin):
                 )
         finally:
             mission_watchdog.cancel()
+            memory_watchdog.cancel()
             stderr_task.cancel()
             reader.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await mission_watchdog
+            with contextlib.suppress(asyncio.CancelledError):
+                await memory_watchdog
             with contextlib.suppress(asyncio.CancelledError):
                 await reader
             with contextlib.suppress(asyncio.CancelledError):  # CancelledError 不是 Exception，须单独捕获
@@ -518,6 +619,62 @@ class AIWorker(AIWorkerProcessingMixin):
                 continue
             await self._terminate_ffmpeg_process(process, reason="mission_inactive")
             return
+
+    async def _stop_ffmpeg_on_memory_limit(
+        self,
+        process: asyncio.subprocess.Process,
+        stop_event: asyncio.Event,
+    ) -> None:
+        while not stop_event.is_set() and process.returncode is None:
+            await asyncio.sleep(self._ffmpeg_memory_check_interval_s)
+            if stop_event.is_set() or process.returncode is not None:
+                return
+
+            rss_bytes = self._read_process_rss_bytes(process.pid)
+            if rss_bytes is None:
+                continue
+            self._ffmpeg_peak_rss_bytes = max(self._ffmpeg_peak_rss_bytes, rss_bytes)
+            if rss_bytes <= self._ffmpeg_max_rss_bytes:
+                continue
+
+            rss_mb = rss_bytes / (1024 * 1024)
+            limit_mb = self._ffmpeg_max_rss_bytes / (1024 * 1024)
+            reason = f"memory_limit_exceeded(rss={rss_mb:.1f}MiB,limit={limit_mb:.0f}MiB)"
+            self._ffmpeg_last_exit_reason = reason
+            self._ffmpeg_stream_unavailable = True
+            self._ffmpeg_unavailable_reason = reason
+            video_logger.error(
+                "FFmpeg 内存异常，停止并重拉流：pid={}，rss={:.1f} MiB，上限={:.0f} MiB",
+                process.pid,
+                rss_mb,
+                limit_mb,
+            )
+            await self._terminate_ffmpeg_process(process, reason=reason)
+            return
+
+    @staticmethod
+    def _read_process_rss_bytes(
+        pid: int,
+        proc_root: Path = Path("/proc"),
+    ) -> int | None:
+        try:
+            status = (proc_root / str(pid) / "status").read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except (FileNotFoundError, PermissionError, OSError):
+            return None
+
+        for line in status.splitlines():
+            if not line.startswith("VmRSS:"):
+                continue
+            fields = line.split()
+            if len(fields) < 2:
+                return None
+            try:
+                return int(fields[1]) * 1024
+            except ValueError:
+                return None
+        return None
 
     async def _terminate_ffmpeg_process(
         self,
@@ -610,23 +767,35 @@ class AIWorker(AIWorkerProcessingMixin):
             await self._maybe_broadcast_status()
 
     async def _detect_and_process_frame(self, frame: bytes, frame_index: int) -> None:
+        pose_observations_for_overlay: list[PoseObservation] | None = None
         pose_due = (
             self._pose_detector is not None
             and self._pose_event_engine is not None
             and frame_index % max(1, int(settings.POSE_FRAME_SKIP)) == 0
         )
-        # TensorRT engine 的第一次 predict() 会惰性创建执行上下文。先分别顺序预热，
-        # 后续才允许两个独立 engine 并发，避免 CUDA 初始化竞争。
-        run_parallel = (
+        weapon_due = self._is_weapon_due(frame_index)
+        # TensorRT engine 的第一次 predict() 会惰性创建执行上下文。每个支路先
+        # 顺序预热，后续才允许独立 engine 并发，避免 CUDA 初始化竞争。
+        run_pose_parallel = (
             pose_due
             and self._parallel_inference_enabled
             and self._detector_warmed_up
             and self._pose_warmed_up
         )
+        run_weapon_parallel = (
+            weapon_due
+            and self._parallel_inference_enabled
+            and self._detector_warmed_up
+            and self._weapon_warmed_up
+        )
         pose_task: asyncio.Task[tuple[list, float, float]] | None = None
         pose_task_consumed = False
-        if run_parallel:
+        weapon_task: asyncio.Task[tuple[list[DetectionResult], float]] | None = None
+        weapon_task_consumed = False
+        if run_pose_parallel:
             pose_task = asyncio.create_task(self._infer_pose(frame))
+        if run_weapon_parallel:
+            weapon_task = asyncio.create_task(self._infer_weapon(frame))
 
         # 调用 detect_many 返回所有候选结果。
         t_start = time.monotonic()
@@ -640,6 +809,21 @@ class AIWorker(AIWorkerProcessingMixin):
             t_detect_end = time.monotonic()
             self._last_detect_ms = round((t_detect_end - t_start) * 1000, 1)
             self._detector_warmed_up = True
+
+            if weapon_due:
+                if weapon_task is None:
+                    weapon_detections, weapon_ms = await self._infer_weapon(frame)
+                else:
+                    weapon_detections, weapon_ms = await weapon_task
+                    weapon_task_consumed = True
+                self._weapon_warmed_up = True
+                self._last_weapon_ms = weapon_ms
+                self._weapon_frames_processed += 1
+                self._weapon_detections_count += len(weapon_detections)
+                detections.extend(weapon_detections)
+                await self._process_weapon_detections(weapon_detections, frame)
+            else:
+                self._last_weapon_ms = 0.0
 
             if pose_due:
                 if pose_task is None:
@@ -668,7 +852,7 @@ class AIWorker(AIWorkerProcessingMixin):
                 self._pose_frames_processed += 1
                 self._pose_events_count += len(pose_events)
                 await self._process_pose_events(pose_events, frame)
-                await self._broadcast_pose_overlay(observations, detections)
+                pose_observations_for_overlay = observations
             else:
                 self._last_pose_ms = 0.0
 
@@ -676,6 +860,27 @@ class AIWorker(AIWorkerProcessingMixin):
                 detections,
                 self._latest_pose_observations,
             )
+            persons = [item for item in detections if item.label == "person"]
+            self._lightweight_tracker.update(persons, frame_index)
+
+            from .services_face_identities import get_face_identity_service
+
+            face_service = get_face_identity_service()
+            await face_service.ensure_initialized(self._session_factory)
+            await face_service.annotate_frame(
+                frame,
+                detections,
+                frame_index,
+                self._frame_width,
+                self._frame_height,
+            )
+            if pose_observations_for_overlay is not None or weapon_due:
+                await self._broadcast_pose_overlay(
+                    pose_observations_for_overlay
+                    if pose_observations_for_overlay is not None
+                    else self._latest_pose_observations,
+                    detections,
+                )
             await self._process_detection(detections, frame, t_start, t_detect_end)
 
             t_done = time.monotonic()
@@ -691,6 +896,12 @@ class AIWorker(AIWorkerProcessingMixin):
                     pose_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await pose_task
+
+            if weapon_task is not None and not weapon_task_consumed:
+                if not weapon_task.done():
+                    weapon_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await weapon_task
 
     @staticmethod
     def _merge_pose_person_fallback(
@@ -728,6 +939,25 @@ class AIWorker(AIWorkerProcessingMixin):
         pose_ms = round((time.monotonic() - pose_started_at) * 1000, 1)
         return raw_poses, pose_started_at, pose_ms
 
+    def _is_weapon_due(self, frame_index: int, *, now: float | None = None) -> bool:
+        if self._weapon_detector is None:
+            return False
+        current_time = time.monotonic() if now is None else now
+        if current_time < self._weapon_active_until:
+            return True
+        return frame_index % self._weapon_frame_skip == 0
+
+    async def _infer_weapon(
+        self,
+        frame: bytes,
+    ) -> tuple[list[DetectionResult], float]:
+        if self._weapon_detector is None:
+            return [], 0.0
+        weapon_started_at = time.monotonic()
+        detections = await asyncio.to_thread(self._weapon_detector.detect_many, frame)
+        weapon_ms = round((time.monotonic() - weapon_started_at) * 1000, 1)
+        return detections, weapon_ms
+
     async def _start_ffmpeg(self) -> asyncio.subprocess.Process:
         command = [
             "nice",
@@ -745,14 +975,17 @@ class AIWorker(AIWorkerProcessingMixin):
             "-rtsp_flags", "prefer_tcp",
             "-reorder_queue_size", "0",
             "-max_delay", "0",
-            "-use_wallclock_as_timestamps", "1",
             "-stimeout", "5000000",
-            "-hwaccel", "auto",
+            # 实机相机的 H.264 VUI 偶发给出 0/0 时间基。不要使用 hwaccel=auto
+            # 和 FFmpeg fps 滤镜：两者组合曾令输出队列在几十秒内积压上万帧。
+            "-threads", "2",
+            "-filter_threads", "1",
             "-i", self._current_rtsp_url,
             "-an",
             "-sn",
             "-dn",
-            "-vf", f"fps={settings.AI_FPS},scale={self._frame_width}:{self._frame_height}:flags=fast_bilinear",
+            "-vf", f"scale={self._frame_width}:{self._frame_height}:flags=fast_bilinear",
+            "-vsync", "0",
             "-f", "image2pipe",
             "-vcodec", "rawvideo",
             "-pix_fmt", "bgr24",
@@ -761,6 +994,7 @@ class AIWorker(AIWorkerProcessingMixin):
 
         self._ffmpeg_last_exit_reason = "unknown"
         self._stream_restored_logged = False
+        self._ffmpeg_peak_rss_bytes = 0
 
         self._log_ffmpeg_start()
 
@@ -841,6 +1075,19 @@ class AIWorker(AIWorkerProcessingMixin):
                         video_logger.debug("FFmpeg 版本信息已写入 logs/ffmpeg.log")
                     continue
 
+                if self._is_ffmpeg_output_backlog(text):
+                    reason = "output_buffer_backlog"
+                    self._ffmpeg_last_exit_reason = reason
+                    self._ffmpeg_stream_unavailable = True
+                    self._ffmpeg_unavailable_reason = reason
+                    video_logger.error(
+                        "FFmpeg 输出队列发生异常积压，立即停止并重拉流：pid={}，detail={}",
+                        process.pid,
+                        text[:160],
+                    )
+                    await self._terminate_ffmpeg_process(process, reason=reason)
+                    return
+
                 reason = self._classify_ffmpeg_failure_reason(text)
                 if reason is None:
                     continue
@@ -915,6 +1162,11 @@ class AIWorker(AIWorkerProcessingMixin):
         )
         lowered = text.lower()
         return lowered.startswith(prefixes)
+
+    @staticmethod
+    def _is_ffmpeg_output_backlog(text: str) -> bool:
+        lowered = text.lower()
+        return "buffers queued in out_" in lowered and "something may be wrong" in lowered
 
     @staticmethod
     def _classify_ffmpeg_failure_reason(text: str) -> Optional[str]:

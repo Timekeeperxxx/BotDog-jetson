@@ -4,7 +4,9 @@ import asyncio
 
 from backend.api.routes import control as control_routes
 from backend.api.routes import nav as nav_routes
+from backend.api.routes.nav_auto_track_helpers import release_navigation_control
 from backend.auth.schemas import AuthUserInternal
+from backend.control_arbiter import ControlArbiter, set_control_arbiter
 from backend.services_nav_state import (
     clear_global_path,
     get_nav_state,
@@ -12,6 +14,7 @@ from backend.services_nav_state import (
     update_execution_path,
     update_global_path,
 )
+from backend.tracking_types import ControlOwner
 
 
 def test_nav_stop_task_publishes_nav_start_false_and_clears_state(monkeypatch):
@@ -20,6 +23,7 @@ def test_nav_stop_task_publishes_nav_start_false_and_clears_state(monkeypatch):
     status_updates: list[dict[str, object]] = []
     publish_calls: list[bool] = []
     task_publish_calls: list[bool] = []
+    nav_stop_calls: list[bool] = []
 
     class DummyBridge:
         def publish_navigation_task_start(self, enabled: bool = True) -> dict[str, object]:
@@ -37,6 +41,14 @@ def test_nav_stop_task_publishes_nav_start_false_and_clears_state(monkeypatch):
                 "success": True,
                 "topic": "/nav_start",
                 "data": False,
+            }
+
+        def publish_navigation_stop(self) -> dict[str, object]:
+            nav_stop_calls.append(True)
+            return {
+                "success": True,
+                "topic": "/nav_stop",
+                "data": True,
             }
 
     async def fake_audit_log(*args, **kwargs):
@@ -71,9 +83,12 @@ def test_nav_stop_task_publishes_nav_start_false_and_clears_state(monkeypatch):
     assert result["topic"] == "/nav_start"
     assert result["data"] is False
     assert result["nav_start"]["data"] is False
+    assert result["nav_stop"]["topic"] == "/nav_stop"
+    assert result["nav_stop"]["data"] is True
     assert result["task_start"]["data"] is False
     assert publish_calls == [False]
     assert task_publish_calls == [False]
+    assert nav_stop_calls == [True]
     assert clear_calls == ["clear"]
     assert status_updates
     assert status_updates[0]["status"] == "idle"
@@ -88,6 +103,8 @@ def test_nav_emergency_stop_soft_stops_without_killing_navigation(monkeypatch):
     idle_messages: list[str] = []
     zero_cmd_vel_calls: list[tuple[int, float]] = []
     nav_start_calls: list[bool] = []
+    nav_stop_calls: list[bool] = []
+    release_calls: list[str] = []
 
     class DummyControlService:
         async def send_navigation_velocity(self, vx: float, vy: float, vyaw: float) -> bool:
@@ -101,6 +118,10 @@ def test_nav_emergency_stop_soft_stops_without_killing_navigation(monkeypatch):
         def publish_navigation_start(self, enabled: bool = True) -> dict[str, object]:
             nav_start_calls.append(enabled)
             return {"success": True, "topic": "/nav_start", "data": enabled}
+
+        def publish_navigation_stop(self) -> dict[str, object]:
+            nav_stop_calls.append(True)
+            return {"success": True, "topic": "/nav_stop", "data": True}
 
         def publish_zero_cmd_vel(self, publish_count: int = 10, interval_s: float = 0.03) -> dict[str, object]:
             zero_cmd_vel_calls.append((publish_count, interval_s))
@@ -130,6 +151,11 @@ def test_nav_emergency_stop_soft_stops_without_killing_navigation(monkeypatch):
         lambda: (_ for _ in ()).throw(AssertionError("软停不应杀死导航进程")),
     )
     monkeypatch.setattr(nav_routes, "get_ros_nav_bridge", lambda: DummyBridge())
+    monkeypatch.setattr(
+        nav_routes,
+        "_release_navigation_control",
+        lambda: release_calls.append("release_navigation"),
+    )
     monkeypatch.setattr("backend.services_nav_state.clear_global_path", fake_clear_global_path)
     monkeypatch.setattr("backend.services_nav_state.set_navigation_idle", fake_set_navigation_idle)
     monkeypatch.setattr(nav_routes, "safe_write_audit_log", fake_audit_log)
@@ -148,9 +174,13 @@ def test_nav_emergency_stop_soft_stops_without_killing_navigation(monkeypatch):
     assert result["control_zero"]["linear"] == {"x": 0.0, "y": 0.0, "z": 0.0}
     assert result["cmd_vel_estop"]["active"] is True
     assert result["cmd_vel_zero"]["topic"] == "/cmd_vel"
+    assert result["nav_stop"]["topic"] == "/nav_stop"
+    assert result["nav_stop"]["data"] is True
     assert result["navigation_processes_preserved"] is True
     assert zero_cmd_vel_calls == [(20, 0.02)]
     assert nav_start_calls == [False]
+    assert nav_stop_calls == [True]
+    assert release_calls == ["release_navigation"]
     assert clear_calls == ["clear"]
     assert idle_messages == ["导航已软停：速度已归零，导航定位进程保持运行"]
     assert "soft_stop=true" in audit_messages[0]
@@ -230,6 +260,23 @@ def test_services_nav_state_clear_global_path_and_idle():
     assert state["navigation_status"]["message"] == "测试 idle"
 
 
+def test_release_navigation_control_revokes_owner_without_coordinator(monkeypatch):
+    arbiter = ControlArbiter()
+    arbiter.request_control(ControlOwner.NAVIGATION)
+    set_control_arbiter(arbiter)
+    monkeypatch.setattr(
+        "backend.api.routes.nav_auto_track_helpers._get_nav_auto_track_coordinator",
+        lambda: None,
+    )
+
+    try:
+        release_navigation_control()
+        assert arbiter.owner == ControlOwner.NONE
+        assert arbiter.can_navigation_send() is False
+    finally:
+        set_control_arbiter(None)
+
+
 def test_control_emergency_stop_clamps_both_navigation_and_direct_adapter(monkeypatch):
     calls: list[object] = []
 
@@ -247,6 +294,9 @@ def test_control_emergency_stop_clamps_both_navigation_and_direct_adapter(monkey
 
         def publish_navigation_start(self, enabled: bool = True):
             calls.append(("nav_start", enabled))
+
+        def publish_navigation_stop(self):
+            calls.append(("nav_stop", True))
 
         def publish_zero_cmd_vel(self, publish_count: int, interval_s: float):
             calls.append(("zero", publish_count, interval_s))
@@ -273,6 +323,7 @@ def test_control_emergency_stop_clamps_both_navigation_and_direct_adapter(monkey
     assert ("clamp", True, "control_e_stop") in calls
     assert "owner_e_stop" in calls
     assert ("nav_start", False) in calls
+    assert ("nav_stop", True) in calls
     assert ("task_start", False) in calls
     assert ("zero", 20, 0.02) in calls
     assert "stop_sender" in calls

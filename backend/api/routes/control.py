@@ -141,6 +141,7 @@ async def emergency_stop(
             except RuntimeError:
                 pass
             bridge.publish_navigation_start(False)
+            bridge.publish_navigation_stop()
             bridge.publish_zero_cmd_vel(publish_count=20, interval_s=0.02)
         except RuntimeError:
             pass

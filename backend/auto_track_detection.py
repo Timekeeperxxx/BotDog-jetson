@@ -93,48 +93,20 @@ class AutoTrackDetectionMixin:
         为 track_id == -1 的检测结果分配降级 IOU ID，保持帧间连续性。
         YOLO track 模式正常工作时此函数基本是空操作。
         """
-        self._prune_fallback_tracks(frame_index)
-
-        # 若已有锁定目标，把它作为最高优先级轨迹保留下来。
         if self._active_target is not None:
-            self._fallback_tracks[self._active_target.track_id] = _FallbackTrack(
-                track_id=self._active_target.track_id,
-                bbox=self._active_target.bbox,
-                last_seen_frame=frame_index,
+            self._lightweight_tracker.remember(
+                self._active_target.track_id,
+                self._active_target.bbox,
+                frame_index,
             )
-
-        no_id = [d for d in persons if d.track_id == -1]
-        if not no_id:
-            return persons
-
-        result = [d for d in persons if d.track_id != -1]
-        used_track_ids = {d.track_id for d in result if d.track_id >= 0}
-
-        # 优先处理高置信度/大框，减少多人场景下小框抢占主目标 ID。
-        no_id.sort(
-            key=lambda d: (
-                d.confidence,
-                max(0, d.bbox[2] - d.bbox[0]) * max(0, d.bbox[3] - d.bbox[1]),
-            ),
-            reverse=True,
-        )
-
-        for det in no_id:
-            track_id = self._match_fallback_track(det.bbox, used_track_ids)
-            if track_id is None:
-                self._iou_id_counter += 1
-                track_id = self._iou_id_counter
-
-            det.track_id = track_id
-            used_track_ids.add(track_id)
-            self._last_iou_bbox = det.bbox
-            self._fallback_tracks[track_id] = _FallbackTrack(
-                track_id=track_id,
-                bbox=det.bbox,
-                last_seen_frame=frame_index,
-            )
-            result.append(det)
-
+        result = self._lightweight_tracker.update(persons, frame_index)
+        self._iou_id_counter = self._lightweight_tracker.next_id
+        self._fallback_tracks = {
+            track_id: _FallbackTrack(track.track_id, track.bbox, track.last_seen_frame)
+            for track_id, track in self._lightweight_tracker.tracks.items()
+        }
+        if result:
+            self._last_iou_bbox = result[-1].bbox
         return result
 
     def _prune_fallback_tracks(self, frame_index: int) -> None:

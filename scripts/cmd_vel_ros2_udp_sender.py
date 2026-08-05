@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Forward ROS2 /cmd_vel_safe samples to BotDog's loopback UDP ingress."""
+"""Forward ROS2 /cmd_vel_safe to BotDog with a deterministic UDP heartbeat."""
 
 from __future__ import annotations
 
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 
 BOTDOG_ROOT = Path(__file__).resolve().parents[1]
@@ -22,8 +23,11 @@ from backend.navigation_velocity_protocol import (
     NAVIGATION_VELOCITY_UDP_PORT,
     pack_navigation_velocity,
 )
+from backend.navigation_velocity_heartbeat import NavigationVelocityHeartbeat
 
 DEFAULT_TOPIC = "/cmd_vel_safe"
+DEFAULT_SEND_RATE_HZ = 20.0
+DEFAULT_COMMAND_TIMEOUT_S = 0.25
 
 
 def encode_velocity(vx: float, vy: float, vyaw: float) -> bytes:
@@ -36,13 +40,24 @@ class CmdVelRos2UdpSender(Node):
     def __init__(self) -> None:
         super().__init__("cmd_vel_ros2_udp_sender")
         self.declare_parameter("cmd_vel_topic", DEFAULT_TOPIC)
+        self.declare_parameter("send_rate_hz", DEFAULT_SEND_RATE_HZ)
+        self.declare_parameter("cmd_vel_timeout", DEFAULT_COMMAND_TIMEOUT_S)
         topic = str(self.get_parameter("cmd_vel_topic").value or DEFAULT_TOPIC)
+        send_rate_hz = float(self.get_parameter("send_rate_hz").value)
+        command_timeout_s = float(self.get_parameter("cmd_vel_timeout").value)
+        if not 1.0 <= send_rate_hz <= 100.0:
+            raise ValueError("send_rate_hz must be within [1, 100]")
+        self._heartbeat = NavigationVelocityHeartbeat(
+            command_timeout_s=command_timeout_s,
+        )
 
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.connect(
             (NAVIGATION_VELOCITY_UDP_HOST, NAVIGATION_VELOCITY_UDP_PORT)
         )
         self._closed = False
+        self._last_velocity_log_at = float("-inf")
+        self._last_reason: str | None = None
         self._ready_file = (
             Path(os.environ["BOTDOG_CMD_VEL_READY_FILE"]).resolve()
             if os.environ.get("BOTDOG_CMD_VEL_READY_FILE")
@@ -50,6 +65,7 @@ class CmdVelRos2UdpSender(Node):
         )
 
         self.create_subscription(Twist, topic, self._on_cmd_vel, 10)
+        self.create_timer(1.0 / send_rate_hz, self._send_heartbeat)
         if self._ready_file is not None:
             self._ready_file.parent.mkdir(parents=True, exist_ok=True)
             self._ready_file.write_text(f"{os.getpid()}\n", encoding="utf-8")
@@ -57,20 +73,56 @@ class CmdVelRos2UdpSender(Node):
         self.get_logger().info(
             "CMD_VEL_UDP_SENDER_READY "
             f"topic={topic} "
+            f"send_rate_hz={send_rate_hz:.1f} "
+            f"cmd_vel_timeout={command_timeout_s:.3f}s "
             f"target={NAVIGATION_VELOCITY_UDP_HOST}:{NAVIGATION_VELOCITY_UDP_PORT}"
         )
 
     def _on_cmd_vel(self, msg: Twist) -> None:
         try:
-            payload = encode_velocity(msg.linear.x, msg.linear.y, msg.angular.z)
+            self._heartbeat.update(msg.linear.x, msg.linear.y, msg.angular.z)
         except (TypeError, ValueError) as exc:
             self.get_logger().error(f"拒绝非法 cmd_vel：{exc}")
+
+    def _send_heartbeat(self) -> None:
+        sample = self._heartbeat.sample()
+        try:
+            payload = encode_velocity(sample.vx, sample.vy, sample.vyaw)
+        except (TypeError, ValueError) as exc:
+            self.get_logger().error(f"拒绝非法速度心跳：{exc}")
             return
 
         try:
             self._socket.send(payload)
         except OSError as exc:
             self.get_logger().error(f"发送 cmd_vel UDP 数据失败：{exc}")
+            return
+
+        if sample.reason != self._last_reason:
+            previous_reason = self._last_reason
+            self._last_reason = sample.reason
+            if sample.reason == "command_stale":
+                self.get_logger().warning(
+                    "CMD_VEL_UDP_HEARTBEAT_ZERO "
+                    f"reason={sample.reason} age={sample.command_age_s:.3f}s"
+                )
+            elif sample.reason == "active" and previous_reason is not None:
+                self.get_logger().info("CMD_VEL_UDP_HEARTBEAT_RECOVERED")
+
+        now = time.monotonic()
+        if now - self._last_velocity_log_at >= 1.0:
+            self._last_velocity_log_at = now
+            age_text = (
+                "none"
+                if sample.command_age_s is None
+                else f"{sample.command_age_s:.3f}"
+            )
+            self.get_logger().info(
+                "CMD_VEL_UDP_SAMPLE "
+                f"vx={sample.vx:.3f} vy={sample.vy:.3f} "
+                f"vyaw={sample.vyaw:.3f} reason={sample.reason} "
+                f"age={age_text}"
+            )
 
     def close(self) -> None:
         if self._closed:

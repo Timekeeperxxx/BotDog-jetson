@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    LargeBinary,
     Boolean,
     CheckConstraint,
     Float,
@@ -51,6 +52,56 @@ class User(Base):
         ),
         CheckConstraint("enabled IN (0, 1)", name="ck_users_enabled"),
         CheckConstraint("must_change_password IN (0, 1)", name="ck_users_must_change_password"),
+    )
+
+
+class FaceIdentity(Base):
+    """持久化人员身份；不保存注册原图。"""
+
+    __tablename__ = "face_identities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    display_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+
+    templates: Mapped[list["FaceTemplate"]] = relationship(
+        back_populates="identity",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+    __table_args__ = (
+        CheckConstraint("enabled IN (0, 1)", name="ck_face_identities_enabled"),
+    )
+
+
+class FaceTemplate(Base):
+    """SFace 特征模板；embedding 为归一化 float32 原始字节。"""
+
+    __tablename__ = "face_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    identity_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("face_identities.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    embedding: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    dimension: Mapped[int] = mapped_column(Integer, nullable=False)
+    model_name: Mapped[str] = mapped_column(String(100), nullable=False, default="OpenCV SFace")
+    model_version: Mapped[str] = mapped_column(String(100), nullable=False, default="2021dec")
+    quality: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    created_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+
+    identity: Mapped[FaceIdentity] = relationship(back_populates="templates")
+
+    __table_args__ = (
+        CheckConstraint("dimension > 0", name="ck_face_templates_dimension"),
+        CheckConstraint("quality >= 0.0 AND quality <= 1.0", name="ck_face_templates_quality"),
     )
 
 

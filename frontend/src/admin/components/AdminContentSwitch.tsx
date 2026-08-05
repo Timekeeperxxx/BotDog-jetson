@@ -8,6 +8,7 @@ import { AdminEvidencePage } from '../pages/AdminEvidencePage'
 import { AdminLogsPage } from '../pages/AdminLogsPage'
 import { AdminConfigPage } from '../pages/AdminConfigPage'
 import { AdminUsersPage } from '../pages/AdminUsersPage'
+import { AdminFaceIdentitiesPage } from '../pages/AdminFaceIdentitiesPage'
 import { AdminControlPage } from '../pages/AdminControlPage'
 import { AdminDeviceVideoPage } from '../pages/AdminDeviceVideoPage'
 import { AdminAiGuardPage } from '../pages/AdminAiGuardPage'
@@ -167,6 +168,10 @@ export function AdminContentSwitch({
 
   if (activeSection === 'users') {
     return <AdminUsersPage />
+  }
+
+  if (activeSection === 'face-identities') {
+    return <AdminFaceIdentitiesPage />
   }
 
   if (activeSection === 'diagnostics') {

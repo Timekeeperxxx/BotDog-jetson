@@ -77,6 +77,7 @@ class NavigationVelocityUdpService:
         self._stream_active = False
         self._last_datagram_at: float | None = None
         self._pending_departure_stop: ControlOwner | None = None
+        self._last_command_log_at = float("-inf")
 
         self._received_count = 0
         self._accepted_count = 0
@@ -184,10 +185,21 @@ class NavigationVelocityUdpService:
             self._rejected_count += 1
             return DATAGRAM_REJECTED_CONTROL
 
-        self._last_datagram_at = self._clock()
+        command_now = self._clock()
+        self._last_datagram_at = command_now
         self._stream_active = True
         self._pending_departure_stop = None
         self._accepted_count += 1
+        if command_now - self._last_command_log_at >= 1.0:
+            self._last_command_log_at = command_now
+            logger.info(
+                "Navigation velocity accepted: vx={:.3f} vy={:.3f} "
+                "vyaw={:.3f} accepted_count={}",
+                vx,
+                vy,
+                vyaw,
+                self._accepted_count,
+            )
         return DATAGRAM_ACCEPTED
 
     async def poll_safety(self) -> None:

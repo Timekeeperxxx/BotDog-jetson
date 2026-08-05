@@ -6,6 +6,7 @@ import {
   RefreshCw,
   ScrollText,
   Settings2,
+  ScanFace,
   ShieldAlert,
   Users,
 } from 'lucide-react'
@@ -21,6 +22,7 @@ export const adminNavItems: AdminMenuItem[] = [
   { key: 'logs', label: '日志中心', icon: <ScrollText size={18} />, description: '审计日志 / 运行日志', visibleTo: ['viewer', 'operator', 'admin'] },
   { key: 'config', label: '系统配置', icon: <Settings2 size={18} />, description: '系统参数 / 热更新 / 历史', visibleTo: ['operator', 'admin'], badge: '只读' },
   { key: 'users', label: '用户与权限', icon: <Users size={18} />, description: '管理账号 / 角色 / 密码', visibleTo: ['admin'] },
+  { key: 'face-identities', label: '人员识别库', icon: <ScanFace size={18} />, description: '人员姓名 / 人脸模板', visibleTo: ['admin'] },
   { key: 'diagnostics', label: '诊断工具', icon: <RefreshCw size={18} />, description: '安全 / 目标 / 登录态排查', visibleTo: [] },
 ]
 

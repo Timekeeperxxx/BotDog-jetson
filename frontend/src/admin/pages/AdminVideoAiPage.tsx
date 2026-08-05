@@ -13,10 +13,7 @@ function inferSourceStatus(source: VideoSource): ModuleHealthState {
 }
 
 function groupConfigs(configs: SystemConfig[]): AiConfigGroup[] {
-  const aiKeys = configs.filter((item) => {
-    const key = item.key.toLowerCase()
-    return key.includes('ai') || key.includes('track') || key.includes('camera')
-  })
+  const aiKeys = configs.filter((item) => item.category === 'ai' || item.category === 'auto_track')
 
   return [
     {

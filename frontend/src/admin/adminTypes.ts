@@ -15,6 +15,7 @@ export type AdminSection =
   | 'logs'
   | 'config'
   | 'users'
+  | 'face-identities'
   | 'diagnostics'
 
 export type ModuleHealthState = 'normal' | 'degraded' | 'failed' | 'waiting' | 'todo'

@@ -22,6 +22,42 @@ const DEFAULT_WHEP_URL = `http://${window.location.hostname}:8889/cam/whep`;
 const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000];
 const STALLED_FRAME_SAMPLE_LIMIT = 8;
 const MIN_STALL_RECONNECT_INTERVAL_MS = 30000;
+const WEBRTC_NEGOTIATION_TIMEOUT_MS = 5000;
+const WHEP_REQUEST_TIMEOUT_MS = 8000;
+const WHEP_DELETE_TIMEOUT_MS = 2000;
+
+export async function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+interface VideoElementWithLegacyFrameCount extends HTMLVideoElement {
+  webkitDecodedFrameCount?: number;
+}
+
+/** Return an actual decoded-frame counter instead of trusting WebRTC state. */
+export function getDecodedVideoFrameCount(video: HTMLVideoElement): number | null {
+  const quality = video.getVideoPlaybackQuality?.();
+  if (quality && Number.isFinite(quality.totalVideoFrames)) {
+    return quality.totalVideoFrames;
+  }
+
+  const legacyCount = (video as VideoElementWithLegacyFrameCount).webkitDecodedFrameCount;
+  return typeof legacyCount === 'number' && Number.isFinite(legacyCount)
+    ? legacyCount
+    : null;
+}
 
 // TypeScript DOM lib 中无 RTCRemoteInboundRtpStreamStats，按需声明
 interface RemoteInboundRtpStats {
@@ -88,6 +124,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
   const retryAttemptsRef = useRef(0);
   const stalledFrameSamplesRef = useRef(0);
   const lastStallReconnectAtRef = useRef(0);
+  const lastDecodedFrameCountRef = useRef<number | null>(null);
   // statusRef 与 React state 保持同步，用于同步判断当前连接状态
   const statusRef = useRef<WhepStatus>('disconnected');
   // 最新 connect 函数引用，供 retry timer 调用，避免 stale closure
@@ -121,16 +158,22 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
     }
 
     if (sessionUrlRef.current) {
+      const sessionUrl = sessionUrlRef.current;
+      sessionUrlRef.current = null;
+      const controller = new AbortController();
+      const abortTimer = window.setTimeout(() => controller.abort(), WHEP_DELETE_TIMEOUT_MS);
       try {
-        await fetch(sessionUrlRef.current, { method: 'DELETE' });
+        await fetch(sessionUrl, { method: 'DELETE', signal: controller.signal });
       } catch {
         // ignore cleanup errors
+      } finally {
+        window.clearTimeout(abortTimer);
       }
-      sessionUrlRef.current = null;
     }
 
     prevInboundRef.current = null;
     stalledFrameSamplesRef.current = 0;
+    lastDecodedFrameCountRef.current = null;
     setVideoLatencyMs(null);
     setVideoLatencyStats(null);
     setVideoResolution({ width: null, height: null });
@@ -193,6 +236,7 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
           receiver.playoutDelayHint = 0;
         }
         if (videoRef.current) {
+          lastDecodedFrameCountRef.current = null;
           videoRef.current.srcObject = event.streams[0];
         }
       };
@@ -313,10 +357,25 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
 
                 // 高 jitter 并不等于视频已经停止；按缓冲区阈值主动重连会不断丢弃
                 // 当前会话和关键帧。仅在页面可见且连续多次没有解码新帧时重连。
-                if (!skipStats && decodedFramesDelta !== null) {
-                  if (decodedFramesDelta > 0) {
+                if (!skipStats) {
+                  // A restarted MediaMTX can leave Chromium's PeerConnection in
+                  // "connected" while the old receiver no longer appears in
+                  // getStats(). Prefer the video element's real decoded-frame
+                  // counter so that this half-open session is still detected.
+                  let observedFrameDelta = decodedFramesDelta;
+                  const video = videoRef.current;
+                  const decodedFrameCount = video ? getDecodedVideoFrameCount(video) : null;
+                  if (decodedFrameCount !== null) {
+                    const previousFrameCount = lastDecodedFrameCountRef.current;
+                    lastDecodedFrameCountRef.current = decodedFrameCount;
+                    observedFrameDelta = previousFrameCount === null || decodedFrameCount < previousFrameCount
+                      ? null
+                      : decodedFrameCount - previousFrameCount;
+                  }
+
+                  if (observedFrameDelta !== null && observedFrameDelta > 0) {
                     stalledFrameSamplesRef.current = 0;
-                  } else {
+                  } else if (observedFrameDelta !== null) {
                     stalledFrameSamplesRef.current += 1;
                   }
 
@@ -357,14 +416,33 @@ export function useWhepVideo(customWhepUrl?: string, options?: { skipStats?: boo
         }
       };
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+      const offer = await withTimeout(
+        pc.createOffer(),
+        WEBRTC_NEGOTIATION_TIMEOUT_MS,
+        'WebRTC 创建 Offer 超时',
+      );
+      await withTimeout(
+        pc.setLocalDescription(offer),
+        WEBRTC_NEGOTIATION_TIMEOUT_MS,
+        'WebRTC 设置本地 SDP 超时',
+      );
 
-      const response = await fetch(whepUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/sdp' },
-        body: offer.sdp,
-      });
+      const whepController = new AbortController();
+      const whepAbortTimer = window.setTimeout(
+        () => whepController.abort(),
+        WHEP_REQUEST_TIMEOUT_MS,
+      );
+      let response: Response;
+      try {
+        response = await fetch(whepUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/sdp' },
+          body: offer.sdp,
+          signal: whepController.signal,
+        });
+      } finally {
+        window.clearTimeout(whepAbortTimer);
+      }
 
       if (connectSessionIdRef.current !== sessionId) return;
 

@@ -101,3 +101,7 @@ tmp/
 
 
 backend/scripts/
+
+# Local face-recognition validation images
+/artifacts/face-recognition-validation-2026-08-04/*.png
+/tests/fixtures/face_recognition/*.png

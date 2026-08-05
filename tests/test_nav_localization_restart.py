@@ -599,7 +599,7 @@ def test_restart_navigation_localization_uses_scene_dir_and_returns_pids(monkeyp
     process_env = popen_calls[0]["kwargs"]["env"]
     assert process_env["NAV_LIDAR_MOUNT_Z_M"] == "0.9"
     assert process_env["NAV_LIDAR_MOUNT_PITCH_DEG"] == "19.48"
-    assert process_env["NAV_LIDAR_MOUNT_X_M"] == "0.0"
+    assert process_env["NAV_LIDAR_MOUNT_X_M"] == "0.425"
     assert result["pid"] == 999
     assert result["scene_id"] == "Scene1_测试"
     assert str(result["map_pcd"]).endswith("map.pcd")
@@ -1071,8 +1071,9 @@ def test_restart_script_prefers_exact_scene_pcd_files():
     assert 'find_scene_pcd_file "$SCENE_DIR" "ground.pcd" "*ground.pcd"' in adapter
     assert '"footprint_fill.pcd|fill_footpoint.pcd"' in adapter
     assert "navigation_failure_message" in adapter
-    assert "ros2 topic echo /livox/lidar --once" in adapter
-    assert "--no-daemon --spin-time 2" in adapter
+    assert 'NAV_LIVOX_DATA_TIMEOUT_SECONDS="${NAV_LIVOX_DATA_TIMEOUT_SECONDS:-30}"' in adapter
+    assert "init_frame_count=[1-9][0-9]* imu_cout=[1-9][0-9]*" in adapter
+    assert "current_run_log_has_regex" in adapter
     assert 'NAV_READY_TIMEOUT_SECONDS="${NAV_READY_TIMEOUT_SECONDS:-120}"' in adapter
 
 

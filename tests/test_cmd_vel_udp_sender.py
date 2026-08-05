@@ -13,6 +13,7 @@ from backend.navigation_velocity_protocol import (
     NAVIGATION_VELOCITY_UDP_PORT,
     pack_navigation_velocity,
 )
+from backend.navigation_velocity_heartbeat import NavigationVelocityHeartbeat
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -40,10 +41,58 @@ def test_cmd_vel_sender_uses_ros_safe_topic_and_shared_udp_protocol():
     start_source = START_SCRIPT.read_text(encoding="utf-8")
 
     assert 'DEFAULT_TOPIC = "/cmd_vel_safe"' in sender_source
+    assert "NavigationVelocityHeartbeat" in sender_source
+    assert "create_timer" in sender_source
     assert "pack_navigation_velocity" in sender_source
     assert "unitree_sdk" not in sender_source.lower()
     assert 'exec /usr/bin/python3 "$SCRIPT_DIR/cmd_vel_ros2_udp_sender.py"' in start_source
     assert "rmw_fastrtps_cpp" in start_source
+
+
+class ManualClock:
+    def __init__(self) -> None:
+        self.now = 10.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_velocity_heartbeat_repeats_fresh_filtered_command_then_fails_closed():
+    clock = ManualClock()
+    heartbeat = NavigationVelocityHeartbeat(command_timeout_s=0.25, clock=clock)
+
+    assert heartbeat.sample().reason == "awaiting_command"
+    heartbeat.update(0.25, -0.08, 0.3)
+    first = heartbeat.sample()
+    assert (first.vx, first.vy, first.vyaw) == pytest.approx((0.25, -0.08, 0.3))
+    assert first.reason == "active"
+
+    clock.now += 0.249
+    assert heartbeat.sample().reason == "active"
+    clock.now += 0.001
+    stale = heartbeat.sample()
+    assert (stale.vx, stale.vy, stale.vyaw) == (0.0, 0.0, 0.0)
+    assert stale.reason == "command_stale"
+
+
+def test_velocity_heartbeat_recovers_only_after_a_new_valid_command():
+    clock = ManualClock()
+    heartbeat = NavigationVelocityHeartbeat(command_timeout_s=0.25, clock=clock)
+    heartbeat.update(0.2, 0.0, 0.0)
+    clock.now += 0.3
+    assert heartbeat.sample().reason == "command_stale"
+
+    heartbeat.update(0.0, 0.0, -0.4)
+    recovered = heartbeat.sample()
+    assert recovered.reason == "active"
+    assert recovered.vyaw == pytest.approx(-0.4)
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_velocity_heartbeat_rejects_non_finite_commands(value):
+    heartbeat = NavigationVelocityHeartbeat()
+    with pytest.raises(ValueError, match="non-finite"):
+        heartbeat.update(value, 0.0, 0.0)
 
 
 def test_cmd_vel_script_path_points_to_existing_udp_sender_launcher():

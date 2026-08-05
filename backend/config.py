@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     AI_INFERENCE_IMGSZ: int = 640
     AI_FFMPEG_RETRY_MIN_SECONDS: float = 1.0
     AI_FFMPEG_RETRY_MAX_SECONDS: float = 3.0
+    # FFmpeg 正常软件解码 640x360 RTSP 时常驻内存远低于此值；超过上限说明
+    # 解码/滤镜输出发生异常积压，主动重拉流，避免挤占导航所需内存。
+    AI_FFMPEG_MAX_RSS_MB: int = 512
+    AI_FFMPEG_MEMORY_CHECK_INTERVAL_SECONDS: float = 1.0
     # 单帧 AI 处理超时保护。YOLO/TensorRT/CUDA 偶发卡死时，线程无法被 Python 安全杀掉；
     # 默认让后端失败退出，交给 systemd Restart=on-failure 自动重启，避免 AI 帧永久停住。
     AI_FRAME_PROCESS_TIMEOUT_SECONDS: float = 15.0
@@ -102,6 +106,21 @@ class Settings(BaseSettings):
     # 关闭后，AI 只在自动跟踪或驱离模式需要视觉结果时拉流推理，避免抢占主视频链路。
     AI_PASSIVE_SESSION_DETECTION_ENABLED: bool = True
 
+    # 独立武器检测支路：复用 AI Worker 已解码的同一帧，不额外拉取 RTSP。
+    # 巡逻时按 WEAPON_FRAME_SKIP 低频推理；一旦命中，在短暂活跃窗口内逐帧复核。
+    WEAPON_ENABLED: bool = False
+    WEAPON_MODEL_PATH: str = (
+        '/home/jetson/Projects/Models/weapon_guns_knife_yolov8n_fp16.engine'
+    )
+    WEAPON_DEVICE: str = 'auto'
+    WEAPON_INFERENCE_IMGSZ: int = 640
+    WEAPON_CONFIDENCE_THRESHOLD: float = 0.5
+    WEAPON_TARGET_CLASSES: list[str] = ['guns', 'knife']
+    WEAPON_FRAME_SKIP: int = 3
+    WEAPON_ACTIVE_SECONDS: float = 3.0
+    WEAPON_STABLE_HITS: int = 2
+    WEAPON_ALERT_COOLDOWN_SECONDS: float = 10.0
+
     # 姿态检测支路：COCO 17 点骨架 + 轻量时序状态机。
     POSE_ENABLED: bool = False
     POSE_MODEL_PATH: str = '/home/jetson/Projects/Models/yolo11n-pose.engine'
@@ -117,6 +136,22 @@ class Settings(BaseSettings):
     POSE_EVENT_COOLDOWN_SECONDS: float = 15.0
     POSE_TRACK_TTL_SECONDS: float = 3.0
     POSE_OVERLAY_INTERVAL_SECONDS: float = 0.2
+
+    # 人脸身份显示：OpenCV YuNet + SFace，仅影响视频叠层，不参与控制策略。
+    FACE_RECOGNITION_ENABLED: bool = True
+    FACE_DETECT_MODEL_PATH: str = '/home/jetson/Projects/Models/face_detection_yunet_2023mar.onnx'
+    FACE_RECOGNITION_MODEL_PATH: str = '/home/jetson/Projects/Models/face_recognition_sface_2021dec.onnx'
+    FACE_DETECT_THRESHOLD: float = 0.80
+    # 后台注册照片允许稍低阈值；只用于人工上传，不影响实时视频检测。
+    FACE_ENROLL_DETECT_THRESHOLD: float = 0.70
+    FACE_MATCH_THRESHOLD: float = 0.45
+    FACE_FRAME_SKIP: int = 2
+    FACE_CONFIRM_HITS: int = 3
+    FACE_TRACK_TTL_SECONDS: float = 2.0
+    FACE_MIN_SIZE_PX: int = 64
+    FACE_MAX_UPLOAD_BYTES: int = 8 * 1024 * 1024
+    FACE_MAX_IMAGE_PIXELS: int = 12_000_000
+    FACE_MAX_TEMPLATES_PER_IDENTITY: int = 5
 
     # 抓拍存储目录（用于 /api/v1/static）
     SNAPSHOT_DIR: str = 'data/snapshots'
@@ -164,7 +199,10 @@ class Settings(BaseSettings):
     # 雷达在机器人 base_footprint 坐标系中的安装位姿（T_base_footprint_lidar）。
     # 平移单位为米，姿态单位为度；俯仰角为正表示雷达朝前下倾。
     # 建图和定位启动时会同时用于 LIO odom_robo 与 base_link -> base_footprint TF。
-    NAV_LIDAR_MOUNT_X_M: float = 0.0
+    # The Mid360 is mounted about 0.425 m ahead of B2's planar rotation
+    # centre.  Keeping this at zero puts base_footprint below the sensor and
+    # makes an in-place body turn look like a large XY translation.
+    NAV_LIDAR_MOUNT_X_M: float = 0.425
     NAV_LIDAR_MOUNT_Y_M: float = 0.0
     NAV_LIDAR_MOUNT_Z_M: float = 0.90
     NAV_LIDAR_MOUNT_ROLL_DEG: float = 0.0
@@ -216,8 +254,10 @@ class Settings(BaseSettings):
     # 动态避障监控器的状态 topic；持续阻断超过阈值秒数后推送 ALERT_RAISED。
     ROS_NAV_OBSTACLE_STATUS_TOPIC: str = '/nav/obstacle_status'
     NAV_OBSTACLE_ALERT_SECONDS: float = 15.0
-    # 持续阻断自动重发目标：SCAN 失败计满后丢弃目标锁死，重发 goal 唤醒。
-    NAV_OBSTACLE_AUTO_REGOAL_ENABLED: bool = True
+    # SCAN 当前会在原目标内持续局部重规划，不会因短时失败丢弃目标。
+    # 应用层重发同一 goal 会创建新规划代次、暂时解除旧代次的 safety hold，
+    # 实机表现为被挡后反复启停和左右摇摆，因此默认禁止自动重发。
+    NAV_OBSTACLE_AUTO_REGOAL_ENABLED: bool = False
     NAV_OBSTACLE_REGOAL_SECONDS: float = 25.0
     NAV_OBSTACLE_REGOAL_COOLDOWN_SECONDS: float = 30.0
     NAV_OBSTACLE_REGOAL_MAX_ATTEMPTS: int = 3

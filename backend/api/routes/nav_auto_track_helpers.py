@@ -39,6 +39,16 @@ def release_navigation_control() -> None:
     if coordinator is not None:
         coordinator.release_navigation_control()
 
+    # Do not rely exclusively on the optional coordinator. Explicit stop
+    # routes must revoke navigation at the final hardware ingress even when
+    # auto-track coordination is unavailable or failed internally.
+    from ...control_arbiter import get_control_arbiter
+    from ...tracking_types import ControlOwner
+
+    arbiter = get_control_arbiter()
+    if arbiter is not None:
+        arbiter.release_control(ControlOwner.NAVIGATION)
+
 
 def task_auto_track_requested(task: dict[str, Any]) -> bool:
     value = task.get("autoTrackEnabled")

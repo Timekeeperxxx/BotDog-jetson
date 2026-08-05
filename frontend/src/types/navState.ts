@@ -62,9 +62,9 @@ export type MappingCloud = {
 }
 
 export type NavWebSocketEvent =
-  | { type: 'nav.robot_pose'; data: RobotPose; timestamp?: string }
+  | { type: 'nav.robot_pose'; data: RobotPose | null; timestamp?: string }
   | { type: 'nav.navigation_status'; data: NavigationStatus; timestamp?: string }
   | { type: 'nav.localization_status'; data: LocalizationStatus; timestamp?: string }
-  | { type: 'nav.global_path'; data: GlobalPath; timestamp?: string }
+  | { type: 'nav.global_path'; data: GlobalPath | null; timestamp?: string }
   | { type: 'nav.execution_path'; data: GlobalPath | null; timestamp?: string }
   | { type: 'nav.mapping_cloud'; data: MappingCloud; timestamp?: string }

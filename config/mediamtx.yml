@@ -21,9 +21,10 @@ webrtcEncryption: false
 
 # WHEP paths (explicit for clarity)
 # 只公布用户访问侧的接口；前端再按打开网页所使用的 IPv4 地址保留对应候选。
-# 不公布 eno1（192.168.123.222 相机专网），避免媒体流误入相机链路。
+# enP8p1s0 同时承载当前 192.168.123.x 客户端访问，必须公布对应 ICE 候选。
 webrtcIPsFromInterfaces: true
 webrtcIPsFromInterfacesList:
+  - enP8p1s0        # 192.168.123.222 相机/客户端访问网
   - enx00e04c0e6160  # 192.168.144.104 图传/控制网
   - wlP1p1s0        # 192.168.111.60 Wi-Fi/其他局域网
   - tun0            # 10.144.0.4 VPN 隧道

@@ -19,6 +19,10 @@ export interface TrackOverlayData {
     track_id?: number;
     is_stranger?: boolean | null;
     safety_status?: string | null;
+    identity_id?: number | null;
+    display_name?: string | null;
+    face_status?: 'pending' | 'recognized' | 'unknown' | 'unavailable' | null;
+    face_score?: number | null;
   }[];
   poses?: {
     track_id: number;
@@ -38,6 +42,10 @@ export interface TrackOverlayData {
     track_id?: number;
     is_stranger?: boolean;
     safety_status?: string | null;
+    identity_id?: number | null;
+    display_name?: string | null;
+    face_status?: 'pending' | 'recognized' | 'unknown' | 'unavailable' | null;
+    face_score?: number | null;
   }[];
   active_bbox: number[] | null;
   zone_bbox?: number[] | null;        // 防区 bounding box [x1,y1,x2,y2]
@@ -155,6 +163,12 @@ export function TrackOverlay({ data, videoRef }: Props) {
       if (className === 'helmet') {
         return { box: 'rgba(255,220,40,0.95)', label: 'rgba(150,120,0,0.92)' };
       }
+      if (className === 'guns') {
+        return { box: 'rgba(255,30,30,0.98)', label: 'rgba(150,0,0,0.96)' };
+      }
+      if (className === 'knife') {
+        return { box: 'rgba(255,45,180,0.98)', label: 'rgba(140,0,85,0.96)' };
+      }
       return { box: 'rgba(220,220,220,0.85)', label: 'rgba(80,80,80,0.92)' };
     };
 
@@ -174,7 +188,22 @@ export function TrackOverlay({ data, videoRef }: Props) {
       ctx.strokeRect(rx, ry, rw, rh);
 
       const idPart = p.track_id !== undefined && p.track_id >= 0 ? ` #${p.track_id}` : '';
-      const headerText = `${className}${idPart} ${(p.conf * 100).toFixed(0)}%`;
+      const faceLabel = className === 'person'
+        ? (p.face_status === 'recognized' && p.display_name
+          ? ` · ${p.display_name}`
+          : p.face_status === 'unknown'
+            ? ' · 未知人员'
+            : p.face_status === 'pending'
+              ? ' · 识别中'
+              : p.face_status === 'unavailable'
+                ? ' · 人脸不可用'
+                : '')
+        : '';
+      const classLabels: Record<string, string> = {
+        guns: '枪械',
+        knife: '刀具',
+      };
+      const headerText = `${classLabels[className] ?? className}${idPart}${faceLabel} ${(p.conf * 100).toFixed(0)}%`;
       ctx.font = 'bold 10px monospace';
       const headerWidth = Math.max(ctx.measureText(headerText).width + 10, 64);
       ctx.fillStyle = colors.label;

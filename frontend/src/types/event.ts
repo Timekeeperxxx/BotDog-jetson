@@ -45,6 +45,7 @@ export interface AIStatus {
   frame_age_ms?: number;
   processing_ms?: number;
   detect_ms?: number;
+  weapon_ms?: number;
   pose_ms?: number;
   postprocess_ms?: number;
   end_to_end_ms?: number;
@@ -52,6 +53,11 @@ export interface AIStatus {
   pose_status?: 'disabled' | 'ready' | 'failed';
   pose_frames_processed?: number;
   pose_events_count?: number;
+  weapon_status?: 'disabled' | 'ready' | 'failed';
+  weapon_active?: boolean;
+  weapon_frames_processed?: number;
+  weapon_detections_count?: number;
+  weapon_alerts_count?: number;
   parallel_inference_enabled?: boolean;
   inference_warmed_up?: boolean;
 }

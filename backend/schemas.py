@@ -560,6 +560,7 @@ class NavTaskStopResponse(BaseModel):
     topic: str
     data: bool
     nav_start: NavTaskExecuteNavStartDTO
+    nav_stop: NavTaskExecuteNavStartDTO
     task_start: NavTaskExecuteNavStartDTO | None = None
     cmd_vel_stop: dict[str, Any] | None = None
     message: str

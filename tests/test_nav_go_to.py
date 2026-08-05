@@ -25,6 +25,7 @@ def test_nav_go_to_waypoint_replaces_goal_without_nav_start(monkeypatch):
     publish_order: list[str] = []
     publish_thread_ids: list[int] = []
     task_start_calls: list[bool] = []
+    cancelled_resume_reasons: list[str] = []
     request_thread_id = threading.get_ident()
 
     class DummyBridge:
@@ -93,6 +94,11 @@ def test_nav_go_to_waypoint_replaces_goal_without_nav_start(monkeypatch):
         },
     )
     monkeypatch.setattr(nav_routes, "safe_write_audit_log", fake_audit_log)
+    monkeypatch.setattr(
+        nav_routes,
+        "_cancel_pending_auto_track_resume",
+        cancelled_resume_reasons.append,
+    )
     result = asyncio.run(
         nav_routes.nav_go_to_waypoint(
             "Scene1_实验室一楼",
@@ -115,6 +121,7 @@ def test_nav_go_to_waypoint_replaces_goal_without_nav_start(monkeypatch):
     assert publish_thread_ids
     assert publish_thread_ids[0] != request_thread_id
     assert task_start_calls == [False]
+    assert cancelled_resume_reasons == ["nav_go_to"]
     assert audit_messages
     assert "clicked_point_topic=/clicked_point" in audit_messages[0]
     assert "yaw_topic=goal_yaw" in audit_messages[0]

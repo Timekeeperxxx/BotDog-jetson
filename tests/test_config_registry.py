@@ -56,6 +56,25 @@ def test_registry_excludes_sensitive_credentials() -> None:
     )
 
 
+def test_registry_contains_weapon_inference_controls() -> None:
+    configs = ConfigService.DEFAULT_CONFIGS
+    expected = {
+        "weapon_enabled",
+        "weapon_model_path",
+        "weapon_device",
+        "weapon_inference_imgsz",
+        "weapon_confidence_threshold",
+        "weapon_frame_skip",
+        "weapon_active_seconds",
+        "weapon_stable_hits",
+        "weapon_alert_cooldown_seconds",
+    }
+
+    assert expected.issubset(configs)
+    assert all(configs[key]["category"] == "ai" for key in expected)
+    assert all(configs[key]["is_hot_reloadable"] is False for key in expected)
+
+
 def test_restart_only_config_does_not_mutate_live_setting() -> None:
     original_ai_fps = settings.AI_FPS
     try:

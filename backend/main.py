@@ -508,6 +508,7 @@ def register_routes(app: FastAPI) -> None:
     from .api.routes import snapshot as _snapshot_routes
     from .api.routes import recording as _recording_routes
     from .api.routes import gimbal as _gimbal_routes
+    from .api.routes import face_identities as _face_identity_routes
     app.include_router(_auth_routes.router)
     app.include_router(_users_routes.router)
     app.include_router(_nav_routes.router)
@@ -530,6 +531,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(_snapshot_routes.router)
     app.include_router(_recording_routes.router)
     app.include_router(_gimbal_routes.router)
+    app.include_router(_face_identity_routes.router)
     app.include_router(_websocket_routes.router)
 
 

@@ -86,6 +86,10 @@ class DetectionResult:
     confidence: float
     class_name: str = "person"
     track_id: int = -1                # YOLO 分配的稳定跨帧 ID，-1 表示无
+    identity_id: int | None = None
+    display_name: str | None = None
+    face_status: str | None = None
+    face_score: float | None = None
 
 
 @dataclass

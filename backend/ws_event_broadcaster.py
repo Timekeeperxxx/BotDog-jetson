@@ -9,6 +9,7 @@
 
 import asyncio
 import json
+from collections.abc import Callable
 from typing import Dict, Set, Any, Optional
 from datetime import datetime
 
@@ -28,10 +29,14 @@ class EventBroadcaster:
     - 管理连接生命周期
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        nav_state_provider: Callable[[], dict[str, Any]] | None = None,
+    ):
         """初始化事件广播器。"""
         self._connections: Set[WebSocket] = set()
         self._lock = asyncio.Lock()
+        self._nav_state_provider = nav_state_provider
 
     def has_connections(self) -> bool:
         """Return whether any client is currently subscribed."""
@@ -60,6 +65,57 @@ class EventBroadcaster:
             })
         except Exception as exc:
             get_logger("WebSocket事件").debug("欢迎消息发送失败：{}", exc)
+
+        # nav.* broadcasts are deliberately de-duplicated, so a browser that
+        # opens after SCAN published its current trajectory will not receive
+        # another event until the geometry changes.  Replay the canonical
+        # in-memory state on every connection instead of leaving a reconnected
+        # viewer with an empty (or stale) path indefinitely.
+        await self._send_nav_snapshot(websocket)
+
+    def _get_nav_state(self) -> dict[str, Any]:
+        provider = self._nav_state_provider
+        if provider is None:
+            # Import lazily to keep the broadcaster independent from ROS
+            # startup ordering and to avoid a module-level dependency cycle.
+            from .services_nav_state import get_nav_state
+
+            provider = get_nav_state
+        return provider()
+
+    async def _send_nav_snapshot(self, websocket: WebSocket) -> None:
+        try:
+            state = self._get_nav_state()
+        except Exception as exc:
+            get_logger("WebSocket事件").warning(
+                "读取导航状态快照失败：{}", exc
+            )
+            return
+
+        timestamp = utc_now_iso()
+        event_fields = (
+            ("nav.robot_pose", "robot_pose"),
+            ("nav.global_path", "global_path"),
+            ("nav.execution_path", "execution_path"),
+            ("nav.localization_status", "localization_status"),
+            ("nav.navigation_status", "navigation_status"),
+        )
+        try:
+            for event_type, state_field in event_fields:
+                # Null is meaningful here: it clears a stale pose/path kept by
+                # a reconnecting frontend after navigation was stopped.
+                await websocket.send_json(
+                    {
+                        "type": event_type,
+                        "data": state.get(state_field),
+                        "timestamp": timestamp,
+                        "snapshot": True,
+                    }
+                )
+        except Exception as exc:
+            get_logger("WebSocket事件").debug(
+                "导航状态快照发送失败：{}", exc
+            )
 
     async def disconnect(self, websocket: WebSocket) -> None:
         """
@@ -152,7 +208,7 @@ class EventBroadcaster:
 
         return success_count
 
-    async def broadcast_event(self, event_type: str, data: dict[str, Any]) -> int:
+    async def broadcast_event(self, event_type: str, data: Any) -> int:
         """
         广播标准业务事件。
 

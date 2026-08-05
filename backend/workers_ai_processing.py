@@ -146,6 +146,53 @@ class AIWorkerProcessingMixin:
         self._hits = 0
         self._misses = 0
         self._in_alert = False
+        self._weapon_active_until = 0.0
+        for class_name in self._weapon_hits:
+            self._weapon_hits[class_name] = 0
+
+    async def _process_weapon_detections(
+        self,
+        detections: list[DetectionResult],
+        frame: bytes,
+    ) -> None:
+        """独立处理枪械/刀具命中，不受自动跟踪或驱离状态机短路影响。"""
+        now = asyncio.get_running_loop().time()
+        best_by_class: dict[str, DetectionResult] = {}
+        for detection in detections:
+            current = best_by_class.get(detection.label)
+            if current is None or detection.confidence > current.confidence:
+                best_by_class[detection.label] = detection
+
+        if best_by_class:
+            self._weapon_active_until = max(
+                self._weapon_active_until,
+                now + max(0.0, float(settings.WEAPON_ACTIVE_SECONDS)),
+            )
+
+        stable_hits = max(1, int(settings.WEAPON_STABLE_HITS))
+        cooldown_seconds = max(
+            0.0,
+            float(settings.WEAPON_ALERT_COOLDOWN_SECONDS),
+        )
+        for class_name in self._weapon_hits:
+            detection = best_by_class.get(class_name)
+            if detection is None:
+                self._weapon_hits[class_name] = 0
+                continue
+
+            self._weapon_hits[class_name] = min(
+                stable_hits,
+                self._weapon_hits[class_name] + 1,
+            )
+            if self._weapon_hits[class_name] < stable_hits:
+                continue
+            if now - self._weapon_last_alert_at[class_name] < cooldown_seconds:
+                continue
+
+            await self._raise_alert(detection, frame)
+            self._weapon_last_alert_at[class_name] = now
+            self._weapon_hits[class_name] = 0
+            self._weapon_alerts_count += 1
 
     async def _process_detection(
         self,
@@ -169,32 +216,27 @@ class AIWorkerProcessingMixin:
         skip = self._get_frame_skip()
         effective_fps = settings.AI_FPS / skip if skip > 0 else settings.AI_FPS
 
+        track_detections = [
+            TrackDetectionResult(
+                bbox=d.bbox or (0, 0, 1, 1),
+                confidence=d.confidence,
+                class_name=d.label,
+                track_id=getattr(d, "track_id", -1),
+                identity_id=getattr(d, "identity_id", None),
+                display_name=getattr(d, "display_name", None),
+                face_status=getattr(d, "face_status", None),
+                face_score=getattr(d, "face_score", None),
+            )
+            for d in detections
+            if d.bbox is not None
+        ]
+
         if guard_mission is not None and guard_mission.enabled:
-            track_detections = [
-                TrackDetectionResult(
-                    bbox=d.bbox or (0, 0, 1, 1),
-                    confidence=d.confidence,
-                    class_name=d.label,
-                    track_id=getattr(d, "track_id", -1),
-                )
-                for d in detections
-                if d.bbox is not None
-            ]
             guard_mission.update_effective_fps(effective_fps)
             await guard_mission.process_frame(track_detections, frame)
             return
 
-        if auto_track is not None and auto_track._enabled:
-            track_detections = [
-                TrackDetectionResult(
-                    bbox=d.bbox or (0, 0, 1, 1),
-                    confidence=d.confidence,
-                    class_name=d.label,
-                    track_id=getattr(d, "track_id", -1),
-                )
-                for d in detections
-                if d.bbox is not None
-            ]
+        if auto_track is not None:
             await auto_track.process_frame(
                 detections=track_detections,
                 frame=frame,
@@ -203,7 +245,8 @@ class AIWorkerProcessingMixin:
                 t_start=t_start,
                 t_detect_end=t_detect_end,
             )
-            return
+            if auto_track._enabled:
+                return
 
         # 多类别模型上线后，head/helmet 只作为前端叠框信息；旧告警路径仍只对 person 抓拍。
         alert_detections = [d for d in detections if d.label == "person"]
@@ -248,6 +291,8 @@ class AIWorkerProcessingMixin:
             "dog": "动物",
             "cat": "动物",
             "fire": "火焰",
+            "guns": "枪械",
+            "knife": "刀具",
         }
         label_zh_value = label_zh.get(detection.label, detection.label)
 
@@ -365,6 +410,10 @@ class AIWorkerProcessingMixin:
                         "conf": round(detection.confidence, 4),
                         "class_name": detection.label,
                         "track_id": getattr(detection, "track_id", -1),
+                        "identity_id": getattr(detection, "identity_id", None),
+                        "display_name": getattr(detection, "display_name", None),
+                        "face_status": getattr(detection, "face_status", None),
+                        "face_score": getattr(detection, "face_score", None),
                     }
                     for detection in detections
                     if detection.bbox is not None
@@ -457,6 +506,7 @@ class AIWorkerProcessingMixin:
                     "frame_age_ms": self._last_frame_age_ms,
                     "processing_ms": self._last_processing_ms,
                     "detect_ms": self._last_detect_ms,
+                    "weapon_ms": self._last_weapon_ms,
                     "pose_ms": self._last_pose_ms,
                     "postprocess_ms": self._last_postprocess_ms,
                     "end_to_end_ms": self._last_end_to_end_ms,
@@ -464,10 +514,22 @@ class AIWorkerProcessingMixin:
                     "pose_status": self._pose_status,
                     "pose_frames_processed": self._pose_frames_processed,
                     "pose_events_count": self._pose_events_count,
+                    "weapon_status": self._weapon_status,
+                    "weapon_active": (
+                        asyncio.get_running_loop().time()
+                        < self._weapon_active_until
+                    ),
+                    "weapon_frames_processed": self._weapon_frames_processed,
+                    "weapon_detections_count": self._weapon_detections_count,
+                    "weapon_alerts_count": self._weapon_alerts_count,
                     "parallel_inference_enabled": self._parallel_inference_enabled,
                     "inference_warmed_up": (
                         self._detector_warmed_up
                         and (self._pose_detector is None or self._pose_warmed_up)
+                        and (
+                            self._weapon_detector is None
+                            or self._weapon_warmed_up
+                        )
                     ),
                 },
             }

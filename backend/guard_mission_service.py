@@ -601,6 +601,10 @@ class GuardMissionService(GuardMissionAudioMixin):
                             "conf": round(d.confidence, 2),
                             "class_name": d.class_name,
                             "track_id": d.track_id,
+                            "identity_id": d.identity_id,
+                            "display_name": d.display_name,
+                            "face_status": d.face_status,
+                            "face_score": round(d.face_score, 4) if d.face_score is not None else None,
                         }
                         for d in detections
                     ],
@@ -609,7 +613,11 @@ class GuardMissionService(GuardMissionAudioMixin):
                             "bbox": list(d.bbox),
                             "conf": round(d.confidence, 2),
                             "class_name": d.class_name,
-                            "track_id": d.track_id
+                            "track_id": d.track_id,
+                            "identity_id": d.identity_id,
+                            "display_name": d.display_name,
+                            "face_status": d.face_status,
+                            "face_score": round(d.face_score, 4) if d.face_score is not None else None,
                         }
                         for d in persons
                     ],

@@ -114,6 +114,9 @@ AI_MODEL_PATH=models/helmet.engine
 AI_CONFIDENCE_THRESHOLD=0.4
 AI_TARGET_CLASSES=["person","head","helmet"]
 AI_DEVICE=auto                   # auto | cpu | cuda
+WEAPON_ENABLED=false
+WEAPON_MODEL_PATH=/home/jetson/Projects/Models/weapon_guns_knife_yolov8n_fp16.engine
+WEAPON_FRAME_SKIP=3              # 命中后自动切换为逐帧复核
 ```
 
 ### 运动控制

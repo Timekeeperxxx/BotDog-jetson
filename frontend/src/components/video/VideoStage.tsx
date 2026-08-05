@@ -7,8 +7,7 @@ import { OmniMonitorEntry } from './OmniMonitorEntry';
 import { OmniMonitorOverlay } from './OmniMonitorOverlay';
 import { VideoHud } from './VideoHud';
 import type { VideoStageProps } from './types';
-
-const AI_OVERLAY_STORAGE_KEY = 'botdog.show-ai-overlay.v2';
+import { AI_OVERLAY_STORAGE_KEY, getInitialAiOverlayVisibility } from './videoStagePreferences';
 
 export function VideoStage({
   videoRef,
@@ -43,8 +42,8 @@ export function VideoStage({
   const [isOmniOpen, setIsOmniOpen] = useState(false);
   const [isCameraControlOpen, setIsCameraControlOpen] = useState(false);
   const [showAiOverlay, setShowAiOverlay] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem(AI_OVERLAY_STORAGE_KEY) === 'true';
+    if (typeof window === 'undefined') return getInitialAiOverlayVisibility(null);
+    return getInitialAiOverlayVisibility(window.localStorage);
   });
 
   const toggleAiOverlay = () => {

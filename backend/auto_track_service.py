@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 
 from .auto_track_detection import AutoTrackDetectionMixin, _FallbackTrack
+from .lightweight_tracker import LightweightIouTracker
 from .auto_track_runtime import AutoTrackRuntimeMixin
 from .auto_track_snapshot import _save_snapshot_to_disk
 from .config import settings
@@ -133,6 +134,11 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         self._fallback_tracks: dict[int, _FallbackTrack] = {}
         self._fallback_iou_threshold: float = 0.15
         self._fallback_max_age_frames: int = max(15, lost_timeout_frames)
+        self._lightweight_tracker = LightweightIouTracker(
+            frame_width=frame_width,
+            iou_threshold=self._fallback_iou_threshold,
+            max_age_frames=self._fallback_max_age_frames,
+        )
 
         # ── 活跃目标（FOLLOWING / LOST 阶段） ──────────────────────────────
         self._active_target: Optional[ActiveTarget] = None
@@ -517,6 +523,10 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                         "conf": round(d.confidence, 2),
                         "class_name": d.class_name,
                         "track_id": d.track_id,
+                        "identity_id": d.identity_id,
+                        "display_name": d.display_name,
+                        "face_status": d.face_status,
+                        "face_score": round(d.face_score, 4) if d.face_score is not None else None,
                         "is_stranger": self._is_stranger(d.track_id) if d.class_name == "person" else None,
                         "safety_status": "no_helmet" if d.class_name == "person" and d.track_id in no_helmet_ids else None,
                     }
@@ -528,6 +538,10 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                         "conf": round(d.confidence, 2),
                         "class_name": d.class_name,
                         "track_id": d.track_id,
+                        "identity_id": d.identity_id,
+                        "display_name": d.display_name,
+                        "face_status": d.face_status,
+                        "face_score": round(d.face_score, 4) if d.face_score is not None else None,
                         "is_stranger": self._is_stranger(d.track_id),
                         "safety_status": "no_helmet" if d.track_id in no_helmet_ids else None,
                     }

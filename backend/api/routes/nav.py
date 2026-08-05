@@ -334,7 +334,8 @@ async def nav_stop_task(
             task_stop_result = bridge.publish_navigation_task_start(False)
         except RuntimeError:
             task_stop_result = None
-        nav_stop_result = bridge.publish_navigation_start(False)
+        nav_start_stop_result = bridge.publish_navigation_start(False)
+        ros_stop_result = bridge.publish_navigation_stop()
         cmd_vel_stop_result = stop_cmd_vel_script()
         _release_navigation_control()
     except FileNotFoundError as exc:
@@ -360,16 +361,18 @@ async def nav_stop_task(
         module="BACKEND",
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.task.stop "
-            f"目标={task_id} 结果=success topic={nav_stop_result['topic']} "
-            f"data={nav_stop_result['data']} cmd_vel_pid={cmd_vel_stop_result.get('pid')}"
+            f"目标={task_id} 结果=success topic={nav_start_stop_result['topic']} "
+            f"data={nav_start_stop_result['data']} ros_stop_topic={ros_stop_result['topic']} "
+            f"cmd_vel_pid={cmd_vel_stop_result.get('pid')}"
         ),
     )
     return {
         "success": True,
         "task_id": task_id,
-        "topic": nav_stop_result["topic"],
-        "data": nav_stop_result["data"],
-        "nav_start": nav_stop_result,
+        "topic": nav_start_stop_result["topic"],
+        "data": nav_start_stop_result["data"],
+        "nav_start": nav_start_stop_result,
+        "nav_stop": ros_stop_result,
         "task_start": task_stop_result,
         "cmd_vel_stop": cmd_vel_stop_result,
         "message": "已发布导航停止信号",
@@ -776,6 +779,11 @@ async def nav_go_to_waypoint(
         try:
             _ensure_localization_ready_for_navigation()
             _ensure_navigation_runtime_ready()
+            # A single-point GoTo is an explicit user intervention.  Cancel
+            # any delayed auto-track resume before publishing the replacement
+            # goal, otherwise that stale callback can later publish
+            # /nav_start=true and revive the previous inspection task.
+            _cancel_pending_auto_track_resume("nav_go_to")
             try:
                 stop_task_result = bridge.publish_navigation_task_start(False)
             except RuntimeError:
@@ -856,12 +864,23 @@ async def nav_emergency_stop(
                 except RuntimeError:
                     pass
                 bridge.publish_navigation_start(False)
+                ros_stop_result = bridge.publish_navigation_stop()
                 cmd_vel_zero_result = bridge.publish_zero_cmd_vel(publish_count=20, interval_s=0.02)
             except RuntimeError as exc:
+                ros_stop_result = {
+                    "success": False,
+                    "message": str(exc),
+                }
                 cmd_vel_zero_result = {
                     "success": False,
                     "message": str(exc),
                 }
+        else:
+            ros_stop_result = {
+                "success": False,
+                "message": "ROS2 导航桥未初始化",
+            }
+        _release_navigation_control()
         control_zero_sent = None
         if control_service is not None:
             control_zero_sent = await control_service.send_navigation_velocity(0.0, 0.0, 0.0)
@@ -892,5 +911,6 @@ async def nav_emergency_stop(
         },
         "cmd_vel_estop": cmd_vel_estop_result,
         "cmd_vel_zero": cmd_vel_zero_result,
+        "nav_stop": ros_stop_result,
         "navigation_processes_preserved": True,
     }

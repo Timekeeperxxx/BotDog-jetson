@@ -1,0 +1,52 @@
+{
+  "result": "passed",
+  "models": {
+    "yunet": {
+      "path": "/home/jetson/Projects/Models/face_detection_yunet_2023mar.onnx",
+      "sha256": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
+    },
+    "sface": {
+      "path": "/home/jetson/Projects/Models/face_recognition_sface_2021dec.onnx",
+      "sha256": "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+    }
+  },
+  "settings": {
+    "detect_threshold": 0.8,
+    "match_threshold": 0.45,
+    "frame_skip": 2,
+    "confirm_hits": 3,
+    "frame_timeout_ms": 15000.0
+  },
+  "known": {
+    "display_name": "测试人员A",
+    "matched": true,
+    "score": 1.0,
+    "detect_score": 0.831873,
+    "bbox": [
+      389,
+      279,
+      849,
+      873
+    ]
+  },
+  "unknown": {
+    "matched": false,
+    "score": 0.229934,
+    "detect_score": 0.857893,
+    "bbox": [
+      388,
+      303,
+      852,
+      904
+    ]
+  },
+  "after_template_delete_matched": false,
+  "performance_ms": {
+    "model_load": 151.95,
+    "iterations": 20,
+    "mean": 200.6,
+    "p50": 200.04,
+    "p95": 227.64,
+    "max": 237.17
+  }
+}

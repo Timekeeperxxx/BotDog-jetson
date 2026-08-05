@@ -108,7 +108,12 @@ export function useNavWebSocket() {
 
         const navEvent = message as NavWebSocketEvent
         if (navEvent.type === 'nav.robot_pose') {
-          queueRobotPose(navEvent.data as RobotPose)
+          if (navEvent.data) {
+            queueRobotPose(navEvent.data)
+          } else {
+            pendingRobotPoseRef.current = null
+            setState((prev) => ({ ...prev, robotPose: null, lastMessageAt: Date.now() }))
+          }
           return
         }
 

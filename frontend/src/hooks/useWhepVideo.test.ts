@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterWhepAnswerCandidates } from './useWhepVideo';
+import { filterWhepAnswerCandidates, getDecodedVideoFrameCount, withTimeout } from './useWhepVideo';
 
 const answer = [
   'v=0',
@@ -34,5 +34,38 @@ describe('filterWhepAnswerCandidates', () => {
   it('keeps all candidates for hostnames and unavailable addresses', () => {
     expect(filterWhepAnswerCandidates(answer, 'https://botdog.example.com/cam/whep')).toBe(answer);
     expect(filterWhepAnswerCandidates(answer, 'http://192.168.200.10:8889/cam/whep')).toBe(answer);
+  });
+});
+
+describe('getDecodedVideoFrameCount', () => {
+  it('uses actual playback-quality frames when WebRTC state is stale', () => {
+    const video = {
+      getVideoPlaybackQuality: () => ({ totalVideoFrames: 42 }),
+    } as HTMLVideoElement;
+
+    expect(getDecodedVideoFrameCount(video)).toBe(42);
+  });
+
+  it('falls back to Chromium legacy decoded frames', () => {
+    const video = {
+      webkitDecodedFrameCount: 17,
+    } as unknown as HTMLVideoElement;
+
+    expect(getDecodedVideoFrameCount(video)).toBe(17);
+  });
+
+  it('returns null when the browser exposes no frame counter', () => {
+    expect(getDecodedVideoFrameCount({} as HTMLVideoElement)).toBeNull();
+  });
+});
+
+describe('withTimeout', () => {
+  it('returns an operation that completes in time', async () => {
+    await expect(withTimeout(Promise.resolve('ok'), 50, 'timed out')).resolves.toBe('ok');
+  });
+
+  it('rejects an operation that is stuck', async () => {
+    await expect(withTimeout(new Promise(() => undefined), 5, 'negotiation timed out'))
+      .rejects.toThrow('negotiation timed out');
   });
 });

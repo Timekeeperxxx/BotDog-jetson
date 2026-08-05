@@ -706,7 +706,8 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
                 )
             time.sleep(interval)
 
-    def publish_emergency_stop(self) -> dict[str, Any]:
+    def publish_navigation_stop(self) -> dict[str, Any]:
+        """Latch the ROS navigation execution chain off via /nav_stop=true."""
         result = publish_bool_message(
             node=self._node,
             publisher=self._estop_publisher,
@@ -715,6 +716,13 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             value=True,
             not_ready_message="ROS2 急停发布器未就绪",
         )
+        self._navigation_control_expected = False
+        self._navigation_terminal_release_blocked_until = 0.0
+        return result
+
+    def publish_emergency_stop(self) -> dict[str, Any]:
+        """Backward-compatible emergency-stop publisher."""
+        result = self.publish_navigation_stop()
         result.pop("data", None)
         return result
 

@@ -38,6 +38,7 @@ class _FastDetector:
     def detect_many(self, frame: bytes) -> list[DetectionResult]:
         return []
 
+
 class _BarrierDetector:
     def __init__(self, barrier: threading.Barrier) -> None:
         self._barrier = barrier
@@ -76,8 +77,27 @@ class _FakeAutoTrack:
         self._candidates = candidates or {}
 
 
+class _FakeStderr:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    async def read(self, size: int) -> bytes:
+        del size
+        payload, self._payload = self._payload, b""
+        return payload
+
+
 class _FakeProcess:
-    def __init__(self, *, wait_never_finishes: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        wait_never_finishes: bool = False,
+        pid: int = 4242,
+        stderr: _FakeStderr | None = None,
+    ) -> None:
+        self.pid = pid
+        self.stdout = None
+        self.stderr = stderr
         self.returncode: int | None = None
         self.terminated = False
         self.killed = False
@@ -104,6 +124,8 @@ def _worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AIWorker:
     monkeypatch.setattr(workers_ai.settings, "AI_EXIT_ON_FRAME_TIMEOUT", False)
     monkeypatch.setattr(workers_ai.settings, "AI_MAX_FRAME_AGE_SECONDS", 0.35)
     monkeypatch.setattr(workers_ai.settings, "AI_EVENT_SEND_TIMEOUT_SECONDS", 0.03)
+    monkeypatch.setattr(workers_ai.settings, "AI_FFMPEG_MAX_RSS_MB", 512)
+    monkeypatch.setattr(workers_ai.settings, "AI_FFMPEG_MEMORY_CHECK_INTERVAL_SECONDS", 1.0)
     monkeypatch.setattr(workers_ai.settings, "AI_PATROL_SKIP", 2)
     monkeypatch.setattr(workers_ai.settings, "AI_AUTO_TRACK_SKIP", 1)
     monkeypatch.setattr(workers_ai.settings, "AI_SUSPECT_SKIP", 1)
@@ -367,6 +389,64 @@ async def test_ai_pose_skip_keeps_detector_running_every_frame(
     assert worker._last_pose_ms == 0.0
 
 
+def test_weapon_detector_runs_low_frequency_then_every_frame_when_active(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    worker._weapon_detector = _FastDetector()  # type: ignore[assignment]
+    worker._weapon_frame_skip = 3
+
+    assert worker._is_weapon_due(1, now=10.0) is False
+    assert worker._is_weapon_due(3, now=10.0) is True
+
+    worker._weapon_active_until = 20.0
+    assert worker._is_weapon_due(4, now=19.0) is True
+    assert worker._is_weapon_due(4, now=21.0) is False
+
+
+@pytest.mark.asyncio
+async def test_weapon_detection_requires_stable_hits_and_respects_cooldown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_ACTIVE_SECONDS", 3.0)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_STABLE_HITS", 2)
+    monkeypatch.setattr(
+        workers_ai.settings,
+        "WEAPON_ALERT_COOLDOWN_SECONDS",
+        10.0,
+    )
+    alerts: list[tuple[str, bytes]] = []
+
+    async def capture_alert(detection: DetectionResult, frame: bytes) -> None:
+        alerts.append((detection.label, frame))
+
+    monkeypatch.setattr(worker, "_raise_alert", capture_alert)
+    detection = DetectionResult(
+        label="knife",
+        confidence=0.81,
+        bbox=(10, 20, 30, 40),
+    )
+    before = asyncio.get_running_loop().time()
+
+    await worker._process_weapon_detections([detection], b"frame-1")
+    assert alerts == []
+    assert worker._weapon_active_until >= before + 3.0
+
+    await worker._process_weapon_detections([detection], b"frame-2")
+    assert alerts == [("knife", b"frame-2")]
+    assert worker._weapon_alerts_count == 1
+
+    await worker._process_weapon_detections([detection], b"frame-3")
+    await worker._process_weapon_detections([detection], b"frame-4")
+    assert alerts == [("knife", b"frame-2")]
+
+    await worker._process_weapon_detections([], b"frame-5")
+    assert worker._weapon_hits["knife"] == 0
+
+
 @pytest.mark.asyncio
 async def test_ai_ffmpeg_termination_kills_after_timeout(
     tmp_path: Path,
@@ -385,3 +465,93 @@ async def test_ai_ffmpeg_termination_kills_after_timeout(
     assert process.killed is True
     assert process.returncode == -9
     assert worker._ffmpeg_last_exit_reason == "mission_inactive"
+
+
+@pytest.mark.asyncio
+async def test_ai_ffmpeg_command_avoids_timestamp_dependent_fps_and_hwaccel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    process = _FakeProcess()
+    captured: dict[str, object] = {}
+
+    async def fake_create_subprocess_exec(*command: str, **kwargs: object) -> _FakeProcess:
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    assert await worker._start_ffmpeg() is process
+    command = captured["command"]
+    assert isinstance(command, tuple)
+    assert "-hwaccel" not in command
+    assert "-use_wallclock_as_timestamps" not in command
+    assert "-vsync" in command
+    assert command[command.index("-vsync") + 1] == "0"
+    video_filter = command[command.index("-vf") + 1]
+    assert video_filter == "scale=640:360:flags=fast_bilinear"
+    assert "fps=" not in video_filter
+
+
+def test_ai_ffmpeg_rss_reads_proc_status() -> None:
+    proc_root = Path("/tmp")
+    # 使用 tmp_path 的测试在下一个用例覆盖；这里直接验证缺失进程安全返回。
+    assert AIWorker._read_process_rss_bytes(999_999_999, proc_root) is None
+
+
+def test_ai_ffmpeg_rss_parses_kibibytes(tmp_path: Path) -> None:
+    process_dir = tmp_path / "4242"
+    process_dir.mkdir()
+    (process_dir / "status").write_text(
+        "Name:\tffmpeg\nVmPeak:\t200000 kB\nVmRSS:\t131072 kB\n",
+        encoding="utf-8",
+    )
+
+    assert AIWorker._read_process_rss_bytes(4242, tmp_path) == 128 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_ai_ffmpeg_memory_watchdog_restarts_oversized_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    worker._ffmpeg_memory_check_interval_s = 0.001
+    process = _FakeProcess(pid=4242)
+    stop_event = asyncio.Event()
+    monkeypatch.setattr(
+        worker,
+        "_read_process_rss_bytes",
+        lambda pid: 700 * 1024 * 1024,
+    )
+
+    await worker._stop_ffmpeg_on_memory_limit(  # type: ignore[arg-type]
+        process,
+        stop_event,
+    )
+
+    assert process.terminated is True
+    assert process.returncode == -15
+    assert worker._ffmpeg_peak_rss_bytes == 700 * 1024 * 1024
+    assert worker._ffmpeg_last_exit_reason.startswith("memory_limit_exceeded")
+
+
+@pytest.mark.asyncio
+async def test_ai_ffmpeg_output_backlog_forces_stream_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    process = _FakeProcess(
+        stderr=_FakeStderr(
+            b"[buffersink] 100 buffers queued in out_0_0, something may be wrong.\n"
+        )
+    )
+
+    await worker._drain_stderr(process)  # type: ignore[arg-type]
+
+    assert process.terminated is True
+    assert worker._ffmpeg_last_exit_reason == "output_buffer_backlog"
+    assert worker._ffmpeg_stream_unavailable is True
