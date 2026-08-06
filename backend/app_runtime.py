@@ -27,6 +27,7 @@ from .ws_broadcaster import WebSocketBroadcaster
 from .ws_event_broadcaster import EventBroadcaster
 from .ws_runtime_state import set_ws_runtime
 from .z2mini_gimbal import GcuProtocolError, get_z2mini_gimbal
+from .fence_detection_service import FenceDetectionService, set_fence_detection_service
 from .zone_service import ZoneService, set_zone_service
 
 telemetry_logger = get_logger("机器人遥测")
@@ -193,6 +194,12 @@ async def initialize_runtime_services(
             "degraded",
             f"默认画面设置失败：{exc}",
         )
+
+    # 复用同一导航位姿、Z2-Mini 和 AI 解码帧，不创建第二条视频链路。
+    _fence_detection_service = FenceDetectionService(gimbal_service=gimbal_service)
+    set_fence_detection_service(_fence_detection_service)
+    tasks.append(asyncio.create_task(_fence_detection_service.run(stop_event)))
+    startup_summary.set("自动围栏检测", "ready", "默认关闭，等待控制台开启")
 
     # 6) 重点区、自动跟踪、驱离
     _zone_service = ZoneService()

@@ -54,6 +54,9 @@ class DetectionResult:
     display_name: str | None = None
     face_status: str | None = None
     face_score: float | None = None
+    # 姿态模型的人体框只用于补齐叠层和跟踪输入，不能单独作为“陌生人”
+    # 被动告警的证据。否则姿态模型对背景的低置信度误检会绕过主检测器阈值。
+    is_pose_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -734,7 +737,14 @@ class AIWorker(AIWorkerProcessingMixin):
             )
         try:
             await asyncio.wait_for(
-                self._detect_and_process_frame(frame, frame_index),
+                self._detect_and_process_frame(
+                    frame,
+                    frame_index,
+                    frame_read_at=frame_read_at,
+                ),
+                # read_at 与围栏控制循环的位姿/云台样本同为 monotonic 时钟，
+                # 用于选择图像对应时刻的样本，避免运动中拿“现在”投影旧帧。
+                # 关键字传参也保持测试替身易于兼容。
                 timeout=self._frame_process_timeout_s,
             )
         except asyncio.TimeoutError as exc:
@@ -766,8 +776,14 @@ class AIWorker(AIWorkerProcessingMixin):
             self._last_frame_timeout_reason = None
             await self._maybe_broadcast_status()
 
-    async def _detect_and_process_frame(self, frame: bytes, frame_index: int) -> None:
+    async def _detect_and_process_frame(
+        self,
+        frame: bytes,
+        frame_index: int,
+        frame_read_at: float | None = None,
+    ) -> None:
         pose_observations_for_overlay: list[PoseObservation] | None = None
+        fresh_pose_observations: list[PoseObservation] = []
         pose_due = (
             self._pose_detector is not None
             and self._pose_event_engine is not None
@@ -853,6 +869,7 @@ class AIWorker(AIWorkerProcessingMixin):
                 self._pose_events_count += len(pose_events)
                 await self._process_pose_events(pose_events, frame)
                 pose_observations_for_overlay = observations
+                fresh_pose_observations = observations
             else:
                 self._last_pose_ms = 0.0
 
@@ -862,6 +879,20 @@ class AIWorker(AIWorkerProcessingMixin):
             )
             persons = [item for item in detections if item.label == "person"]
             self._lightweight_tracker.update(persons, frame_index)
+
+            from .fence_detection_service import get_fence_detection_service
+
+            fence_detection = get_fence_detection_service()
+            fence_enabled = fence_detection is not None and fence_detection.enabled
+            if fence_detection is not None and fence_enabled:
+                fence_events = fence_detection.process_frame(
+                    detections=detections,
+                    poses=fresh_pose_observations,
+                    frame_monotonic=(
+                        frame_read_at if frame_read_at is not None else time.monotonic()
+                    ),
+                )
+                await self._process_fence_events(fence_events, frame)
 
             from .services_face_identities import get_face_identity_service
 
@@ -881,7 +912,15 @@ class AIWorker(AIWorkerProcessingMixin):
                     else self._latest_pose_observations,
                     detections,
                 )
-            await self._process_detection(detections, frame, t_start, t_detect_end)
+            # 围栏模式只拥有云台，不允许原有 AutoTrack/Guard 分支同时下发机体
+            # 运动或争抢云台；原有非运动检测告警仍照常工作。
+            await self._process_detection(
+                detections,
+                frame,
+                t_start,
+                t_detect_end,
+                allow_motion_services=not fence_enabled,
+            )
 
             t_done = time.monotonic()
             self._last_postprocess_ms = round((t_done - t_detect_end) * 1000, 1)
@@ -926,6 +965,7 @@ class AIWorker(AIWorkerProcessingMixin):
                     confidence=observation.confidence,
                     bbox=observation.bbox,
                     track_id=observation.track_id,
+                    is_pose_fallback=True,
                 )
                 for observation in observations
             ],

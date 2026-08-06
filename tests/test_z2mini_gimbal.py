@@ -117,6 +117,35 @@ async def test_jog_speed_limit_is_checked_before_network_access() -> None:
 
 
 @pytest.mark.asyncio
+async def test_yaw_jog_sends_zero_roll_and_pitch_velocity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gimbal = Z2MiniGimbal(host="127.0.0.1")
+    captured: list[tuple[int, tuple[float, float, float] | None]] = []
+    expected = parse_status(_status_packet())
+
+    def command_and_status(
+        command: int,
+        parameters: bytes = b"",
+        *,
+        control_values: tuple[float, float, float] | None = None,
+    ):
+        del parameters
+        captured.append((command, control_values))
+        return expected
+
+    monkeypatch.setattr(gimbal, "_command_and_status_sync", command_and_status)
+
+    status = await gimbal.jog(pitch_velocity_dps=0.0, yaw_velocity_dps=8.0)
+
+    assert status is expected
+    assert captured == [(0x12, (0.0, 0.0, 8.0))]
+
+    await gimbal.jog(pitch_velocity_dps=0.0, yaw_velocity_dps=0.0)
+    assert captured[-1] == (0x12, (0.0, 0.0, 0.0))
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("mode", "expected_code"),
     [

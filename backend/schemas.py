@@ -371,6 +371,33 @@ class DeleteWaypointResponse(BaseModel):
     success: bool
 
 
+class NavFencePointDTO(BaseModel):
+    x: float
+    y: float
+
+
+class NavFenceCreateRequest(BaseModel):
+    start: NavFencePointDTO
+    end: NavFencePointDTO
+    enabled: bool = True
+
+
+class NavFenceEnabledRequest(BaseModel):
+    enabled: bool
+
+
+class NavFenceDTO(BaseModel):
+    id: str
+    scene_id: str
+    start: NavFencePointDTO
+    end: NavFencePointDTO
+    enabled: bool
+
+
+class NavFenceListResponse(BaseModel):
+    items: list[NavFenceDTO]
+
+
 class LocalizationPoseSetRequest(BaseModel):
     map_id: str = Field(..., min_length=1)
     x: float

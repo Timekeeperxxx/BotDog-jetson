@@ -12,7 +12,9 @@ import {
   UserSearch,
 } from 'lucide-react'
 import type { PointCloudQualityMode, WallColorMode } from '../../types/pcdMap'
+import type { FenceDetectionStatus } from '../../types/fenceDetection'
 import { formatSpeed } from '../../utils/speedControl'
+import { NavFenceControls } from '../../components/pcd/NavFenceControls'
 import type { MappingSessionInfo } from './navPageUtils'
 
 export type PcdLayerVisibility = {
@@ -23,6 +25,11 @@ export type PcdLayerVisibility = {
 
 type NavToolStripProps = {
   canOperate: boolean
+  fenceMode: boolean
+  fenceAddAvailable: boolean
+  fenceDetectionStatus: FenceDetectionStatus | null
+  fenceDetectionLoading: boolean
+  fenceDetectionError: string | null
   currentCmd: string | null
   followRobot: boolean
   isControlling: boolean
@@ -52,6 +59,8 @@ type NavToolStripProps = {
   webglSupported: boolean
   wallColorMode: WallColorMode
   onCheckRadar: () => void
+  onToggleFenceMode: () => void
+  onSetFenceDetectionEnabled: (enabled: boolean) => void
   onToggleRosbag: () => void
   onStopSelectedTask: () => void
   onToggleFollowRobot: () => void
@@ -67,6 +76,11 @@ type NavToolStripProps = {
 
 export function NavToolStrip({
   canOperate,
+  fenceMode,
+  fenceAddAvailable,
+  fenceDetectionStatus,
+  fenceDetectionLoading,
+  fenceDetectionError,
   currentCmd,
   followRobot,
   isControlling,
@@ -96,6 +110,8 @@ export function NavToolStrip({
   webglSupported,
   wallColorMode,
   onCheckRadar,
+  onToggleFenceMode,
+  onSetFenceDetectionEnabled,
   onToggleRosbag,
   onStopSelectedTask,
   onToggleFollowRobot,
@@ -122,6 +138,16 @@ export function NavToolStrip({
   return (
     <>
       <section className="pcd-tool-strip">
+        <NavFenceControls
+          adding={fenceMode}
+          canAdd={fenceAddAvailable}
+          canOperate={canOperate}
+          status={fenceDetectionStatus}
+          loading={fenceDetectionLoading}
+          error={fenceDetectionError}
+          onToggleAdd={onToggleFenceMode}
+          onSetDetectionEnabled={onSetFenceDetectionEnabled}
+        />
         <button
           className={`pcd-tool-button ${followRobot ? 'is-active' : ''}`}
           onClick={onToggleFollowRobot}

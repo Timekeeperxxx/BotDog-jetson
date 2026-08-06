@@ -206,6 +206,25 @@ export type NavWaypointCreatePayload = {
   frame_id: 'map'
 }
 
+export type NavFencePoint = {
+  x: number
+  y: number
+}
+
+export type NavFence = {
+  id: string
+  scene_id: string
+  start: NavFencePoint
+  end: NavFencePoint
+  enabled: boolean
+}
+
+export type NavFenceCreatePayload = {
+  start: NavFencePoint
+  end: NavFencePoint
+  enabled?: boolean
+}
+
 export type LocalizationPosePayload = {
   map_id: string
   x: number

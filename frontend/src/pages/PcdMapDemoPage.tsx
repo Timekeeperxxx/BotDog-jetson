@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createWaypoint,
+  createFence,
+  deleteFence,
   deleteWaypoint,
   goToWaypoint,
   listWaypoints,
+  listFences,
+  setFenceEnabled,
   deletePcdScene,
   checkRadarHealth,
   getNavAutoTrackMode,
@@ -19,6 +23,7 @@ import {
 import { detectWebGLSupport } from '../components/pcd/webglSupport'
 import { useRobotControl } from '../hooks/useRobotControl'
 import { useKeyboardRobotControl } from '../hooks/useKeyboardRobotControl'
+import { useFenceDetection } from '../hooks/useFenceDetection'
 import { useBotDogWebSocket } from '../hooks/useBotDogWebSocket'
 import { useNavWebSocket } from '../hooks/useNavWebSocket'
 import { useMappingCloudWebSocket } from '../hooks/useMappingCloudWebSocket'
@@ -26,6 +31,7 @@ import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore'
 import type {
   LocalizationPosePayload,
   NavWaypoint,
+  NavFence,
   PcdSceneItem,
   PointCloudQualityMode,
   RosbagRecordingResponse,
@@ -64,6 +70,7 @@ type OperationNotice = {
 export function PcdMapDemoPage() {
   useAuthState()
   const canOperate = hasAuthSession() && hasRole('operator')
+  const fenceDetection = useFenceDetection()
   const [pcdLayerPanelOpen, setPcdLayerPanelOpen] = useState(false)
   const [pcdLayerVisibility, setPcdLayerVisibility] = useState<PcdLayerVisibility>({
     map: true,
@@ -73,7 +80,11 @@ export function PcdMapDemoPage() {
   const [wallColorMode, setWallColorMode] = useState<WallColorMode>('intensity')
   const [pointCloudQualityMode, setPointCloudQualityMode] = useState<PointCloudQualityMode>('auto')
   const [waypoints, setWaypoints] = useState<NavWaypoint[]>([])
+  const [fences, setFences] = useState<NavFence[]>([])
+  const [fencesVisible, setFencesVisible] = useState(true)
   const [addMode, setAddMode] = useState(false)
+  const [fenceMode, setFenceMode] = useState(false)
+  const fenceLoadRequestRef = useRef(0)
   const [activeDrawer, setActiveDrawer] = useState<'task' | 'map' | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
   const [followRobot, setFollowRobot] = useState(false)
@@ -110,6 +121,9 @@ export function PcdMapDemoPage() {
   const waypointModeNotice = addMode
     ? { title: '3D ground 标点', message: '在 3D 蓝色 ground.pcd 上按住并拖动确定朝向。' }
     : null
+  const fenceModeNotice = fenceMode
+    ? { title: '两点式围栏标记', message: '在 3D 地面依次点击围栏起点和终点；第二次点击后自动保存。' }
+    : null
   const poseModeNotice = toolMode === 'pose'
     ? { title: '重定位模式', message: '在 3D 蓝色 ground.pcd 上按住当前位置，拖动确定朝向。' }
     : null
@@ -117,14 +131,14 @@ export function PcdMapDemoPage() {
     ? { title: '定位状态', message: summarizeLocalizationStatus(localizationStatus.status, localizationStatus.message) }
     : null
   const navigationNotice = getNavigationStatusNotice(navigationStatus)
-  const stateNotice = relocationNotice ?? waypointModeNotice ?? poseModeNotice ?? localizationNotice ?? navigationNotice
+  const stateNotice = relocationNotice ?? fenceModeNotice ?? waypointModeNotice ?? poseModeNotice ?? localizationNotice ?? navigationNotice
   const stateNoticeKind = relocationPrompt.status !== 'idle'
     ? relocationPrompt.status === 'nav-waiting'
       ? 'waiting'
       : relocationPrompt.status === 'nav-ready'
         ? 'ready'
         : relocationPrompt.status
-    : addMode || toolMode === 'pose'
+    : addMode || fenceMode || toolMode === 'pose'
       ? 'ready'
       : localizationNotice
         ? 'waiting'
@@ -238,6 +252,8 @@ export function PcdMapDemoPage() {
 
   const handleSceneChanging = useCallback(() => {
     setAddMode(false)
+    setFenceMode(false)
+    setFences([])
     setInitialState({
       robotPose: null,
       globalPath: null,
@@ -273,6 +289,23 @@ export function PcdMapDemoPage() {
     onLog: addLog,
     onSceneChanging: handleSceneChanging,
   })
+
+  useEffect(() => {
+    const requestId = ++fenceLoadRequestRef.current
+    if (!selectedSceneId) {
+      setFences([])
+      return
+    }
+    void listFences(selectedSceneId)
+      .then((result) => {
+        if (requestId === fenceLoadRequestRef.current) setFences(result.items)
+      })
+      .catch((error: unknown) => {
+        if (requestId !== fenceLoadRequestRef.current) return
+        setFences([])
+        addLog(error instanceof Error ? error.message : '读取场景围栏失败', 'error')
+      })
+  }, [addLog, selectedSceneId])
   const sceneDisplayPointCount = useMemo(() => {
     if (!tileManifest) return null
     const tier = pointCloudQualityMode === 'performance'
@@ -425,6 +458,51 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, selectedSceneId])
 
+  const handleAddFence = useCallback(async (
+    start: { x: number; y: number },
+    end: { x: number; y: number },
+  ) => {
+    if (!selectedSceneId || !selectedSceneNavigable) {
+      addLog('当前场景缺少 ground.pcd，不能添加围栏', 'error')
+      return
+    }
+    try {
+      const created = await createFence(selectedSceneId, { start, end, enabled: true })
+      const next = await listFences(selectedSceneId)
+      setFences(next.items)
+      setFenceMode(false)
+      addLog(
+        `已保存围栏 ${created.id}: (${created.start.x.toFixed(3)}, ${created.start.y.toFixed(3)}) → (${created.end.x.toFixed(3)}, ${created.end.y.toFixed(3)})`,
+      )
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '保存围栏失败', 'error')
+    }
+  }, [addLog, selectedSceneId, selectedSceneNavigable])
+
+  const handleDeleteFence = useCallback(async (fenceId: string) => {
+    if (!selectedSceneId) return
+    try {
+      await deleteFence(selectedSceneId, fenceId)
+      const next = await listFences(selectedSceneId)
+      setFences(next.items)
+      addLog(`已删除围栏 ${fenceId}`)
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '删除围栏失败', 'error')
+    }
+  }, [addLog, selectedSceneId])
+
+  const handleToggleFenceEnabled = useCallback(async (fenceId: string, enabled: boolean) => {
+    if (!selectedSceneId) return
+    try {
+      await setFenceEnabled(selectedSceneId, fenceId, enabled)
+      const next = await listFences(selectedSceneId)
+      setFences(next.items)
+      addLog(`已${enabled ? '启用' : '禁用'}围栏 ${fenceId}`)
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '更新围栏状态失败', 'error')
+    }
+  }, [addLog, selectedSceneId])
+
   // 中间层：拦截 go-to，先弹确认框
   const requestGoToWaypoint = useCallback((waypointId: string) => {
     if (!canOperate || goToInFlightRef.current) return
@@ -537,6 +615,7 @@ export function PcdMapDemoPage() {
     }
 
     setAddMode(false)
+    setFenceMode(false)
     setToolMode('none')
     setRestartLocalizationSending(true)
     setRelocationPrompt({
@@ -588,7 +667,8 @@ export function PcdMapDemoPage() {
       const result = await deletePcdScene(sceneDeleteConfirm.id)
       const removedTasks = result.cleanup?.tasks?.removed_count ?? 0
       const removedWaypoints = result.cleanup?.waypoints?.removed_items ?? 0
-      addLog(`已删除场景文件夹 ${sceneDeleteConfirm.id}，清理导航点 ${removedWaypoints} 个，任务 ${removedTasks} 个`)
+      const removedFences = result.cleanup?.fences?.removed_items ?? 0
+      addLog(`已删除场景文件夹 ${sceneDeleteConfirm.id}，清理导航点 ${removedWaypoints} 个、围栏 ${removedFences} 条，任务 ${removedTasks} 个`)
       setSceneDeleteConfirm(null)
       await refreshScenes()
     } catch (error) {
@@ -601,6 +681,7 @@ export function PcdMapDemoPage() {
       const resolved = current === nextMode ? 'none' : nextMode
       if (resolved !== 'none') {
         setAddMode(false)
+        setFenceMode(false)
       }
       addLog(
         resolved === 'none'
@@ -635,15 +716,28 @@ export function PcdMapDemoPage() {
       const nextValue = !value
       if (nextValue) {
         setToolMode('none')
+        setFenceMode(false)
       }
       addLog(nextValue ? '已切换到添加导航点模式' : '已退出标点')
       return nextValue
     })
   }, [addLog])
+  const handleToggleFenceMode = useCallback(() => {
+    setFenceMode((value) => {
+      const nextValue = !value
+      if (nextValue) {
+        setAddMode(false)
+        setToolMode('none')
+        setFencesVisible(true)
+      }
+      addLog(nextValue ? '已进入围栏标记模式，请依次点击起点和终点' : '已退出围栏标记')
+      return nextValue
+    })
+  }, [addLog])
   const openTaskDrawer = useCallback(() => setActiveDrawer('task'), [])
 
-  const pointCloudMode: 'none' | 'waypoint' | 'pose' =
-    addMode ? 'waypoint' : (toolMode === 'pose' ? 'pose' : 'none')
+  const pointCloudMode: 'none' | 'waypoint' | 'pose' | 'fence' =
+    fenceMode ? 'fence' : addMode ? 'waypoint' : (toolMode === 'pose' ? 'pose' : 'none')
 
   const {
     allLayers,
@@ -804,8 +898,11 @@ export function PcdMapDemoPage() {
                 footprint_fill: pcdLayerVisibility.footprint,
               }}
               waypoints={waypoints}
+              fences={fences}
+              fencesVisible={fencesVisible}
               webglSupported={webglSupported}
               onAddWaypoint={handleAddWaypoint}
+              onAddFence={handleAddFence}
               onGroundPointerChange={setMouseMapPosition}
               onSetPose={handleSetPose}
             />
@@ -863,6 +960,11 @@ export function PcdMapDemoPage() {
 
           <NavToolStrip
             canOperate={canOperate}
+            fenceMode={fenceMode}
+            fenceAddAvailable={Boolean((preview || tileManifest) && selectedSceneNavigable && webglSupported)}
+            fenceDetectionStatus={fenceDetection.status}
+            fenceDetectionLoading={fenceDetection.loading}
+            fenceDetectionError={fenceDetection.error}
             currentCmd={currentCmd}
             followRobot={followRobot}
             isControlling={isControlling}
@@ -892,6 +994,8 @@ export function PcdMapDemoPage() {
             webglSupported={webglSupported}
             wallColorMode={wallColorMode}
             onCheckRadar={() => void handleCheckRadar()}
+            onToggleFenceMode={handleToggleFenceMode}
+            onSetFenceDetectionEnabled={(enabled) => void fenceDetection.setEnabled(enabled)}
             onToggleRosbag={() => void handleToggleRosbag()}
             onStopSelectedTask={handleStopSelectedTask}
             onToggleFollowRobot={handleToggleFollowRobot}
@@ -919,12 +1023,17 @@ export function PcdMapDemoPage() {
           sceneNavigable={selectedSceneNavigable}
           viewKey={pointCloudViewKey}
           waypoints={waypoints}
+          fences={fences}
+          fencesVisible={fencesVisible}
           onAddWaypoint={handleAddWaypoint}
           onDeleteWaypoint={handleDeleteWaypoint}
           onEmergencyStop={handleEmergencyStop}
           onGoToWaypoint={requestGoToWaypoint}
           onMouseMapPositionChange={setMouseMapPosition}
           onSetPose={handleSetPose}
+          onToggleFencesVisible={() => setFencesVisible((value) => !value)}
+          onToggleFenceEnabled={(fenceId, enabled) => void handleToggleFenceEnabled(fenceId, enabled)}
+          onDeleteFence={(fenceId) => void handleDeleteFence(fenceId)}
         />
 
         <NavMessageCenter

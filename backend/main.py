@@ -72,6 +72,7 @@ IMPORTANT_ACCESS_PREFIXES = (
     "/api/v1/audio/play",
     "/api/v1/audio/stop",
     "/api/v1/auto-track",
+    "/api/v1/fence-detection",
 )
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
@@ -509,6 +510,7 @@ def register_routes(app: FastAPI) -> None:
     from .api.routes import recording as _recording_routes
     from .api.routes import gimbal as _gimbal_routes
     from .api.routes import face_identities as _face_identity_routes
+    from .api.routes import fence_detection as _fence_detection_routes
     app.include_router(_auth_routes.router)
     app.include_router(_users_routes.router)
     app.include_router(_nav_routes.router)
@@ -532,6 +534,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(_recording_routes.router)
     app.include_router(_gimbal_routes.router)
     app.include_router(_face_identity_routes.router)
+    app.include_router(_fence_detection_routes.router)
     app.include_router(_websocket_routes.router)
 
 

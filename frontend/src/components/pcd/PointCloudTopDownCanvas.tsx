@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { LocateFixed, ZoomIn, ZoomOut } from 'lucide-react'
-import type { NavWaypoint, PcdBounds, PcdSceneLayerRole, PointCloudPoints } from '../../types/pcdMap'
+import type { NavFence, NavWaypoint, PcdBounds, PcdSceneLayerRole, PointCloudPoints } from '../../types/pcdMap'
 import type { GlobalPath, RobotPose } from '../../types/navState'
 import { getPointCount, getPointXYZ } from '../../utils/pointCloudPoints'
 import { canvasToMap, getTopDownScale, mapToCanvas } from '../../utils/topDownCoordinate'
@@ -22,6 +22,8 @@ type Props = {
   viewKey?: string
   bounds: PcdBounds | null
   waypoints: NavWaypoint[]
+  fences: NavFence[]
+  fencesVisible: boolean
   robotPose: RobotPose | null
   globalPath: GlobalPath | null
   executionPath: GlobalPath | null
@@ -117,6 +119,8 @@ export function PointCloudTopDownCanvas({
   viewKey = 'default',
   bounds,
   waypoints,
+  fences,
+  fencesVisible,
   robotPose,
   globalPath,
   executionPath,
@@ -370,6 +374,36 @@ export function PointCloudTopDownCanvas({
       drawPath(globalPath, '#facc15', 2, [8, 5], 1.5)
       drawPath(executionPath, '#22d3ee', 3, [], 2.1)
 
+      if (fencesVisible) {
+        fences.forEach((fence, index) => {
+          const startBase = mapToCanvas(fence.start.x, fence.start.y, bounds, width, height, PADDING)
+          const endBase = mapToCanvas(fence.end.x, fence.end.y, bounds, width, height, PADDING)
+          const start = applyView(startBase.x, startBase.y, width, height)
+          const end = applyView(endBase.x, endBase.y, width, height)
+          ctx.save()
+          ctx.strokeStyle = fence.enabled ? '#ef4444' : 'rgba(239,68,68,0.35)'
+          ctx.fillStyle = ctx.strokeStyle
+          ctx.lineWidth = 3
+          ctx.setLineDash(fence.enabled ? [] : [6, 5])
+          ctx.beginPath()
+          ctx.moveTo(start.x, start.y)
+          ctx.lineTo(end.x, end.y)
+          ctx.stroke()
+          ctx.setLineDash([])
+          for (const point of [start, end]) {
+            ctx.beginPath()
+            ctx.arc(point.x, point.y, 4, 0, Math.PI * 2)
+            ctx.fill()
+          }
+          drawTextBadge(ctx, `围栏 ${index + 1}`, (start.x + end.x) / 2, (start.y + end.y) / 2 - 13, {
+            font: 'bold 11px system-ui',
+            fill: '#fecaca',
+            background: 'rgba(7, 16, 20, 0.90)',
+          })
+          ctx.restore()
+        })
+      }
+
       waypoints.forEach((waypoint, index) => {
         const basePos = mapToCanvas(waypoint.x, waypoint.y, bounds, width, height, PADDING)
         const pos = applyView(basePos.x, basePos.y, width, height)
@@ -529,6 +563,8 @@ export function PointCloudTopDownCanvas({
     totalPointCount,
     view,
     waypoints,
+    fences,
+    fencesVisible,
   ])
 
   const readMapPosition = (event: MouseEvent<HTMLCanvasElement>) => {

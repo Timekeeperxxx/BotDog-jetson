@@ -263,10 +263,12 @@ def delete_pcd_scene(scene_id: str) -> dict[str, Any]:
     cleanup: dict[str, Any] = {}
 
     from .services_nav_localization import delete_scene_localization_data
+    from .services_nav_fences import delete_scene_fence_data
     from .services_nav_tasks import delete_nav_tasks_for_scene
     from .services_nav_waypoints import delete_scene_waypoint_data
 
     cleanup["waypoints"] = delete_scene_waypoint_data(scene_id)
+    cleanup["fences"] = delete_scene_fence_data(scene_id)
     cleanup["localization"] = delete_scene_localization_data(scene_id)
     cleanup["tasks"] = delete_nav_tasks_for_scene(scene_id)
     cleanup["runtime"] = _delete_scene_runtime_json(scene_id)

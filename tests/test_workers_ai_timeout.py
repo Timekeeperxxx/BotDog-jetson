@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from backend import workers_ai
+from backend.pose_detection import PoseObservation, Posture
 from backend.workers_ai import AIWorker, AIWorkerFrameTimeout, DetectionResult, _AIFrame
 
 
@@ -403,6 +404,68 @@ def test_weapon_detector_runs_low_frequency_then_every_frame_when_active(
     worker._weapon_active_until = 20.0
     assert worker._is_weapon_due(4, now=19.0) is True
     assert worker._is_weapon_due(4, now=21.0) is False
+
+
+def test_pose_person_fallback_is_marked_as_non_alert_evidence() -> None:
+    observation = PoseObservation(
+        track_id=9,
+        bbox=(100, 40, 220, 340),
+        confidence=0.36,
+        keypoints=(),
+        posture=Posture.UNKNOWN,
+        posture_confidence=0.0,
+        inside_zone=False,
+        dwell_seconds=0.0,
+    )
+
+    detections = AIWorker._merge_pose_person_fallback([], [observation])
+
+    assert len(detections) == 1
+    assert detections[0].label == "person"
+    assert detections[0].is_pose_fallback is True
+
+
+@pytest.mark.asyncio
+async def test_pose_person_fallback_does_not_raise_legacy_stranger_alert(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+
+    import backend.auto_track_service as auto_track_service
+    import backend.guard_mission_service as guard_mission_service
+
+    monkeypatch.setattr(auto_track_service, "get_auto_track_service", lambda: None)
+    monkeypatch.setattr(guard_mission_service, "get_guard_mission_service", lambda: None)
+    alerts: list[DetectionResult] = []
+
+    async def capture_alert(detection: DetectionResult, frame: bytes) -> None:
+        del frame
+        alerts.append(detection)
+
+    monkeypatch.setattr(worker, "_raise_alert", capture_alert)
+    fallback = DetectionResult(
+        label="person",
+        confidence=0.36,
+        bbox=(100, 40, 220, 340),
+        is_pose_fallback=True,
+    )
+
+    for _ in range(worker._stable_hits + 2):
+        await worker._process_detection([fallback], b"empty-background")
+
+    assert alerts == []
+    assert worker._hits == 0
+
+    primary = DetectionResult(
+        label="person",
+        confidence=0.91,
+        bbox=(100, 40, 220, 340),
+    )
+    for _ in range(worker._stable_hits):
+        await worker._process_detection([primary], b"real-person")
+
+    assert alerts == [primary]
 
 
 @pytest.mark.asyncio

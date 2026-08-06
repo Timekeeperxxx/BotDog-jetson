@@ -1,8 +1,9 @@
 import { Battery, Crosshair, Loader2 } from 'lucide-react'
 import { NavWaypointPanel } from '../../components/pcd/NavWaypointPanel'
+import { NavFencePanel } from '../../components/pcd/NavFencePanel'
 import { PointCloudTopDownCanvas } from '../../components/pcd/PointCloudTopDownCanvas'
 import type { GlobalPath, RobotPose } from '../../types/navState'
-import type { NavWaypoint, PcdBounds, PcdSceneLayerRole, PointCloudPoints } from '../../types/pcdMap'
+import type { NavFence, NavWaypoint, PcdBounds, PcdSceneLayerRole, PointCloudPoints } from '../../types/pcdMap'
 
 type NavPageHeaderProps = {
   addMode: boolean
@@ -96,12 +97,17 @@ type NavRightRailProps = {
   sceneNavigable: boolean
   viewKey: string
   waypoints: NavWaypoint[]
+  fences: NavFence[]
+  fencesVisible: boolean
   onAddWaypoint: (pos: { x: number; y: number; z: number; yaw: number }) => void
   onDeleteWaypoint: (waypointId: string) => void
   onEmergencyStop: () => void
   onGoToWaypoint: (waypointId: string) => void
   onMouseMapPositionChange: (pos: { x: number; y: number } | null) => void
   onSetPose: (pos: { x: number; y: number; z: number; yaw: number }) => void
+  onToggleFencesVisible: () => void
+  onToggleFenceEnabled: (fenceId: string, enabled: boolean) => void
+  onDeleteFence: (fenceId: string) => void
 }
 
 export function NavRightRail({
@@ -117,12 +123,17 @@ export function NavRightRail({
   sceneNavigable,
   viewKey,
   waypoints,
+  fences,
+  fencesVisible,
   onAddWaypoint,
   onDeleteWaypoint,
   onEmergencyStop,
   onGoToWaypoint,
   onMouseMapPositionChange,
   onSetPose,
+  onToggleFencesVisible,
+  onToggleFenceEnabled,
+  onDeleteFence,
 }: NavRightRailProps) {
   return (
     <aside className="pcd-right-rail">
@@ -131,6 +142,8 @@ export function NavRightRail({
         viewKey={viewKey}
         bounds={bounds}
         waypoints={waypoints}
+        fences={fences}
+        fencesVisible={fencesVisible}
         robotPose={robotPose}
         globalPath={globalPath}
         executionPath={executionPath}
@@ -147,6 +160,14 @@ export function NavRightRail({
         sceneNavigable={sceneNavigable}
         onGoTo={onGoToWaypoint}
         onDelete={onDeleteWaypoint}
+      />
+      <NavFencePanel
+        fences={fences}
+        visible={fencesVisible}
+        canOperate={canOperate}
+        onToggleVisible={onToggleFencesVisible}
+        onToggleEnabled={onToggleFenceEnabled}
+        onDelete={onDeleteFence}
       />
       <section className="pcd-rail-footer">
         <button

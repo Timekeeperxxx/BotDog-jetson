@@ -5,6 +5,8 @@ import type {
   LocalizationPosePayload,
   NavWaypoint,
   NavWaypointCreatePayload,
+  NavFence,
+  NavFenceCreatePayload,
   MappingControlResponse,
   RosbagRecordingResponse,
   RadarHealthResponse,
@@ -220,6 +222,7 @@ export function deletePcdScene(sceneId: string): Promise<{
   deleted_path: string
   cleanup?: {
     waypoints?: { removed_items?: number; deleted_files?: string[]; updated_files?: string[] }
+    fences?: { removed_items?: number; deleted_files?: string[] }
     localization?: { deleted_files?: string[] }
     tasks?: { deleted_task_ids?: string[]; removed_count?: number }
     runtime?: { deleted_files?: string[] }
@@ -330,6 +333,51 @@ export function deleteWaypoint(
     getApiUrl(
       `/api/v1/nav/pcd-maps/${encodeURIComponent(mapId)}/waypoints/${encodeURIComponent(waypointId)}`,
     ),
+    { method: 'DELETE' },
+  )
+}
+
+export function listFences(mapId: string): Promise<{ items: NavFence[] }> {
+  return requestJson(
+    getApiUrl(`/api/v1/nav/pcd-maps/${encodeURIComponent(mapId)}/fences`),
+  )
+}
+
+export function createFence(
+  mapId: string,
+  payload: NavFenceCreatePayload,
+): Promise<NavFence> {
+  return requestJson(
+    getApiUrl(`/api/v1/nav/pcd-maps/${encodeURIComponent(mapId)}/fences`),
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  )
+}
+
+export function setFenceEnabled(
+  mapId: string,
+  fenceId: string,
+  enabled: boolean,
+): Promise<NavFence> {
+  return requestJson(
+    getApiUrl(`/api/v1/nav/pcd-maps/${encodeURIComponent(mapId)}/fences/${encodeURIComponent(fenceId)}`),
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    },
+  )
+}
+
+export function deleteFence(
+  mapId: string,
+  fenceId: string,
+): Promise<{ success: boolean }> {
+  return requestJson(
+    getApiUrl(`/api/v1/nav/pcd-maps/${encodeURIComponent(mapId)}/fences/${encodeURIComponent(fenceId)}`),
     { method: 'DELETE' },
   )
 }

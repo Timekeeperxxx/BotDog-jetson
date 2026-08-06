@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from .control_service import get_control_service, set_control_service
+from .fence_detection_service import get_fence_detection_service, set_fence_detection_service
 from .logging_config import get_logger
 from .nav_bridge_state import set_ros_nav_bridge
 from .navigation_velocity_udp import (
@@ -47,6 +48,14 @@ async def shutdown_runtime_services(
     if ros_nav_bridge is not None:
         ros_nav_bridge.stop()
         set_ros_nav_bridge(None)
+
+    fence_detection = get_fence_detection_service()
+    if fence_detection is not None:
+        try:
+            await fence_detection.disable(center_gimbal=True)
+        except Exception as exc:
+            app_logger.warning("关闭围栏检测服务时发生异常：{}", exc)
+        set_fence_detection_service(None)
 
     for task in tasks:
         task.cancel()

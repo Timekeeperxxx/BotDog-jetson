@@ -166,6 +166,56 @@ class Settings(BaseSettings):
     Z2MINI_JOG_SECONDS: float = 0.45
     Z2MINI_DEFAULT_PICTURE_MODE: Literal["visible", "thermal"] = "visible"
 
+    # 自动围栏检测。检测阈值集中在这里；水平瞄准不依赖围栏高度。
+    # 安装关系默认采用现场确认值，图像几何优先复用现有画面尺寸/FOV/实时变焦。
+    FENCE_DETECTION_MAX_DISTANCE_M: float = 20.0
+    FENCE_WARNING_DISTANCE_M: float = 2.0
+    FENCE_DWELL_SECONDS: float = 10.0
+    FENCE_NEAR_STABLE_FRAMES: int = 3
+    FENCE_CONTACT_SEGMENT_MARGIN_M: float = 0.25
+    FENCE_CONTACT_STABLE_FRAMES: int = 3
+    FENCE_CROSS_MARGIN_M: float = 0.25
+    FENCE_CROSS_STABLE_FRAMES: int = 3
+    FENCE_CROSS_REQUIRE_CLIMBING_POSTURE: bool = True
+    FENCE_KEYPOINT_CONFIDENCE: float = 0.35
+    FENCE_TRACK_TTL_SECONDS: float = 2.0
+    FENCE_ALERT_COOLDOWN_SECONDS: float = 15.0
+    FENCE_CONTROL_HZ: float = 5.0
+    FENCE_GIMBAL_YAW_DEADBAND_DEG: float = 0.8
+    FENCE_GIMBAL_SMOOTHING_ALPHA: float = 0.35
+    FENCE_GIMBAL_MAX_SPEED_DPS: float = 20.0
+    FENCE_GIMBAL_SETTLE_ERROR_DEG: float = 1.5
+    FENCE_GIMBAL_SETTLE_VELOCITY_DPS: float = 1.0
+    FENCE_GIMBAL_SETTLE_SECONDS: float = 0.6
+    FENCE_SWITCH_DELAY_SECONDS: float = 1.5
+    FENCE_FRAME_SAMPLE_TOLERANCE_SECONDS: float = 0.6
+    FENCE_GIMBAL_MIN_YAW_DEG: float = -170.0
+    FENCE_GIMBAL_MAX_YAW_DEG: float = 170.0
+    # 平移为空时直接复用 NAV_LIDAR_MOUNT_X/Y/Z；用户确认云台和相机
+    # 安装姿态均朝向 base_footprint 正前方，因此安装角和相机偏移默认 0。
+    FENCE_GIMBAL_MOUNT_X_M: float | None = None
+    FENCE_GIMBAL_MOUNT_Y_M: float | None = None
+    FENCE_GIMBAL_MOUNT_Z_M: float | None = None
+    FENCE_GIMBAL_MOUNT_ROLL_DEG: float = 0.0
+    FENCE_GIMBAL_MOUNT_PITCH_DEG: float = 0.0
+    FENCE_GIMBAL_MOUNT_YAW_DEG: float = 0.0
+    # Z2-Mini 已有控制代码确认相对 yaw 正值朝机器狗右侧；地图 y 正值朝左。
+    FENCE_GIMBAL_YAW_SIGN: float = -1.0
+    FENCE_GIMBAL_PITCH_SIGN: float = 1.0
+    FENCE_CAMERA_OFFSET_X_M: float = 0.0
+    FENCE_CAMERA_OFFSET_Y_M: float = 0.0
+    FENCE_CAMERA_OFFSET_Z_M: float = 0.0
+    FENCE_CAMERA_ROLL_DEG: float = 0.0
+    FENCE_CAMERA_PITCH_DEG: float = 0.0
+    FENCE_CAMERA_YAW_DEG: float = 0.0
+    # 内参为空时根据 AI_FRAME_WIDTH/HEIGHT、现有自动跟踪水平 FOV 和
+    # Z2-Mini 实时 zoom 推导；实机标定值仍可在这里覆盖。
+    FENCE_CAMERA_FX_PX: float | None = None
+    FENCE_CAMERA_FY_PX: float | None = None
+    FENCE_CAMERA_CX_PX: float | None = None
+    FENCE_CAMERA_CY_PX: float | None = None
+    FENCE_CAMERA_CALIBRATED_ZOOM_RATIO: float | None = None
+
     # ==================== 导航巡逻 / PCD 点云地图 Demo ====================
     PCD_MAP_ROOT: str = '/home/jetson/superlio/Super-LIO/src/super_lio/map'
     SCENE_MAP_ROOT: str = '/home/jetson/Projects/Maps'
@@ -191,6 +241,7 @@ class Settings(BaseSettings):
     PCD_SCENE_TILE_CACHE_MAX_SCENES: int = 2
     PCD_SCENE_TILE_CACHE_MAX_BYTES: int = 12 * 1024 * 1024 * 1024
     NAV_WAYPOINT_STORE_DIR: str = './data/nav_waypoints'
+    NAV_FENCE_STORE_DIR: str = './data/nav_fences'
     NAV_LOCALIZATION_STORE_DIR: str = './data/nav_localization'
     NAV_RUNTIME_DIR: str = './data/nav_runtime'
     NAV_TASK_STORE_DIR: str = './data/nav_tasks'

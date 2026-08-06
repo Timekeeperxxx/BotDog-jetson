@@ -1228,7 +1228,7 @@ DATA binary
     assert expected_message in result.stdout + result.stderr
 
 
-def test_navigation_uses_cpp_pcd_publisher_without_fixed_input_limits():
+def test_navigation_uses_cpp_pcd_publisher_with_bounded_input_limits():
     botdog_root = Path(__file__).resolve().parents[1]
     bringup = botdog_root.parent / "Navigation" / "src" / "nav_bringup"
     publisher = (bringup / "src" / "nav_pcd_map_publisher.cpp").read_text(encoding="utf-8")
@@ -1244,12 +1244,24 @@ def test_navigation_uses_cpp_pcd_publisher_without_fixed_input_limits():
     bridge = publisher.index("bridge_planground_gaps(downsampled_cloud")
     serialize = publisher.index("build_message(downsampled_cloud")
     assert downsample < bridge < serialize
-    assert "max_input_bytes" not in config
-    assert "max_input_points" not in config
+    # The simplified Navigation baseline deliberately bounds the raw PCD read
+    # before downsampling.  Keep both limits explicit so a malformed or
+    # unexpectedly large map cannot exhaust the Jetson before the streaming
+    # publisher has a chance to release the current layer.
+    assert "max_input_bytes: 67108864" in config
+    assert "max_input_points: 4000000" in config
 
 
-def test_global_planner_start_connection_matches_hybrid_cloud_resolution():
+def test_global_planner_resolution_matches_simplified_navigation_baseline():
     botdog_root = Path(__file__).resolve().parents[1]
+    planning_launch = (
+        botdog_root.parent
+        / "Navigation"
+        / "src"
+        / "nav_bringup"
+        / "launch"
+        / "planning.launch.py"
+    ).read_text(encoding="utf-8")
     planner_config = (
         botdog_root.parent
         / "Navigation"
@@ -1259,17 +1271,17 @@ def test_global_planner_start_connection_matches_hybrid_cloud_resolution():
         / "global_planner.yaml"
     ).read_text(encoding="utf-8")
 
-    # B2 full-footprint support must use the dense 0.10 m ground cloud.
-    # Hybrid search owns a separate coarse copy, whose output is validated
-    # edge-by-edge against that dense support surface.
-    assert "ground_down_sample: 0.1" in planner_config
-    assert "hybrid_downsample_leaf_size: 0.20" in planner_config
+    # planning.launch.py overrides the YAML publisher value and keeps the live
+    # ground support cloud at 0.10 m.  The simplified hybrid planner uses its
+    # own 0.15 m copy and a 0.20 m neighbour radius.
+    assert 'DeclareLaunchArgument("ground_down_sample", default_value="0.1")' in planning_launch
+    assert "hybrid_downsample_leaf_size: 0.15" in planner_config
     assert "a_star_expanding_radius: 0.2" in planner_config
     assert "planground_search_radius: 0.2" in planner_config
-    assert "hybrid_max_ground_bridge_length: 0.25" in planner_config
+    assert "hybrid_max_ground_bridge_length: 20.0" in planner_config
 
 
-def test_hybrid_astar_maps_planning_indices_to_perception_ground():
+def test_hybrid_astar_maps_cost_indices_and_preserves_connected_fallback():
     botdog_root = Path(__file__).resolve().parents[1]
     planner_source = botdog_root.parent / "Navigation" / "src" / "nav_planner"
     astar = (planner_source / "src" / "a_star_on_pc.cpp").read_text(encoding="utf-8")
@@ -1280,10 +1292,12 @@ def test_hybrid_astar_maps_planning_indices_to_perception_ground():
     assert "getNodeWeight(perception_ground_index)" in astar
     assert "get_min_dGraphValue(current_expanding_index)" not in astar
     assert "if (start_neighbors.empty())" in hybrid
-    assert "reference_path_available" in hybrid
-    assert "if (reference_valid && edge_validator_)" in hybrid
-    assert "edge_validator_(" in hybrid
-    assert "Using validated fill_footprint reference directly" in hybrid
+    assert "has_planground_reference" in hybrid
+    assert "planground_reference_path" in hybrid
+    assert "if (path.empty())" in hybrid
+    assert "using connected planground fallback" in hybrid
+    assert "path_detour_limit_" in hybrid
+    assert "path = planground_reference_path" in hybrid
 
 
 def test_restart_navigation_script_exposes_initialpose_stage_before_runtime_tf():

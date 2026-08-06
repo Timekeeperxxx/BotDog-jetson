@@ -1,6 +1,6 @@
 import { PointCloud3DViewer } from '../../components/pcd/PointCloud3DViewer'
 import type { GlobalPath, RobotPose } from '../../types/navState'
-import type { NavWaypoint, PcdSceneTileManifest, PointCloudQualityMode, WallColorMode } from '../../types/pcdMap'
+import type { NavFence, NavWaypoint, PcdSceneTileManifest, PointCloudQualityMode, WallColorMode } from '../../types/pcdMap'
 import type { PointCloudLayer } from './NavPageShell'
 
 type NavMainViewerProps = {
@@ -9,7 +9,7 @@ type NavMainViewerProps = {
   followRobot: boolean
   globalPath: GlobalPath | null
   layers: PointCloudLayer[]
-  mode: 'none' | 'waypoint' | 'pose'
+  mode: 'none' | 'waypoint' | 'pose' | 'fence'
   pointCloudQualityMode: PointCloudQualityMode
   robotPose: RobotPose | null
   viewKey: string
@@ -21,8 +21,11 @@ type NavMainViewerProps = {
     footprint_fill: boolean
   }
   waypoints: NavWaypoint[]
+  fences: NavFence[]
+  fencesVisible: boolean
   webglSupported: boolean
   onAddWaypoint: (pos: { x: number; y: number; z: number; yaw: number }) => void
+  onAddFence: (start: { x: number; y: number }, end: { x: number; y: number }) => void
   onGroundPointerChange: (pos: { x: number; y: number } | null) => void
   onSetPose: (pos: { x: number; y: number; z: number; yaw: number }) => void
 }
@@ -41,8 +44,11 @@ export function NavMainViewer({
   tiledScene,
   tileVisibility,
   waypoints,
+  fences,
+  fencesVisible,
   webglSupported,
   onAddWaypoint,
+  onAddFence,
   onGroundPointerChange,
   onSetPose,
 }: NavMainViewerProps) {
@@ -72,6 +78,8 @@ export function NavMainViewer({
       viewKey={viewKey}
       wallColorMode={wallColorMode}
       waypoints={waypoints}
+      fences={fences}
+      fencesVisible={fencesVisible}
       robotPose={robotPose}
       globalPath={globalPath}
       executionPath={executionPath}
@@ -80,6 +88,7 @@ export function NavMainViewer({
       centerHeight={centerHeight}
       onGroundPointerChange={onGroundPointerChange}
       onAddWaypoint={onAddWaypoint}
+      onAddFence={onAddFence}
       onSetPose={onSetPose}
     />
   )

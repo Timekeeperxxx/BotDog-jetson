@@ -62,6 +62,10 @@ NAV_ROUTES = [
     ("POST",   "/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}/go-to"),
     # 删除导航点
     ("DELETE", "/api/v1/nav/pcd-maps/{map_id}/waypoints/{waypoint_id}"),
+    ("GET",    "/api/v1/nav/pcd-maps/{map_id}/fences"),
+    ("POST",   "/api/v1/nav/pcd-maps/{map_id}/fences"),
+    ("PUT",    "/api/v1/nav/pcd-maps/{map_id}/fences/{fence_id}"),
+    ("DELETE", "/api/v1/nav/pcd-maps/{map_id}/fences/{fence_id}"),
     # 导航急停
     ("POST",   "/api/v1/nav/e-stop"),
 ]
@@ -155,6 +159,12 @@ GIMBAL_ROUTES = [
     ("POST", "/api/v1/gimbal/zoom"),
     ("POST", "/api/v1/gimbal/picture-mode"),
     ("POST", "/api/v1/gimbal/settings"),
+]
+
+FENCE_DETECTION_ROUTES = [
+    ("GET", "/api/v1/fence-detection/status"),
+    ("POST", "/api/v1/fence-detection/enable"),
+    ("POST", "/api/v1/fence-detection/disable"),
 ]
 
 FOCUS_ZONE_ROUTES = [
@@ -310,6 +320,13 @@ def test_gimbal_route_registered(route_index: dict, method: str, path: str) -> N
     """Z2-Mini 云台状态与控制路由必须保持注册。"""
     assert (method, path) in route_index, (
         f"{method} {path} 未注册 ── gimbal 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", FENCE_DETECTION_ROUTES)
+def test_fence_detection_route_registered(route_index: dict, method: str, path: str) -> None:
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── fence_detection 路由可能在拆分中丢失"
     )
 
 

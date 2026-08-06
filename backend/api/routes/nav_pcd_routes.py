@@ -11,6 +11,10 @@ from ...auth.service import safe_write_audit_log
 from ...database import get_db
 from ...schemas import (
     DeleteWaypointResponse,
+    NavFenceCreateRequest,
+    NavFenceDTO,
+    NavFenceEnabledRequest,
+    NavFenceListResponse,
     NavCurrentSceneResponse,
     NavWaypointCreateRequest,
     NavWaypointDTO,
@@ -300,6 +304,111 @@ async def nav_delete_waypoint(
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.waypoint.delete "
             f"目标={waypoint_id} map={map_id} 结果=success"
+        ),
+    )
+    return {"success": True}
+
+
+@router.get("/pcd-maps/{map_id}/fences", response_model=NavFenceListResponse)
+async def nav_list_fences(map_id: str):
+    from ...services_nav_fences import list_fences
+    from ...services_pcd_maps import PcdMapError
+
+    try:
+        return list_fences(map_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {map_id}")
+    except PcdMapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/pcd-maps/{map_id}/fences", response_model=NavFenceDTO)
+async def nav_create_fence(
+    map_id: str,
+    body: NavFenceCreateRequest,
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    from ...services_nav_fences import create_fence
+    from ...services_pcd_maps import PcdMapError
+
+    try:
+        fence = create_fence(map_id, body.model_dump())
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {map_id}")
+    except (PcdMapError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    await safe_write_audit_log(
+        db,
+        level="INFO",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.fence.create "
+            f"目标={fence['id']} scene={map_id} 结果=success"
+        ),
+    )
+    return fence
+
+
+@router.put("/pcd-maps/{map_id}/fences/{fence_id}", response_model=NavFenceDTO)
+async def nav_set_fence_enabled(
+    map_id: str,
+    fence_id: str,
+    body: NavFenceEnabledRequest,
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    from ...services_nav_fences import set_fence_enabled
+    from ...services_pcd_maps import PcdMapError
+
+    try:
+        fence = set_fence_enabled(map_id, fence_id, body.enabled)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"围栏不存在: {fence_id}")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {map_id}")
+    except PcdMapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    await safe_write_audit_log(
+        db,
+        level="INFO",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.fence.enabled "
+            f"目标={fence_id} scene={map_id} enabled={body.enabled} 结果=success"
+        ),
+    )
+    return fence
+
+
+@router.delete("/pcd-maps/{map_id}/fences/{fence_id}", response_model=DeleteWaypointResponse)
+async def nav_delete_fence(
+    map_id: str,
+    fence_id: str,
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    from ...services_nav_fences import delete_fence
+    from ...services_pcd_maps import PcdMapError
+
+    try:
+        deleted = delete_fence(map_id, fence_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"场景不存在或缺少 ground.pcd: {map_id}")
+    except PcdMapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"围栏不存在: {fence_id}")
+
+    await safe_write_audit_log(
+        db,
+        level="WARN",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.fence.delete "
+            f"目标={fence_id} scene={map_id} 结果=success"
         ),
     )
     return {"success": True}

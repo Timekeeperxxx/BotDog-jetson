@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type {
   NavWaypoint,
+  NavFence,
   PcdSceneLayerRole,
   PcdSceneTileManifest,
   PointCloudQualityMode,
@@ -13,6 +14,7 @@ import type {
 import type { GlobalPath, RobotPose } from '../../types/navState'
 import { mapToThree, threeToMap } from '../../utils/pointCloudTransform'
 import { getPointCount } from '../../utils/pointCloudPoints'
+import { advanceFenceDraft } from '../../utils/fenceDraft'
 import { detectWebGLSupport } from './webglSupport'
 import {
   PointCloudTileManager,
@@ -70,10 +72,12 @@ type Props = {
   points?: PointCloudPoints
   viewKey?: string
   waypoints: NavWaypoint[]
+  fences: NavFence[]
+  fencesVisible?: boolean
   robotPose: RobotPose | null
   globalPath: GlobalPath | null
   executionPath: GlobalPath | null
-  mode?: 'none' | 'waypoint' | 'pose'
+  mode?: 'none' | 'waypoint' | 'pose' | 'fence'
   followRobot?: boolean
   centerHeight?: number | null
   wallColorMode?: WallColorMode
@@ -86,6 +90,7 @@ type Props = {
   }
   onGroundPointerChange?: (pos: { x: number; y: number; z: number } | null) => void
   onAddWaypoint?: (pos: { x: number; y: number; z: number; yaw: number }) => void
+  onAddFence?: (start: { x: number; y: number }, end: { x: number; y: number }) => void
   onSetPose?: (pos: { x: number; y: number; z: number; yaw: number }) => void
 }
 
@@ -101,6 +106,8 @@ export function PointCloud3DViewer({
   points,
   viewKey = 'default',
   waypoints,
+  fences,
+  fencesVisible = true,
   robotPose,
   globalPath,
   executionPath,
@@ -113,6 +120,7 @@ export function PointCloud3DViewer({
   tileVisibility = { ground: true, wall: true, footprint_fill: true },
   onGroundPointerChange,
   onAddWaypoint,
+  onAddFence,
   onSetPose,
 }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -132,6 +140,7 @@ export function PointCloud3DViewer({
   const tileVisibilityRef = useRef(tileVisibility)
   const pathGroupRef = useRef<THREE.Group | null>(null)
   const waypointGroupRef = useRef<THREE.Group | null>(null)
+  const fenceGroupRef = useRef<THREE.Group | null>(null)
   const pendingGroupRef = useRef<THREE.Group | null>(null)
   const robotGroupRef = useRef<THREE.Group | null>(null)
   const scanBodyGroupRef = useRef<THREE.Group | null>(null)
@@ -150,7 +159,21 @@ export function PointCloud3DViewer({
     z: number
     yaw: number
   } | null>(null)
+  const [pendingFenceStart, setPendingFenceStart] = useState<{ x: number; y: number; z: number } | null>(null)
+  const pendingFenceStartRef = useRef<{ x: number; y: number; z: number } | null>(null)
+  const [fenceCursor, setFenceCursor] = useState<{ x: number; y: number; z: number } | null>(null)
+  const [fenceDraftMode, setFenceDraftMode] = useState(mode)
   const [tileStats, setTileStats] = useState<PointCloudTileStats | null>(null)
+
+  if (fenceDraftMode !== mode) {
+    setFenceDraftMode(mode)
+    setPendingFenceStart(null)
+    setFenceCursor(null)
+  }
+
+  useEffect(() => {
+    pendingFenceStartRef.current = pendingFenceStart
+  }, [pendingFenceStart])
 
   const normalizedLayers: PointCloudLayer[] = useMemo(
     () => {
@@ -294,6 +317,10 @@ export function PointCloud3DViewer({
     const waypointGroup = new THREE.Group()
     waypointGroupRef.current = waypointGroup
     scene.add(waypointGroup)
+
+    const fenceGroup = new THREE.Group()
+    fenceGroupRef.current = fenceGroup
+    scene.add(fenceGroup)
 
     const pendingGroup = new THREE.Group()
     pendingGroupRef.current = pendingGroup
@@ -468,6 +495,8 @@ export function PointCloud3DViewer({
       pathGroup.clear()
       waypointGroup.children.forEach(disposeObject3D)
       waypointGroup.clear()
+      fenceGroup.children.forEach(disposeObject3D)
+      fenceGroup.clear()
       pendingGroup.children.forEach(disposeObject3D)
       pendingGroup.clear()
       robotGroup.children.forEach(disposeObject3D)
@@ -920,11 +949,74 @@ export function PointCloud3DViewer({
 
   useEffect(() => {
     if (!webglSupported) return
+    const group = fenceGroupRef.current
+    if (!group) return
+    group.children.forEach(disposeObject3D)
+    group.clear()
+    if (!fencesVisible) return
+
+    const displayZ = centerHeight ?? groundPreviewBounds?.centerZ ?? 0
+    fences.forEach((fence) => {
+      const start = mapToThree(fence.start.x, fence.start.y, displayZ + 0.08)
+      const end = mapToThree(fence.end.x, fence.end.y, displayZ + 0.08)
+      const color = fence.enabled ? 0xef4444 : 0x7f1d1d
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(start.x, start.y, start.z),
+        new THREE.Vector3(end.x, end.y, end.z),
+      ])
+      const line = new THREE.Line(
+        geometry,
+        new THREE.LineBasicMaterial({ color, transparent: true, opacity: fence.enabled ? 1 : 0.45, depthTest: false }),
+      )
+      line.renderOrder = 52
+      group.add(line)
+      for (const point of [start, end]) {
+        const marker = new THREE.Mesh(
+          new THREE.SphereGeometry(0.09, 14, 10),
+          new THREE.MeshBasicMaterial({ color, depthTest: false }),
+        )
+        marker.position.set(point.x, point.y, point.z)
+        marker.renderOrder = 53
+        group.add(marker)
+      }
+    })
+  }, [centerHeight, fences, fencesVisible, groundPreviewBounds?.centerZ, webglSupported])
+
+  useEffect(() => {
+    if (!webglSupported) return
     const group = pendingGroupRef.current
     if (!group) return
 
     group.children.forEach(disposeObject3D)
     group.clear()
+
+    if (mode === 'fence') {
+      if (!pendingFenceStart) return
+      const start = mapToThree(pendingFenceStart.x, pendingFenceStart.y, pendingFenceStart.z + 0.1)
+      const cursor = fenceCursor ?? pendingFenceStart
+      const end = mapToThree(cursor.x, cursor.y, cursor.z + 0.1)
+      const geometry = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(start.x, start.y, start.z),
+        new THREE.Vector3(end.x, end.y, end.z),
+      ])
+      const line = new THREE.Line(
+        geometry,
+        new THREE.LineDashedMaterial({ color: 0xf87171, dashSize: 0.25, gapSize: 0.15, depthTest: false }),
+      )
+      line.computeLineDistances()
+      line.renderOrder = 62
+      group.add(line)
+      for (const point of [start, end]) {
+        const marker = new THREE.Mesh(
+          new THREE.SphereGeometry(0.12, 16, 10),
+          new THREE.MeshBasicMaterial({ color: 0xf87171, depthTest: false }),
+        )
+        marker.position.set(point.x, point.y, point.z)
+        marker.renderOrder = 63
+        group.add(marker)
+      }
+      return
+    }
 
     if (!pendingTarget || mode === 'none') return
 
@@ -958,7 +1050,7 @@ export function PointCloud3DViewer({
     arrow.renderOrder = 61
     marker.add(arrow)
     group.add(marker)
-  }, [mode, pendingTarget, webglSupported])
+  }, [fenceCursor, mode, pendingFenceStart, pendingTarget, webglSupported])
 
   useEffect(() => {
     if (!webglSupported) return
@@ -1114,6 +1206,9 @@ export function PointCloud3DViewer({
     const point = readGroundPoint(event)
     onGroundPointerChange?.(point)
     if (!point) return
+    if (mode === 'fence') {
+      setFenceCursor(point)
+    }
     setPendingTarget((current) => {
       if (!current) return current
       const dx = point.x - current.x
@@ -1136,7 +1231,23 @@ export function PointCloud3DViewer({
     const target = pendingTargetRef.current
     if (!target) return
 
-    if (mode === 'waypoint') {
+    if (mode === 'fence') {
+      const next = advanceFenceDraft(
+        pendingFenceStartRef.current,
+        { x: target.x, y: target.y, z: target.z },
+      )
+      if (next.completed) {
+        onAddFence?.(
+          { x: next.completed.start.x, y: next.completed.start.y },
+          { x: next.completed.end.x, y: next.completed.end.y },
+        )
+        setFenceCursor(null)
+      } else if (pendingFenceStartRef.current === null && next.start) {
+        setFenceCursor(next.start)
+      }
+      pendingFenceStartRef.current = next.start
+      setPendingFenceStart(next.start)
+    } else if (mode === 'waypoint') {
       onAddWaypoint?.(target)
     } else {
       onSetPose?.(target)

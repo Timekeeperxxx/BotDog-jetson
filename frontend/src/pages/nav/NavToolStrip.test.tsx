@@ -46,6 +46,13 @@ describe('NavToolStrip task controls', () => {
     expect(stopButton).toHaveClass('is-active')
     expect(stopButton).toHaveAttribute('title', expect.stringContaining('复用建图中的雷达驱动'))
   })
+
+  it('shows fence marking and detection controls at the start of the bottom toolbar', () => {
+    renderToolStrip()
+    const buttons = screen.getAllByRole('button')
+    expect(buttons[0]).toHaveAccessibleName('添加围栏')
+    expect(buttons[1]).toHaveAccessibleName('开启围栏检测')
+  })
 })
 
 function createToolStripProps(
@@ -53,6 +60,11 @@ function createToolStripProps(
 ): React.ComponentProps<typeof NavToolStrip> {
   return {
     canOperate: true,
+    fenceMode: false,
+    fenceAddAvailable: true,
+    fenceDetectionStatus: null,
+    fenceDetectionLoading: false,
+    fenceDetectionError: null,
     currentCmd: null,
     followRobot: false,
     isControlling: false,
@@ -82,6 +94,8 @@ function createToolStripProps(
     webglSupported: true,
     wallColorMode: 'solid',
     onCheckRadar: vi.fn(),
+    onToggleFenceMode: vi.fn(),
+    onSetFenceDetectionEnabled: vi.fn(),
     onToggleRosbag: vi.fn(),
     onStopSelectedTask: vi.fn(),
     onToggleFollowRobot: vi.fn(),

@@ -83,6 +83,14 @@ class AIWorkerProcessingMixin:
         # 因此不会向机器人下发任何运动命令。
         if settings.AI_CONTINUOUS_DETECTION_ENABLED:
             return True
+        try:
+            from .fence_detection_service import get_fence_detection_service
+
+            fence_detection = get_fence_detection_service()
+            if fence_detection is not None and fence_detection.enabled:
+                return True
+        except Exception:
+            pass
         # 移除对 self._state_machine.state == SystemState.IN_MISSION 的强依赖。
         # 只要存在运行中的任务，且 RTSP 摄像头推流正常，AI 就会开始分析画面。
         if self._current_task_id is not None and settings.AI_PASSIVE_SESSION_DETECTION_ENABLED:
@@ -126,6 +134,15 @@ class AIWorkerProcessingMixin:
         confirmation and target reacquisition do not miss every other frame.
         """
         from .guard_mission_service import get_guard_mission_service
+
+        try:
+            from .fence_detection_service import get_fence_detection_service
+
+            fence_detection = get_fence_detection_service()
+            if fence_detection is not None and fence_detection.enabled:
+                return self._suspect_skip
+        except Exception:
+            pass
 
         guard_mission = get_guard_mission_service()
         if guard_mission is not None and guard_mission.enabled:
@@ -200,6 +217,8 @@ class AIWorkerProcessingMixin:
         frame: bytes,
         t_start: float = 0.0,
         t_detect_end: float = 0.0,
+        *,
+        allow_motion_services: bool = True,
     ) -> None:
         """
         处理检测结果。
@@ -231,12 +250,12 @@ class AIWorkerProcessingMixin:
             if d.bbox is not None
         ]
 
-        if guard_mission is not None and guard_mission.enabled:
+        if allow_motion_services and guard_mission is not None and guard_mission.enabled:
             guard_mission.update_effective_fps(effective_fps)
             await guard_mission.process_frame(track_detections, frame)
             return
 
-        if auto_track is not None:
+        if allow_motion_services and auto_track is not None:
             await auto_track.process_frame(
                 detections=track_detections,
                 frame=frame,
@@ -248,8 +267,14 @@ class AIWorkerProcessingMixin:
             if auto_track._enabled:
                 return
 
-        # 多类别模型上线后，head/helmet 只作为前端叠框信息；旧告警路径仍只对 person 抓拍。
-        alert_detections = [d for d in detections if d.label == "person"]
+        # 多类别模型上线后，head/helmet 只作为前端叠框信息；旧告警路径仍只对
+        # 主目标检测器确认的 person 抓拍。姿态模型补齐的人体框置信度阈值更低，
+        # 其用途是叠层/跟踪辅助，不能单独触发“陌生人”告警。
+        alert_detections = [
+            d
+            for d in detections
+            if d.label == "person" and not getattr(d, "is_pose_fallback", False)
+        ]
         detection = alert_detections[0] if alert_detections else None
 
         if detection:
@@ -377,6 +402,59 @@ class AIWorkerProcessingMixin:
                     task_id=self._current_task_id
                     if isinstance(self._current_task_id, int)
                     else None,
+                    session=session,
+                )
+
+    async def _process_fence_events(self, events, frame: bytes) -> None:
+        if not events:
+            return
+
+        from .fence_detection_service import FenceBehavior
+
+        event_meta = {
+            FenceBehavior.DWELLING: (
+                "FENCE_DWELL",
+                "E_FENCE_DWELL",
+                "WARNING",
+                "检测到人员在围栏附近停留",
+            ),
+            FenceBehavior.CONTACT: (
+                "FENCE_CONTACT",
+                "E_FENCE_CONTACT",
+                "WARNING",
+                "检测到人员接触围栏",
+            ),
+            FenceBehavior.CLIMBING_SUSPECTED: (
+                "FENCE_CLIMBING_SUSPECTED",
+                "E_FENCE_CLIMBING_SUSPECTED",
+                "CRITICAL",
+                "检测到人员疑似翻越围栏",
+            ),
+        }
+        gps = self._get_latest_gps()
+        alert_service = get_alert_service()
+        for event in events:
+            meta = event_meta.get(event.behavior)
+            if meta is None:
+                continue
+            event_type, event_code, severity, label = meta
+            image_path, image_url = await self._save_snapshot(frame)
+            message = (
+                f"{label}：fence_id={event.fence_id}，track_id={event.track_id}，"
+                f"持续={event.duration_seconds:.1f}s"
+            )
+            async with self._session_factory() as session:
+                await alert_service.handle_ai_event(
+                    event_type=event_type,
+                    event_code=event_code,
+                    severity=severity,
+                    message=message,
+                    confidence=event.confidence,
+                    file_path=str(image_path),
+                    image_url=image_url,
+                    gps_lat=gps[0],
+                    gps_lon=gps[1],
+                    task_id=self._current_task_id if isinstance(self._current_task_id, int) else None,
                     session=session,
                 )
 
