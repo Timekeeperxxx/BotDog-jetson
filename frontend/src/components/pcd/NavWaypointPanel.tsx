@@ -51,8 +51,16 @@ export function NavWaypointPanel({
                 <button
                   className="pcd-icon-button"
                   onClick={() => onGoTo(point.id)}
-                  disabled={!canOperate || !sceneNavigable || goToSending || navigatingWaypointId === point.id}
-                  title="导航到该点"
+                  disabled={
+                    !canOperate
+                    || !sceneNavigable
+                    || (goToSending && navigatingWaypointId === point.id)
+                  }
+                  title={
+                    goToSending && navigatingWaypointId !== point.id
+                      ? '切换导航到该点'
+                      : '导航到该点'
+                  }
                 >
                   <Navigation size={15} />
                 </button>

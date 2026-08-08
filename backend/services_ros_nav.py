@@ -1939,13 +1939,11 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             target_frame=settings.ROS_NAV_FRAME_ID,
             source_frames=self._base_frame_candidates(),
         )
-        ros_timestamp = float(pose.get("ros_timestamp") or 0.0)
-        max_age_seconds = max(float(settings.ROS_NAV_TF_MAX_AGE_SECONDS), 0.0)
-        tf_age = time.time() - ros_timestamp
-        if ros_timestamp <= 0.0 or tf_age > max_age_seconds:
-            raise RuntimeError(
-                f"TF 时间戳已过期：age={tf_age:.3f}s，limit={max_age_seconds:.3f}s"
-            )
+        # A successful latest-transform lookup is authoritative here.  The
+        # bridge shares one ROS executor with path/status subscriptions, so its
+        # local TF buffer can temporarily trail the publisher even while the
+        # live TF chain is healthy.  Rejecting by the ROS header timestamp made
+        # the UI clear a moving robot pose and blocked target replacement.
         return pose
 
     def _resolve_msg_type(

@@ -91,7 +91,6 @@ export function PcdMapDemoPage() {
   const [toolMode, setToolMode] = useState<'none' | 'obstacle' | 'pose'>('none')
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
   const [goToSending, setGoToSending] = useState(false)
-  const goToInFlightRef = useRef(false)
   const goToRequestSequenceRef = useRef(0)
   const [estopSending, setEstopSending] = useState(false)
   const [restartLocalizationSending, setRestartLocalizationSending] = useState(false)
@@ -505,14 +504,13 @@ export function PcdMapDemoPage() {
 
   // 中间层：拦截 go-to，先弹确认框
   const requestGoToWaypoint = useCallback((waypointId: string) => {
-    if (!canOperate || goToInFlightRef.current) return
+    if (!canOperate) return
     const waypoint = waypoints.find((item) => item.id === waypointId)
     if (!waypoint) return
     setGoToConfirm(waypoint)
   }, [canOperate, waypoints])
 
   const handleGoToWaypoint = useCallback(async (waypointId: string) => {
-    if (goToInFlightRef.current) return
     if (!selectedSceneId) {
       setGoToConfirm(null)
       return
@@ -530,11 +528,11 @@ export function PcdMapDemoPage() {
       return
     }
 
-    goToInFlightRef.current = true
     const requestSequence = ++goToRequestSequenceRef.current
     const isCurrentRequest = () => requestSequence === goToRequestSequenceRef.current
     setGoToSending(true)
     setNavigatingWaypointId(waypointId)
+    setGoToConfirm(null)
     setInitialState({
       globalPath: null,
       executionPath: null,
@@ -571,10 +569,8 @@ export function PcdMapDemoPage() {
       addLog(message, 'error')
     } finally {
       if (isCurrentRequest()) {
-        goToInFlightRef.current = false
         setGoToSending(false)
         setNavigatingWaypointId(null)
-        setGoToConfirm((current) => current?.id === waypointId ? null : current)
       }
     }
   }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable, setInitialState, waypoints])
@@ -1052,10 +1048,8 @@ export function PcdMapDemoPage() {
       />
       <GoToWaypointConfirmDialog
         waypoint={goToConfirm}
-        sending={goToSending}
-        onCancel={() => {
-          if (!goToInFlightRef.current) setGoToConfirm(null)
-        }}
+        sending={goToSending && goToConfirm?.id === navigatingWaypointId}
+        onCancel={() => setGoToConfirm(null)}
         onConfirm={(waypoint) => void handleGoToWaypoint(waypoint.id)}
       />
       <MappingStartDialog

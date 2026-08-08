@@ -57,7 +57,28 @@ router = APIRouter(prefix="/api/v1/nav", tags=["nav"])
 router.include_router(pcd_router)
 _sensor_session_lock = asyncio.Lock()
 _go_to_waypoint_lock = asyncio.Lock()
-_go_to_waypoint_inflight: set[tuple[str, str]] = set()
+_go_to_waypoint_latest_generation = 0
+_go_to_waypoint_inflight: dict[int, tuple[str, str]] = {}
+
+
+def _claim_latest_go_to_request(target: tuple[str, str]) -> int:
+    """Register a GoTo request; only the newest generation may publish."""
+    global _go_to_waypoint_latest_generation
+
+    _go_to_waypoint_latest_generation += 1
+    generation = _go_to_waypoint_latest_generation
+    _go_to_waypoint_inflight[generation] = target
+    return generation
+
+
+def _ensure_latest_go_to_request(generation: int, target: tuple[str, str]) -> None:
+    if generation == _go_to_waypoint_latest_generation:
+        return
+    map_id, waypoint_id = target
+    raise HTTPException(
+        status_code=409,
+        detail=f"导航目标已被更新的请求替换: map={map_id} waypoint={waypoint_id}",
+    )
 
 
 class NavAutoTrackModeRequest(BaseModel):
@@ -766,14 +787,7 @@ async def nav_go_to_waypoint(
         raise HTTPException(status_code=400, detail=str(exc))
 
     target_key = (map_id, waypoint_id)
-    if target_key in _go_to_waypoint_inflight:
-        raise HTTPException(
-            status_code=409,
-            detail=f"导航目标正在处理中，请勿重复提交: map={map_id} waypoint={waypoint_id}",
-        )
-    # The check and insertion contain no await, so they are atomic with respect
-    # to other FastAPI tasks running on this event loop.
-    _go_to_waypoint_inflight.add(target_key)
+    request_generation: int | None = None
 
     try:
         try:
@@ -789,14 +803,20 @@ async def nav_go_to_waypoint(
             except RuntimeError:
                 stop_task_result = None
 
-            # B2 mode preparation and goal publication form one ordered unit.
-            # asyncio.Lock is FIFO for waiting tasks, so a later distinct target
-            # cannot overtake an earlier one and leave the robot on a stale goal.
+            # Claim the latest generation only after all synchronous readiness
+            # checks pass.  A newer request may then supersede this one while
+            # B2 motion mode is being prepared.
+            request_generation = _claim_latest_go_to_request(target_key)
+
+            # B2 mode preparation and goal publication remain serialized, but
+            # an outdated waiter is discarded before it can publish.  This
+            # makes rapid target switching latest-wins instead of FIFO.
             async with _go_to_waypoint_lock:
                 control_service = get_control_service()
                 if control_service is None:
                     raise RuntimeError("控制服务未就绪")
                 motion_prepare_result = await control_service.prepare_navigation_motion()
+                _ensure_latest_go_to_request(request_generation, target_key)
                 cmd_vel_result = start_cmd_vel_script()
                 _request_navigation_control()
                 try:
@@ -839,7 +859,8 @@ async def nav_go_to_waypoint(
             "message": "新单点目标已替换旧目标，正在规划路径",
         }
     finally:
-        _go_to_waypoint_inflight.discard(target_key)
+        if request_generation is not None:
+            _go_to_waypoint_inflight.pop(request_generation, None)
 
 
 @router.post("/e-stop")

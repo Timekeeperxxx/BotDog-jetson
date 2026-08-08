@@ -140,7 +140,8 @@ def _install_concurrent_go_to_dependencies(
         return None
 
     monkeypatch.setattr(nav_routes, "_go_to_waypoint_lock", asyncio.Lock())
-    monkeypatch.setattr(nav_routes, "_go_to_waypoint_inflight", set())
+    monkeypatch.setattr(nav_routes, "_go_to_waypoint_latest_generation", 0)
+    monkeypatch.setattr(nav_routes, "_go_to_waypoint_inflight", {})
     monkeypatch.setattr(nav_routes, "get_ros_nav_bridge", lambda: bridge)
     monkeypatch.setattr(
         "backend.control_service.get_control_service",
@@ -206,7 +207,7 @@ def _operator() -> AuthUserInternal:
 
 
 @pytest.mark.asyncio
-async def test_nav_go_to_rejects_same_inflight_target_immediately(monkeypatch):
+async def test_nav_go_to_same_target_retry_supersedes_inflight_request(monkeypatch):
     map_id = "Scene5"
     waypoint_id = "wp_001"
     waypoint = {
@@ -222,6 +223,7 @@ async def test_nav_go_to_rejects_same_inflight_target_immediately(monkeypatch):
     prepare_started = asyncio.Event()
     release_prepare = asyncio.Event()
     prepare_calls = 0
+    published_goals: list[str] = []
 
     class DummyControlService:
         async def prepare_navigation_motion(self) -> dict[str, object]:
@@ -236,6 +238,7 @@ async def test_nav_go_to_rejects_same_inflight_target_immediately(monkeypatch):
             return {"success": True, "topic": "/nav_task_start", "data": enabled}
 
         def publish_goal_xyz_yaw(self, payload: dict[str, object]) -> dict[str, object]:
+            published_goals.append(str(payload["id"]))
             return _goal_publish_result(payload)
 
     _install_concurrent_go_to_dependencies(
@@ -255,31 +258,39 @@ async def test_nav_go_to_rejects_same_inflight_target_immediately(monkeypatch):
     )
     await asyncio.wait_for(prepare_started.wait(), timeout=1.0)
 
-    try:
-        with pytest.raises(HTTPException) as exc_info:
-            await asyncio.wait_for(
-                nav_routes.nav_go_to_waypoint(
-                    map_id,
-                    waypoint_id,
-                    user=_operator(),
-                    db=object(),
-                ),
-                timeout=0.1,
-            )
-        assert exc_info.value.status_code == 409
-        assert "正在处理中" in str(exc_info.value.detail)
-        assert prepare_calls == 1
-        assert not first_request.done()
-    finally:
-        release_prepare.set()
+    second_request = asyncio.create_task(
+        nav_routes.nav_go_to_waypoint(
+            map_id,
+            waypoint_id,
+            user=_operator(),
+            db=object(),
+        )
+    )
+    await asyncio.sleep(0)
 
-    result = await asyncio.wait_for(first_request, timeout=1.0)
-    assert result["waypoint_id"] == waypoint_id
-    assert nav_routes._go_to_waypoint_inflight == set()
+    assert nav_routes._go_to_waypoint_inflight == {
+        1: (map_id, waypoint_id),
+        2: (map_id, waypoint_id),
+    }
+
+    release_prepare.set()
+    first_result, second_result = await asyncio.wait_for(
+        asyncio.gather(first_request, second_request, return_exceptions=True),
+        timeout=2.0,
+    )
+
+    assert isinstance(first_result, HTTPException)
+    assert first_result.status_code == 409
+    assert "被更新的请求替换" in str(first_result.detail)
+    assert isinstance(second_result, dict)
+    assert second_result["waypoint_id"] == waypoint_id
+    assert prepare_calls == 2
+    assert published_goals == [waypoint_id]
+    assert nav_routes._go_to_waypoint_inflight == {}
 
 
 @pytest.mark.asyncio
-async def test_nav_go_to_serializes_distinct_targets_in_arrival_order(monkeypatch):
+async def test_nav_go_to_distinct_target_switch_discards_stale_waiter(monkeypatch):
     map_id = "Scene5"
     first_waypoint = {
         "id": "wp_001",
@@ -363,22 +374,25 @@ async def test_nav_go_to_serializes_distinct_targets_in_arrival_order(monkeypatc
     await asyncio.sleep(0)
 
     assert nav_routes._go_to_waypoint_inflight == {
-        (map_id, "wp_001"),
-        (map_id, "wp_002"),
+        1: (map_id, "wp_001"),
+        2: (map_id, "wp_002"),
     }
     assert prepare_order == ["start-1"]
 
     release_first_prepare.set()
     first_result, second_result = await asyncio.wait_for(
-        asyncio.gather(first_request, second_request),
+        asyncio.gather(first_request, second_request, return_exceptions=True),
         timeout=2.0,
     )
 
-    assert first_result["waypoint_id"] == "wp_001"
+    assert isinstance(first_result, HTTPException)
+    assert first_result.status_code == 409
+    assert "被更新的请求替换" in str(first_result.detail)
+    assert isinstance(second_result, dict)
     assert second_result["waypoint_id"] == "wp_002"
     assert prepare_order == ["start-1", "end-1", "start-2", "end-2"]
-    assert publish_order == ["wp_001", "wp_002"]
+    assert publish_order == ["wp_002"]
     assert last_published_goal == second_waypoint
     assert publish_thread_ids
     assert all(thread_id != request_thread_id for thread_id in publish_thread_ids)
-    assert nav_routes._go_to_waypoint_inflight == set()
+    assert nav_routes._go_to_waypoint_inflight == {}

@@ -559,7 +559,6 @@ def test_tf_pose_uses_receive_time_for_freshness(monkeypatch):
     bridge._rclpy = object()
     monkeypatch.setattr(settings, "ROS_NAV_FRAME_ID", "map")
     monkeypatch.setattr(settings, "ROS_NAV_BASE_FRAME_ID", "base_footprint")
-    monkeypatch.setattr(settings, "ROS_NAV_TF_MAX_AGE_SECONDS", 3.0)
 
     before = time.time()
     pose = bridge._lookup_tf_pose()
@@ -571,7 +570,7 @@ def test_tf_pose_uses_receive_time_for_freshness(monkeypatch):
     assert pose["ros_timestamp"] == pytest.approx(ros_now, abs=1e-6)
 
 
-def test_tf_pose_rejects_cached_stale_transform(monkeypatch):
+def test_tf_pose_accepts_latest_transform_available_in_local_buffer(monkeypatch):
     bridge = RosNavBridge.__new__(RosNavBridge)
     bridge._tf_buffer = SimpleNamespace(
         lookup_transform=lambda _target, _source, _time: SimpleNamespace(
@@ -585,7 +584,9 @@ def test_tf_pose_rejects_cached_stale_transform(monkeypatch):
     bridge._rclpy = object()
     monkeypatch.setattr(settings, "ROS_NAV_FRAME_ID", "map")
     monkeypatch.setattr(settings, "ROS_NAV_BASE_FRAME_ID", "base_footprint")
-    monkeypatch.setattr(settings, "ROS_NAV_TF_MAX_AGE_SECONDS", 3.0)
 
-    with pytest.raises(RuntimeError, match="TF 时间戳已过期"):
-        bridge._lookup_tf_pose()
+    pose = bridge._lookup_tf_pose()
+
+    assert pose["x"] == 1.0
+    assert pose["source_frame"] == "base_footprint"
+    assert pose["ros_timestamp"] == 1.0
