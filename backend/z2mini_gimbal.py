@@ -269,6 +269,8 @@ class Z2MiniGimbal:
         self._lock = asyncio.Lock()
         self._jog_stop_task: asyncio.Task[None] | None = None
         self._zoom_stop_task: asyncio.Task[None] | None = None
+        self._last_status: Z2MiniStatus | None = None
+        self._last_status_monotonic = 0.0
 
     def _exchange(self, packet: bytes) -> bytes:
         with socket.create_connection(
@@ -280,7 +282,19 @@ class Z2MiniGimbal:
             return receive_packet(connection)
 
     def _read_status_sync(self) -> Z2MiniStatus:
-        return parse_status(self._exchange(build_packet()))
+        status = parse_status(self._exchange(build_packet()))
+        # 供视频帧与雷达帧融合读取。只缓存已实际收到的 GCU 状态，不主动
+        # 发起额外网络请求，也不会让 AI Worker 阻塞在云台 TCP 上。
+        self._last_status = status
+        self._last_status_monotonic = time.monotonic()
+        return status
+
+    def get_cached_status(self, *, max_age_seconds: float = 2.0) -> Z2MiniStatus | None:
+        if self._last_status is None:
+            return None
+        if time.monotonic() - self._last_status_monotonic > max(0.0, max_age_seconds):
+            return None
+        return self._last_status
 
     def _execute_command_sync(
         self,

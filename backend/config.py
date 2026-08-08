@@ -114,12 +114,29 @@ class Settings(BaseSettings):
     )
     WEAPON_DEVICE: str = 'auto'
     WEAPON_INFERENCE_IMGSZ: int = 640
-    WEAPON_CONFIDENCE_THRESHOLD: float = 0.5
+    WEAPON_CONFIDENCE_THRESHOLD: float = 0.65
     WEAPON_TARGET_CLASSES: list[str] = ['guns', 'knife']
     WEAPON_FRAME_SKIP: int = 3
     WEAPON_ACTIVE_SECONDS: float = 3.0
-    WEAPON_STABLE_HITS: int = 2
-    WEAPON_ALERT_COOLDOWN_SECONDS: float = 10.0
+    WEAPON_STABLE_HITS: int = 5
+    WEAPON_CONFIRM_IOU_THRESHOLD: float = 0.4
+    WEAPON_REQUIRE_PERSON_ASSOCIATION: bool = True
+    WEAPON_PERSON_EXPAND_RATIO: float = 0.35
+    WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD: float = 0.85
+    WEAPON_ALERT_COOLDOWN_SECONDS: float = 60.0
+
+    # 天气分类支路：复用 AI Worker 已解码的可见光帧，不创建第二条 RTSP。
+    # 当前产品类别为 normal/rain/snow/sandstorm；雷达融合状态会在接口中明确标记。
+    WEATHER_ENABLED: bool = False
+    WEATHER_MODEL_PATH: str = (
+        '/home/jetson/Projects/Models/weather_types_image_detection/checkpoint-3000'
+    )
+    WEATHER_DEVICE: str = 'auto'
+    WEATHER_USE_FP16: bool = True
+    WEATHER_INTERVAL_SECONDS: float = 3.0
+    WEATHER_CONFIDENCE_THRESHOLD: float = 0.55
+    WEATHER_SMOOTHING_WINDOW: int = 5
+    WEATHER_STABLE_VOTES: int = 3
 
     # 姿态检测支路：COCO 17 点骨架 + 轻量时序状态机。
     POSE_ENABLED: bool = False
@@ -215,6 +232,23 @@ class Settings(BaseSettings):
     FENCE_CAMERA_CX_PX: float | None = None
     FENCE_CAMERA_CY_PX: float | None = None
     FENCE_CAMERA_CALIBRATED_ZOOM_RATIO: float | None = None
+
+    # 雷达、可见光、热成像近似时间同步与三维目标融合。
+    # 默认关闭，必须先写入完整标定文件并确认三路设备时间来自同一时钟域。
+    MULTISENSOR_ENABLED: bool = False
+    MULTISENSOR_CALIBRATION_PATH: str = "./data/multisensor_calibration.json"
+    MULTISENSOR_SYNC_TOLERANCE_MS: float = 80.0
+    MULTISENSOR_SAMPLE_MAX_AGE_SECONDS: float = 2.0
+    MULTISENSOR_QUEUE_SIZE: int = 30
+    # 原始 Livox CustomMsg，而不是已变换到 map 的 /lio/cloud_world。
+    MULTISENSOR_LIDAR_TOPIC: str = "/livox/lidar"
+    MULTISENSOR_LIDAR_MAX_POINTS: int = 20000
+    MULTISENSOR_MIN_TARGET_POINTS: int = 5
+    MULTISENSOR_CLUSTER_GAP_M: float = 0.35
+    # 当前版本只在标定云台姿态附近输出坐标，避免把静态外参误用于转动后的相机。
+    MULTISENSOR_GIMBAL_TOLERANCE_DEG: float = 1.0
+    MULTISENSOR_ZOOM_TOLERANCE_RATIO: float = 0.02
+    MULTISENSOR_GIMBAL_POLL_HZ: float = 2.0
 
     # ==================== 导航巡逻 / PCD 点云地图 Demo ====================
     PCD_MAP_ROOT: str = '/home/jetson/superlio/Super-LIO/src/super_lio/map'
@@ -428,8 +462,10 @@ class Settings(BaseSettings):
     AUTO_TRACK_VYAW: float = 0.35                  # 自动跟踪偏航转速（rad/s），需高于 B2 实机偏航死区
     # 云台视觉伺服：先让相机保持目标，再让机身追随相机视线。
     AUTO_TRACK_GIMBAL_ENABLED: bool = True
-    AUTO_TRACK_GIMBAL_BODY_DEADBAND_DEG: float = 5.0
+    # 初始对准保持 5°；跟踪阶段使用更宽的 8° 外圈并连续确认，避免边界抖动。
+    AUTO_TRACK_GIMBAL_BODY_DEADBAND_DEG: float = 8.0
     AUTO_TRACK_GIMBAL_FORWARD_DEADBAND_DEG: float = 5.0
+    AUTO_TRACK_GIMBAL_REALIGN_FRAMES: int = 3
     AUTO_TRACK_GIMBAL_HORIZONTAL_FOV_DEG: float = 60.0
     AUTO_TRACK_GIMBAL_SERVO_GAIN: float = 0.75
     AUTO_TRACK_GIMBAL_PIXEL_DEADBAND_PX: int = 45

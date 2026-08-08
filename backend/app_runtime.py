@@ -12,6 +12,7 @@ from .config import settings
 from .control_arbiter import ControlArbiter, set_control_arbiter
 from .guard_mission_service import GuardMissionService, set_guard_mission_service
 from .logging_config import get_logger
+from .multisensor_fusion import MultiSensorFusionService, set_multisensor_fusion_service
 from .nav_auto_track_coordinator import NavAutoTrackCoordinator, set_nav_auto_track_coordinator
 from .nav_bridge_state import set_ros_nav_bridge
 from .navigation_velocity_udp import (
@@ -74,6 +75,23 @@ async def initialize_runtime_services(
     set_ws_runtime(queue_manager, state_machine, event_broadcaster, mapping_cloud_broadcaster)
     get_logger("WebSocket事件").info("事件广播器已初始化")
     get_logger("WebSocket事件").info("导航建图点云广播器已初始化")
+
+    # 多源服务必须先于 ROS bridge 注册，bridge 创建节点时才会挂载原始
+    # Livox 订阅。默认关闭；未标定时只报告缺项，不输出三维坐标。
+    multisensor_service = MultiSensorFusionService.from_settings()
+    set_multisensor_fusion_service(multisensor_service)
+    multisensor_status = multisensor_service.get_status()
+    startup_summary.set(
+        "多源融合",
+        (
+            "disabled"
+            if multisensor_status["state"] == "disabled"
+            else "waiting"
+            if multisensor_status["state"] != "ready"
+            else "ready"
+        ),
+        multisensor_status["detail"],
+    )
 
     ros_nav_bridge = None
     if settings.ROS_NAV_ENABLED:
@@ -195,6 +213,29 @@ async def initialize_runtime_services(
             f"默认画面设置失败：{exc}",
         )
 
+    if settings.MULTISENSOR_ENABLED:
+        async def _poll_multisensor_gimbal_status() -> None:
+            interval = 1.0 / max(0.2, float(settings.MULTISENSOR_GIMBAL_POLL_HZ))
+            warned = False
+            while not stop_event.is_set():
+                try:
+                    await gimbal_service.status()
+                    warned = False
+                except (OSError, GcuProtocolError, ValueError) as exc:
+                    if not warned:
+                        gimbal_logger.warning("多源融合读取云台姿态失败：{}", exc)
+                        warned = True
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=interval)
+                except asyncio.TimeoutError:
+                    pass
+
+        tasks.append(asyncio.create_task(_poll_multisensor_gimbal_status()))
+        gimbal_logger.info(
+            "多源融合云台姿态轮询已启动：频率={}Hz",
+            settings.MULTISENSOR_GIMBAL_POLL_HZ,
+        )
+
     # 复用同一导航位姿、Z2-Mini 和 AI 解码帧，不创建第二条视频链路。
     _fence_detection_service = FenceDetectionService(gimbal_service=gimbal_service)
     set_fence_detection_service(_fence_detection_service)
@@ -286,6 +327,7 @@ async def initialize_runtime_services(
         gimbal_enabled=settings.AUTO_TRACK_GIMBAL_ENABLED,
         gimbal_body_deadband_deg=settings.AUTO_TRACK_GIMBAL_BODY_DEADBAND_DEG,
         gimbal_forward_deadband_deg=settings.AUTO_TRACK_GIMBAL_FORWARD_DEADBAND_DEG,
+        gimbal_realign_frames=settings.AUTO_TRACK_GIMBAL_REALIGN_FRAMES,
         gimbal_horizontal_fov_deg=settings.AUTO_TRACK_GIMBAL_HORIZONTAL_FOV_DEG,
         gimbal_servo_gain=settings.AUTO_TRACK_GIMBAL_SERVO_GAIN,
         gimbal_pixel_deadband_px=settings.AUTO_TRACK_GIMBAL_PIXEL_DEADBAND_PX,

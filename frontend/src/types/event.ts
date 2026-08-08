@@ -18,6 +18,8 @@ export interface AlertEvent {
   timestamp: string;
   temperature?: number;
   threshold?: number;
+  repeat_count?: number;
+  first_timestamp?: string;
   [key: string]: unknown;
 }
 
@@ -30,6 +32,25 @@ export interface EventMessage {
 export interface EventWebSocketStatus {
   status: 'disconnected' | 'connecting' | 'connected' | 'error';
   error: string | null;
+}
+
+export type WeatherLabel = 'unknown' | 'normal' | 'rain' | 'snow' | 'sandstorm';
+
+export interface WeatherStatus {
+  enabled: boolean;
+  state: 'disabled' | 'unavailable' | 'warming_up' | 'ready' | 'degraded' | 'failed';
+  detail: string;
+  label: WeatherLabel;
+  label_zh: string;
+  confidence: number;
+  raw_label?: string | null;
+  raw_confidence?: number;
+  observed_at?: string | null;
+  inference_ms?: number;
+  frames_processed?: number;
+  source?: 'visible_camera';
+  radar_fused?: boolean;
+  last_error?: string | null;
 }
 
 export interface AIStatus {
@@ -46,6 +67,7 @@ export interface AIStatus {
   processing_ms?: number;
   detect_ms?: number;
   weapon_ms?: number;
+  weather_ms?: number;
   pose_ms?: number;
   postprocess_ms?: number;
   end_to_end_ms?: number;
@@ -57,7 +79,9 @@ export interface AIStatus {
   weapon_active?: boolean;
   weapon_frames_processed?: number;
   weapon_detections_count?: number;
+  weapon_filtered_detections_count?: number;
   weapon_alerts_count?: number;
+  weather?: WeatherStatus;
   parallel_inference_enabled?: boolean;
   inference_warmed_up?: boolean;
 }

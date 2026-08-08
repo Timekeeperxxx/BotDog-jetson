@@ -406,6 +406,88 @@ def test_weapon_detector_runs_low_frequency_then_every_frame_when_active(
     assert worker._is_weapon_due(4, now=21.0) is False
 
 
+def test_weapon_filter_rejects_unassociated_chair_false_positive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_REQUIRE_PERSON_ASSOCIATION", True)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_EXPAND_RATIO", 0.35)
+    monkeypatch.setattr(
+        workers_ai.settings,
+        "WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD",
+        0.85,
+    )
+    chair_false_positive = DetectionResult(
+        label="guns",
+        confidence=0.6919,
+        bbox=(294, 243, 385, 285),
+    )
+    person_at_left = DetectionResult(
+        label="person",
+        confidence=0.4225,
+        bbox=(0, 20, 178, 348),
+    )
+
+    result = worker._filter_weapon_detections(
+        [chair_false_positive],
+        [person_at_left],
+    )
+
+    assert result == []
+
+
+def test_weapon_filter_keeps_person_associated_or_high_confidence_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_REQUIRE_PERSON_ASSOCIATION", True)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_EXPAND_RATIO", 0.35)
+    monkeypatch.setattr(
+        workers_ai.settings,
+        "WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD",
+        0.85,
+    )
+    person = DetectionResult(
+        label="person",
+        confidence=0.91,
+        bbox=(100, 50, 300, 350),
+    )
+    held_weapon = DetectionResult(
+        label="guns",
+        confidence=0.72,
+        bbox=(280, 150, 350, 215),
+    )
+    unattended_high_confidence = DetectionResult(
+        label="knife",
+        confidence=0.91,
+        bbox=(500, 100, 540, 200),
+    )
+
+    result = worker._filter_weapon_detections(
+        [held_weapon, unattended_high_confidence],
+        [person],
+    )
+
+    assert result == [held_weapon, unattended_high_confidence]
+
+
+def test_weapon_filter_can_be_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_REQUIRE_PERSON_ASSOCIATION", False)
+    candidate = DetectionResult(
+        label="guns",
+        confidence=0.66,
+        bbox=(294, 243, 385, 285),
+    )
+
+    assert worker._filter_weapon_detections([candidate], []) == [candidate]
+
+
 def test_pose_person_fallback_is_marked_as_non_alert_evidence() -> None:
     observation = PoseObservation(
         track_id=9,
@@ -476,6 +558,7 @@ async def test_weapon_detection_requires_stable_hits_and_respects_cooldown(
     worker = _worker(tmp_path, monkeypatch)
     monkeypatch.setattr(workers_ai.settings, "WEAPON_ACTIVE_SECONDS", 3.0)
     monkeypatch.setattr(workers_ai.settings, "WEAPON_STABLE_HITS", 2)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_CONFIRM_IOU_THRESHOLD", 0.4)
     monkeypatch.setattr(
         workers_ai.settings,
         "WEAPON_ALERT_COOLDOWN_SECONDS",
@@ -508,6 +591,83 @@ async def test_weapon_detection_requires_stable_hits_and_respects_cooldown(
 
     await worker._process_weapon_detections([], b"frame-5")
     assert worker._weapon_hits["knife"] == 0
+    assert worker._weapon_last_bbox["knife"] is None
+
+
+@pytest.mark.asyncio
+async def test_weapon_confirmation_requires_spatially_consistent_bbox(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_STABLE_HITS", 3)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_CONFIRM_IOU_THRESHOLD", 0.4)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_ALERT_COOLDOWN_SECONDS", 0.0)
+    alerts: list[tuple[tuple[int, int, int, int] | None, bytes]] = []
+
+    async def capture_alert(detection: DetectionResult, frame: bytes) -> None:
+        alerts.append((detection.bbox, frame))
+
+    monkeypatch.setattr(worker, "_raise_alert", capture_alert)
+    first_location = DetectionResult(
+        label="guns",
+        confidence=0.82,
+        bbox=(10, 20, 50, 70),
+    )
+    distant_location = DetectionResult(
+        label="guns",
+        confidence=0.91,
+        bbox=(300, 250, 350, 310),
+    )
+
+    await worker._process_weapon_detections([first_location], b"frame-1")
+    await worker._process_weapon_detections([distant_location], b"frame-2")
+    await worker._process_weapon_detections([first_location], b"frame-3")
+    assert alerts == []
+    assert worker._weapon_hits["guns"] == 1
+
+    await worker._process_weapon_detections([first_location], b"frame-4")
+    await worker._process_weapon_detections([first_location], b"frame-5")
+
+    assert alerts == [((10, 20, 50, 70), b"frame-5")]
+
+
+@pytest.mark.asyncio
+async def test_weapon_confirmation_follows_matching_bbox_not_highest_confidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_STABLE_HITS", 2)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_CONFIRM_IOU_THRESHOLD", 0.4)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_ALERT_COOLDOWN_SECONDS", 0.0)
+    alerts: list[DetectionResult] = []
+
+    async def capture_alert(detection: DetectionResult, frame: bytes) -> None:
+        del frame
+        alerts.append(detection)
+
+    monkeypatch.setattr(worker, "_raise_alert", capture_alert)
+    initial = DetectionResult(
+        label="knife",
+        confidence=0.80,
+        bbox=(100, 100, 160, 180),
+    )
+    matching = DetectionResult(
+        label="knife",
+        confidence=0.70,
+        bbox=(104, 103, 164, 183),
+    )
+    unrelated = DetectionResult(
+        label="knife",
+        confidence=0.99,
+        bbox=(400, 300, 460, 380),
+    )
+
+    await worker._process_weapon_detections([initial], b"frame-1")
+    await worker._process_weapon_detections([unrelated, matching], b"frame-2")
+
+    assert alerts == [matching]
 
 
 @pytest.mark.asyncio

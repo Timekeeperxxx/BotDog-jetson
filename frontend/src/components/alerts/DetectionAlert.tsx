@@ -31,6 +31,11 @@ export function DetectionAlert({ data }: DetectionAlertProps) {
           <span className="text-[10px] font-black tracking-widest text-white">
             {displaySeverity}
           </span>
+          {(data.repeat_count ?? 1) > 1 && (
+            <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[9px] font-black text-red-300">
+              ×{data.repeat_count}
+            </span>
+          )}
         </div>
         <span className="text-[10px] font-mono font-black text-slate-400">
           {new Date(data.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}

@@ -39,6 +39,8 @@ def _service(
     default_enabled: bool = True,
     gimbal_enabled: bool = False,
     gimbal_service: Any = None,
+    gimbal_body_deadband_deg: float = 8.0,
+    gimbal_realign_frames: int = 3,
 ) -> AutoTrackService:
     service = AutoTrackService(
         zone_service=_ZoneAlwaysInside(),
@@ -56,8 +58,9 @@ def _service(
         stop_snapshot_enabled=False,
         default_enabled=default_enabled,
         gimbal_enabled=gimbal_enabled,
-        gimbal_body_deadband_deg=5.0,
+        gimbal_body_deadband_deg=gimbal_body_deadband_deg,
         gimbal_forward_deadband_deg=5.0,
+        gimbal_realign_frames=gimbal_realign_frames,
         gimbal_horizontal_fov_deg=60.0,
         gimbal_servo_gain=0.75,
         gimbal_pixel_deadband_px=20,
@@ -116,6 +119,32 @@ def _head() -> DetectionResult:
 
 def _helmet() -> DetectionResult:
     return DetectionResult(bbox=(148, 92, 247, 162), confidence=0.86, class_name="helmet")
+
+
+async def _establish_centered_gimbal_follow(
+    service: AutoTrackService,
+) -> DetectionResult:
+    centered = _person(bbox=(220, 80, 420, 460))
+    centered_head = DetectionResult(
+        bbox=(275, 105, 365, 195),
+        confidence=0.88,
+        class_name="head",
+    )
+    for frame_index in range(1, 6):
+        await service.process_frame(
+            [centered, centered_head],
+            b"",
+            frame_index=frame_index,
+            current_task_id="task",
+        )
+    for frame_index in range(6, 10):
+        await service.process_frame(
+            [centered],
+            b"",
+            frame_index=frame_index,
+            current_task_id="task",
+        )
+    return centered
 
 
 async def _feed_head_person_frames(
@@ -432,6 +461,84 @@ async def test_after_alignment_turns_body_without_moving_gimbal(
     assert gimbal.modes == ["head_lock", "head_follow"]
     assert service._control_service.commands[-1][0] == "right"
     assert service._control_service.commands[-1][1]["vyaw"] == pytest.approx(0.35)
+
+
+@pytest.mark.asyncio
+async def test_gimbal_yaw_jitter_inside_tracking_deadband_keeps_following(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gimbal = _Gimbal(yaw_deg=0.0)
+    service = _service(
+        tmp_path,
+        monkeypatch,
+        gimbal_enabled=True,
+        gimbal_service=gimbal,
+    )
+    centered = await _establish_centered_gimbal_follow(service)
+
+    assert service._control_service.commands[-1][0] == "forward"
+    assert gimbal.modes == ["head_lock", "head_follow"]
+
+    for frame_index, yaw_deg in enumerate(
+        (-5.4, -6.8, -5.9, -7.1, -6.2),
+        start=10,
+    ):
+        gimbal.yaw_deg = yaw_deg
+        await service.process_frame(
+            [centered],
+            b"",
+            frame_index=frame_index,
+            current_task_id="task",
+        )
+        assert service.get_status()["tracking_phase"] == "FOLLOWING"
+        assert service._initial_alignment_complete is True
+        assert service._control_service.commands[-1][0] == "forward"
+
+    assert service.get_status()["camera_realign_deadband_deg"] == pytest.approx(8.0)
+    assert service.get_status()["gimbal_realign_hits"] == 0
+    assert gimbal.modes == ["head_lock", "head_follow"]
+
+
+@pytest.mark.asyncio
+async def test_persistent_moderate_gimbal_offset_realigns_after_confirmation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gimbal = _Gimbal(yaw_deg=0.0)
+    service = _service(
+        tmp_path,
+        monkeypatch,
+        gimbal_enabled=True,
+        gimbal_service=gimbal,
+    )
+    centered = await _establish_centered_gimbal_follow(service)
+
+    gimbal.yaw_deg = 9.0
+    for frame_index in (10, 11):
+        await service.process_frame(
+            [centered],
+            b"",
+            frame_index=frame_index,
+            current_task_id="task",
+        )
+        assert service.get_status()["tracking_phase"] == "FOLLOWING"
+        assert service._initial_alignment_complete is True
+
+    assert service.get_status()["gimbal_realign_hits"] == 2
+    assert service._control_service.commands[-1][0] == "right"
+
+    await service.process_frame(
+        [centered],
+        b"",
+        frame_index=12,
+        current_task_id="task",
+    )
+
+    assert service._control_service.commands[-1][0] == "stop"
+    assert service.get_status()["tracking_phase"] == "ALIGNING"
+    assert service._initial_alignment_complete is False
+    assert gimbal.modes == ["head_lock", "head_follow", "head_lock"]
 
 
 @pytest.mark.asyncio

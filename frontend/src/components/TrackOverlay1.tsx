@@ -10,6 +10,10 @@
  */
 
 import { useEffect, useRef, useCallback } from 'react';
+import {
+  DEFAULT_AI_OVERLAY_VISIBILITY,
+  type AiOverlayVisibility,
+} from './video/videoStagePreferences';
 
 export interface TrackOverlayData {
   detections?: {
@@ -69,9 +73,14 @@ export interface TrackOverlayData {
 interface Props {
   data: TrackOverlayData | null;
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  visibility?: AiOverlayVisibility;
 }
 
-export function TrackOverlay({ data, videoRef }: Props) {
+export function TrackOverlay({
+  data,
+  videoRef,
+  visibility = DEFAULT_AI_OVERLAY_VISIBILITY,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
 
@@ -101,47 +110,57 @@ export function TrackOverlay({ data, videoRef }: Props) {
     const sx = cw / data.frame_w;
     const sy = ch / data.frame_h;
 
-    // ─── 1. 水平死区（两条蓝色虚线） ───────────────────────────────
-    const centerX = cw / 2;
-    const dbPx = data.deadband_px * sx;
-    ctx.save();
-    ctx.setLineDash([6, 4]);
-    ctx.strokeStyle = 'rgba(80,160,255,0.5)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(centerX - dbPx, 0);
-    ctx.lineTo(centerX - dbPx, ch);
-    ctx.moveTo(centerX + dbPx, 0);
-    ctx.lineTo(centerX + dbPx, ch);
-    ctx.stroke();
-    ctx.restore();
+    if (visibility.tracking) {
+      // ─── 1. 水平死区（两条蓝色虚线） ─────────────────────────────
+      const centerX = cw / 2;
+      const dbPx = data.deadband_px * sx;
+      ctx.save();
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = 'rgba(80,160,255,0.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(centerX - dbPx, 0);
+      ctx.lineTo(centerX - dbPx, ch);
+      ctx.moveTo(centerX + dbPx, 0);
+      ctx.lineTo(centerX + dbPx, ch);
+      ctx.stroke();
+      ctx.restore();
 
-    // 死区标签
-    ctx.save();
-    ctx.fillStyle = 'rgba(80,160,255,0.35)';
-    ctx.font = '10px monospace';
-    ctx.fillText('← 死区 →', centerX - 22, 14);
-    ctx.restore();
+      ctx.save();
+      ctx.fillStyle = 'rgba(80,160,255,0.35)';
+      ctx.font = '10px monospace';
+      ctx.fillText('← 死区 →', centerX - 22, 14);
+      ctx.restore();
 
-    // ─── 2. 纵向停止线（黄色虚线） ──────────────────────────────────
-    const stopY = data.anchor_y_stop_ratio * ch;
-    ctx.save();
-    ctx.setLineDash([8, 4]);
-    ctx.strokeStyle = 'rgba(255,200,0,0.55)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, stopY);
-    ctx.lineTo(cw, stopY);
-    ctx.stroke();
-    // 标签
-    ctx.fillStyle = 'rgba(255,200,0,0.55)';
-    ctx.font = '10px monospace';
-    ctx.fillText(`停止线 y=${Math.round(stopY)}`, 6, stopY - 4);
-    ctx.restore();
+      // ─── 2. 纵向停止线（黄色虚线） ────────────────────────────────
+      const stopY = data.anchor_y_stop_ratio * ch;
+      ctx.save();
+      ctx.setLineDash([8, 4]);
+      ctx.strokeStyle = 'rgba(255,200,0,0.55)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, stopY);
+      ctx.lineTo(cw, stopY);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,200,0,0.55)';
+      ctx.font = '10px monospace';
+      ctx.fillText(`停止线 y=${Math.round(stopY)}`, 6, stopY - 4);
+      ctx.restore();
+    }
 
-    const overlayDetections = data.detections?.length
+    const allDetections = data.detections?.length
       ? data.detections
       : data.persons.map((p) => ({ ...p, class_name: p.class_name || 'person' }));
+
+    const overlayDetections = allDetections.filter((detection) => {
+      const className = detection.class_name || 'person';
+      if (className === 'guns' || className === 'knife') return visibility.weapon;
+      if (className === 'head' || className === 'helmet') return visibility.helmet;
+      if (className === 'person') {
+        return visibility.helmet || (visibility.face && Boolean(detection.face_status));
+      }
+      return visibility.helmet;
+    });
 
     const colorForClass = (className: string, isStranger?: boolean | null, safetyStatus?: string | null) => {
       if (className === 'person') {
@@ -180,7 +199,9 @@ export function TrackOverlay({ data, videoRef }: Props) {
       const rx = x1 * sx, ry = y1 * sy;
       const rw = (x2 - x1) * sx, rh = (y2 - y1) * sy;
       const className = p.class_name || 'person';
-      const colors = colorForClass(className, p.is_stranger, p.safety_status);
+      const visibleSafetyStatus = visibility.helmet ? p.safety_status : null;
+      const visibleStrangerStatus = visibility.face ? p.is_stranger : null;
+      const colors = colorForClass(className, visibleStrangerStatus, visibleSafetyStatus);
 
       ctx.save();
       ctx.strokeStyle = colors.box;
@@ -188,7 +209,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
       ctx.strokeRect(rx, ry, rw, rh);
 
       const idPart = p.track_id !== undefined && p.track_id >= 0 ? ` #${p.track_id}` : '';
-      const faceLabel = className === 'person'
+      const faceLabel = visibility.face && className === 'person'
         ? (p.face_status === 'recognized' && p.display_name
           ? ` · ${p.display_name}`
           : p.face_status === 'unknown'
@@ -203,7 +224,10 @@ export function TrackOverlay({ data, videoRef }: Props) {
         guns: '枪械',
         knife: '刀具',
       };
-      const headerText = `${classLabels[className] ?? className}${idPart}${faceLabel} ${(p.conf * 100).toFixed(0)}%`;
+      const baseLabel = className === 'person' && !visibility.helmet && visibility.face
+        ? '人脸'
+        : (classLabels[className] ?? className);
+      const headerText = `${baseLabel}${idPart}${faceLabel} ${(p.conf * 100).toFixed(0)}%`;
       ctx.font = 'bold 10px monospace';
       const headerWidth = Math.max(ctx.measureText(headerText).width + 10, 64);
       ctx.fillStyle = colors.label;
@@ -211,12 +235,14 @@ export function TrackOverlay({ data, videoRef }: Props) {
       ctx.fillStyle = '#fff';
       ctx.fillText(headerText, rx + 5, ry - 4);
 
-      if (className === 'person' && (p.safety_status === 'no_helmet' || (p.is_stranger !== undefined && p.is_stranger !== null))) {
-        const tagText = p.safety_status === 'no_helmet'
+      const showNoHelmetTag = visibility.helmet && p.safety_status === 'no_helmet';
+      const showIdentityTag = visibility.face && p.is_stranger !== undefined && p.is_stranger !== null;
+      if (className === 'person' && (showNoHelmetTag || showIdentityTag)) {
+        const tagText = showNoHelmetTag
           ? 'NO_HELMET'
           : (p.is_stranger ? "STRANGER" : "KNOWN");
         const w = ctx.measureText(tagText).width + 8;
-        ctx.fillStyle = p.safety_status === 'no_helmet'
+        ctx.fillStyle = showNoHelmetTag
           ? 'rgba(230,0,0,0.9)'
           : (p.is_stranger ? 'rgba(220,0,0,0.85)' : 'rgba(0,180,80,0.85)');
         ctx.fillRect(rx, y2 * sy, w, 14);
@@ -250,7 +276,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
     };
     const keypointThreshold = data.keypoint_confidence ?? 0.35;
 
-    for (const pose of data.poses ?? []) {
+    for (const pose of visibility.pose ? (data.poses ?? []) : []) {
       const color = postureColors[pose.posture] ?? postureColors.unknown;
       const points = pose.keypoints;
       ctx.save();
@@ -305,7 +331,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
     }
 
     // ─── 3.5. 人的脚点记录 ──────────────────────────────────────
-    if (data.foot_points && data.foot_points.length > 0) {
+    if (visibility.tracking && data.foot_points && data.foot_points.length > 0) {
       for (const fp of data.foot_points) {
         const fx = fp.x * sx;
         const fy = fp.y * sy;
@@ -326,7 +352,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
     }
 
     // ─── 3.8. 边缘裕量保护区（红色半透明条带 + 三侧安全边界线） ──────────
-    if (data.edge_margin_ratio && data.edge_margin_ratio > 0) {
+    if (visibility.tracking && data.edge_margin_ratio && data.edge_margin_ratio > 0) {
       const mx = cw * data.edge_margin_ratio;
       const my = ch * data.edge_margin_ratio;
       const dangerColor = 'rgba(255, 60, 60, 0.13)';
@@ -360,7 +386,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
     }
 
     // ─── 4. 防区多边形（黄色，优先画旋转四边形） ─────────────────────
-    if (data.zone_polygon && data.zone_polygon.length >= 3) {
+    if (visibility.tracking && data.zone_polygon && data.zone_polygon.length >= 3) {
       // 精确旋转四边形
       const pts = data.zone_polygon.map(([px, py]) => [px * sx, py * sy]);
       ctx.save();
@@ -383,7 +409,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
       ctx.font = 'bold 11px monospace';
       ctx.fillText('🟡 防区(颜色检测)', pts[0][0] + 3, pts[0][1] - 5);
       ctx.restore();
-    } else if (data.zone_bbox) {
+    } else if (visibility.tracking && data.zone_bbox) {
       // 回退：轴对齐矩形
       const [x1, y1, x2, y2] = data.zone_bbox;
       const rx = x1 * sx, ry = y1 * sy;
@@ -404,7 +430,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
     }
 
     // ─── 6. 锁定目标（红色加粗框） ──────────────────────────────────
-    if (data.active_bbox) {
+    if (visibility.tracking && data.active_bbox) {
       const [x1, y1, x2, y2] = data.active_bbox;
       const rx = x1 * sx, ry = y1 * sy;
       const rw = (x2 - x1) * sx, rh = (y2 - y1) * sy;
@@ -435,7 +461,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
     }
 
     // ─── 5. 决策信息（左下角） ───────────────────────────────────────
-    if (data.command || data.state) {
+    if (visibility.tracking && (data.command || data.state)) {
       const cmdLabel: Record<string, string> = {
         forward: '↑ 前进', left: '← 左转', right: '→ 右转', stop: '■ 停止',
       };
@@ -466,7 +492,7 @@ export function TrackOverlay({ data, videoRef }: Props) {
       }
       ctx.restore();
     }
-  }, [data, videoRef]);
+  }, [data, videoRef, visibility]);
 
   useEffect(() => {
     draw();

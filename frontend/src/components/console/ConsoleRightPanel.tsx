@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { Camera, ChevronDown, ChevronUp, ShieldCheck, Volume2, VolumeX } from 'lucide-react';
+import { Camera, ChevronDown, ChevronUp, ShieldCheck, Trash2, Volume2, VolumeX } from 'lucide-react';
 import { ControlPad } from '../ControlPad';
 import { DetectionAlert } from '../alerts/DetectionAlert';
 import { LogPanel } from '../logs/LogPanel';
@@ -23,6 +23,7 @@ export interface ConsoleRightPanelProps {
   isConnected: boolean;
   whepStatus: WhepState;
   alerts: AlertEvent[];
+  onClearAlerts: () => void;
   connectWs: () => void;
   connectWhep: () => void;
 }
@@ -43,6 +44,7 @@ export function ConsoleRightPanel({
   isConnected,
   whepStatus,
   alerts,
+  onClearAlerts,
   connectWs,
   connectWhep,
 }: ConsoleRightPanelProps) {
@@ -86,16 +88,28 @@ export function ConsoleRightPanel({
             <Camera size={16} />
             <span className="text-[11px] uppercase tracking-widest">AI 识别</span>
           </div>
-          {aiStatus && (
-            <span className={`text-[9px] px-2 py-0.5 font-black rounded uppercase tracking-tighter ${
-              aiStatus.mode === 'alert' ? 'bg-red-600 text-white' :
-              aiStatus.mode === 'suspect' ? 'bg-amber-500 text-black' :
-              aiStatus.mode === 'patrol' ? 'bg-blue-500 text-white' :
-              'bg-white text-black'
-            }`}>
-              {{ idle: '待机', patrol: '巡逻', suspect: '疑似', alert: '告警' }[aiStatus.mode] || aiStatus.mode}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {alerts.length > 0 && (
+              <button
+                type="button"
+                onClick={onClearAlerts}
+                title="清除当前告警列表"
+                className="rounded border border-white/15 p-1 text-white/50 transition hover:border-white/50 hover:text-white"
+              >
+                <Trash2 size={11} />
+              </button>
+            )}
+            {aiStatus && (
+              <span className={`text-[9px] px-2 py-0.5 font-black rounded uppercase tracking-tighter ${
+                aiStatus.mode === 'alert' ? 'bg-red-600 text-white' :
+                aiStatus.mode === 'suspect' ? 'bg-amber-500 text-black' :
+                aiStatus.mode === 'patrol' ? 'bg-blue-500 text-white' :
+                'bg-white text-black'
+              }`}>
+                {{ idle: '待机', patrol: '巡逻', suspect: '疑似', alert: '告警' }[aiStatus.mode] || aiStatus.mode}
+              </span>
+            )}
+          </div>
         </div>
         <div
           className="px-4 py-2 border-b border-white/10 bg-black/80 flex items-center justify-between cursor-pointer hover:bg-white/5 transition-all"
@@ -122,6 +136,14 @@ export function ConsoleRightPanel({
               <div className="flex items-center justify-between">
                 <span className="text-white/50">稳定阈值</span>
                 <span>{aiStatus ? aiStatus.stable_hits : '--'}</span>
+              </div>
+              <div className="flex items-center justify-between col-span-2">
+                <span className="text-white/50">天气</span>
+                <span>
+                  {aiStatus?.weather?.state === 'ready'
+                    ? `${aiStatus.weather.label_zh} ${Math.round(aiStatus.weather.confidence * 100)}%`
+                    : aiStatus?.weather?.state === 'warming_up' ? '识别中' : '--'}
+                </span>
               </div>
             </div>
           </div>

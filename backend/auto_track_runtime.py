@@ -67,6 +67,7 @@ class AutoTrackRuntimeMixin:
         self._tracking_phase = "AIMING"
         self._initial_alignment_complete = False
         self._body_aligned_hits = 0
+        self._gimbal_realign_hits = 0
         self._reset_alignment_motion_observation()
         self._decision_engine.reset()
 
@@ -103,6 +104,7 @@ class AutoTrackRuntimeMixin:
         self._body_turn_active = False
         self._body_aligned_hits = 0
         self._initial_alignment_complete = False
+        self._gimbal_realign_hits = 0
         self._tracking_phase = "IDLE"
         self._gimbal_alignment_mode_set = False
         self._reset_alignment_motion_observation()

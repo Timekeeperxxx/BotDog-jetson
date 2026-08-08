@@ -1,0 +1,38 @@
+{
+  "calibrated_at": "2026-08-06T00:00:00Z",
+  "coordinate_validation": null,
+  "gimbal_reference": {
+    "pitch_deg": 0.0,
+    "yaw_deg": 0.0,
+    "zoom_ratio": 1.0
+  },
+  "lidar_frame_id": "livox_frame",
+  "lidar_to_visible": {
+    "rotation": [
+      [1.0, 0.0, 0.0],
+      [0.0, 1.0, 0.0],
+      [0.0, 0.0, 1.0]
+    ],
+    "translation_m": [0.0, 0.0, 0.0]
+  },
+  "thermal_frame_id": "thermal_camera",
+  "thermal_resolution": {
+    "height": 360,
+    "width": 640
+  },
+  "thermal_to_visible_homography": [
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0]
+  ],
+  "version": "replace-with-field-calibration-v1",
+  "visible_frame_id": "visible_camera",
+  "visible_intrinsics": {
+    "cx": 320.0,
+    "cy": 180.0,
+    "fx": 500.0,
+    "fy": 500.0,
+    "height": 360,
+    "width": 640
+  }
+}

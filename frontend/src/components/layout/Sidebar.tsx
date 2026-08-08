@@ -37,6 +37,7 @@ export interface SidebarProps {
   onOpenNavPatrolPage: () => void;
   onOpenAdminPage: () => void;
   onOpenConfig: () => void;
+  onAcknowledgeAlert: () => void;
   latestAlert: AlertEvent | null;
   isUiFullscreen: boolean;
 }
@@ -47,6 +48,7 @@ export function Sidebar({
   onOpenNavPatrolPage,
   onOpenAdminPage,
   onOpenConfig,
+  onAcknowledgeAlert,
   latestAlert,
   isUiFullscreen,
 }: SidebarProps) {
@@ -66,7 +68,7 @@ export function Sidebar({
       </div>
       <div className="mt-auto space-y-5 pt-4 border-t border-white/10">
         <SidebarBtn icon={<Settings size={20} />} active={false} onClick={onOpenConfig} label="设置" />
-        <SidebarBtn icon={<Bell size={20} />} active={false} dot={!!latestAlert} label="告警" />
+        <SidebarBtn icon={<Bell size={20} />} active={false} onClick={onAcknowledgeAlert} dot={!!latestAlert} label="确认告警" />
       </div>
     </nav>
   );

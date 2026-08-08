@@ -88,8 +88,9 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         default_enabled: bool = False,
         yaw_pulse_ms: float = 0.0,
         gimbal_enabled: bool = False,
-        gimbal_body_deadband_deg: float = 5.0,
+        gimbal_body_deadband_deg: float = 8.0,
         gimbal_forward_deadband_deg: float = 5.0,
+        gimbal_realign_frames: int = 3,
         gimbal_horizontal_fov_deg: float = 60.0,
         gimbal_servo_gain: float = 0.75,
         gimbal_pixel_deadband_px: int = 20,
@@ -167,6 +168,8 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             0.5,
             min(15.0, float(gimbal_forward_deadband_deg)),
         )
+        self._gimbal_realign_frames = max(1, int(gimbal_realign_frames))
+        self._gimbal_realign_hits = 0
         self._gimbal_horizontal_fov_deg = max(10.0, min(170.0, float(gimbal_horizontal_fov_deg)))
         self._gimbal_servo_gain = max(0.0, min(1.5, float(gimbal_servo_gain)))
         self._gimbal_pixel_deadband_px = max(0, int(gimbal_pixel_deadband_px))
@@ -316,11 +319,16 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                 logger.info(f"[AutoTrackService] 热更新 gimbal_enabled={self._gimbal_enabled}")
             elif key == "auto_track_gimbal_body_deadband_deg":
                 self._gimbal_body_deadband_deg = max(0.5, float(value))
+                self._gimbal_realign_hits = 0
             elif key == "auto_track_gimbal_forward_deadband_deg":
                 self._gimbal_forward_deadband_deg = max(
                     0.5,
                     min(15.0, float(value)),
                 )
+                self._gimbal_realign_hits = 0
+            elif key == "auto_track_gimbal_realign_frames":
+                self._gimbal_realign_frames = max(1, int(value))
+                self._gimbal_realign_hits = 0
             elif key == "auto_track_gimbal_horizontal_fov_deg":
                 self._gimbal_horizontal_fov_deg = max(10.0, min(170.0, float(value)))
             elif key == "auto_track_gimbal_servo_gain":
@@ -378,6 +386,10 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             "gimbal_connected": self._gimbal_connected,
             "camera_yaw_deg": self._camera_yaw_deg,
             "camera_forward_deadband_deg": self._gimbal_forward_deadband_deg,
+            "camera_realign_deadband_deg": self._gimbal_realign_deadband_deg(),
+            "gimbal_body_deadband_deg": self._gimbal_body_deadband_deg,
+            "gimbal_realign_hits": self._gimbal_realign_hits,
+            "gimbal_realign_frames": self._gimbal_realign_frames,
             "body_heading_error_deg": self._body_heading_error_deg,
             "gimbal_target_yaw_deg": self._gimbal_target_yaw_deg,
             "gimbal_error": self._gimbal_error,
@@ -691,6 +703,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             self._body_turn_active = False
             self._body_aligned_hits = 0
             self._initial_alignment_complete = False
+            self._gimbal_realign_hits = 0
             self._tracking_phase = "LOST"
             self._reset_alignment_motion_observation()
             target.lost_count = 1
@@ -757,6 +770,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                         await self._send_command_safe("stop")
                         await self._finish_gimbal_alignment()
                         self._initial_alignment_complete = True
+                        self._gimbal_realign_hits = 0
                         self._tracking_phase = "FOLLOWING"
                         self._reset_alignment_motion_observation()
                         self._last_decision_reason = "机身已正对摄像头，下一帧开始跟踪"
@@ -849,12 +863,15 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                     return
 
                 camera_yaw_deg = float(self._camera_yaw_deg or 0.0)
-                if abs(camera_yaw_deg) > self._gimbal_forward_deadband_deg:
-                    # 运行中人为转动云台或云台发生漂移时，先停止底盘，再锁住
-                    # 相机当前世界朝向，重新让机身追到相机方向。未对齐时严禁前进。
+                if self._should_realign_gimbal(camera_yaw_deg):
+                    # 跟踪阶段使用更宽的外圈阈值和连续帧确认，过滤 5° 边界附近
+                    # 的读数抖动。大幅人为转动云台时仍在首帧立即停车并重新对齐。
+                    realign_deadband_deg = self._gimbal_realign_deadband_deg()
+                    realign_hits = self._gimbal_realign_hits
                     await self._send_command_safe("stop")
                     self._initial_alignment_complete = False
                     self._body_aligned_hits = 0
+                    self._gimbal_realign_hits = 0
                     self._tracking_phase = "ALIGNING"
                     self._reset_alignment_motion_observation()
                     try:
@@ -862,9 +879,10 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                     except Exception as exc:
                         self._set_gimbal_error(str(exc))
                     self._last_decision_reason = (
-                        "检测到相机偏离机身正前方，重新只转机身对齐："
+                        "检测到相机持续偏离机身正前方，重新只转机身对齐："
                         f"camera_yaw={camera_yaw_deg:.2f}°，"
-                        f"deadband=±{self._gimbal_forward_deadband_deg:.1f}°"
+                        f"deadband=±{realign_deadband_deg:.1f}°，"
+                        f"confirm={realign_hits}/{self._gimbal_realign_frames}"
                     )
                     logger.info(
                         f"[AutoTrackService] FOLLOWING→ALIGNING: "
@@ -878,6 +896,9 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                         "track_id": target.track_id,
                         "camera_yaw_deg": camera_yaw_deg,
                         "camera_forward_deadband_deg": self._gimbal_forward_deadband_deg,
+                        "camera_realign_deadband_deg": realign_deadband_deg,
+                        "gimbal_realign_hits": realign_hits,
+                        "gimbal_realign_frames": self._gimbal_realign_frames,
                     })
                     return
 
@@ -1003,6 +1024,28 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             self._last_gimbal_error_log_time = now
             logger.warning(f"[AutoTrackService] 云台视线不可用，自动跟踪停车：{message}")
 
+    def _gimbal_realign_deadband_deg(self) -> float:
+        """跟踪阶段的外圈阈值；初始对准仍使用更严格的前进阈值。"""
+        return max(
+            self._gimbal_forward_deadband_deg,
+            self._gimbal_body_deadband_deg,
+        )
+
+    def _should_realign_gimbal(self, camera_yaw_deg: float) -> bool:
+        """使用迟滞和连续帧确认，过滤阈值附近的单帧偏航抖动。"""
+        absolute_yaw_deg = abs(float(camera_yaw_deg))
+        realign_deadband_deg = self._gimbal_realign_deadband_deg()
+        if absolute_yaw_deg <= realign_deadband_deg:
+            self._gimbal_realign_hits = 0
+            return False
+
+        self._gimbal_realign_hits += 1
+        immediate_realign_deg = max(15.0, realign_deadband_deg * 2.0)
+        return (
+            absolute_yaw_deg >= immediate_realign_deg
+            or self._gimbal_realign_hits >= self._gimbal_realign_frames
+        )
+
     def _body_yaw_speed(self, heading_error_deg: float | None) -> float | None:
         if heading_error_deg is None:
             return None
@@ -1122,6 +1165,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             self._tracking_phase = "AIMING"
             self._initial_alignment_complete = False
             self._body_aligned_hits = 0
+            self._gimbal_realign_hits = 0
             self._reset_alignment_motion_observation()
             logger.info(
                 f"[AutoTrackService] LOST→FOLLOWING: 重新发现 track_id={target.track_id}"

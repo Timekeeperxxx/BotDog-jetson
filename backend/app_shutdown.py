@@ -8,6 +8,7 @@ from typing import Any
 from .control_service import get_control_service, set_control_service
 from .fence_detection_service import get_fence_detection_service, set_fence_detection_service
 from .logging_config import get_logger
+from .multisensor_fusion import set_multisensor_fusion_service
 from .nav_bridge_state import set_ros_nav_bridge
 from .navigation_velocity_udp import (
     get_navigation_velocity_udp_service,
@@ -16,6 +17,7 @@ from .navigation_velocity_udp import (
 from .services_mapping import get_mapping_service
 from .state_machine_state import set_state_machine
 from .ws_runtime_state import clear_ws_runtime
+from .weather_detection import set_weather_detection_service
 
 app_logger = get_logger("应用服务")
 
@@ -29,6 +31,8 @@ async def shutdown_runtime_services(
 
     set_state_machine(None)
     clear_ws_runtime()
+    set_multisensor_fusion_service(None)
+    set_weather_detection_service(None)
 
     navigation_velocity_udp = get_navigation_velocity_udp_service()
     if navigation_velocity_udp is not None:

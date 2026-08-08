@@ -29,6 +29,7 @@ MAPPING_CLOUD_BROADCAST_MIN_INTERVAL_S = 3.0
 class RosNavCloudBridgeMixin:
     def _init_mapping_cloud_state(self) -> None:
         self._cloud_subscription: Any | None = None
+        self._multisensor_lidar_subscription: Any | None = None
         self._last_cloud_broadcast_at = 0.0
         self._accumulated_cloud: np.ndarray = np.empty((0, 3), dtype=np.float32)
         self._accumulated_cloud_voxels: VoxelMap = {}
@@ -38,6 +39,7 @@ class RosNavCloudBridgeMixin:
     def _setup_cloud_subscription(self) -> None:
         if self._node is None:
             return
+        self._setup_multisensor_lidar_subscription()
         if not settings.ROS_NAV_MAPPING_CLOUD_FORWARD_ENABLED:
             nav_logger.info("建图实时点云转发已禁用，跳过 {} 订阅", settings.ROS_NAV_MAPPING_CLOUD_TOPIC)
             return
@@ -58,6 +60,71 @@ class RosNavCloudBridgeMixin:
             qos_profile_sensor_data,
         )
         nav_logger.info("ROS2 建图实时点云订阅已启动：topic={}", cloud_topic)
+
+    def _setup_multisensor_lidar_subscription(self) -> None:
+        if self._node is None or not settings.MULTISENSOR_ENABLED:
+            return
+        if self._multisensor_lidar_subscription is not None:
+            return
+        try:
+            from livox_ros_driver2.msg import CustomMsg
+            from rclpy.qos import qos_profile_sensor_data
+        except Exception as exc:
+            nav_logger.warning("Livox CustomMsg 不可用，跳过多源雷达订阅：{}", exc)
+            return
+        self._multisensor_lidar_subscription = self._node.create_subscription(
+            CustomMsg,
+            settings.MULTISENSOR_LIDAR_TOPIC,
+            self._handle_multisensor_lidar_message,
+            qos_profile_sensor_data,
+        )
+        nav_logger.info(
+            "多源融合原始雷达订阅已启动：topic={}，max_points={}",
+            settings.MULTISENSOR_LIDAR_TOPIC,
+            settings.MULTISENSOR_LIDAR_MAX_POINTS,
+        )
+
+    def _handle_multisensor_lidar_message(self, msg: Any) -> None:
+        from .multisensor_fusion import get_multisensor_fusion_service
+
+        service = get_multisensor_fusion_service()
+        if service is None or not service.enabled:
+            return
+        raw_points = getattr(msg, "points", ())
+        point_count = len(raw_points)
+        if point_count <= 0:
+            return
+        maximum = max(1, int(settings.MULTISENSOR_LIDAR_MAX_POINTS))
+        stride = max(1, (point_count + maximum - 1) // maximum)
+        points = []
+        for point in raw_points[::stride]:
+            try:
+                xyz = (float(point.x), float(point.y), float(point.z))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if all(np.isfinite(value) for value in xyz):
+                points.append(xyz)
+        if not points:
+            return
+
+        header = getattr(msg, "header", None)
+        stamp = getattr(header, "stamp", None)
+        seconds = float(getattr(stamp, "sec", 0.0))
+        nanoseconds = float(getattr(stamp, "nanosec", 0.0))
+        timestamp = seconds + nanoseconds / 1_000_000_000.0
+        if timestamp <= 0:
+            timebase = float(getattr(msg, "timebase", 0.0))
+            timestamp = timebase / 1_000_000_000.0 if timebase > 0 else time.time()
+        frame_id = str(getattr(header, "frame_id", "") or "livox_frame")
+        try:
+            service.ingest_lidar(
+                timestamp=timestamp,
+                monotonic_at=time.monotonic(),
+                points=points,
+                frame_id=frame_id,
+            )
+        except (TypeError, ValueError) as exc:
+            nav_logger.warning("多源融合雷达采样无效，本帧已跳过：{}", exc)
 
     def reset_mapping_cloud_subscription(self) -> bool:
         """Recreate the mapping cloud subscription after the mapping stack starts."""

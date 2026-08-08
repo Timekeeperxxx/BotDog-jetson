@@ -7,6 +7,7 @@ import { getWsUrl } from '../config/api';
 import type { AlertEvent, AIStatus, EventWebSocketStatus, AutoTrackStatus } from '../types/event';
 import type { TrackDecision } from './useAutoTrack';
 import type { TrackOverlayData } from '../components/TrackOverlay1';
+import { ALERT_MERGE_WINDOW_MS, mergeAlertEvent } from './alertEventPolicy';
 
 export interface EventHookState {
   status: EventWebSocketStatus;
@@ -18,6 +19,8 @@ export interface EventHookState {
   trackOverlay: TrackOverlayData | null;
   connect: () => void;
   disconnect: () => void;
+  acknowledgeLatestAlert: () => void;
+  clearAlerts: () => void;
 }
 
 export function useEventWebSocket(): EventHookState {
@@ -141,7 +144,7 @@ export function useEventWebSocket(): EventHookState {
           } as AlertEvent;
 
           setLatestAlert(alert);
-          setAlerts((prev) => [alert, ...prev].slice(0, 10));
+          setAlerts((prev) => mergeAlertEvent(prev, alert));
         } catch (error) {
           console.error('解析事件消息失败:', error);
         }
@@ -182,6 +185,24 @@ export function useEventWebSocket(): EventHookState {
     connectRef.current = connect;
   }, [connect]);
 
+  useEffect(() => {
+    if (!latestAlert) return;
+    const currentAlert = latestAlert;
+    const timer = window.setTimeout(() => {
+      setLatestAlert((value) => value === currentAlert ? null : value);
+    }, ALERT_MERGE_WINDOW_MS);
+    return () => window.clearTimeout(timer);
+  }, [latestAlert]);
+
+  const acknowledgeLatestAlert = useCallback(() => {
+    setLatestAlert(null);
+  }, []);
+
+  const clearAlerts = useCallback(() => {
+    setAlerts([]);
+    setLatestAlert(null);
+  }, []);
+
   const disconnect = useCallback(() => {
     connectionIdRef.current += 1;
     if (reconnectTimeoutRef.current) {
@@ -213,5 +234,7 @@ export function useEventWebSocket(): EventHookState {
     trackOverlay,
     connect,
     disconnect,
+    acknowledgeLatestAlert,
+    clearAlerts,
   };
 }

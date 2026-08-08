@@ -167,6 +167,18 @@ FENCE_DETECTION_ROUTES = [
     ("POST", "/api/v1/fence-detection/disable"),
 ]
 
+MULTISENSOR_ROUTES = [
+    ("GET", "/api/v1/multisensor/status"),
+    ("GET", "/api/v1/multisensor/calibration"),
+    ("PUT", "/api/v1/multisensor/calibration"),
+    ("POST", "/api/v1/multisensor/samples/thermal"),
+    ("GET", "/api/v1/multisensor/targets"),
+]
+
+WEATHER_ROUTES = [
+    ("GET", "/api/v1/weather/status"),
+]
+
 FOCUS_ZONE_ROUTES = [
     ("GET", "/api/v1/focus-zones"),
     ("POST", "/api/v1/focus-zones"),
@@ -201,6 +213,13 @@ WEBSOCKET_ROUTES = [
     "/ws/event",
     "/ws/nav-mapping-cloud",
 ]
+
+
+@pytest.mark.parametrize("method,path", MULTISENSOR_ROUTES)
+def test_multisensor_route_registered(route_index: dict, method: str, path: str) -> None:
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── 多源同步/融合接口不可用"
+    )
 
 
 @pytest.mark.parametrize("method,path", NAV_ROUTES)
@@ -327,6 +346,13 @@ def test_gimbal_route_registered(route_index: dict, method: str, path: str) -> N
 def test_fence_detection_route_registered(route_index: dict, method: str, path: str) -> None:
     assert (method, path) in route_index, (
         f"{method} {path} 未注册 ── fence_detection 路由可能在拆分中丢失"
+    )
+
+
+@pytest.mark.parametrize("method,path", WEATHER_ROUTES)
+def test_weather_route_registered(route_index: dict, method: str, path: str) -> None:
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── weather 路由可能在拆分中丢失"
     )
 
 

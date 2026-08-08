@@ -67,7 +67,29 @@ def test_registry_contains_weapon_inference_controls() -> None:
         "weapon_frame_skip",
         "weapon_active_seconds",
         "weapon_stable_hits",
+        "weapon_confirm_iou_threshold",
+        "weapon_require_person_association",
+        "weapon_person_expand_ratio",
+        "weapon_unattended_confidence_threshold",
         "weapon_alert_cooldown_seconds",
+    }
+
+    assert expected.issubset(configs)
+    assert all(configs[key]["category"] == "ai" for key in expected)
+    assert all(configs[key]["is_hot_reloadable"] is False for key in expected)
+
+
+def test_registry_contains_weather_inference_controls() -> None:
+    configs = ConfigService.DEFAULT_CONFIGS
+    expected = {
+        "weather_enabled",
+        "weather_model_path",
+        "weather_device",
+        "weather_use_fp16",
+        "weather_interval_seconds",
+        "weather_confidence_threshold",
+        "weather_smoothing_window",
+        "weather_stable_votes",
     }
 
     assert expected.issubset(configs)

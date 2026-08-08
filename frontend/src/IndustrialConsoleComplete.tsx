@@ -46,7 +46,16 @@ export default function IndustrialConsoleComplete() {
   } = useBotDogWebSocket();
 
   // 事件流由 main.tsx 中的 EventStreamProvider 自动连接，这里只消费派生状态。
-  const { alerts, latestAlert, aiStatus, autoTrackStatus, trackDecision, trackOverlay } = useEventWebSocket();
+  const {
+    alerts,
+    latestAlert,
+    aiStatus,
+    autoTrackStatus,
+    trackDecision,
+    trackOverlay,
+    acknowledgeLatestAlert,
+    clearAlerts,
+  } = useEventWebSocket();
 
   const autoTrack = useAutoTrack(autoTrackStatus, trackDecision);
 
@@ -163,6 +172,7 @@ export default function IndustrialConsoleComplete() {
         onOpenNavPatrolPage={openNavPatrolPage}
         onOpenAdminPage={openAdminPage}
         onOpenConfig={() => setShowConfigPanel(true)}
+        onAcknowledgeAlert={acknowledgeLatestAlert}
         latestAlert={latestAlert}
         isUiFullscreen={isUiFullscreen}
       />
@@ -227,6 +237,7 @@ export default function IndustrialConsoleComplete() {
               isConnected,
               whepStatus,
               alerts,
+              onClearAlerts: clearAlerts,
               connectWs,
               connectWhep,
             }}

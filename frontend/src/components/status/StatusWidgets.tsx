@@ -32,6 +32,14 @@ export function StatusWidgets({
             <span className="text-white/40 uppercase">视频流:</span>
             <span className={`font-bold ${whepStatusColor}`}>{whepStatusText}</span>
           </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-white/40 uppercase">天气:</span>
+            <span className="font-bold text-slate-200">
+              {aiStatus?.weather?.state === 'ready'
+                ? `${aiStatus.weather.label_zh} ${Math.round(aiStatus.weather.confidence * 100)}%`
+                : aiStatus?.weather?.state === 'warming_up' ? '识别中' : '--'}
+            </span>
+          </div>
           <div className="pt-1.5 border-t border-white/10 text-white/35 uppercase">
             信号: {telemetry ? `${telemetry.rssi_dbm} dBm` : '--'}
           </div>

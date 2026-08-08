@@ -32,6 +32,7 @@ video_logger = get_logger("AI视频")
 ai_logger = get_logger("AI识别")
 pose_logger = get_logger("姿态识别")
 weapon_logger = get_logger("武器识别")
+weather_logger = get_logger("天气识别")
 ffmpeg_logger = get_logger("AI视频").bind(raw_ffmpeg=True)
 
 
@@ -320,13 +321,20 @@ class AIWorker(AIWorkerProcessingMixin):
         self._weapon_hits = {
             class_name: 0 for class_name in settings.WEAPON_TARGET_CLASSES
         }
+        self._weapon_last_bbox = {
+            class_name: None for class_name in settings.WEAPON_TARGET_CLASSES
+        }
         self._weapon_last_alert_at = {
             class_name: 0.0 for class_name in settings.WEAPON_TARGET_CLASSES
         }
         self._weapon_frames_processed = 0
         self._weapon_detections_count = 0
+        self._weapon_filtered_detections_count = 0
         self._weapon_alerts_count = 0
         self._last_weapon_ms = 0.0
+        self._last_weather_inference_at = 0.0
+        self._last_weather_ms = 0.0
+        self._weather_warmed_up = False
         # 姿态模型同时提供可靠的人体框。当安全帽检测模型漏掉 person 时，
         # 缓存最近一批姿态框，供两次姿态推理之间的检测帧兜底使用。
         self._latest_pose_observations: list[PoseObservation] = []
@@ -341,6 +349,14 @@ class AIWorker(AIWorkerProcessingMixin):
             f"等待 RTSP 连接：rtsp={self._current_rtsp_url}，fps={settings.AI_FPS}，"
             f"分辨率={self._frame_width}x{self._frame_height}"
         )
+
+        from .weather_detection import (
+            WeatherDetectionService,
+            set_weather_detection_service,
+        )
+
+        self._weather_service = WeatherDetectionService.from_settings(settings)
+        set_weather_detection_service(self._weather_service)
 
         if settings.AI_SIMULATE_DETECTION:
             self._detector: _BaseDetector = _SimulatedDetector(settings.AI_SIMULATE_PROB)
@@ -435,18 +451,19 @@ class AIWorker(AIWorkerProcessingMixin):
                 pose_logger.debug("姿态模型加载堆栈：\n{}", traceback.format_exc())
 
     def get_startup_status(self) -> dict[str, str]:
+        weather_status = self._weather_service.get_status()
         return {
             "status": self._startup_status,
             "detail": (
                 f"{self._startup_detail}，pose={self._pose_status}，"
-                f"weapon={self._weapon_status}"
+                f"weapon={self._weapon_status}，weather={weather_status['state']}"
             ),
         }
 
     async def start(self, stop_event: asyncio.Event) -> None:
         ai_logger.info(
             "AI Worker 已启动：fps={}，分辨率={}x{}，rtsp_sources={}，pose={}，"
-            "weapon={}，patrol_skip={}，pose_skip={}，weapon_skip={}，"
+            "weapon={}，weather={}，patrol_skip={}，pose_skip={}，weapon_skip={}，"
             "parallel_inference={}",
             settings.AI_FPS,
             self._frame_width,
@@ -454,6 +471,7 @@ class AIWorker(AIWorkerProcessingMixin):
             self._rtsp_urls,
             self._pose_status,
             self._weapon_status,
+            self._weather_service.get_status()["state"],
             self._patrol_skip,
             settings.POSE_FRAME_SKIP,
             self._weapon_frame_skip,
@@ -836,8 +854,22 @@ class AIWorker(AIWorkerProcessingMixin):
                 self._last_weapon_ms = weapon_ms
                 self._weapon_frames_processed += 1
                 self._weapon_detections_count += len(weapon_detections)
-                detections.extend(weapon_detections)
-                await self._process_weapon_detections(weapon_detections, frame)
+                person_detections = [
+                    detection for detection in detections
+                    if detection.label == "person"
+                ]
+                eligible_weapon_detections = self._filter_weapon_detections(
+                    weapon_detections,
+                    person_detections,
+                )
+                self._weapon_filtered_detections_count += (
+                    len(weapon_detections) - len(eligible_weapon_detections)
+                )
+                detections.extend(eligible_weapon_detections)
+                await self._process_weapon_detections(
+                    eligible_weapon_detections,
+                    frame,
+                )
             else:
                 self._last_weapon_ms = 0.0
 
@@ -873,12 +905,64 @@ class AIWorker(AIWorkerProcessingMixin):
             else:
                 self._last_pose_ms = 0.0
 
+            await self._maybe_process_weather(frame)
+
             detections = self._merge_pose_person_fallback(
                 detections,
                 self._latest_pose_observations,
             )
             persons = [item for item in detections if item.label == "person"]
             self._lightweight_tracker.update(persons, frame_index)
+
+            # 复用已经解码并完成跟踪的可见光帧，仅向多源服务传递时间戳、
+            # 检测框和缓存云台姿态，不复制整帧图像。纯热成像模式则只登记
+            # 热成像时间戳；画中画模式不是独立双路原始图，不能用于精确标定。
+            try:
+                from .multisensor_fusion import get_multisensor_fusion_service
+                from .z2mini_gimbal import get_z2mini_gimbal
+
+                multisensor = get_multisensor_fusion_service()
+                if multisensor is not None and multisensor.enabled:
+                    observed_monotonic = (
+                        frame_read_at if frame_read_at is not None else time.monotonic()
+                    )
+                    source_timestamp = time.time() - max(
+                        0.0,
+                        time.monotonic() - observed_monotonic,
+                    )
+                    gimbal_status = get_z2mini_gimbal().get_cached_status(
+                        max_age_seconds=settings.MULTISENSOR_SAMPLE_MAX_AGE_SECONDS
+                    )
+                    picture_mode = (
+                        gimbal_status.picture_mode if gimbal_status is not None else "unknown"
+                    )
+                    if picture_mode in {"visible", "unknown"}:
+                        gimbal_sample = (
+                            {
+                                "yaw_deg": gimbal_status.relative_yaw_deg,
+                                "pitch_deg": gimbal_status.relative_pitch_deg,
+                                "zoom_ratio": gimbal_status.zoom_ratio,
+                            }
+                            if gimbal_status is not None
+                            else None
+                        )
+                        multisensor.ingest_visible(
+                            timestamp=source_timestamp,
+                            monotonic_at=observed_monotonic,
+                            detections=detections,
+                            width=self._frame_width,
+                            height=self._frame_height,
+                            gimbal=gimbal_sample,
+                        )
+                    elif picture_mode == "thermal":
+                        multisensor.ingest_thermal(
+                            timestamp=source_timestamp,
+                            monotonic_at=observed_monotonic,
+                            width=self._frame_width,
+                            height=self._frame_height,
+                        )
+            except Exception as exc:  # noqa: BLE001
+                ai_logger.warning("多源融合采样失败，本帧已跳过：{}", exc)
 
             from .fence_detection_service import get_fence_detection_service
 
@@ -997,6 +1081,32 @@ class AIWorker(AIWorkerProcessingMixin):
         detections = await asyncio.to_thread(self._weapon_detector.detect_many, frame)
         weapon_ms = round((time.monotonic() - weapon_started_at) * 1000, 1)
         return detections, weapon_ms
+
+    async def _maybe_process_weather(self, frame: bytes) -> None:
+        if not self._weather_service.available:
+            self._last_weather_ms = 0.0
+            return
+        now = time.monotonic()
+        interval = max(0.5, float(settings.WEATHER_INTERVAL_SECONDS))
+        if now - self._last_weather_inference_at < interval:
+            self._last_weather_ms = 0.0
+            return
+
+        # Reserve the slot before entering the thread so a cancelled outer task
+        # cannot enqueue duplicate GPU work for the immediately following frame.
+        self._last_weather_inference_at = now
+        started = time.monotonic()
+        status = await asyncio.to_thread(self._weather_service.process_frame, frame)
+        self._last_weather_ms = round((time.monotonic() - started) * 1000, 1)
+        self._weather_warmed_up = status["state"] in {"ready", "warming_up"}
+        weather_logger.debug(
+            "天气采样：state={}，label={}，confidence={}，raw={}，cost={}ms",
+            status["state"],
+            status["label"],
+            status["confidence"],
+            status["raw_label"],
+            self._last_weather_ms,
+        )
 
     async def _start_ffmpeg(self) -> asyncio.subprocess.Process:
         command = [

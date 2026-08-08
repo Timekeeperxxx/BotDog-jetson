@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Camera, Eye, EyeOff, Gauge, Maximize2, Minimize2, Play, SlidersHorizontal, Square, Video, VideoOff } from 'lucide-react';
+import { Camera, Gauge, Layers3, Maximize2, Minimize2, Play, SlidersHorizontal, Square, Video, VideoOff } from 'lucide-react';
 import { TrackOverlay } from '../TrackOverlay1';
 import { CameraControlPanel } from './CameraControlPanel';
 import { CameraVideo } from './CameraVideo';
@@ -7,7 +7,26 @@ import { OmniMonitorEntry } from './OmniMonitorEntry';
 import { OmniMonitorOverlay } from './OmniMonitorOverlay';
 import { VideoHud } from './VideoHud';
 import type { VideoStageProps } from './types';
-import { AI_OVERLAY_STORAGE_KEY, getInitialAiOverlayVisibility } from './videoStagePreferences';
+import {
+  AI_OVERLAY_LAYERS_STORAGE_KEY,
+  DEFAULT_AI_OVERLAY_VISIBILITY,
+  getInitialAiOverlayVisibility,
+  hasVisibleAiOverlayLayer,
+  type AiOverlayLayer,
+} from './videoStagePreferences';
+
+const AI_LAYER_OPTIONS: Array<{
+  key: AiOverlayLayer;
+  label: string;
+  description: string;
+  color: string;
+}> = [
+  { key: 'helmet', label: '安全帽检测', description: '人员、头部、安全帽', color: '#facc15' },
+  { key: 'weapon', label: '武器检测', description: '枪械、刀具', color: '#fb7185' },
+  { key: 'pose', label: '姿态检测', description: '人体框、骨架、姿态', color: '#2dd4bf' },
+  { key: 'face', label: '人脸身份', description: '姓名和识别状态', color: '#4ade80' },
+  { key: 'tracking', label: '跟踪与防区', description: '锁定框、辅助线、防区', color: '#60a5fa' },
+];
 
 export function VideoStage({
   videoRef,
@@ -41,31 +60,53 @@ export function VideoStage({
 }: VideoStageProps) {
   const [isOmniOpen, setIsOmniOpen] = useState(false);
   const [isCameraControlOpen, setIsCameraControlOpen] = useState(false);
-  const [showAiOverlay, setShowAiOverlay] = useState(() => {
+  const [isAiLayerPanelOpen, setIsAiLayerPanelOpen] = useState(false);
+  const [aiOverlayVisibility, setAiOverlayVisibility] = useState(() => {
     if (typeof window === 'undefined') return getInitialAiOverlayVisibility(null);
     return getInitialAiOverlayVisibility(window.localStorage);
   });
 
-  const toggleAiOverlay = () => {
-    setShowAiOverlay((current) => {
-      const next = !current;
-      window.localStorage.setItem(AI_OVERLAY_STORAGE_KEY, String(next));
+  const updateAiOverlayVisibility = (
+    updater: (current: typeof aiOverlayVisibility) => typeof aiOverlayVisibility,
+  ) => {
+    setAiOverlayVisibility((current) => {
+      const next = updater(current);
+      window.localStorage.setItem(AI_OVERLAY_LAYERS_STORAGE_KEY, JSON.stringify(next));
       return next;
     });
   };
 
-  const mainOverlayEnabled = autoTrackEnabled
-    || guardEnabled
-    || Boolean(trackOverlay?.poses?.length)
-    || Boolean(trackOverlay?.detections?.length);
+  const toggleAiLayer = (layer: AiOverlayLayer) => {
+    updateAiOverlayVisibility((current) => ({ ...current, [layer]: !current[layer] }));
+  };
+
+  const allAiLayersVisible = Object.values(aiOverlayVisibility).every(Boolean);
+  const activeAiLayerCount = Object.values(aiOverlayVisibility).filter(Boolean).length;
+  const toggleAllAiLayers = () => {
+    const nextVisible = !allAiLayersVisible;
+    updateAiOverlayVisibility(() => Object.fromEntries(
+      Object.keys(DEFAULT_AI_OVERLAY_VISIBILITY).map((key) => [key, nextVisible]),
+    ) as typeof aiOverlayVisibility);
+  };
+
+  const mainOverlayEnabled = hasVisibleAiOverlayLayer(aiOverlayVisibility) && (
+    autoTrackEnabled
+      || guardEnabled
+      || Boolean(trackOverlay?.poses?.length)
+      || Boolean(trackOverlay?.detections?.length)
+  );
   const stageResolutionChip = resolutionChip || (videoResolution.height ? `${videoResolution.height}p` : '--');
 
   return (
     <div className="flex-1 flex min-h-0 relative">
       <div className={`flex-1 bg-black relative overflow-hidden transition-all duration-300 ${isUiFullscreen ? 'fixed inset-0 z-[100]' : 'border-r border-white/20'}`}>
         <CameraVideo videoRef={videoRef} />
-        {showAiOverlay && trackOverlay && mainOverlayEnabled && (
-          <TrackOverlay data={trackOverlay} videoRef={videoRef} />
+        {trackOverlay && mainOverlayEnabled && (
+          <TrackOverlay
+            data={trackOverlay}
+            videoRef={videoRef}
+            visibility={aiOverlayVisibility}
+          />
         )}
         {whepStatus.status !== 'connected' && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/88 z-5">
@@ -176,19 +217,79 @@ export function VideoStage({
               >
                 <SlidersHorizontal size={22} />
               </button>
-              <button
-                onClick={toggleAiOverlay}
-                className={`p-2 rounded-lg transition-all ${
-                  showAiOverlay
-                    ? 'bg-emerald-300/15 text-emerald-200 hover:bg-emerald-300/25'
-                    : 'text-white/40 hover:bg-white hover:text-black'
-                }`}
-                title={showAiOverlay ? '隐藏 AI 检测框' : '显示 AI 检测框'}
-                aria-label={showAiOverlay ? '隐藏 AI 检测框' : '显示 AI 检测框'}
-                aria-pressed={showAiOverlay}
-              >
-                {showAiOverlay ? <Eye size={22} /> : <EyeOff size={22} />}
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setIsAiLayerPanelOpen((open) => !open)}
+                  className={`relative p-2 rounded-lg transition-all ${
+                    isAiLayerPanelOpen || activeAiLayerCount < AI_LAYER_OPTIONS.length
+                      ? 'bg-emerald-300/15 text-emerald-200 hover:bg-emerald-300/25'
+                      : 'hover:bg-white hover:text-black'
+                  }`}
+                  title="选择 AI 检测叠层"
+                  aria-label="AI 检测叠层"
+                  aria-expanded={isAiLayerPanelOpen}
+                  aria-controls="ai-layer-popover"
+                >
+                  <Layers3 size={22} />
+                  <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-emerald-300 px-1 text-center text-[9px] font-black leading-4 text-black">
+                    {activeAiLayerCount}
+                  </span>
+                </button>
+
+                {isAiLayerPanelOpen && (
+                  <div
+                    id="ai-layer-popover"
+                    role="group"
+                    aria-label="AI 检测叠层显示开关"
+                    className="absolute bottom-[calc(100%+14px)] left-1/2 z-50 w-72 -translate-x-1/2 rounded-xl border border-white/20 bg-[#070e14]/98 p-3 text-left shadow-[0_18px_55px_rgba(0,0,0,0.72)] backdrop-blur"
+                  >
+                    <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2">
+                      <div>
+                        <div className="text-xs font-black text-white">AI 检测叠层</div>
+                        <div className="mt-0.5 text-[10px] text-white/45">仅控制显示，不会停用模型</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={toggleAllAiLayers}
+                        className="rounded-md border border-white/15 px-2 py-1 text-[10px] font-bold text-white/70 transition hover:border-white/40 hover:text-white"
+                      >
+                        {allAiLayersVisible ? '全部隐藏' : '全部显示'}
+                      </button>
+                    </div>
+
+                    <div className="grid gap-1.5">
+                      {AI_LAYER_OPTIONS.map((option) => {
+                        const active = aiOverlayVisibility[option.key];
+                        return (
+                          <button
+                            key={option.key}
+                            type="button"
+                            onClick={() => toggleAiLayer(option.key)}
+                            aria-pressed={active}
+                            className={`flex min-h-11 items-center gap-3 rounded-lg border px-3 py-2 transition ${
+                              active
+                                ? 'border-emerald-300/35 bg-emerald-300/10 text-white'
+                                : 'border-white/10 bg-white/[0.03] text-white/45 hover:border-white/25 hover:text-white/70'
+                            }`}
+                          >
+                            <span
+                              className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white/10"
+                              style={{ backgroundColor: option.color }}
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block text-[11px] font-black">{option.label}</span>
+                              <span className="block truncate text-[9px] font-medium opacity-55">{option.description}</span>
+                            </span>
+                            <span className={`relative h-5 w-9 shrink-0 rounded-full transition ${active ? 'bg-emerald-300' : 'bg-white/15'}`}>
+                              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-black shadow transition-transform ${active ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="flex items-center space-x-3">
               <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded border ${

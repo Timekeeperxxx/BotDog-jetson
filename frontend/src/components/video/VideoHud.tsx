@@ -1,6 +1,23 @@
 import { AutoTrackPanel } from '../AutoTrackPanel';
 import type { VideoHudProps } from './types';
 
+function weatherText(aiStatus: VideoHudProps['aiStatus']): string {
+  const weather = aiStatus?.weather;
+  if (!weather || weather.state === 'disabled' || weather.state === 'unavailable') return '未启用';
+  if (weather.state === 'failed') return '模型异常';
+  if (weather.state === 'warming_up') return '识别中';
+  const confidence = Math.round((weather.confidence ?? 0) * 100);
+  return `${weather.label_zh || '未知'} ${confidence}%`;
+}
+
+function weatherColor(aiStatus: VideoHudProps['aiStatus']): string {
+  const weather = aiStatus?.weather;
+  if (!weather || weather.state !== 'ready') {
+    return weather?.state === 'failed' ? 'text-red-400' : 'text-white/50';
+  }
+  return weather.label === 'normal' ? 'text-emerald-400' : 'text-amber-300';
+}
+
 export function VideoHud({
   resolutionChip,
   currentWhep,
@@ -28,6 +45,10 @@ export function VideoHud({
           <div className="flex items-center gap-1.5">
             <span className="text-white/40 uppercase">视频流:</span>
             <span className={`font-bold ${currentWhep.color}`}>{currentWhep.text}</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-white/40 uppercase">天气:</span>
+            <span className={`font-bold ${weatherColor(aiStatus)}`}>{weatherText(aiStatus)}</span>
           </div>
           <div className="pt-1.5 border-t border-white/10 text-white/35 uppercase">
             信号: {telemetry ? `${telemetry.rssi_dbm} dBm` : '--'}

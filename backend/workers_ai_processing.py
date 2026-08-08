@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .alert_service import get_alert_service
 from .config import settings
+from .lightweight_tracker import calc_iou
 from .logging_config import get_logger
 from .models import InspectionTask
 from .pose_detection import PoseEvent, PoseObservation
@@ -166,6 +167,43 @@ class AIWorkerProcessingMixin:
         self._weapon_active_until = 0.0
         for class_name in self._weapon_hits:
             self._weapon_hits[class_name] = 0
+            self._weapon_last_bbox[class_name] = None
+
+    def _filter_weapon_detections(
+        self,
+        detections: list[DetectionResult],
+        persons: list[DetectionResult],
+    ) -> list[DetectionResult]:
+        """过滤与人员无关的低置信度武器框，抑制椅子扶手等静态误报。"""
+        if not bool(settings.WEAPON_REQUIRE_PERSON_ASSOCIATION):
+            return list(detections)
+
+        expand_ratio = max(
+            0.0,
+            min(2.0, float(settings.WEAPON_PERSON_EXPAND_RATIO)),
+        )
+        unattended_threshold = max(
+            0.0,
+            min(1.0, float(settings.WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD)),
+        )
+        person_bboxes = [person.bbox for person in persons if person.bbox is not None]
+        eligible: list[DetectionResult] = []
+        for detection in detections:
+            if detection.confidence >= unattended_threshold:
+                eligible.append(detection)
+                continue
+            if detection.bbox is None:
+                continue
+            if any(
+                _bbox_center_inside_expanded_bbox(
+                    detection.bbox,
+                    person_bbox,
+                    expand_ratio,
+                )
+                for person_bbox in person_bboxes
+            ):
+                eligible.append(detection)
+        return eligible
 
     async def _process_weapon_detections(
         self,
@@ -174,33 +212,58 @@ class AIWorkerProcessingMixin:
     ) -> None:
         """独立处理枪械/刀具命中，不受自动跟踪或驱离状态机短路影响。"""
         now = asyncio.get_running_loop().time()
-        best_by_class: dict[str, DetectionResult] = {}
+        detections_by_class: dict[str, list[DetectionResult]] = {}
         for detection in detections:
-            current = best_by_class.get(detection.label)
-            if current is None or detection.confidence > current.confidence:
-                best_by_class[detection.label] = detection
+            detections_by_class.setdefault(detection.label, []).append(detection)
 
-        if best_by_class:
+        if detections_by_class:
             self._weapon_active_until = max(
                 self._weapon_active_until,
                 now + max(0.0, float(settings.WEAPON_ACTIVE_SECONDS)),
             )
 
         stable_hits = max(1, int(settings.WEAPON_STABLE_HITS))
+        confirm_iou_threshold = max(
+            0.0,
+            min(1.0, float(settings.WEAPON_CONFIRM_IOU_THRESHOLD)),
+        )
         cooldown_seconds = max(
             0.0,
             float(settings.WEAPON_ALERT_COOLDOWN_SECONDS),
         )
         for class_name in self._weapon_hits:
-            detection = best_by_class.get(class_name)
-            if detection is None:
+            class_detections = detections_by_class.get(class_name, [])
+            previous_bbox = self._weapon_last_bbox[class_name]
+            if not class_detections:
                 self._weapon_hits[class_name] = 0
+                self._weapon_last_bbox[class_name] = None
                 continue
 
-            self._weapon_hits[class_name] = min(
-                stable_hits,
-                self._weapon_hits[class_name] + 1,
-            )
+            if previous_bbox is None:
+                detection = max(class_detections, key=lambda item: item.confidence)
+                spatially_consistent = False
+            else:
+                detection = max(
+                    class_detections,
+                    key=lambda item: (
+                        calc_iou(item.bbox, previous_bbox)
+                        if item.bbox is not None
+                        else 0.0
+                    ),
+                )
+                spatially_consistent = (
+                    detection.bbox is not None
+                    and calc_iou(detection.bbox, previous_bbox) >= confirm_iou_threshold
+                )
+
+            if previous_bbox is None or not spatially_consistent:
+                self._weapon_hits[class_name] = 1
+            else:
+                self._weapon_hits[class_name] = min(
+                    stable_hits,
+                    self._weapon_hits[class_name] + 1,
+                )
+            self._weapon_last_bbox[class_name] = detection.bbox
             if self._weapon_hits[class_name] < stable_hits:
                 continue
             if now - self._weapon_last_alert_at[class_name] < cooldown_seconds:
@@ -585,6 +648,7 @@ class AIWorkerProcessingMixin:
                     "processing_ms": self._last_processing_ms,
                     "detect_ms": self._last_detect_ms,
                     "weapon_ms": self._last_weapon_ms,
+                    "weather_ms": self._last_weather_ms,
                     "pose_ms": self._last_pose_ms,
                     "postprocess_ms": self._last_postprocess_ms,
                     "end_to_end_ms": self._last_end_to_end_ms,
@@ -599,7 +663,9 @@ class AIWorkerProcessingMixin:
                     ),
                     "weapon_frames_processed": self._weapon_frames_processed,
                     "weapon_detections_count": self._weapon_detections_count,
+                    "weapon_filtered_detections_count": self._weapon_filtered_detections_count,
                     "weapon_alerts_count": self._weapon_alerts_count,
+                    "weather": self._weather_service.get_status(),
                     "parallel_inference_enabled": self._parallel_inference_enabled,
                     "inference_warmed_up": (
                         self._detector_warmed_up
@@ -607,6 +673,10 @@ class AIWorkerProcessingMixin:
                         and (
                             self._weapon_detector is None
                             or self._weapon_warmed_up
+                        )
+                        and (
+                            not self._weather_service.available
+                            or self._weather_warmed_up
                         )
                     ),
                 },
@@ -626,6 +696,24 @@ class AIWorkerProcessingMixin:
                     broadcaster._connections.discard(conn)
         except Exception as exc:
             ai_logger.debug("AI 状态广播失败：{}", exc)
+
+
+def _bbox_center_inside_expanded_bbox(
+    target_bbox: tuple[int, int, int, int],
+    reference_bbox: tuple[int, int, int, int],
+    expand_ratio: float,
+) -> bool:
+    """判断目标框中心是否落在按比例外扩后的参考框内。"""
+    target_cx = (target_bbox[0] + target_bbox[2]) / 2.0
+    target_cy = (target_bbox[1] + target_bbox[3]) / 2.0
+    reference_width = max(1.0, float(reference_bbox[2] - reference_bbox[0]))
+    reference_height = max(1.0, float(reference_bbox[3] - reference_bbox[1]))
+    expand_x = reference_width * max(0.0, expand_ratio)
+    expand_y = reference_height * max(0.0, expand_ratio)
+    return (
+        reference_bbox[0] - expand_x <= target_cx <= reference_bbox[2] + expand_x
+        and reference_bbox[1] - expand_y <= target_cy <= reference_bbox[3] + expand_y
+    )
 
 
 async def _get_latest_running_task(session: AsyncSession) -> Optional[InspectionTask]:
