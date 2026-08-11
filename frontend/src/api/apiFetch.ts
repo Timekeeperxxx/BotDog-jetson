@@ -64,3 +64,11 @@ export async function apiFetchArrayBuffer(path: string, init?: RequestInit): Pro
   }
   return response.arrayBuffer()
 }
+
+export async function apiFetchBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const response = await fetchWithAuth(path, init)
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response))
+  }
+  return response.blob()
+}

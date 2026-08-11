@@ -179,6 +179,12 @@ WEATHER_ROUTES = [
     ("GET", "/api/v1/weather/status"),
 ]
 
+MODEL_TESTER_ROUTES = [
+    ("GET", "/api/v1/model-tester/models"),
+    ("POST", "/api/v1/model-tester/runs"),
+    ("GET", "/api/v1/model-tester/results/{filename}"),
+]
+
 FOCUS_ZONE_ROUTES = [
     ("GET", "/api/v1/focus-zones"),
     ("POST", "/api/v1/focus-zones"),
@@ -213,6 +219,13 @@ WEBSOCKET_ROUTES = [
     "/ws/event",
     "/ws/nav-mapping-cloud",
 ]
+
+
+@pytest.mark.parametrize("method,path", MODEL_TESTER_ROUTES)
+def test_model_tester_route_registered(route_index: dict, method: str, path: str) -> None:
+    assert (method, path) in route_index, (
+        f"{method} {path} 未注册 ── 后台模型测试页面无法使用"
+    )
 
 
 @pytest.mark.parametrize("method,path", MULTISENSOR_ROUTES)

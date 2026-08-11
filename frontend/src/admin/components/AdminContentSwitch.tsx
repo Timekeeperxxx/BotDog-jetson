@@ -13,6 +13,7 @@ import { AdminControlPage } from '../pages/AdminControlPage'
 import { AdminDeviceVideoPage } from '../pages/AdminDeviceVideoPage'
 import { AdminAiGuardPage } from '../pages/AdminAiGuardPage'
 import { AdminDiagnosticsPage } from '../pages/AdminDiagnosticsPage'
+import { AdminModelTesterPage } from '../pages/AdminModelTesterPage'
 import type { useAdminCoreData } from '../hooks/useAdminCoreData'
 import type { useAdminNavigationData } from '../hooks/useAdminNavigationData'
 import type { useAdminVideoConfigData } from '../hooks/useAdminVideoConfigData'
@@ -172,6 +173,10 @@ export function AdminContentSwitch({
 
   if (activeSection === 'face-identities') {
     return <AdminFaceIdentitiesPage />
+  }
+
+  if (activeSection === 'model-tester') {
+    return <AdminModelTesterPage />
   }
 
   if (activeSection === 'diagnostics') {

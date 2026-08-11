@@ -513,6 +513,7 @@ def register_routes(app: FastAPI) -> None:
     from .api.routes import fence_detection as _fence_detection_routes
     from .api.routes import multisensor as _multisensor_routes
     from .api.routes import weather as _weather_routes
+    from .api.routes import model_tester as _model_tester_routes
     app.include_router(_auth_routes.router)
     app.include_router(_users_routes.router)
     app.include_router(_nav_routes.router)
@@ -539,6 +540,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(_fence_detection_routes.router)
     app.include_router(_multisensor_routes.router)
     app.include_router(_weather_routes.router)
+    app.include_router(_model_tester_routes.router)
     app.include_router(_websocket_routes.router)
 
 
