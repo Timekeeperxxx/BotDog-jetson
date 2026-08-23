@@ -19,6 +19,9 @@ class RosNavLifecycleMixin:
     _lifecycle_request: dict[str, Any] | None
     _publisher_lock: threading.RLock
     _rclpy: Any | None
+    _tf_node: Any | None
+    _tf_executor: Any | None
+    _tf_thread: threading.Thread | None
     _tf_available: bool
     _tf_wait_started_at: float
     _last_tf_lookup_at: float
@@ -136,9 +139,16 @@ class RosNavLifecycleMixin:
     def _destroy_ros_node(self, action: str) -> None:
         with self._publisher_lock:
             node = self._node
+            tf_node = getattr(self, "_tf_node", None)
+            tf_executor = getattr(self, "_tf_executor", None)
+            tf_thread = getattr(self, "_tf_thread", None)
             self._node = None
             self._tf_buffer = None
-            self._tf_listener = None
+            self._tf_node = None
+            self._tf_executor = None
+            self._tf_thread = None
+            self._tf_subscription = None
+            self._tf_static_subscription = None
             self._nav_start_publisher = None
             self._nav_task_start_publisher = None
             self._cmd_vel_publisher = None
@@ -152,6 +162,24 @@ class RosNavLifecycleMixin:
             self._estop_publisher = None
             self._initial_pose_publisher = None
             self._cloud_subscription = None
+            if tf_executor is not None:
+                try:
+                    tf_executor.shutdown(timeout_sec=2.0)
+                except Exception as exc:
+                    nav_logger.warning("{}停止 TF executor 失败：{}", action, exc)
+            if (
+                tf_thread is not None
+                and tf_thread is not threading.current_thread()
+                and tf_thread.is_alive()
+            ):
+                tf_thread.join(timeout=2.0)
+                if tf_thread.is_alive():
+                    nav_logger.warning("{}等待 TF 线程退出超时", action)
+            if tf_node is not None:
+                try:
+                    tf_node.destroy_node()
+                except Exception as exc:
+                    nav_logger.warning("{}销毁 TF 节点失败：{}", action, exc)
             if node is not None:
                 try:
                     node.destroy_node()

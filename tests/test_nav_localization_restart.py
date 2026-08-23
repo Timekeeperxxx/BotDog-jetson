@@ -450,11 +450,30 @@ def test_initialpose_ready_reports_missing_backend_publisher():
 
 
 def test_ros_nav_pause_clears_node_and_publishers(monkeypatch):
-    destroyed = []
+    events = []
 
     class DummyNode:
         def destroy_node(self) -> None:
-            destroyed.append(True)
+            events.append("main_node_destroyed")
+
+    class DummyTfNode:
+        def destroy_node(self) -> None:
+            events.append("tf_node_destroyed")
+
+    class DummyTfExecutor:
+        def shutdown(self, timeout_sec: float) -> None:
+            events.append(("tf_executor_shutdown", timeout_sec))
+
+    class DummyTfThread:
+        def __init__(self) -> None:
+            self.alive = True
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def join(self, timeout: float) -> None:
+            events.append(("tf_thread_join", timeout))
+            self.alive = False
 
     bridge = RosNavBridge.__new__(RosNavBridge)
     bridge._paused = False
@@ -462,7 +481,11 @@ def test_ros_nav_pause_clears_node_and_publishers(monkeypatch):
     bridge._publisher_lock = threading.RLock()
     bridge._pause_event = threading.Event()
     bridge._tf_buffer = object()
-    bridge._tf_listener = object()
+    bridge._tf_node = DummyTfNode()
+    bridge._tf_executor = DummyTfExecutor()
+    bridge._tf_thread = DummyTfThread()
+    bridge._tf_subscription = object()
+    bridge._tf_static_subscription = object()
     bridge._nav_start_publisher = object()
     bridge._nav_task_start_publisher = object()
     bridge._cmd_vel_publisher = object()
@@ -478,10 +501,18 @@ def test_ros_nav_pause_clears_node_and_publishers(monkeypatch):
 
     bridge._pause_ros_node_for_mapping()
 
-    assert destroyed == [True]
+    assert events == [
+        ("tf_executor_shutdown", 2.0),
+        ("tf_thread_join", 2.0),
+        "tf_node_destroyed",
+        "main_node_destroyed",
+    ]
     assert bridge._paused is True
     assert bridge._pause_event.is_set()
     assert bridge._node is None
+    assert bridge._tf_node is None
+    assert bridge._tf_executor is None
+    assert bridge._tf_thread is None
     assert bridge._initial_pose_publisher is None
     assert bridge._nav_task_start_publisher is None
 

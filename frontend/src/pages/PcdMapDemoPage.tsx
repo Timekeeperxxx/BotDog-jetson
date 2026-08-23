@@ -16,7 +16,8 @@ import {
   setLocalizationPose,
   setNavAutoTrackMode,
   setRosbagRecordingEnabled,
-  triggerNavEmergencyStop,
+  stopNavigationLocalization,
+  triggerNavSoftStop,
   waitInitialposeReady,
   waitNavigationRuntimeReady,
 } from '../api/pcdMapApi'
@@ -92,7 +93,8 @@ export function PcdMapDemoPage() {
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
   const [goToSending, setGoToSending] = useState(false)
   const goToRequestSequenceRef = useRef(0)
-  const [estopSending, setEstopSending] = useState(false)
+  const [softStopSending, setSoftStopSending] = useState(false)
+  const [localizationStopSending, setLocalizationStopSending] = useState(false)
   const [restartLocalizationSending, setRestartLocalizationSending] = useState(false)
   const [radarChecking, setRadarChecking] = useState(false)
   const [rosbagLoading, setRosbagLoading] = useState(false)
@@ -575,12 +577,12 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable, setInitialState, waypoints])
 
-  const handleEmergencyStop = useCallback(async () => {
+  const handleSoftStop = useCallback(async () => {
     if (!canOperate) return
-    if (estopSending) return
-    setEstopSending(true)
+    if (softStopSending || localizationStopSending) return
+    setSoftStopSending(true)
     try {
-      const result = await triggerNavEmergencyStop()
+      const result = await triggerNavSoftStop()
       setNavigatingWaypointId(null)
       setInitialState({
         globalPath: null,
@@ -597,9 +599,49 @@ export function PcdMapDemoPage() {
     } catch (error) {
       addLog(error instanceof Error ? error.message : '执行导航软停失败', 'error')
     } finally {
-      setEstopSending(false)
+      setSoftStopSending(false)
     }
-  }, [addLog, canOperate, estopSending, setInitialState])
+  }, [addLog, canOperate, localizationStopSending, setInitialState, softStopSending])
+
+  const handleStopNavigationLocalization = useCallback(async () => {
+    if (!canOperate || softStopSending || localizationStopSending) return
+    const confirmed = window.confirm(
+      '将先把速度归零，再停止导航、雷达重定位和 TF 发布。重新使用前需要点击“重启导航定位”。确认继续吗？',
+    )
+    if (!confirmed) return
+
+    setLocalizationStopSending(true)
+    try {
+      const result = await stopNavigationLocalization()
+      setNavigatingWaypointId(null)
+      setToolMode('none')
+      setFollowRobot(false)
+      setInitialState({
+        robotPose: null,
+        globalPath: null,
+        executionPath: null,
+        localizationStatus: {
+          status: 'stopped',
+          frame_id: 'map',
+          source: null,
+          message: '导航和 TF 定位已停止',
+          timestamp: Date.now() / 1000,
+        },
+        navigationStatus: {
+          status: 'idle',
+          target_waypoint_id: null,
+          target_name: null,
+          message: result.message,
+          timestamp: Date.now() / 1000,
+        },
+      })
+      addLog(result.message)
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '停止导航和 TF 定位失败', 'error')
+    } finally {
+      setLocalizationStopSending(false)
+    }
+  }, [addLog, canOperate, localizationStopSending, setInitialState, softStopSending])
 
   const handleRestartNavigationLocalization = useCallback(async () => {
     if (!canOperate) return
@@ -1009,7 +1051,8 @@ export function PcdMapDemoPage() {
         <NavRightRail
           bounds={rightRailBounds}
           canOperate={canOperate}
-          estopSending={estopSending}
+          localizationStopSending={localizationStopSending}
+          softStopSending={softStopSending}
           executionPath={displayedExecutionPath}
           globalPath={displayedGlobalPath}
           layers={rightRailLayers}
@@ -1023,7 +1066,8 @@ export function PcdMapDemoPage() {
           fencesVisible={fencesVisible}
           onAddWaypoint={handleAddWaypoint}
           onDeleteWaypoint={handleDeleteWaypoint}
-          onEmergencyStop={handleEmergencyStop}
+          onSoftStop={handleSoftStop}
+          onStopLocalization={() => void handleStopNavigationLocalization()}
           onGoToWaypoint={requestGoToWaypoint}
           onMouseMapPositionChange={setMouseMapPosition}
           onSetPose={handleSetPose}

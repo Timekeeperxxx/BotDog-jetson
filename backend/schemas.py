@@ -455,6 +455,16 @@ class LocalizationRestartResponse(BaseModel):
     )
 
 
+class LocalizationStopResponse(BaseModel):
+    success: bool = Field(..., description="导航与 TF 定位是否已停止")
+    running: bool = Field(default=False, description="导航定位进程是否仍在运行")
+    processes: dict[str, Any] = Field(default_factory=dict, description="导航定位进程停止结果")
+    cmd_vel_stop: dict[str, Any] = Field(default_factory=dict, description="速度桥停止结果")
+    cmd_vel_estop: dict[str, Any] = Field(default_factory=dict, description="导航速度软停钳制状态")
+    nav_stop: dict[str, Any] | None = Field(default=None, description="ROS 导航停止信号结果")
+    message: str = Field(..., description="响应消息")
+
+
 class MappingControlRequest(BaseModel):
     enabled: bool
     scene_name: str | None = Field(default=None, max_length=100, description="建图场景名称")

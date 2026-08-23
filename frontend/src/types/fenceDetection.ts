@@ -14,6 +14,8 @@ export type FenceBehavior =
   | 'dwelling'
   | 'contact'
   | 'climbing_suspected'
+  | 'tampering_suspected'
+  | 'tampering_confirmed'
 
 export type FenceDetectionStatus = {
   enabled: boolean
@@ -30,8 +32,21 @@ export type FenceDetectionStatus = {
   persons: Array<{
     track_id: number
     behavior: FenceBehavior
+    tamper_action_score: number
     duration_seconds: number
   }>
+  tamper: {
+    enabled: boolean
+    structure_check_enabled: boolean
+    reference_ready: boolean
+    reference_age_seconds: number | null
+    pending: boolean
+    pending_track_id: number | null
+    action_score: number
+    structure_change_ratio: number
+    last_result: FenceBehavior | null
+    last_result_age_seconds: number | null
+  }
   missing_calibration: string[]
   gimbal_error: string | null
 }

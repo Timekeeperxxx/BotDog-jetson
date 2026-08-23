@@ -8,6 +8,7 @@ normal until a site-specific four-class checkpoint replaces the baseline.
 
 from __future__ import annotations
 
+import json
 import time
 from collections import Counter, deque
 from dataclasses import dataclass
@@ -44,6 +45,8 @@ class WeatherClassifier(Protocol):
 
 class HuggingFaceWeatherClassifier:
     """Local-only ViT inference adapter used by the Jetson deployment."""
+
+    runtime = "pytorch"
 
     def __init__(
         self,
@@ -133,6 +136,156 @@ class HuggingFaceWeatherClassifier:
         }
 
 
+class TensorRTWeatherClassifier:
+    """Fixed-shape TensorRT adapter for the deployed weather checkpoint."""
+
+    runtime = "tensorrt_fp16"
+
+    def __init__(
+        self,
+        *,
+        model_path: str,
+        frame_width: int,
+        frame_height: int,
+        device: str = "auto",
+    ) -> None:
+        engine_path = Path(model_path).expanduser().resolve()
+        metadata_path = engine_path.with_suffix(".json")
+        missing = [
+            str(path) for path in (engine_path, metadata_path) if not path.is_file()
+        ]
+        if missing:
+            raise FileNotFoundError(f"天气 TensorRT 文件缺失：{', '.join(missing)}")
+
+        try:
+            import numpy as np
+            import tensorrt as trt
+            import torch
+            from PIL import Image
+        except ImportError as exc:
+            raise ImportError(
+                "TensorRT 天气模型依赖缺失，请安装 Pillow、TensorRT 和 torch"
+            ) from exc
+
+        if device not in {"auto", "cuda", "cuda:0"}:
+            raise RuntimeError("TensorRT 天气模型仅支持 WEATHER_DEVICE=auto/cuda/cuda:0")
+        if not torch.cuda.is_available():
+            raise RuntimeError("TensorRT 天气模型要求 CUDA，但当前 torch.cuda 不可用")
+
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        labels = metadata.get("labels")
+        input_shape = tuple(int(value) for value in metadata.get("input_shape", ()))
+        resize = tuple(int(value) for value in metadata.get("resize", ()))
+        mean = tuple(float(value) for value in metadata.get("image_mean", ()))
+        std = tuple(float(value) for value in metadata.get("image_std", ()))
+        resample = str(metadata.get("resample", "bilinear")).lower()
+        if (
+            not isinstance(labels, list)
+            or input_shape != (1, 3, 224, 224)
+            or resize != (224, 224)
+            or len(mean) != 3
+            or len(std) != 3
+            or resample != "bilinear"
+        ):
+            raise ValueError(f"天气 TensorRT 元数据格式不正确：{metadata_path}")
+
+        self._np = np
+        self._torch = torch
+        self._trt = trt
+        self._image_type = Image
+        self._frame_width = max(1, int(frame_width))
+        self._frame_height = max(1, int(frame_height))
+        self._resize = (resize[1], resize[0])
+        self._resample = Image.Resampling.BILINEAR
+        self._mean = np.asarray(mean, dtype=np.float32).reshape((1, 1, 3))
+        self._std = np.asarray(std, dtype=np.float32).reshape((1, 1, 3))
+        self._labels = [str(label).strip().lower() for label in labels]
+        self._input_name = str(metadata.get("input_name", "pixel_values"))
+        self._output_name = str(metadata.get("output_name", "logits"))
+        self._lock = Lock()
+        self.device = "cuda:0"
+
+        self._logger = trt.Logger(trt.Logger.ERROR)
+        self._runtime = trt.Runtime(self._logger)
+        self._engine = self._runtime.deserialize_cuda_engine(engine_path.read_bytes())
+        if self._engine is None:
+            raise RuntimeError(f"天气 TensorRT 引擎反序列化失败：{engine_path}")
+        self._context = self._engine.create_execution_context()
+        if self._context is None:
+            raise RuntimeError("天气 TensorRT 执行上下文创建失败")
+
+        engine_input_shape = tuple(self._engine.get_tensor_shape(self._input_name))
+        engine_output_shape = tuple(self._engine.get_tensor_shape(self._output_name))
+        if engine_input_shape != input_shape:
+            raise ValueError(
+                "天气 TensorRT 输入形状不匹配："
+                f"engine={engine_input_shape}, metadata={input_shape}"
+            )
+        if engine_output_shape != (1, len(self._labels)):
+            raise ValueError(
+                "天气 TensorRT 输出形状与类别数不匹配："
+                f"shape={engine_output_shape}, labels={len(self._labels)}"
+            )
+
+        input_dtype = self._torch_dtype(self._engine.get_tensor_dtype(self._input_name))
+        output_dtype = self._torch_dtype(self._engine.get_tensor_dtype(self._output_name))
+        self._input_tensor = torch.empty(input_shape, dtype=input_dtype, device=self.device)
+        self._output_tensor = torch.empty(
+            engine_output_shape,
+            dtype=output_dtype,
+            device=self.device,
+        )
+        if not self._context.set_tensor_address(
+            self._input_name, self._input_tensor.data_ptr()
+        ):
+            raise RuntimeError("天气 TensorRT 输入地址绑定失败")
+        if not self._context.set_tensor_address(
+            self._output_name, self._output_tensor.data_ptr()
+        ):
+            raise RuntimeError("天气 TensorRT 输出地址绑定失败")
+
+    def _torch_dtype(self, dtype: Any) -> Any:
+        mapping = {
+            self._trt.float16: self._torch.float16,
+            self._trt.float32: self._torch.float32,
+            self._trt.int32: self._torch.int32,
+            self._trt.int64: self._torch.int64,
+        }
+        if dtype not in mapping:
+            raise TypeError(f"天气 TensorRT 不支持的数据类型：{dtype}")
+        return mapping[dtype]
+
+    def predict(self, frame_bgr: bytes) -> Mapping[str, float]:
+        expected_size = self._frame_width * self._frame_height * 3
+        if len(frame_bgr) != expected_size:
+            raise ValueError(
+                f"天气模型帧大小错误：expected={expected_size}, actual={len(frame_bgr)}"
+            )
+
+        frame = self._np.frombuffer(frame_bgr, dtype=self._np.uint8).reshape(
+            (self._frame_height, self._frame_width, 3)
+        )
+        image = self._image_type.fromarray(frame[:, :, ::-1].copy(), mode="RGB")
+        image = self._np.asarray(
+            image.resize(self._resize, resample=self._resample),
+            dtype=self._np.float32,
+        )
+        image = (image / 255.0 - self._mean) / self._std
+        image = self._np.ascontiguousarray(image.transpose((2, 0, 1))[None, ...])
+
+        with self._lock, self._torch.inference_mode():
+            self._input_tensor.copy_(self._torch.from_numpy(image))
+            stream = self._torch.cuda.current_stream(device=self.device)
+            if not self._context.execute_async_v3(stream_handle=stream.cuda_stream):
+                raise RuntimeError("天气 TensorRT 推理执行失败")
+            probabilities = self._torch.softmax(self._output_tensor.float(), dim=-1)[0]
+            values = probabilities.cpu().tolist()
+
+        return {
+            label: float(values[index]) for index, label in enumerate(self._labels)
+        }
+
+
 @dataclass(frozen=True)
 class _MappedObservation:
     label: str
@@ -157,6 +310,7 @@ class WeatherDetectionService:
     ) -> None:
         self.enabled = bool(enabled)
         self._classifier = classifier
+        self._runtime = getattr(classifier, "runtime", "unknown") if classifier else None
         self._min_confidence = min(1.0, max(0.0, float(min_confidence)))
         self._window_size = max(1, int(smoothing_window))
         self._stable_votes = min(self._window_size, max(1, int(stable_votes)))
@@ -183,20 +337,30 @@ class WeatherDetectionService:
         if not bool(settings.WEATHER_ENABLED):
             return cls(enabled=False)
         try:
-            classifier = HuggingFaceWeatherClassifier(
-                model_path=settings.WEATHER_MODEL_PATH,
-                frame_width=settings.AI_FRAME_WIDTH,
-                frame_height=settings.AI_FRAME_HEIGHT,
-                device=settings.WEATHER_DEVICE,
-                use_fp16=settings.WEATHER_USE_FP16,
-            )
+            if Path(settings.WEATHER_MODEL_PATH).suffix.lower() == ".engine":
+                classifier = TensorRTWeatherClassifier(
+                    model_path=settings.WEATHER_MODEL_PATH,
+                    frame_width=settings.AI_FRAME_WIDTH,
+                    frame_height=settings.AI_FRAME_HEIGHT,
+                    device=settings.WEATHER_DEVICE,
+                )
+            else:
+                classifier = HuggingFaceWeatherClassifier(
+                    model_path=settings.WEATHER_MODEL_PATH,
+                    frame_width=settings.AI_FRAME_WIDTH,
+                    frame_height=settings.AI_FRAME_HEIGHT,
+                    device=settings.WEATHER_DEVICE,
+                    use_fp16=settings.WEATHER_USE_FP16,
+                )
         except Exception as exc:  # noqa: BLE001 - startup must degrade, not crash
             weather_logger.error("天气模型加载失败，天气支路已降级：{}", exc)
             return cls(enabled=True, initialization_error=str(exc))
 
         weather_logger.info(
-            "天气模型已就绪：path={}，device={}，interval={}s，window={}，votes={}",
+            "天气模型已就绪：path={}，runtime={}，device={}，"
+            "interval={}s，window={}，votes={}",
             settings.WEATHER_MODEL_PATH,
+            classifier.runtime,
             classifier.device,
             settings.WEATHER_INTERVAL_SECONDS,
             settings.WEATHER_SMOOTHING_WINDOW,
@@ -287,6 +451,7 @@ class WeatherDetectionService:
                 "smoothing_window": self._window_size,
                 "stable_votes": self._stable_votes,
                 "source": "visible_camera",
+                "runtime": self._runtime,
                 "radar_fused": False,
                 "last_error": self._last_error,
                 "errors": self._errors,

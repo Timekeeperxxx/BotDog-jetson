@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, ScanFace, Upload } from 'lucide-react'
+import { RefreshCw, ScanFace, Trash2, Upload } from 'lucide-react'
 import { faceIdentitiesApi, type FaceIdentity, type FaceRecognitionStatus } from '../../api/faceIdentitiesApi'
 import { AdminCard, ConfirmDialog, EmptyState, StatusBadge, TableCell, TableHead, ToolbarButton } from '../AdminUi'
 
@@ -15,6 +15,11 @@ export function AdminFaceIdentitiesPage() {
   const [enabled, setEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<FaceIdentity | null>(null)
+  const [templateDeleteTarget, setTemplateDeleteTarget] = useState<{
+    identityId: number
+    identityName: string
+    templateId: number
+  } | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -82,16 +87,31 @@ export function AdminFaceIdentitiesPage() {
     }
   }
 
-  const uploadTemplate = async (identity: FaceIdentity, file?: File) => {
-    if (!file) return
+  const uploadTemplates = async (identity: FaceIdentity, selectedFiles: FileList | null) => {
+    const files = Array.from(selectedFiles ?? [])
+    if (files.length === 0) return
+    const remainingSlots = 5 - identity.templates.length
+    if (files.length > remainingSlots) {
+      setError(`“${identity.display_name}”还可上传 ${remainingSlots} 张照片，本次选择了 ${files.length} 张`)
+      return
+    }
     setSaving(true)
     setError(null)
+    let uploadedCount = 0
+    let uploadError: string | null = null
     try {
-      await faceIdentitiesApi.addTemplate(identity.id, file)
-      await refresh()
+      for (const file of files) {
+        await faceIdentitiesApi.addTemplate(identity.id, file)
+        uploadedCount += 1
+      }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '人脸图片注册失败')
+      const detail = reason instanceof Error ? reason.message : '人脸图片注册失败'
+      uploadError = uploadedCount > 0
+        ? `已成功录入 ${uploadedCount} 张，后续照片失败：${detail}`
+        : detail
     } finally {
+      await refresh()
+      if (uploadError) setError(uploadError)
       setSaving(false)
     }
   }
@@ -106,6 +126,7 @@ export function AdminFaceIdentitiesPage() {
       setError(reason instanceof Error ? reason.message : '删除模板失败')
     } finally {
       setSaving(false)
+      setTemplateDeleteTarget(null)
     }
   }
 
@@ -127,12 +148,12 @@ export function AdminFaceIdentitiesPage() {
 
       <AdminCard
         title="人员库"
-        subtitle="每个人员最多 5 个模板；注册图片必须且只能有一张清晰正脸，原图不会保存。"
+        subtitle="每个人员可录入 1–5 张单人照片组成图组，至少包含 1 张清晰正脸；可补充轻微左右转脸和不同光线照片。原图不会保存。"
         actions={<ToolbarButton onClick={openCreate}><ScanFace size={14} className="inline-block" /> 新增人员</ToolbarButton>}
       >
         {error ? <div className="mb-4 rounded-md border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300">{error}</div> : null}
         {!loading && identities.length === 0 ? (
-          <EmptyState title="暂无人员" description="先新增人员，再上传一到五张清晰正脸照片。" />
+          <EmptyState title="暂无人员" description="先新增人员，再选择 1–5 张照片组成图组；其中至少包含一张清晰正脸。" />
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full">
@@ -145,13 +166,38 @@ export function AdminFaceIdentitiesPage() {
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-2">
                         {identity.templates.map((template) => (
-                          <button key={template.id} type="button" disabled={saving} onClick={() => void deleteTemplate(identity.id, template.id)} className="rounded border border-white/10 px-2 py-1 text-xs text-zinc-300 hover:border-red-500/50 hover:text-red-300" title="点击删除此模板">
-                            模板 #{template.id} · 质量 {Math.round(template.quality * 100)}%
-                          </button>
+                          <span key={template.id} className="inline-flex items-center overflow-hidden rounded border border-white/10 bg-white/[0.03] text-xs text-zinc-300">
+                            <span className="px-2 py-1">模板 #{template.id} · 质量 {Math.round(template.quality * 100)}%</span>
+                            <button
+                              type="button"
+                              disabled={saving}
+                              onClick={() => setTemplateDeleteTarget({
+                                identityId: identity.id,
+                                identityName: identity.display_name,
+                                templateId: template.id,
+                              })}
+                              className="self-stretch border-l border-white/10 px-2 text-zinc-500 transition-colors hover:bg-red-950/60 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
+                              title={`删除模板 #${template.id}`}
+                              aria-label={`删除 ${identity.display_name} 的模板 #${template.id}`}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </span>
                         ))}
                         <label className="cursor-pointer rounded border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-xs text-sky-300 hover:bg-sky-500/20">
-                          <Upload size={12} className="mr-1 inline-block" /> 上传正脸
-                          <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={saving || identity.templates.length >= 5} onChange={(event) => { void uploadTemplate(identity, event.target.files?.[0]); event.currentTarget.value = '' }} />
+                          <Upload size={12} className="mr-1 inline-block" /> 上传人脸图组
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp"
+                            multiple
+                            aria-label={`上传 ${identity.display_name} 的人脸图组`}
+                            className="hidden"
+                            disabled={saving || identity.templates.length >= 5}
+                            onChange={(event) => {
+                              void uploadTemplates(identity, event.target.files)
+                              event.currentTarget.value = ''
+                            }}
+                          />
                         </label>
                       </div>
                     </TableCell>
@@ -180,6 +226,19 @@ export function AdminFaceIdentitiesPage() {
       ) : null}
 
       <ConfirmDialog open={deleteTarget !== null} title="删除人员" description={`将永久删除“${deleteTarget?.display_name ?? ''}”及其全部人脸模板，立即停止匹配。`} confirmText="永久删除" danger disabled={saving} onCancel={() => setDeleteTarget(null)} onConfirm={() => { if (!deleteTarget) return; setSaving(true); void faceIdentitiesApi.delete(deleteTarget.id).then(refresh).catch((reason) => setError(reason instanceof Error ? reason.message : '删除失败')).finally(() => { setSaving(false); setDeleteTarget(null) }) }} />
+      <ConfirmDialog
+        open={templateDeleteTarget !== null}
+        title="删除人脸模板"
+        description={`确定删除“${templateDeleteTarget?.identityName ?? ''}”的模板 #${templateDeleteTarget?.templateId ?? ''} 吗？删除后无法恢复，需要重新上传照片才能重新生成。`}
+        confirmText="确认删除模板"
+        danger
+        disabled={saving}
+        onCancel={() => setTemplateDeleteTarget(null)}
+        onConfirm={() => {
+          if (!templateDeleteTarget) return
+          void deleteTemplate(templateDeleteTarget.identityId, templateDeleteTarget.templateId)
+        }}
+      />
     </div>
   )
 }

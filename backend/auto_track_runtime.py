@@ -306,13 +306,25 @@ class AutoTrackRuntimeMixin:
         # 手动开启自动跟踪时允许独立工作；导航联动开启时仍要求有任务上下文。
         return self._standalone_enabled or task_id is not None
 
-    def _is_stranger(self, track_id: int) -> bool:
-        """通过 StrangerPolicy 判断是否为陌生人（已知人员不跟踪）。"""
+    def _is_stranger(self, target: int | DetectionResult) -> bool:
+        """通过人脸库和会话白名单判断是否为陌生人。"""
+        if isinstance(target, DetectionResult):
+            track_id = target.track_id
+            face_status = target.face_status
+            identity_id = target.identity_id
+        else:
+            track_id = int(target)
+            face_status = None
+            identity_id = None
         try:
             from .stranger_policy import get_stranger_policy
             policy = get_stranger_policy()
             if policy is not None:
-                return policy.is_stranger(track_id)
+                return policy.is_stranger(
+                    track_id,
+                    face_status=face_status,
+                    identity_id=identity_id,
+                )
         except Exception:
             pass
         return True  # 默认视为陌生人

@@ -110,11 +110,11 @@ class Settings(BaseSettings):
     # 巡逻时按 WEAPON_FRAME_SKIP 低频推理；一旦命中，在短暂活跃窗口内逐帧复核。
     WEAPON_ENABLED: bool = False
     WEAPON_MODEL_PATH: str = (
-        '/home/jetson/Projects/Models/weapon_guns_knife_yolov8n_fp16.engine'
+        '/home/jetson/Projects/Models/weapon-domain-v13-yolo26x-800-best.engine'
     )
     WEAPON_DEVICE: str = 'auto'
     WEAPON_INFERENCE_IMGSZ: int = 640
-    WEAPON_CONFIDENCE_THRESHOLD: float = 0.65
+    WEAPON_CONFIDENCE_THRESHOLD: float = 0.25
     WEAPON_TARGET_CLASSES: list[str] = ['guns', 'knife']
     WEAPON_FRAME_SKIP: int = 3
     WEAPON_ACTIVE_SECONDS: float = 3.0
@@ -122,14 +122,23 @@ class Settings(BaseSettings):
     WEAPON_CONFIRM_IOU_THRESHOLD: float = 0.4
     WEAPON_REQUIRE_PERSON_ASSOCIATION: bool = True
     WEAPON_PERSON_EXPAND_RATIO: float = 0.35
-    WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD: float = 0.85
+    # 可选两阶段模式：先用主模型获得人员框，再在人员区域内放大检测刀枪。
+    WEAPON_PERSON_CROP_ENABLED: bool = True
+    WEAPON_PERSON_CROP_EXPAND_RATIO: float = 0.35
+    WEAPON_PERSON_CROP_MAX_REGIONS: int = 2
+    WEAPON_PERSON_CROP_NMS_IOU: float = 0.5
+    # 携带刀枪场景默认不接受无人关联候选；设为 <1.0 可显式开启高置信度例外。
+    WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD: float = 1.0
+    # 过滤覆盖画面过大的异常框（键盘、桌面等常见全幅误报）。
+    WEAPON_MAX_FRAME_AREA_RATIO: float = 0.35
     WEAPON_ALERT_COOLDOWN_SECONDS: float = 60.0
 
     # 天气分类支路：复用 AI Worker 已解码的可见光帧，不创建第二条 RTSP。
     # 当前产品类别为 normal/rain/snow/sandstorm；雷达融合状态会在接口中明确标记。
     WEATHER_ENABLED: bool = False
     WEATHER_MODEL_PATH: str = (
-        '/home/jetson/Projects/Models/weather_types_image_detection/checkpoint-3000'
+        '/home/jetson/Projects/Models/weather_types_image_detection/'
+        'weather_types_vit_4class_wedge_bdd_v2_fp16.engine'
     )
     WEATHER_DEVICE: str = 'auto'
     WEATHER_USE_FP16: bool = True
@@ -146,7 +155,9 @@ class Settings(BaseSettings):
     POSE_CONFIDENCE_THRESHOLD: float = 0.35
     POSE_KEYPOINT_CONFIDENCE: float = 0.35
     POSE_MIN_VISIBLE_KEYPOINTS: int = 5
-    POSE_FRAME_SKIP: int = 1
+    # 按 AI Worker 实际处理的帧计数，而不是摄像头原始帧号计数。
+    # 5 FPS 主检测下每 2 帧运行一次姿态模型，人员框仍由主检测逐帧更新。
+    POSE_FRAME_SKIP: int = 2
     POSE_STABLE_HITS: int = 3
     POSE_CROUCH_SECONDS: float = 4.0
     POSE_LOITER_SECONDS: float = 20.0
@@ -154,13 +165,16 @@ class Settings(BaseSettings):
     POSE_TRACK_TTL_SECONDS: float = 3.0
     POSE_OVERLAY_INTERVAL_SECONDS: float = 0.2
 
-    # 人脸身份显示：OpenCV YuNet + SFace，仅影响视频叠层，不参与控制策略。
+    # 人脸身份：SCRFD/YuNet 检测 + OpenCV SFace 特征；未匹配默认未授权。
     FACE_RECOGNITION_ENABLED: bool = True
-    FACE_DETECT_MODEL_PATH: str = '/home/jetson/Projects/Models/face_detection_yunet_2023mar.onnx'
+    FACE_DETECT_BACKEND: Literal['yunet', 'scrfd_tensorrt'] = 'scrfd_tensorrt'
+    FACE_DETECT_MODEL_PATH: str = '/home/jetson/Projects/Models/face_detection_scrfd_10g_640_fp16.engine'
     FACE_RECOGNITION_MODEL_PATH: str = '/home/jetson/Projects/Models/face_recognition_sface_2021dec.onnx'
-    FACE_DETECT_THRESHOLD: float = 0.80
+    FACE_DETECT_INPUT_SIZE: int = 640
+    FACE_DETECT_NMS_THRESHOLD: float = 0.40
+    FACE_DETECT_THRESHOLD: float = 0.50
     # 后台注册照片允许稍低阈值；只用于人工上传，不影响实时视频检测。
-    FACE_ENROLL_DETECT_THRESHOLD: float = 0.70
+    FACE_ENROLL_DETECT_THRESHOLD: float = 0.40
     FACE_MATCH_THRESHOLD: float = 0.45
     FACE_FRAME_SKIP: int = 2
     FACE_CONFIRM_HITS: int = 3
@@ -195,6 +209,24 @@ class Settings(BaseSettings):
     FENCE_CROSS_STABLE_FRAMES: int = 3
     FENCE_CROSS_REQUIRE_CLIMBING_POSTURE: bool = True
     FENCE_KEYPOINT_CONFIDENCE: float = 0.35
+    # 破坏围栏不由单帧接触触发：先在滑动窗口内检测手腕往复运动，
+    # 再对人工绘制的地图围栏投影区进行结构变化复核。
+    FENCE_TAMPER_ENABLED: bool = True
+    FENCE_TAMPER_WINDOW_SECONDS: float = 2.4
+    FENCE_TAMPER_MIN_DURATION_SECONDS: float = 1.0
+    FENCE_TAMPER_MIN_TRAVEL_RATIO: float = 0.30
+    FENCE_TAMPER_MIN_REVERSALS: int = 2
+    FENCE_TAMPER_ACTION_SCORE_THRESHOLD: float = 0.75
+    FENCE_TAMPER_STABLE_FRAMES: int = 2
+    FENCE_TAMPER_STRUCTURE_ENABLED: bool = True
+    FENCE_TAMPER_STRUCTURE_HEIGHT_M: float = 2.0
+    FENCE_TAMPER_STRUCTURE_PATCH_RATIO: float = 0.45
+    FENCE_TAMPER_STRUCTURE_CHANGE_THRESHOLD: float = 0.18
+    FENCE_TAMPER_STRUCTURE_STABLE_FRAMES: int = 2
+    FENCE_TAMPER_STRUCTURE_MIN_EDGE_PIXELS: int = 80
+    FENCE_TAMPER_REFERENCE_CLEAR_FRAMES: int = 3
+    FENCE_TAMPER_CONFIRM_GRACE_SECONDS: float = 5.0
+    FENCE_TAMPER_ALIGN_MAX_SHIFT_PX: float = 16.0
     FENCE_TRACK_TTL_SECONDS: float = 2.0
     FENCE_ALERT_COOLDOWN_SECONDS: float = 15.0
     FENCE_CONTROL_HZ: float = 5.0

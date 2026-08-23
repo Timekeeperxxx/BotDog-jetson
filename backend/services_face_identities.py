@@ -30,7 +30,10 @@ class FaceIdentityService:
         self.engine = FaceRecognitionEngine(
             settings.FACE_DETECT_MODEL_PATH,
             settings.FACE_RECOGNITION_MODEL_PATH,
+            detect_backend=settings.FACE_DETECT_BACKEND,
             detect_threshold=settings.FACE_DETECT_THRESHOLD,
+            detect_input_size=settings.FACE_DETECT_INPUT_SIZE,
+            detect_nms_threshold=settings.FACE_DETECT_NMS_THRESHOLD,
             min_face_size=settings.FACE_MIN_SIZE_PX,
         )
         self.matcher = FaceMatcher(settings.FACE_MATCH_THRESHOLD)

@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -50,6 +51,13 @@ class CmdVelRos2UdpSender(Node):
         self._heartbeat = NavigationVelocityHeartbeat(
             command_timeout_s=command_timeout_s,
         )
+        self._send_period_s = 1.0 / send_rate_hz
+        self._heartbeat_stop_event = threading.Event()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name="cmd-vel-udp-heartbeat",
+            daemon=True,
+        )
 
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.connect(
@@ -65,7 +73,10 @@ class CmdVelRos2UdpSender(Node):
         )
 
         self.create_subscription(Twist, topic, self._on_cmd_vel, 10)
-        self.create_timer(1.0 / send_rate_hz, self._send_heartbeat)
+        # Keep the safety heartbeat independent from the ROS executor.  The
+        # 100 Hz cmd_vel subscription can otherwise starve a ROS timer long
+        # enough for the backend's 0.5 s datagram watchdog to stop the robot.
+        self._heartbeat_thread.start()
         if self._ready_file is not None:
             self._ready_file.parent.mkdir(parents=True, exist_ok=True)
             self._ready_file.write_text(f"{os.getpid()}\n", encoding="utf-8")
@@ -124,10 +135,23 @@ class CmdVelRos2UdpSender(Node):
                 f"age={age_text}"
             )
 
+    def _heartbeat_loop(self) -> None:
+        next_send_at = time.monotonic()
+        while not self._heartbeat_stop_event.is_set():
+            self._send_heartbeat()
+            next_send_at += self._send_period_s
+            now = time.monotonic()
+            if next_send_at < now - self._send_period_s:
+                next_send_at = now
+            self._heartbeat_stop_event.wait(max(0.0, next_send_at - now))
+
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        self._heartbeat_stop_event.set()
+        if self._heartbeat_thread.is_alive():
+            self._heartbeat_thread.join(timeout=1.0)
         try:
             self._socket.send(encode_velocity(0.0, 0.0, 0.0))
         except OSError:

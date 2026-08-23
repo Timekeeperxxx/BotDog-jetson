@@ -3,6 +3,8 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
 from backend import fence_detection_service as fence_runtime
@@ -10,8 +12,10 @@ from backend.fence_detection_service import (
     FenceBehavior,
     FenceDetectionService,
     FenceDetectionState,
+    _PendingTamper,
     _SynchronizedSample,
     closest_point_on_segment,
+    repetitive_motion_score,
 )
 from backend.pose_detection import PoseKeypoint, PoseObservation, Posture
 from backend.services_nav_fences import (
@@ -497,3 +501,174 @@ def test_climbing_suspected_requires_continuous_crossing_motion(
     assert len(events) == 1
     assert events[0].behavior is FenceBehavior.CLIMBING_SUSPECTED
     assert events[0].track_id == 8
+
+
+def test_repetitive_motion_score_rejects_steady_contact() -> None:
+    steady = [(index * 0.2, index * 0.03, 0.0) for index in range(8)]
+    repeated = [
+        (index * 0.2, 0.2 if index % 2 else 0.0, 0.0)
+        for index in range(8)
+    ]
+
+    steady_score, _, steady_reversals = repetitive_motion_score(
+        steady,
+        min_duration_seconds=1.0,
+        min_travel_ratio=0.3,
+        min_reversals=2,
+    )
+    repeated_score, _, repeated_reversals = repetitive_motion_score(
+        repeated,
+        min_duration_seconds=1.0,
+        min_travel_ratio=0.3,
+        min_reversals=2,
+    )
+
+    assert steady_score == 0.0
+    assert steady_reversals == 0
+    assert repeated_score == 1.0
+    assert repeated_reversals >= 2
+
+
+def test_repeated_wrist_contact_emits_tampering_suspected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _calibration(monkeypatch)
+    values = {
+        "FENCE_NEAR_STABLE_FRAMES": 1,
+        "FENCE_CONTACT_STABLE_FRAMES": 1,
+        "FENCE_TAMPER_MIN_DURATION_SECONDS": 0.4,
+        "FENCE_TAMPER_MIN_TRAVEL_RATIO": 0.2,
+        "FENCE_TAMPER_MIN_REVERSALS": 2,
+        "FENCE_TAMPER_ACTION_SCORE_THRESHOLD": 0.75,
+        "FENCE_TAMPER_STABLE_FRAMES": 1,
+        "FENCE_TAMPER_STRUCTURE_ENABLED": False,
+        "FENCE_FRAME_SAMPLE_TOLERANCE_SECONDS": 5.0,
+    }
+    for name, value in values.items():
+        monkeypatch.setattr(fence_runtime.settings, name, value)
+
+    service = FenceDetectionService(gimbal_service=_FakeGimbal())  # type: ignore[arg-type]
+    service._enabled = True
+    service._state = FenceDetectionState.DETECTING
+    service._target_fence = {
+        "id": "fence_a",
+        "start": {"x": 5.0, "y": -2.0},
+        "end": {"x": 5.0, "y": 2.0},
+    }
+    robot_pose = {"x": 0.0, "y": 0.0, "z": 0.0, "yaw": 0.0}
+    service._samples.append(_SynchronizedSample(100.0, robot_pose, _status()))
+    detection = type(
+        "Detection",
+        (),
+        {"label": "person", "track_id": 12, "bbox": (280, 80, 360, 260)},
+    )()
+    events = []
+    for index, wrist_x in enumerate((290.0, 340.0, 290.0, 340.0, 290.0)):
+        keypoints = [PoseKeypoint(0.0, 0.0, 0.0) for _ in range(17)]
+        keypoints[9] = PoseKeypoint(wrist_x, 180.0, 0.95)
+        observation = PoseObservation(
+            track_id=99,
+            bbox=(280, 80, 360, 260),
+            confidence=0.9,
+            keypoints=tuple(keypoints),
+            posture=Posture.STANDING,
+            posture_confidence=0.8,
+            inside_zone=False,
+            dwell_seconds=0.0,
+        )
+        events.extend(
+            service.process_frame(
+                detections=[detection],
+                poses=[observation],
+                frame_monotonic=100.0 + index * 0.2,
+            )
+        )
+
+    suspected = [
+        event
+        for event in events
+        if event.behavior is FenceBehavior.TAMPERING_SUSPECTED
+    ]
+    assert len(suspected) == 1
+    assert suspected[0].track_id == 12
+    assert suspected[0].action_score >= 0.75
+    assert suspected[0].evidence_level == "repetitive_contact"
+
+
+def test_structure_confirmation_aligns_small_camera_shift_and_detects_edge_loss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _calibration(monkeypatch)
+    monkeypatch.setattr(
+        fence_runtime.settings,
+        "FENCE_TAMPER_STRUCTURE_STABLE_FRAMES",
+        1,
+    )
+    monkeypatch.setattr(
+        fence_runtime.settings,
+        "FENCE_TAMPER_STRUCTURE_CHANGE_THRESHOLD",
+        0.18,
+    )
+    monkeypatch.setattr(
+        fence_runtime.settings,
+        "FENCE_TAMPER_STRUCTURE_MIN_EDGE_PIXELS",
+        40,
+    )
+    service = FenceDetectionService(gimbal_service=_FakeGimbal())  # type: ignore[arg-type]
+    service._target_fence = {
+        "id": "fence_a",
+        "start": {"x": 5.0, "y": -2.0},
+        "end": {"x": 5.0, "y": 2.0},
+    }
+    height, width = 360, 640
+    reference = np.full((height, width), 80, dtype=np.uint8)
+    for x in range(240, 401, 12):
+        cv2.line(reference, (x, 80), (x, 280), 220, 2)
+    for y in range(80, 281, 12):
+        cv2.line(reference, (240, y), (400, y), 220, 2)
+    reference = cv2.GaussianBlur(reference, (3, 3), 0)
+    mask = np.zeros((height, width), dtype=np.uint8)
+    mask[70:290, 230:410] = 255
+    service._structure_reference_gray = reference
+    service._structure_reference_mask = mask
+    service._structure_reference_at = 99.0
+    service._pending_tamper = _PendingTamper(
+        track_id=21,
+        started_at=99.0,
+        last_action_at=100.0,
+        expires_at=105.0,
+        contact_pixel=(320.0, 180.0),
+        person_height=200.0,
+        action_score=0.95,
+    )
+
+    shifted = cv2.warpAffine(
+        reference,
+        np.asarray(((1.0, 0.0, 6.0), (0.0, 1.0, 0.0)), dtype=np.float32),
+        (width, height),
+    )
+    assert service._structure_change_ratio(
+        shifted,
+        mask,
+        [],
+        service._pending_tamper,
+    ) == pytest.approx(0.0)
+
+    damaged = reference.copy()
+    cv2.circle(damaged, (320, 180), 48, 80, thickness=-1)
+    monkeypatch.setattr(service, "_gray_frame", lambda frame: damaged)
+    monkeypatch.setattr(service, "_fence_image_mask", lambda **kwargs: mask)
+    event = service._update_structure_evidence(
+        frame_bgr=b"frame",
+        origin=(0.0, 0.0, 1.0),
+        rotation=((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)),
+        intrinsics=(400.0, 400.0, 320.0, 180.0),
+        ground_z=0.0,
+        near_bboxes=[],
+        now=101.0,
+    )
+
+    assert event is not None
+    assert event.behavior is FenceBehavior.TAMPERING_CONFIRMED
+    assert event.structure_change_ratio >= 0.18
+    assert event.evidence_level == "action_and_structure"

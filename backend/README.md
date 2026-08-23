@@ -13,7 +13,7 @@ BotDog 机器人控制系统的后端服务，运行于 **ARM64 主机**，负�
 | aiosqlite | 异步 SQLite 驱动 |
 | Pydantic Settings | 类型安全配置管理 |
 | ultralytics (YOLOv8) | AI 目标检测 |
-| Transformers / ViT | 雨、雪、沙尘天气分类 |
+| TensorRT FP16 / ViT | 雨、雪、沙尘天气分类 |
 | loguru | 结构化日志 |
 | JWT / RBAC | 登录鉴权、角色权限、审计日志 |
 
@@ -116,17 +116,22 @@ AI_CONFIDENCE_THRESHOLD=0.4
 AI_TARGET_CLASSES=["person","head","helmet"]
 AI_DEVICE=auto                   # auto | cpu | cuda
 WEAPON_ENABLED=false
-WEAPON_MODEL_PATH=/home/jetson/Projects/Models/weapon_guns_knife_yolov8n_fp16.engine
+WEAPON_MODEL_PATH=/home/jetson/Projects/Models/weapon-domain-v13-yolo26x-800-best.engine
 WEAPON_FRAME_SKIP=3              # 命中后自动切换为逐帧复核
-WEAPON_CONFIDENCE_THRESHOLD=0.65
+WEAPON_CONFIDENCE_THRESHOLD=0.25
 WEAPON_STABLE_HITS=5             # 同一位置连续 5 帧才告警
 WEAPON_CONFIRM_IOU_THRESHOLD=0.4
 WEAPON_REQUIRE_PERSON_ASSOCIATION=true
 WEAPON_PERSON_EXPAND_RATIO=0.35
-WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD=0.85
+WEAPON_PERSON_CROP_ENABLED=true             # 人员区域放大检测，改善监控画面中的小刀枪
+WEAPON_PERSON_CROP_EXPAND_RATIO=0.35
+WEAPON_PERSON_CROP_MAX_REGIONS=2            # YOLO26x板端延迟约149ms/裁剪
+WEAPON_PERSON_CROP_NMS_IOU=0.5
+WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD=1.0  # 携带刀枪必须关联人员；调低才允许无人关联例外
+WEAPON_MAX_FRAME_AREA_RATIO=0.35            # 拒绝键盘/桌面等覆盖画面过大的异常框
 WEAPON_ALERT_COOLDOWN_SECONDS=60
 WEATHER_ENABLED=true
-WEATHER_MODEL_PATH=/home/jetson/Projects/Models/weather_types_image_detection/checkpoint-3000
+WEATHER_MODEL_PATH=/home/jetson/Projects/Models/weather_types_image_detection/weather_types_vit_fp16.engine
 WEATHER_DEVICE=auto
 WEATHER_USE_FP16=true
 WEATHER_INTERVAL_SECONDS=3.0
@@ -139,6 +144,7 @@ WEATHER_STABLE_VOTES=3
 
 ```bash
 .venv/bin/python scripts/download-weather-model.py
+.venv/bin/python scripts/export-weather-tensorrt.py
 ```
 
 ### 运动控制
@@ -278,6 +284,14 @@ config/
 | POST | `/api/v1/auto-track/mark-known/{track_id}` | 标记已知目标 |
 | POST | `/api/v1/auto-track/unmark-known/{track_id}` | 取消已知目标标记 |
 | GET | `/api/v1/auto-track/known-list` | 已知目标列表 |
+
+### 围栏行为检测
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/fence-detection/status` | 围栏行为、破坏动作分和结构复核状态 |
+| POST | `/api/v1/fence-detection/enable` | 开启围栏行为与破坏检测 |
+| POST | `/api/v1/fence-detection/disable` | 关闭围栏检测并释放云台 |
 
 ### 导航巡逻 / PCD
 

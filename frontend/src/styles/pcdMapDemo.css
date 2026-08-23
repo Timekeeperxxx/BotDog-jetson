@@ -1452,29 +1452,47 @@
 
 .pcd-rail-footer {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
   justify-content: stretch;
   flex: 0 0 auto;
 }
 
-.pcd-estop-button {
+.pcd-soft-stop-button,
+.pcd-localization-stop-button {
   width: 100%;
   min-height: 42px;
-  border: 1px solid rgba(248, 113, 113, 0.75);
   border-radius: 8px;
-  background: rgba(127, 29, 29, 0.92);
-  color: #fee2e2;
   cursor: pointer;
   font-size: 13px;
   font-weight: 900;
   letter-spacing: 0;
 }
 
-.pcd-estop-button:hover {
+.pcd-soft-stop-button {
+  border: 1px solid rgba(251, 191, 36, 0.72);
+  background: rgba(120, 53, 15, 0.88);
+  color: #fef3c7;
+}
+
+.pcd-soft-stop-button:hover {
+  border-color: rgba(253, 230, 138, 0.95);
+  background: rgba(146, 64, 14, 0.94);
+}
+
+.pcd-localization-stop-button {
+  border: 1px solid rgba(248, 113, 113, 0.75);
+  background: rgba(127, 29, 29, 0.92);
+  color: #fee2e2;
+}
+
+.pcd-localization-stop-button:hover {
   border-color: rgba(254, 202, 202, 0.95);
   background: rgba(185, 28, 28, 0.96);
 }
 
-.pcd-estop-button:disabled {
+.pcd-soft-stop-button:disabled,
+.pcd-localization-stop-button:disabled {
   cursor: not-allowed;
   opacity: 0.6;
 }

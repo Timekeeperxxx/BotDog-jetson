@@ -4,13 +4,21 @@ import asyncio
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 
 from backend import workers_ai
 from backend.pose_detection import PoseObservation, Posture
-from backend.workers_ai import AIWorker, AIWorkerFrameTimeout, DetectionResult, _AIFrame
+from backend.workers_ai import (
+    AIWorker,
+    AIWorkerFrameTimeout,
+    DetectionResult,
+    _AIFrame,
+    _YoloDetector,
+)
 
 
 class _SessionFactory:
@@ -133,6 +141,8 @@ def _worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AIWorker:
     monkeypatch.setattr(workers_ai.settings, "AI_PARALLEL_INFERENCE_ENABLED", True)
     monkeypatch.setattr(workers_ai.settings, "AI_CONTINUOUS_DETECTION_ENABLED", False)
     monkeypatch.setattr(workers_ai.settings, "POSE_ENABLED", False)
+    monkeypatch.setattr(workers_ai.settings, "WEATHER_ENABLED", False)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_ENABLED", False)
     worker = AIWorker(
         session_factory=_SessionFactory(),
         state_machine=object(),
@@ -373,7 +383,7 @@ async def test_ai_pose_skip_keeps_detector_running_every_frame(
 
     class _UnexpectedPoseDetector:
         def detect(self, frame: bytes) -> list[object]:
-            raise AssertionError("odd source frame must skip pose inference")
+            raise AssertionError("first processed AI frame must skip pose inference")
 
     worker._pose_detector = _UnexpectedPoseDetector()  # type: ignore[assignment]
     worker._pose_event_engine = _FakePoseEventEngine()  # type: ignore[assignment]
@@ -383,7 +393,8 @@ async def test_ai_pose_skip_keeps_detector_running_every_frame(
 
     monkeypatch.setattr(worker, "_process_detection", noop)
 
-    await worker._detect_and_process_frame(b"\0", frame_index=547)
+    # 原始帧号即使是偶数，第一次实际处理的 AI 帧也必须按 cycle=1 跳过。
+    await worker._detect_and_process_frame(b"\0", frame_index=546)
 
     assert worker._frames_processed == 1
     assert worker._pose_frames_processed == 0
@@ -404,6 +415,152 @@ def test_weapon_detector_runs_low_frequency_then_every_frame_when_active(
     worker._weapon_active_until = 20.0
     assert worker._is_weapon_due(4, now=19.0) is True
     assert worker._is_weapon_due(4, now=21.0) is False
+
+
+def test_yolo_weapon_region_detection_maps_coordinates_and_suppresses_duplicates() -> None:
+    detector = object.__new__(_YoloDetector)
+    detector._np = np
+    detector._frame_width = 4
+    detector._frame_height = 4
+    detector._inference_imgsz = 640
+    detector._confidence = 0.25
+    detector._target_classes = {"knife"}
+    detector._class_names = {1: "knife"}
+    fake_box = SimpleNamespace(
+        cls=np.asarray([1]),
+        conf=np.asarray([0.82]),
+        xyxy=np.asarray([[1.0, 1.0, 3.0, 3.0]]),
+        id=None,
+    )
+
+    class _FakeModel:
+        def predict(self, *args: object, **kwargs: object) -> list[object]:
+            del args, kwargs
+            return [SimpleNamespace(boxes=[fake_box])]
+
+    detector._model = _FakeModel()
+
+    detections = detector.detect_many_regions(
+        bytes(4 * 4 * 3),
+        [(0, 0, 4, 4), (0, 0, 4, 4)],
+        expand_ratio=0.0,
+        max_regions=3,
+        nms_iou=0.5,
+    )
+
+    assert detections == [
+        DetectionResult(label="knife", confidence=0.82, bbox=(1, 1, 3, 3))
+    ]
+
+
+def test_yolo_weapon_class_aliases_keep_canonical_alert_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ultralytics
+
+    fake_model = SimpleNamespace(
+        names={
+            0: "Blunt_Weapon",
+            3: "Firearm",
+            4: "Melee_Weapon",
+        }
+    )
+    monkeypatch.setattr(
+        ultralytics,
+        "YOLO",
+        lambda *args, **kwargs: fake_model,
+    )
+
+    detector = _YoloDetector(
+        model_path="weapon-v13.engine",
+        device="cpu",
+        confidence=0.4,
+        target_classes=["guns", "knife"],
+        frame_width=1280,
+        frame_height=720,
+        inference_imgsz=640,
+        use_bytetrack=False,
+        class_aliases={"Firearm": "guns", "Melee_Weapon": "knife"},
+    )
+
+    assert detector._class_names == {
+        0: "Blunt_Weapon",
+        3: "guns",
+        4: "knife",
+    }
+
+
+@pytest.mark.asyncio
+async def test_weapon_person_crop_inference_uses_primary_person_regions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    calls: list[dict[str, object]] = []
+    expected = DetectionResult(
+        label="knife",
+        confidence=0.82,
+        bbox=(150, 120, 185, 210),
+    )
+
+    class _RegionDetector:
+        def detect_many(self, frame: bytes) -> list[DetectionResult]:
+            del frame
+            raise AssertionError("person-crop mode must not run full-frame weapon inference")
+
+        def detect_many_regions(
+            self,
+            frame: bytes,
+            regions: list[tuple[int, int, int, int]],
+            **kwargs: object,
+        ) -> list[DetectionResult]:
+            calls.append({"frame": frame, "regions": regions, **kwargs})
+            return [expected]
+
+    worker._weapon_detector = _RegionDetector()  # type: ignore[assignment]
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_ENABLED", True)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_EXPAND_RATIO", 0.35)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_MAX_REGIONS", 3)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_NMS_IOU", 0.5)
+    person = DetectionResult(
+        label="person",
+        confidence=0.91,
+        bbox=(100, 50, 300, 350),
+    )
+
+    detections, elapsed_ms = await worker._infer_weapon(b"frame", [person])
+
+    assert detections == [expected]
+    assert elapsed_ms >= 0.0
+    assert calls == [
+        {
+            "frame": b"frame",
+            "regions": [(100, 50, 300, 350)],
+            "expand_ratio": 0.35,
+            "max_regions": 3,
+            "nms_iou": 0.5,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_weapon_person_crop_inference_skips_when_no_person_is_detected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+
+    class _UnexpectedDetector:
+        def detect_many_regions(self, *args: object, **kwargs: object) -> list[object]:
+            raise AssertionError("no person means no weapon crop inference")
+
+    worker._weapon_detector = _UnexpectedDetector()  # type: ignore[assignment]
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_ENABLED", True)
+
+    detections, elapsed_ms = await worker._infer_weapon(b"frame", [])
+
+    assert detections == []
+    assert elapsed_ms >= 0.0
 
 
 def test_weapon_filter_rejects_unassociated_chair_false_positive(
@@ -471,6 +628,65 @@ def test_weapon_filter_keeps_person_associated_or_high_confidence_candidate(
     )
 
     assert result == [held_weapon, unattended_high_confidence]
+
+
+def test_weapon_filter_rejects_oversized_full_frame_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_REQUIRE_PERSON_ASSOCIATION", True)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_EXPAND_RATIO", 0.35)
+    monkeypatch.setattr(
+        workers_ai.settings,
+        "WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD",
+        0.85,
+    )
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_MAX_FRAME_AREA_RATIO", 0.35)
+    full_frame_false_positive = DetectionResult(
+        label="guns",
+        confidence=0.99,
+        bbox=(0, 0, worker._frame_width, worker._frame_height),
+    )
+    centered_person = DetectionResult(
+        label="person",
+        confidence=0.91,
+        bbox=(
+            worker._frame_width // 3,
+            0,
+            worker._frame_width * 2 // 3,
+            worker._frame_height,
+        ),
+    )
+
+    result = worker._filter_weapon_detections(
+        [full_frame_false_positive],
+        [centered_person],
+    )
+
+    assert result == []
+
+
+def test_weapon_filter_strict_carrying_mode_rejects_unattended_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_REQUIRE_PERSON_ASSOCIATION", True)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_EXPAND_RATIO", 0.35)
+    monkeypatch.setattr(
+        workers_ai.settings,
+        "WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD",
+        1.0,
+    )
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_MAX_FRAME_AREA_RATIO", 1.0)
+    unattended_candidate = DetectionResult(
+        label="knife",
+        confidence=0.99,
+        bbox=(100, 100, 160, 220),
+    )
+
+    assert worker._filter_weapon_detections([unattended_candidate], []) == []
 
 
 def test_weapon_filter_can_be_disabled(

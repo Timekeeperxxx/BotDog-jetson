@@ -18,6 +18,8 @@ const BEHAVIOR_LABELS: Record<FenceBehavior, string> = {
   dwelling: '围栏附近停留',
   contact: '接触围栏',
   climbing_suspected: '疑似翻越',
+  tampering_suspected: '疑似破坏',
+  tampering_confirmed: '确认破坏',
 }
 
 type Props = {
@@ -54,6 +56,10 @@ export function NavFenceControls({
               <span>目标 {status.target_fence_id ?? '--'}</span>
               <span>距离 {status.distance_m == null ? '--' : `${status.distance_m.toFixed(2)} m`}</span>
               <span>人员 {BEHAVIOR_LABELS[status.behavior]}{status.behavior_track_id == null ? '' : ` #${status.behavior_track_id}`}</span>
+              <span>破坏复核 {status.tamper.reference_ready ? '已就绪' : '建立基准中'}</span>
+              {status.tamper.pending ? (
+                <span>动作 {(status.tamper.action_score * 100).toFixed(0)}% · 结构 {(status.tamper.structure_change_ratio * 100).toFixed(0)}%</span>
+              ) : null}
             </div>
           ) : null}
           {!error && status?.detail ? <small>{status.detail}</small> : null}

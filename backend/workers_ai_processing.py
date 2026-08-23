@@ -175,8 +175,22 @@ class AIWorkerProcessingMixin:
         persons: list[DetectionResult],
     ) -> list[DetectionResult]:
         """过滤与人员无关的低置信度武器框，抑制椅子扶手等静态误报。"""
+        max_frame_area_ratio = max(
+            0.0,
+            min(1.0, float(settings.WEAPON_MAX_FRAME_AREA_RATIO)),
+        )
+        frame_area = max(1, int(self._frame_width) * int(self._frame_height))
+        size_eligible: list[DetectionResult] = []
+        for detection in detections:
+            if detection.bbox is not None:
+                x1, y1, x2, y2 = detection.bbox
+                detection_area = max(0, x2 - x1) * max(0, y2 - y1)
+                if detection_area / frame_area > max_frame_area_ratio:
+                    continue
+            size_eligible.append(detection)
+
         if not bool(settings.WEAPON_REQUIRE_PERSON_ASSOCIATION):
-            return list(detections)
+            return size_eligible
 
         expand_ratio = max(
             0.0,
@@ -188,7 +202,7 @@ class AIWorkerProcessingMixin:
         )
         person_bboxes = [person.bbox for person in persons if person.bbox is not None]
         eligible: list[DetectionResult] = []
-        for detection in detections:
+        for detection in size_eligible:
             if detection.confidence >= unattended_threshold:
                 eligible.append(detection)
                 continue
@@ -493,6 +507,18 @@ class AIWorkerProcessingMixin:
                 "CRITICAL",
                 "检测到人员疑似翻越围栏",
             ),
+            FenceBehavior.TAMPERING_SUSPECTED: (
+                "FENCE_TAMPERING_SUSPECTED",
+                "E_FENCE_TAMPERING_SUSPECTED",
+                "WARNING",
+                "检测到人员疑似破坏围栏",
+            ),
+            FenceBehavior.TAMPERING_CONFIRMED: (
+                "FENCE_TAMPERING_CONFIRMED",
+                "E_FENCE_TAMPERING_CONFIRMED",
+                "CRITICAL",
+                "检测到人员破坏围栏（动作与结构变化已确认）",
+            ),
         }
         gps = self._get_latest_gps()
         alert_service = get_alert_service()
@@ -506,6 +532,14 @@ class AIWorkerProcessingMixin:
                 f"{label}：fence_id={event.fence_id}，track_id={event.track_id}，"
                 f"持续={event.duration_seconds:.1f}s"
             )
+            if event.behavior in {
+                FenceBehavior.TAMPERING_SUSPECTED,
+                FenceBehavior.TAMPERING_CONFIRMED,
+            }:
+                message += (
+                    f"，动作分={event.action_score:.2f}，"
+                    f"结构变化={event.structure_change_ratio:.2%}"
+                )
             async with self._session_factory() as session:
                 await alert_service.handle_ai_event(
                     event_type=event_type,
@@ -536,6 +570,30 @@ class AIWorkerProcessingMixin:
         if broadcaster.connection_count == 0:
             return
 
+        from .fence_detection_service import get_fence_detection_service
+
+        fence_service = get_fence_detection_service()
+        fence_status = fence_service.get_status() if fence_service is not None else {}
+        fence_by_track = {
+            int(item["track_id"]): item
+            for item in fence_status.get("persons", [])
+            if item.get("track_id") is not None
+        }
+        fence_structure_ratio = float(
+            (fence_status.get("tamper") or {}).get("structure_change_ratio", 0.0)
+        )
+
+        def fence_overlay_fields(detection: DetectionResult) -> dict[str, object]:
+            track_id = int(getattr(detection, "track_id", -1))
+            item = fence_by_track.get(track_id)
+            return {
+                "fence_behavior": item.get("behavior") if item is not None else None,
+                "fence_action_score": (
+                    item.get("tamper_action_score") if item is not None else 0.0
+                ),
+                "fence_structure_change_ratio": fence_structure_ratio,
+            }
+
         message = {
             "msg_type": "POSE_OVERLAY",
             "timestamp": utc_now_iso(),
@@ -555,6 +613,7 @@ class AIWorkerProcessingMixin:
                         "display_name": getattr(detection, "display_name", None),
                         "face_status": getattr(detection, "face_status", None),
                         "face_score": getattr(detection, "face_score", None),
+                        **fence_overlay_fields(detection),
                     }
                     for detection in detections
                     if detection.bbox is not None

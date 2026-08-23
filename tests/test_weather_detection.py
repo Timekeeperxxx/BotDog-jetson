@@ -7,6 +7,7 @@ from backend.weather_detection import WeatherDetectionService
 
 class FakeClassifier:
     device = "cpu"
+    runtime = "fake"
 
     def __init__(self, outputs: list[Mapping[str, float]]) -> None:
         self._outputs = list(outputs)
@@ -41,6 +42,7 @@ def test_weather_service_stabilizes_rain_after_required_votes() -> None:
     assert status["label_zh"] == "雨"
     assert status["frames_processed"] == 3
     assert status["radar_fused"] is False
+    assert status["runtime"] == "fake"
 
 
 def test_weather_service_maps_non_product_class_to_normal() -> None:

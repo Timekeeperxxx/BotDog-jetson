@@ -2,9 +2,9 @@
 
 ## 技术方案
 
-当前实现使用 OpenCV DNN 的 YuNet（人脸检测）与 SFace（对齐、128 维特征）。它与现有 AIWorker 同进程运行，复用现有 RTSP 解码帧和轻量 IOU 轨迹，不新增 Docker、systemd 或视频拉流服务。
+当前测试部署使用 SCRFD-10G TensorRT FP16（人脸检测）与 OpenCV SFace（对齐、128 维特征）。保留 `yunet` 后端用于回退。它与现有 AIWorker 同进程运行，复用现有 RTSP 解码帧和轻量 IOU 轨迹，不新增 Docker、systemd 或视频拉流服务。
 
-识别结果只写入 `TRACK_OVERLAY` / `POSE_OVERLAY` 的 `identity_id`、`display_name`、`face_status`、`face_score` 字段。它不会修改 `StrangerPolicy`、自动跟踪、驱离或机器人控制决策。
+识别结果写入 `TRACK_OVERLAY` / `POSE_OVERLAY` 的 `identity_id`、`display_name`、`face_status`、`face_score` 字段，并作为自动跟踪入口的授权门禁。`face_status=recognized` 且存在 `identity_id` 时，`StrangerPolicy` 将目标视为人员库授权人员，不进入跟踪；`pending`、`unknown`、`unavailable` 或无身份结果采用默认拒绝，仍按未授权目标处理。目标在锁定后才完成授权确认时会立即停车并恢复导航。人脸身份目前不改变独立的视觉驱离模式逻辑。
 
 ## 数据与权限
 
@@ -20,14 +20,16 @@
 
 ## 部署
 
-安装依赖后执行 `scripts/download-face-models.sh`。默认模型目录是 `/home/jetson/Projects/Models`，脚本会核验 SHA256。模型来自 OpenCV 官方 model zoo：
+SFace 和回退用 YuNet 可通过 `scripts/download-face-models.sh` 安装。默认模型目录是 `/home/jetson/Projects/Models`，脚本会核验 SHA256。模型来自 OpenCV 官方 model zoo：
 
 - [YuNet `face_detection_yunet_2023mar.onnx`](https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx)
 - [SFace `face_recognition_sface_2021dec.onnx`](https://github.com/opencv/opencv_zoo/blob/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx)
 
-默认检测阈值为 0.80，余弦身份匹配阈值为 0.45，连续三次命中后显示确认姓名。每个人员最多五个模板；图片最大 8MB/1200 万像素，格式限 JPEG、PNG、WebP，且必须恰好包含一张最小边长 64px 的人脸。
+Jetson 测试环境的 SCRFD 引擎路径为 `/home/jetson/Projects/Models/face_detection_scrfd_10g_640_fp16.engine`，固定输入 640×640，检测阈值 0.50、NMS 阈值 0.40。引擎只能在生成它的 JetPack/TensorRT/Jetson 环境使用；升级 TensorRT 或更换设备后应从 ONNX 重新构建。切回 YuNet 时设置 `FACE_DETECT_BACKEND=yunet` 并恢复 YuNet ONNX 路径。
 
-后台注册会先应用手机照片的 EXIF 方向，将超大图片等比例缩放到最长边 1920px，并在没有检测结果时尝试四个方向及注册专用阈值 `FACE_ENROLL_DETECT_THRESHOLD`。该宽松阈值不会影响实时视频检测。
+余弦身份匹配阈值为 0.45，连续三次命中后显示确认姓名。每个人员最多五个模板；图片最大 8MB/1200 万像素，格式限 JPEG、PNG、WebP，且必须恰好包含一张最小边长 64px 的人脸。
+
+后台注册会先应用手机照片的 EXIF 方向，将超大图片等比例缩放到最长边 1920px，并在没有检测结果时尝试四个方向及注册专用阈值 `FACE_ENROLL_DETECT_THRESHOLD`（SCRFD 测试配置为 0.40）。该宽松阈值不会影响实时视频检测。
 
 为保证没有巡检任务时也能在操作台持续看到识别结果，需要配置 `AI_ENABLED=true`、`AI_CONTINUOUS_DETECTION_ENABLED=true` 和 `FACE_RECOGNITION_ENABLED=true`。视觉页面首次打开时默认显示 AI 叠层；用户仍可通过画面底部的眼睛按钮关闭，选择会保存在浏览器本地。
 

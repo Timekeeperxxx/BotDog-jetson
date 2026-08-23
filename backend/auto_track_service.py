@@ -539,7 +539,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                         "display_name": d.display_name,
                         "face_status": d.face_status,
                         "face_score": round(d.face_score, 4) if d.face_score is not None else None,
-                        "is_stranger": self._is_stranger(d.track_id) if d.class_name == "person" else None,
+                        "is_stranger": self._is_stranger(d) if d.class_name == "person" else None,
                         "safety_status": "no_helmet" if d.class_name == "person" and d.track_id in no_helmet_ids else None,
                     }
                     for d in detections
@@ -554,7 +554,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                         "display_name": d.display_name,
                         "face_status": d.face_status,
                         "face_score": round(d.face_score, 4) if d.face_score is not None else None,
-                        "is_stranger": self._is_stranger(d.track_id),
+                        "is_stranger": self._is_stranger(d),
                         "safety_status": "no_helmet" if d.track_id in no_helmet_ids else None,
                     }
                     for d in persons
@@ -602,7 +602,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                 continue
 
             # 检查 StrangerPolicy
-            if not self._is_stranger(det.track_id):
+            if not self._is_stranger(det):
                 continue
 
             # 新候选
@@ -643,6 +643,11 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         for tid in list(self._candidates.keys()):
             if tid in person_by_id:
                 det = person_by_id[tid]
+                # 人脸结果通常晚于人员框数帧返回。候选积累期间一旦确认是
+                # 人员库授权人员，立即移除，不能继续累计到锁定阈值。
+                if not self._is_stranger(det):
+                    del self._candidates[tid]
+                    continue
                 cand = self._candidates[tid]
                 cand.stable_hits += 1
                 cand.last_seen_ts = now
@@ -659,7 +664,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         for det in persons:
             if det.track_id not in self._candidates:
                 anchor = ((det.bbox[0] + det.bbox[2]) // 2, det.bbox[3])
-                if self._zone_service.is_inside_zone(anchor) and self._is_stranger(det.track_id):
+                if self._zone_service.is_inside_zone(anchor) and self._is_stranger(det):
                     self._candidates[det.track_id] = TargetCandidate.from_detection(
                         track_id=det.track_id,
                         bbox=det.bbox,
@@ -715,6 +720,19 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             return
 
         target.bbox = matched.bbox
+        # 目标可能先以 pending 状态被锁定，随后才完成三次人脸确认。确认属于
+        # 人员库后立即停车并恢复导航，不改变任何跟踪控制算法。
+        if not self._is_stranger(matched):
+            logger.info(
+                "[AutoTrackService] FOLLOWING→STOPPED(人脸授权): "
+                f"track_id={target.track_id} identity_id={matched.identity_id} "
+                f"name={matched.display_name or '-'}"
+            )
+            await self._stop_without_snapshot(
+                TrackStopReason.MARKED_KNOWN,
+                detail="人脸识别为人员库授权人员",
+            )
+            return
         # 控制坐标单独做 EMA；保留原始 bbox 供身份重关联和状态展示使用。
         self._control_bbox = _smooth_bbox(
             self._control_bbox or matched.bbox,

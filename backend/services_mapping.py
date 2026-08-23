@@ -36,7 +36,9 @@ VIDEO_PIPELINE_PID_FILES = (
 )
 SCENE_DIR_PATTERN = re.compile(r"^Scene(\d+)_")
 MAPPING_READY_FLAG_NAME = ".ground_generation_started"
-MAPPING_START_READY_TIMEOUT_SECONDS = 60
+# 必须明显长于 start_mapping.sh 内层的启动等待（120s），
+# 给 DDS 冷启动、错误状态落盘和脚本清理留出余量。
+MAPPING_START_READY_TIMEOUT_SECONDS = 180
 MAPPING_START_READY_POLL_INTERVAL_SECONDS = 0.5
 # 必须长于 terrain 保存 30 分钟上限及后续 SuperLIO/launch 清理时间，
 # 否则后端会提前终止脚本，ground 和 footprint 仍然来不及落盘。

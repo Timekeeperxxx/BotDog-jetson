@@ -21,7 +21,7 @@ class FaceExtraction:
 
 
 class FaceRecognitionEngine:
-    """OpenCV DNN YuNet 检测 + SFace 对齐和特征提取。"""
+    """YuNet/SCRFD 检测 + OpenCV SFace 对齐和特征提取。"""
 
     model_name = "OpenCV SFace"
     model_version = "2021dec"
@@ -31,13 +31,24 @@ class FaceRecognitionEngine:
         detect_model_path: str,
         recognition_model_path: str,
         *,
+        detect_backend: str = "yunet",
         detect_threshold: float = 0.85,
+        detect_input_size: int = 640,
+        detect_nms_threshold: float = 0.4,
         min_face_size: int = 64,
     ) -> None:
         self.detect_model_path = Path(detect_model_path)
         self.recognition_model_path = Path(recognition_model_path)
+        self.detect_backend = str(detect_backend).strip().lower()
         self.detect_threshold = float(detect_threshold)
+        self.detect_input_size = max(1, int(detect_input_size))
+        self.detect_nms_threshold = min(1.0, max(0.0, float(detect_nms_threshold)))
         self.min_face_size = max(1, int(min_face_size))
+        self.model_name = (
+            "SCRFD-10G TensorRT + OpenCV SFace"
+            if self.detect_backend == "scrfd_tensorrt"
+            else "OpenCV YuNet + SFace"
+        )
         self._detector: Any | None = None
         self._recognizer: Any | None = None
         self._cv2: Any | None = None
@@ -51,25 +62,41 @@ class FaceRecognitionEngine:
         with self._lock:
             if self.loaded:
                 return
+            if self.detect_backend not in {"yunet", "scrfd_tensorrt"}:
+                raise FaceEngineError(
+                    f"不支持的人脸检测后端: {self.detect_backend}，"
+                    "可选 yunet/scrfd_tensorrt"
+                )
             if not self.detect_model_path.is_file():
-                raise FaceEngineError(f"YuNet 模型不存在: {self.detect_model_path}")
+                raise FaceEngineError(f"人脸检测模型不存在: {self.detect_model_path}")
             if not self.recognition_model_path.is_file():
                 raise FaceEngineError(f"SFace 模型不存在: {self.recognition_model_path}")
             try:
                 import cv2
             except ImportError as exc:
                 raise FaceEngineError("缺少 OpenCV，无法加载人脸模型") from exc
-            if not hasattr(cv2, "FaceDetectorYN_create") or not hasattr(cv2, "FaceRecognizerSF_create"):
-                raise FaceEngineError("当前 OpenCV 不包含 YuNet/SFace API")
+            if not hasattr(cv2, "FaceRecognizerSF_create"):
+                raise FaceEngineError("当前 OpenCV 不包含 SFace API")
             try:
-                detector = cv2.FaceDetectorYN_create(
-                    str(self.detect_model_path),
-                    "",
-                    (320, 320),
-                    self.detect_threshold,
-                    0.3,
-                    5000,
-                )
+                if self.detect_backend == "yunet":
+                    if not hasattr(cv2, "FaceDetectorYN_create"):
+                        raise FaceEngineError("当前 OpenCV 不包含 YuNet API")
+                    detector = cv2.FaceDetectorYN_create(
+                        str(self.detect_model_path),
+                        "",
+                        (320, 320),
+                        self.detect_threshold,
+                        self.detect_nms_threshold,
+                        5000,
+                    )
+                else:
+                    from .scrfd_tensorrt import SCRFDTensorRTDetector
+
+                    detector = SCRFDTensorRTDetector(
+                        self.detect_model_path,
+                        input_size=self.detect_input_size,
+                        nms_threshold=self.detect_nms_threshold,
+                    )
                 recognizer = cv2.FaceRecognizerSF_create(
                     str(self.recognition_model_path),
                     "",
@@ -104,14 +131,17 @@ class FaceRecognitionEngine:
         assert self._detector is not None
         threshold = self.detect_threshold if score_threshold is None else float(score_threshold)
         with self._lock:
-            self._detector.setInputSize((width, height))
-            self._detector.setScoreThreshold(threshold)
-            try:
-                _, faces = self._detector.detect(image)
-            finally:
-                # 同一个 detector 也服务实时视频，注册阶段的宽松阈值不能泄漏过去。
-                if threshold != self.detect_threshold:
-                    self._detector.setScoreThreshold(self.detect_threshold)
+            if self.detect_backend == "scrfd_tensorrt":
+                faces = self._detector.detect(image, score_threshold=threshold)
+            else:
+                self._detector.setInputSize((width, height))
+                self._detector.setScoreThreshold(threshold)
+                try:
+                    _, faces = self._detector.detect(image)
+                finally:
+                    # 同一个 detector 也服务实时视频，注册阶段的宽松阈值不能泄漏过去。
+                    if threshold != self.detect_threshold:
+                        self._detector.setScoreThreshold(self.detect_threshold)
         if faces is None:
             return []
         return [np.asarray(face, dtype=np.float32) for face in faces]

@@ -570,6 +570,37 @@ def test_tf_pose_uses_receive_time_for_freshness(monkeypatch):
     assert pose["ros_timestamp"] == pytest.approx(ros_now, abs=1e-6)
 
 
+def test_tf_messages_are_written_to_the_dedicated_buffer():
+    calls: list[tuple[str, object, str]] = []
+
+    class DummyBuffer:
+        def set_transform(self, transform, authority: str) -> None:
+            calls.append(("dynamic", transform, authority))
+
+        def set_transform_static(self, transform, authority: str) -> None:
+            calls.append(("static", transform, authority))
+
+    dynamic_transform = object()
+    static_transform = object()
+    buffer = DummyBuffer()
+
+    RosNavBridge._store_tf_message(
+        buffer,
+        SimpleNamespace(transforms=[dynamic_transform]),
+        is_static=False,
+    )
+    RosNavBridge._store_tf_message(
+        buffer,
+        SimpleNamespace(transforms=[static_transform]),
+        is_static=True,
+    )
+
+    assert calls == [
+        ("dynamic", dynamic_transform, "botdog_nav_tf_bridge"),
+        ("static", static_transform, "botdog_nav_tf_bridge"),
+    ]
+
+
 def test_tf_pose_accepts_latest_transform_available_in_local_buffer(monkeypatch):
     bridge = RosNavBridge.__new__(RosNavBridge)
     bridge._tf_buffer = SimpleNamespace(

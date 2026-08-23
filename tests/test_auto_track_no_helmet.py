@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from backend.auto_track_service import AutoTrackService
+from backend.stranger_policy import StrangerPolicy
 from backend.tracking_types import AutoTrackState, DetectionResult, TrackStopReason
 
 
@@ -208,6 +209,113 @@ async def test_auto_track_ignores_person_without_head_or_with_helmet(
     await service.process_frame([_person(), _head(), _helmet()], b"", frame_index=4, current_task_id="task")
     assert service.get_status()["state"] == AutoTrackState.IDLE.value
     assert service.get_status()["active_target"] is None
+
+
+def test_stranger_policy_uses_face_library_as_authorization() -> None:
+    policy = StrangerPolicy()
+
+    assert policy.is_stranger(8, face_status="recognized", identity_id=3) is False
+    assert policy.is_stranger(8, face_status="recognized", identity_id=None) is True
+    assert policy.is_stranger(8, face_status="pending", identity_id=None) is True
+    assert policy.is_stranger(8, face_status="unknown", identity_id=None) is True
+    assert policy.is_stranger(8, face_status="unavailable", identity_id=None) is True
+
+    policy.mark_known(9)
+    assert policy.is_stranger(9, face_status="unknown", identity_id=None) is False
+
+
+@pytest.mark.asyncio
+async def test_auto_track_does_not_select_face_library_person(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend import stranger_policy
+
+    monkeypatch.setattr(stranger_policy, "_stranger_policy", StrangerPolicy())
+    service = _service(tmp_path, monkeypatch)
+    authorized = _person()
+    authorized.face_status = "recognized"
+    authorized.identity_id = 7
+    authorized.display_name = "授权人员A"
+
+    for frame_index in range(1, 7):
+        await service.process_frame(
+            [authorized, _head()],
+            b"",
+            frame_index=frame_index,
+            current_task_id="task",
+        )
+
+    status = service.get_status()
+    assert status["state"] == AutoTrackState.IDLE.value
+    assert status["active_target"] is None
+
+
+@pytest.mark.asyncio
+async def test_auto_track_removes_pending_candidate_after_face_authorization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend import stranger_policy
+
+    monkeypatch.setattr(stranger_policy, "_stranger_policy", StrangerPolicy())
+    service = _service(tmp_path, monkeypatch)
+    pending = _person()
+    pending.face_status = "pending"
+
+    await service.process_frame(
+        [pending, _head()],
+        b"",
+        frame_index=1,
+        current_task_id="task",
+    )
+    assert service.get_status()["state"] == AutoTrackState.DETECTING.value
+
+    pending.face_status = "recognized"
+    pending.identity_id = 7
+    pending.display_name = "授权人员A"
+    await service.process_frame(
+        [pending, _head()],
+        b"",
+        frame_index=2,
+        current_task_id="task",
+    )
+
+    status = service.get_status()
+    assert status["state"] == AutoTrackState.IDLE.value
+    assert status["active_target"] is None
+
+
+@pytest.mark.asyncio
+async def test_auto_track_stops_when_active_target_becomes_face_authorized(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from backend import stranger_policy
+
+    monkeypatch.setattr(stranger_policy, "_stranger_policy", StrangerPolicy())
+    service = _service(tmp_path, monkeypatch)
+    await _feed_head_person_frames(service, start_frame=1, count=5)
+    status = service.get_status()
+    assert status["state"] == AutoTrackState.FOLLOWING.value
+    track_id = status["active_target"]["track_id"]
+
+    authorized = _person(track_id=track_id)
+    authorized.face_status = "recognized"
+    authorized.identity_id = 7
+    authorized.display_name = "授权人员A"
+    await service.process_frame(
+        [authorized],
+        b"",
+        frame_index=6,
+        current_task_id="task",
+    )
+    await asyncio.sleep(0)
+
+    status = service.get_status()
+    assert status["state"] == AutoTrackState.STOPPED.value
+    assert status["stop_reason"] == TrackStopReason.MARKED_KNOWN.value
+    assert any(command == "stop" for command, _ in service._control_service.commands)
 
 
 @pytest.mark.asyncio

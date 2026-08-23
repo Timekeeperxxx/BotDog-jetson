@@ -842,6 +842,11 @@ def stop_navigation_processes() -> dict[str, Any]:
     unique_pids = sorted(set(target_pids))
     if not unique_pids:
         nav_logger.info("未找到需要停止的导航后台进程")
+        _navigation_ready_path().unlink(missing_ok=True)
+        atomic_write_json(
+            _runtime_dir() / "navigation_status.json",
+            {"running": False, "stage": "stopped"},
+        )
         return {
             "success": True,
             "running": False,
@@ -876,6 +881,12 @@ def stop_navigation_processes() -> dict[str, Any]:
             pid_path.unlink(missing_ok=True)
         except Exception as exc:
             nav_logger.warning("清理 PID 文件失败：{}，path={}", exc, pid_path)
+
+    _navigation_ready_path().unlink(missing_ok=True)
+    atomic_write_json(
+        _runtime_dir() / "navigation_status.json",
+        {"running": False, "stage": "stopped"},
+    )
 
     return {
         "success": True,

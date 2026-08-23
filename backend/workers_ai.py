@@ -107,6 +107,7 @@ class _YoloDetector(_BaseDetector):
         frame_height: int,
         inference_imgsz: int,
         use_bytetrack: bool,
+        class_aliases: dict[str, str] | None = None,
     ) -> None:
         import numpy as np  # noqa: F811
         self._np = np
@@ -140,14 +141,15 @@ class _YoloDetector(_BaseDetector):
         # 缓存模型类别名映射。不得把 cls=0 写死为 person：独立武器模型的
         # cls=0 是 guns，类别应始终以模型元数据为准。
         raw_names = self._model.names
+        aliases = class_aliases or {}
         if isinstance(raw_names, dict):
             self._class_names = {
-                int(class_id): str(class_name)
+                int(class_id): aliases.get(str(class_name), str(class_name))
                 for class_id, class_name in raw_names.items()
             }
         else:
             self._class_names = {
-                class_id: str(class_name)
+                class_id: aliases.get(str(class_name), str(class_name))
                 for class_id, class_name in enumerate(raw_names)
             }
         missing_classes = self._target_classes.difference(self._class_names.values())
@@ -167,6 +169,37 @@ class _YoloDetector(_BaseDetector):
         """返回置信度最高的单个目标（兼容老路径）。"""
         results = self.detect_many(frame_bytes)
         return results[0] if results else None
+
+    def _result_to_detections(
+        self,
+        result,
+        *,
+        offset_x: int = 0,
+        offset_y: int = 0,
+    ) -> list[DetectionResult]:
+        if result is None or result.boxes is None or len(result.boxes) == 0:
+            return []
+        detections: list[DetectionResult] = []
+        for box in result.boxes:
+            cls_id = int(box.cls[0])
+            cls_name = self._class_names.get(cls_id, str(cls_id))
+            if cls_name not in self._target_classes:
+                continue
+            xyxy = box.xyxy[0].tolist()
+            detections.append(
+                DetectionResult(
+                    label=cls_name,
+                    confidence=float(box.conf[0]),
+                    bbox=(
+                        int(xyxy[0]) + offset_x,
+                        int(xyxy[1]) + offset_y,
+                        int(xyxy[2]) + offset_x,
+                        int(xyxy[3]) + offset_y,
+                    ),
+                    track_id=int(box.id[0]) if box.id is not None else -1,
+                )
+            )
+        return detections
 
     def detect_many(self, frame_bytes: bytes) -> list[DetectionResult]:
         """返回所有目标类别的检测结果列表，使用 ByteTrack 提供稳定 track_id。"""
@@ -201,33 +234,84 @@ class _YoloDetector(_BaseDetector):
                 verbose=False,
             )
 
-        if not results or len(results[0].boxes) == 0:
+        if not results:
             return []
+        return self._result_to_detections(results[0])
 
-        detections = []
-        for box in results[0].boxes:
-            cls_id = int(box.cls[0])
-            cls_name = self._class_names.get(cls_id, str(cls_id))
-            conf = float(box.conf[0])
-
-            if cls_name not in self._target_classes:
+    def detect_many_regions(
+        self,
+        frame_bytes: bytes,
+        regions: list[tuple[int, int, int, int]],
+        *,
+        expand_ratio: float,
+        max_regions: int,
+        nms_iou: float,
+    ) -> list[DetectionResult]:
+        """在人员区域内放大检测，并把武器框映射回完整画面坐标。"""
+        frame = self._np.frombuffer(frame_bytes, dtype=self._np.uint8)
+        frame = frame.reshape((self._frame_height, self._frame_width, 3))
+        ordered_regions = sorted(
+            regions,
+            key=lambda item: max(0, item[2] - item[0]) * max(0, item[3] - item[1]),
+            reverse=True,
+        )[: max(1, int(max_regions))]
+        detections: list[DetectionResult] = []
+        for region in ordered_regions:
+            x1, y1, x2, y2 = region
+            width = max(1, x2 - x1)
+            height = max(1, y2 - y1)
+            crop_x1 = max(0, int(x1 - width * expand_ratio))
+            crop_y1 = max(0, int(y1 - height * expand_ratio))
+            crop_x2 = min(self._frame_width, int(x2 + width * expand_ratio))
+            crop_y2 = min(self._frame_height, int(y2 + height * expand_ratio))
+            if crop_x2 <= crop_x1 or crop_y2 <= crop_y1:
                 continue
+            crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+            results = self._model.predict(
+                crop,
+                conf=self._confidence,
+                imgsz=self._inference_imgsz,
+                verbose=False,
+            )
+            if results:
+                detections.extend(
+                    self._result_to_detections(
+                        results[0],
+                        offset_x=crop_x1,
+                        offset_y=crop_y1,
+                    )
+                )
 
-            # 提取 bbox (x1,y1,x2,y2)
-            xyxy = box.xyxy[0].tolist()
-            bbox = (int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3]))
+        kept: list[DetectionResult] = []
+        for detection in sorted(
+            detections, key=lambda item: item.confidence, reverse=True
+        ):
+            if detection.bbox is None:
+                continue
+            if any(
+                previous.label == detection.label
+                and previous.bbox is not None
+                and self._bbox_iou(previous.bbox, detection.bbox) >= nms_iou
+                for previous in kept
+            ):
+                continue
+            kept.append(detection)
+        return kept
 
-            # 提取 YOLO 分配的稳定 track_id（无则 -1）
-            track_id = int(box.id[0]) if box.id is not None else -1
-
-            detections.append(DetectionResult(
-                label=cls_name,
-                confidence=conf,
-                bbox=bbox,
-                track_id=track_id,
-            ))
-
-        return detections
+    @staticmethod
+    def _bbox_iou(
+        first: tuple[int, int, int, int],
+        second: tuple[int, int, int, int],
+    ) -> float:
+        x1 = max(first[0], second[0])
+        y1 = max(first[1], second[1])
+        x2 = min(first[2], second[2])
+        y2 = min(first[3], second[3])
+        intersection = max(0, x2 - x1) * max(0, y2 - y1)
+        first_area = max(0, first[2] - first[0]) * max(0, first[3] - first[1])
+        second_area = max(0, second[2] - second[0]) * max(0, second[3] - second[1])
+        union = first_area + second_area - intersection
+        return intersection / union if union > 0 else 0.0
 
 
 class AIWorker(AIWorkerProcessingMixin):
@@ -310,6 +394,7 @@ class AIWorker(AIWorkerProcessingMixin):
         self._last_end_to_end_ms = 0.0
         self._pose_frames_processed = 0
         self._pose_events_count = 0
+        self._pose_inference_deferred = False
         self._last_pose_overlay_broadcast = 0.0
         self._pose_status = "disabled"
         self._pose_detector: UltralyticsPoseDetector | None = None
@@ -398,6 +483,10 @@ class AIWorker(AIWorkerProcessingMixin):
                     frame_height=self._frame_height,
                     inference_imgsz=settings.WEAPON_INFERENCE_IMGSZ,
                     use_bytetrack=False,
+                    class_aliases={
+                        "Firearm": "guns",
+                        "Melee_Weapon": "knife",
+                    },
                 )
                 self._weapon_status = "ready"
                 weapon_logger.info(
@@ -802,12 +891,29 @@ class AIWorker(AIWorkerProcessingMixin):
     ) -> None:
         pose_observations_for_overlay: list[PoseObservation] | None = None
         fresh_pose_observations: list[PoseObservation] = []
-        pose_due = (
+        # 摄像头通常以 20~25 FPS 输入，而 Worker 只消费最新帧。原始 frame_index
+        # 会一次跳过数帧，拿它做取模可能导致 skip=2 仍然帧帧命中。各 AI 支路
+        # 必须按实际进入推理的帧计数调度，才能得到稳定的 1/N 采样频率。
+        inference_cycle_index = self._frames_processed + 1
+        pose_scheduled = (
             self._pose_detector is not None
             and self._pose_event_engine is not None
-            and frame_index % max(1, int(settings.POSE_FRAME_SKIP)) == 0
+            and (
+                self._pose_inference_deferred
+                or inference_cycle_index % max(1, int(settings.POSE_FRAME_SKIP)) == 0
+            )
         )
-        weapon_due = self._is_weapon_due(frame_index)
+        now = time.monotonic()
+        weapon_active = now < self._weapon_active_until
+        weapon_due = self._is_weapon_due(inference_cycle_index, now=now)
+        # 巡逻态下避免主检测、姿态、武器三个 TensorRT engine 同时争抢 GPU。
+        # 冲突的姿态帧顺延到下一个 AI 周期；武器命中后的逐帧复核不降级。
+        defer_pose_for_weapon = pose_scheduled and weapon_due and not weapon_active
+        pose_due = pose_scheduled and not defer_pose_for_weapon
+        if defer_pose_for_weapon:
+            self._pose_inference_deferred = True
+        elif pose_due:
+            self._pose_inference_deferred = False
         # TensorRT engine 的第一次 predict() 会惰性创建执行上下文。每个支路先
         # 顺序预热，后续才允许独立 engine 并发，避免 CUDA 初始化竞争。
         run_pose_parallel = (
@@ -818,6 +924,7 @@ class AIWorker(AIWorkerProcessingMixin):
         )
         run_weapon_parallel = (
             weapon_due
+            and not bool(settings.WEAPON_PERSON_CROP_ENABLED)
             and self._parallel_inference_enabled
             and self._detector_warmed_up
             and self._weapon_warmed_up
@@ -845,8 +952,15 @@ class AIWorker(AIWorkerProcessingMixin):
             self._detector_warmed_up = True
 
             if weapon_due:
+                person_detections = [
+                    detection for detection in detections
+                    if detection.label == "person"
+                ]
                 if weapon_task is None:
-                    weapon_detections, weapon_ms = await self._infer_weapon(frame)
+                    weapon_detections, weapon_ms = await self._infer_weapon(
+                        frame,
+                        person_detections,
+                    )
                 else:
                     weapon_detections, weapon_ms = await weapon_task
                     weapon_task_consumed = True
@@ -854,10 +968,6 @@ class AIWorker(AIWorkerProcessingMixin):
                 self._last_weapon_ms = weapon_ms
                 self._weapon_frames_processed += 1
                 self._weapon_detections_count += len(weapon_detections)
-                person_detections = [
-                    detection for detection in detections
-                    if detection.label == "person"
-                ]
                 eligible_weapon_detections = self._filter_weapon_detections(
                     weapon_detections,
                     person_detections,
@@ -905,7 +1015,12 @@ class AIWorker(AIWorkerProcessingMixin):
             else:
                 self._last_pose_ms = 0.0
 
-            await self._maybe_process_weather(frame)
+            # 天气只需低频分类。若本帧已有姿态/武器 GPU 任务，顺延到下一空闲
+            # 周期，避免天气的 30~50 ms 再叠加到延迟尖峰上。
+            await self._maybe_process_weather(
+                frame,
+                defer=pose_due or weapon_due,
+            )
 
             detections = self._merge_pose_person_fallback(
                 detections,
@@ -972,6 +1087,7 @@ class AIWorker(AIWorkerProcessingMixin):
                 fence_events = fence_detection.process_frame(
                     detections=detections,
                     poses=fresh_pose_observations,
+                    frame_bgr=frame,
                     frame_monotonic=(
                         frame_read_at if frame_read_at is not None else time.monotonic()
                     ),
@@ -985,7 +1101,7 @@ class AIWorker(AIWorkerProcessingMixin):
             await face_service.annotate_frame(
                 frame,
                 detections,
-                frame_index,
+                inference_cycle_index,
                 self._frame_width,
                 self._frame_height,
             )
@@ -1063,32 +1179,59 @@ class AIWorker(AIWorkerProcessingMixin):
         pose_ms = round((time.monotonic() - pose_started_at) * 1000, 1)
         return raw_poses, pose_started_at, pose_ms
 
-    def _is_weapon_due(self, frame_index: int, *, now: float | None = None) -> bool:
+    def _is_weapon_due(self, cycle_index: int, *, now: float | None = None) -> bool:
         if self._weapon_detector is None:
             return False
         current_time = time.monotonic() if now is None else now
         if current_time < self._weapon_active_until:
             return True
-        return frame_index % self._weapon_frame_skip == 0
+        return cycle_index % self._weapon_frame_skip == 0
 
     async def _infer_weapon(
         self,
         frame: bytes,
+        persons: list[DetectionResult] | None = None,
     ) -> tuple[list[DetectionResult], float]:
         if self._weapon_detector is None:
             return [], 0.0
         weapon_started_at = time.monotonic()
-        detections = await asyncio.to_thread(self._weapon_detector.detect_many, frame)
+        if bool(settings.WEAPON_PERSON_CROP_ENABLED):
+            regions = [
+                person.bbox
+                for person in (persons or [])
+                if person.bbox is not None
+            ]
+            if not regions:
+                return [], round((time.monotonic() - weapon_started_at) * 1000, 1)
+            detections = await asyncio.to_thread(
+                self._weapon_detector.detect_many_regions,
+                frame,
+                regions,
+                expand_ratio=max(
+                    0.0,
+                    min(2.0, float(settings.WEAPON_PERSON_CROP_EXPAND_RATIO)),
+                ),
+                max_regions=max(1, int(settings.WEAPON_PERSON_CROP_MAX_REGIONS)),
+                nms_iou=max(
+                    0.0,
+                    min(1.0, float(settings.WEAPON_PERSON_CROP_NMS_IOU)),
+                ),
+            )
+        else:
+            detections = await asyncio.to_thread(self._weapon_detector.detect_many, frame)
         weapon_ms = round((time.monotonic() - weapon_started_at) * 1000, 1)
         return detections, weapon_ms
 
-    async def _maybe_process_weather(self, frame: bytes) -> None:
+    async def _maybe_process_weather(self, frame: bytes, *, defer: bool = False) -> None:
         if not self._weather_service.available:
             self._last_weather_ms = 0.0
             return
         now = time.monotonic()
         interval = max(0.5, float(settings.WEATHER_INTERVAL_SECONDS))
         if now - self._last_weather_inference_at < interval:
+            self._last_weather_ms = 0.0
+            return
+        if defer:
             self._last_weather_ms = 0.0
             return
 

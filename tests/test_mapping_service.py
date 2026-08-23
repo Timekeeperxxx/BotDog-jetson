@@ -775,8 +775,12 @@ def test_start_mapping_wrapper_waits_for_unified_runtime_readiness():
 
     assert 'source "$SCRIPT_DIR/navigation_adapter_common.sh"' in wrapper
     assert "run_navigation_adapter start_mapping.sh" in wrapper
-    assert "wait_for_livox_data" in adapter
-    assert "ros2 topic echo /livox/lidar --once" in adapter
+    assert "wait_for_livox_data" not in adapter
+    assert "ros2 topic echo /livox/lidar --once" not in adapter
+    assert "ros2 service call /lio/mapping_status" in adapter
+    assert '\\"startup_evidence\\":\\"current_run_map_init\\"' in adapter
+    assert 'MAPPING_READY_TIMEOUT_SECONDS="${MAPPING_READY_TIMEOUT_SECONDS:-120}"' in adapter
+    assert mapping_service_module.MAPPING_START_READY_TIMEOUT_SECONDS == 180
     assert 'session_type="mapping"' in (
         botdog_root / "scripts" / "navigation_adapter_common.sh"
     ).read_text(encoding="utf-8")
@@ -914,7 +918,8 @@ case "${1:-} ${2:-}" in
     printf 'response: success=True\n'
     ;;
   "topic echo")
-    printf '123456789\n'
+    # 冷启动时独立 CLI 订阅可能发现失败；建图就绪不得再依赖它。
+    exit 99
     ;;
   "launch nav_bringup")
     printf 'livox/lidar publish use livox custom format\n'

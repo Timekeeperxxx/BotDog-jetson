@@ -188,6 +188,91 @@ def test_nav_emergency_stop_soft_stops_without_killing_navigation(monkeypatch):
     assert audit_messages
 
 
+def test_nav_stop_localization_soft_stops_before_killing_tf_processes(monkeypatch):
+    calls: list[object] = []
+    audit_messages: list[str] = []
+
+    class DummyControlService:
+        async def send_navigation_velocity(self, vx: float, vy: float, vyaw: float) -> bool:
+            calls.append(("control_zero", vx, vy, vyaw))
+            return True
+
+    class DummyBridge:
+        def publish_navigation_task_start(self, enabled: bool = True):
+            calls.append(("task_start", enabled))
+            return {"success": True, "topic": "/nav_task_start", "data": enabled}
+
+        def publish_navigation_start(self, enabled: bool = True):
+            calls.append(("nav_start", enabled))
+            return {"success": True, "topic": "/nav_start", "data": enabled}
+
+        def publish_navigation_stop(self):
+            calls.append("nav_stop")
+            return {"success": True, "topic": "/nav_stop", "data": True}
+
+        def publish_zero_cmd_vel(self, publish_count: int, interval_s: float):
+            calls.append(("zero_twist", publish_count, interval_s))
+            return {"success": True, "topic": "/cmd_vel"}
+
+    async def fake_audit_log(*args, **kwargs):
+        audit_messages.append(kwargs["message"])
+
+    monkeypatch.setattr("backend.control_service.get_control_service", lambda: DummyControlService())
+    monkeypatch.setattr(nav_routes, "get_ros_nav_bridge", lambda: DummyBridge())
+    monkeypatch.setattr(nav_routes, "_cancel_pending_auto_track_resume", lambda reason: calls.append(("cancel", reason)))
+    monkeypatch.setattr(nav_routes, "_release_navigation_control", lambda: calls.append("release"))
+    monkeypatch.setattr(
+        "backend.services_nav_localization.set_cmd_vel_estop",
+        lambda active, reason="": calls.append(("clamp", active, reason))
+        or {"success": True, "active": active, "reason": reason},
+    )
+    monkeypatch.setattr(
+        "backend.services_nav_localization.stop_cmd_vel_script",
+        lambda: calls.append("stop_cmd_vel")
+        or {"success": True, "running": False, "message": "速度桥已停止"},
+    )
+    monkeypatch.setattr(
+        "backend.services_nav_localization.stop_navigation_processes",
+        lambda: calls.append("stop_processes")
+        or {"success": True, "running": False, "pids": [101, 102]},
+    )
+    monkeypatch.setattr(
+        "backend.services_nav_task_runtime.clear_nav_task_runtime",
+        lambda: calls.append("clear_task") or {"success": True},
+    )
+    monkeypatch.setattr("backend.services_nav_state.clear_global_path", lambda: calls.append("clear_path"))
+    monkeypatch.setattr("backend.services_nav_state.clear_robot_pose", lambda: calls.append("clear_pose"))
+    monkeypatch.setattr(
+        "backend.services_nav_state.set_navigation_idle",
+        lambda message: calls.append(("idle", message)) or {"status": "idle"},
+    )
+    monkeypatch.setattr(
+        "backend.services_nav_state.update_localization_status",
+        lambda status: calls.append(("localization", status)) or status,
+    )
+    monkeypatch.setattr(nav_routes, "safe_write_audit_log", fake_audit_log)
+
+    result = asyncio.run(
+        nav_routes.nav_stop_localization(
+            user=AuthUserInternal(id=1, username="admin", role="operator", token_version=1),
+            db=object(),
+        )
+    )
+
+    assert result["success"] is True
+    assert result["running"] is False
+    assert result["processes"]["pids"] == [101, 102]
+    assert result["cmd_vel_estop"]["active"] is True
+    assert result["nav_stop"]["topic"] == "/nav_stop"
+    assert calls.index(("clamp", True, "nav_localization_stop")) < calls.index("stop_processes")
+    assert calls.index(("zero_twist", 20, 0.02)) < calls.index("stop_processes")
+    assert calls.index("stop_cmd_vel") < calls.index("stop_processes")
+    assert any(call == ("idle", "导航和 TF 定位已停止") for call in calls)
+    localization_updates = [call[1] for call in calls if isinstance(call, tuple) and call[0] == "localization"]
+    assert localization_updates[-1]["status"] == "stopped"
+    assert audit_messages and "nav.localization.stop" in audit_messages[0]
+
+
 def test_restart_localization_clears_all_estop_layers_before_restart(monkeypatch):
     calls: list[object] = []
     audit_messages: list[str] = []

@@ -68,6 +68,12 @@ GOAL_PUBLISH_COUNT = 1
 # planner failure) can arrive after the new goal and must not release the
 # freshly acquired NAVIGATION owner.
 NAV_START_TERMINAL_RELEASE_GRACE_S = 2.0
+# The stock tf2 listener retains 100 dynamic messages.  That is useful for a
+# lightly loaded executor, but on the application bridge it turned callback
+# backlog into about seven seconds of visible pose latency.  A dedicated TF
+# executor only needs a small latest-value window.
+TF_DYNAMIC_QUEUE_DEPTH = 5
+TF_STATIC_QUEUE_DEPTH = 100
 
 
 class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
@@ -89,7 +95,11 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._node: Any | None = None
         self._rclpy: Any | None = None
         self._tf_buffer: Any | None = None
-        self._tf_listener: Any | None = None
+        self._tf_node: Any | None = None
+        self._tf_executor: Any | None = None
+        self._tf_thread: threading.Thread | None = None
+        self._tf_subscription: Any | None = None
+        self._tf_static_subscription: Any | None = None
         self._nav_start_publisher: Any | None = None
         self._nav_task_start_publisher: Any | None = None
         self._cmd_vel_publisher: Any | None = None
@@ -1857,12 +1867,74 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
 
     def _setup_tf_listener(self) -> None:
         try:
-            from tf2_ros import Buffer, TransformListener
+            from rclpy.executors import SingleThreadedExecutor
+            from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
+            from tf2_msgs.msg import TFMessage
+            from tf2_ros import Buffer
         except Exception as exc:
             raise RuntimeError(f"tf2_ros 不可用: {exc}") from exc
 
-        self._tf_buffer = Buffer()
-        self._tf_listener = TransformListener(self._tf_buffer, self._node)
+        if self._rclpy is None:
+            raise RuntimeError("rclpy 未初始化，无法创建独立 TF 节点")
+
+        tf_buffer = Buffer()
+        tf_node = self._rclpy.create_node("botdog_nav_tf_bridge")
+        dynamic_qos = QoSProfile(
+            depth=TF_DYNAMIC_QUEUE_DEPTH,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+        static_qos = QoSProfile(
+            depth=TF_STATIC_QUEUE_DEPTH,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+
+        dynamic_subscription = tf_node.create_subscription(
+            TFMessage,
+            "/tf",
+            lambda msg: self._store_tf_message(tf_buffer, msg, is_static=False),
+            dynamic_qos,
+        )
+        static_subscription = tf_node.create_subscription(
+            TFMessage,
+            "/tf_static",
+            lambda msg: self._store_tf_message(tf_buffer, msg, is_static=True),
+            static_qos,
+        )
+        executor = SingleThreadedExecutor()
+        executor.add_node(tf_node)
+        tf_thread = threading.Thread(
+            target=self._spin_tf_executor,
+            args=(executor,),
+            name="botdog-nav-tf-listener",
+            daemon=True,
+        )
+
+        self._tf_buffer = tf_buffer
+        self._tf_node = tf_node
+        self._tf_executor = executor
+        self._tf_thread = tf_thread
+        self._tf_subscription = dynamic_subscription
+        self._tf_static_subscription = static_subscription
+        tf_thread.start()
+        nav_logger.info(
+            "ROS2 TF 独立执行线程已启动：dynamic_queue_depth={}",
+            TF_DYNAMIC_QUEUE_DEPTH,
+        )
+
+    @staticmethod
+    def _store_tf_message(tf_buffer: Any, msg: Any, *, is_static: bool) -> None:
+        setter = tf_buffer.set_transform_static if is_static else tf_buffer.set_transform
+        for transform in getattr(msg, "transforms", ()):
+            setter(transform, "botdog_nav_tf_bridge")
+
+    def _spin_tf_executor(self, executor: Any) -> None:
+        try:
+            executor.spin()
+        except Exception as exc:
+            if not self._stop_event.is_set() and not self._pause_event.is_set():
+                nav_logger.warning("ROS2 TF 独立执行线程异常退出：{}", exc)
 
     def _update_pose_from_tf_if_needed(self) -> None:
         now = time.monotonic()

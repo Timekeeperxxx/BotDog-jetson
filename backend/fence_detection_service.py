@@ -9,6 +9,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Iterable
 
+import cv2
+import numpy as np
+
 from .config import settings
 from .logging_config import get_logger
 from .pcd_errors import PcdMapError
@@ -44,6 +47,8 @@ class FenceBehavior(str, Enum):
     DWELLING = "dwelling"
     CONTACT = "contact"
     CLIMBING_SUSPECTED = "climbing_suspected"
+    TAMPERING_SUSPECTED = "tampering_suspected"
+    TAMPERING_CONFIRMED = "tampering_confirmed"
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,9 @@ class FenceBehaviorEvent:
     confidence: float
     duration_seconds: float
     fence_id: str
+    action_score: float = 0.0
+    structure_change_ratio: float = 0.0
+    evidence_level: str = "behavior"
 
 
 @dataclass(frozen=True)
@@ -72,7 +80,61 @@ class _PersonFenceState:
     cross_hits: int = 0
     near_since: float | None = None
     baseline_side: int | None = None
+    tamper_hits: int = 0
+    tamper_action_score: float = 0.0
+    tamper_confirmed: bool = False
+    wrist_history: dict[int, deque[tuple[float, float, float]]] = field(
+        default_factory=dict
+    )
     last_events: dict[FenceBehavior, float] = field(default_factory=dict)
+
+
+@dataclass
+class _PendingTamper:
+    track_id: int
+    started_at: float
+    last_action_at: float
+    expires_at: float
+    contact_pixel: tuple[float, float]
+    person_height: float
+    action_score: float
+
+
+def repetitive_motion_score(
+    samples: Iterable[tuple[float, float, float]],
+    *,
+    min_duration_seconds: float,
+    min_travel_ratio: float,
+    min_reversals: int,
+) -> tuple[float, float, int]:
+    """Score repeated wrist motion using person-height-normalized coordinates."""
+    points = list(samples)
+    if len(points) < 3:
+        return 0.0, 0.0, 0
+    duration = max(0.0, points[-1][0] - points[0][0])
+    vectors: list[tuple[float, float, float]] = []
+    total_travel = 0.0
+    for previous, current in zip(points, points[1:]):
+        dx = current[1] - previous[1]
+        dy = current[2] - previous[2]
+        distance = math.hypot(dx, dy)
+        total_travel += distance
+        # Ignore sub-pixel pose jitter after normalization by the person height.
+        if distance >= 0.015:
+            vectors.append((dx, dy, distance))
+
+    reversals = 0
+    for previous, current in zip(vectors, vectors[1:]):
+        cosine = (
+            previous[0] * current[0] + previous[1] * current[1]
+        ) / max(1e-9, previous[2] * current[2])
+        if cosine <= -0.25:
+            reversals += 1
+
+    duration_score = min(1.0, duration / max(0.1, min_duration_seconds))
+    travel_score = min(1.0, total_travel / max(0.01, min_travel_ratio))
+    reversal_score = min(1.0, reversals / max(1, min_reversals))
+    return min(duration_score, travel_score, reversal_score), total_travel, reversals
 
 
 def closest_point_on_segment(
@@ -192,6 +254,15 @@ class FenceDetectionService:
         self._person_states: dict[int, _PersonFenceState] = {}
         self._last_gimbal_error: str | None = None
         self._missing_calibration: list[str] = []
+        self._structure_reference_gray: np.ndarray | None = None
+        self._structure_reference_mask: np.ndarray | None = None
+        self._structure_reference_at: float | None = None
+        self._reference_clear_hits = 0
+        self._pending_tamper: _PendingTamper | None = None
+        self._structure_change_hits = 0
+        self._last_structure_change_ratio = 0.0
+        self._last_tamper_behavior: FenceBehavior | None = None
+        self._last_tamper_at: float | None = None
 
     @property
     def enabled(self) -> bool:
@@ -209,6 +280,7 @@ class FenceDetectionService:
                 {
                     "track_id": item.track_id,
                     "behavior": item.behavior.value,
+                    "tamper_action_score": round(item.tamper_action_score, 4),
                     "duration_seconds": round(
                         max(0.0, time.monotonic() - item.near_since)
                         if item.near_since is not None
@@ -226,6 +298,8 @@ class FenceDetectionService:
             FenceBehavior.DWELLING.value: 2,
             FenceBehavior.CONTACT.value: 3,
             FenceBehavior.CLIMBING_SUSPECTED.value: 4,
+            FenceBehavior.TAMPERING_SUSPECTED.value: 5,
+            FenceBehavior.TAMPERING_CONFIRMED.value: 6,
         }
         highest = max(persons, key=lambda item: priority[item["behavior"]], default=None)
         return {
@@ -241,6 +315,49 @@ class FenceDetectionService:
             "behavior": highest["behavior"] if highest else FenceBehavior.NORMAL.value,
             "behavior_track_id": highest["track_id"] if highest else None,
             "persons": persons,
+            "tamper": {
+                "enabled": bool(settings.FENCE_TAMPER_ENABLED),
+                "structure_check_enabled": bool(
+                    settings.FENCE_TAMPER_STRUCTURE_ENABLED
+                ),
+                "reference_ready": self._structure_reference_gray is not None,
+                "reference_age_seconds": round(
+                    max(0.0, time.monotonic() - self._structure_reference_at),
+                    1,
+                )
+                if self._structure_reference_at is not None
+                else None,
+                "pending": self._pending_tamper is not None,
+                "pending_track_id": (
+                    self._pending_tamper.track_id
+                    if self._pending_tamper is not None
+                    else None
+                ),
+                "action_score": round(
+                    self._pending_tamper.action_score
+                    if self._pending_tamper is not None
+                    else max(
+                        (item.tamper_action_score for item in self._person_states.values()),
+                        default=0.0,
+                    ),
+                    4,
+                ),
+                "structure_change_ratio": round(
+                    self._last_structure_change_ratio,
+                    4,
+                ),
+                "last_result": (
+                    self._last_tamper_behavior.value
+                    if self._last_tamper_behavior is not None
+                    else None
+                ),
+                "last_result_age_seconds": round(
+                    max(0.0, time.monotonic() - self._last_tamper_at),
+                    1,
+                )
+                if self._last_tamper_at is not None
+                else None,
+            },
             "missing_calibration": list(self._missing_calibration),
             "gimbal_error": self._last_gimbal_error,
         }
@@ -252,6 +369,7 @@ class FenceDetectionService:
             self._clear_lock()
             self._person_states.clear()
             self._samples.clear()
+            self._reset_tamper_evidence()
             self._invalidated_at = None
             self._last_pose_ros_timestamp = None
             self._last_gimbal_error = None
@@ -265,6 +383,7 @@ class FenceDetectionService:
             self._clear_lock()
             self._person_states.clear()
             self._samples.clear()
+            self._reset_tamper_evidence()
             self._scene_id = None
             self._invalidated_at = None
             self._last_pose_ros_timestamp = None
@@ -287,6 +406,25 @@ class FenceDetectionService:
         self._last_yaw_velocity_dps = 0.0
         self._yaw_motion_active = False
         self._settled_since = None
+        self._reset_tamper_evidence()
+
+    def _reset_tamper_evidence(self) -> None:
+        self._structure_reference_gray = None
+        self._structure_reference_mask = None
+        self._structure_reference_at = None
+        self._reference_clear_hits = 0
+        self._pending_tamper = None
+        self._structure_change_hits = 0
+        self._last_structure_change_ratio = 0.0
+        self._last_tamper_behavior = None
+        self._last_tamper_at = None
+
+    def _invalidate_structure_reference(self) -> None:
+        self._structure_reference_gray = None
+        self._structure_reference_mask = None
+        self._structure_reference_at = None
+        self._reference_clear_hits = 0
+        self._structure_change_hits = 0
 
     @staticmethod
     def _finite_setting(name: str, fallback_name: str | None = None) -> float:
@@ -569,6 +707,8 @@ class FenceDetectionService:
         needs_command = abs(yaw_error) > float(settings.FENCE_GIMBAL_YAW_DEADBAND_DEG)
 
         if needs_command:
+            self._invalidate_structure_reference()
+            self._pending_tamper = None
             control_hz = max(1.0, float(settings.FENCE_CONTROL_HZ))
             alpha = max(0.0, min(1.0, float(settings.FENCE_GIMBAL_SMOOTHING_ALPHA)))
             max_speed = float(settings.FENCE_GIMBAL_MAX_SPEED_DPS)
@@ -773,6 +913,7 @@ class FenceDetectionService:
         detections: Iterable[Any],
         poses: Iterable[PoseObservation],
         frame_monotonic: float,
+        frame_bgr: bytes | None = None,
     ) -> list[FenceBehaviorEvent]:
         if not self._enabled or self._state is not FenceDetectionState.DETECTING or self._target_fence is None:
             return []
@@ -794,6 +935,7 @@ class FenceDetectionService:
         ]
         pose_by_track = self._associate_poses(persons, list(poses))
         events: list[FenceBehaviorEvent] = []
+        near_bboxes: list[tuple[int, int, int, int]] = []
         seen: set[int] = set()
         for person in persons:
             track_id = int(person.track_id)
@@ -822,6 +964,7 @@ class FenceDetectionService:
 
             near = world_distance <= float(settings.FENCE_WARNING_DISTANCE_M)
             if near:
+                near_bboxes.append(bbox)
                 person_state.near_hits += 1
                 if person_state.near_since is None:
                     person_state.near_since = now
@@ -829,14 +972,19 @@ class FenceDetectionService:
                 person_state.near_hits = 0
                 person_state.contact_hits = 0
                 person_state.cross_hits = 0
+                person_state.tamper_hits = 0
+                person_state.tamper_action_score = 0.0
+                person_state.tamper_confirmed = False
+                person_state.wrist_history.clear()
                 person_state.near_since = None
                 person_state.baseline_side = None
 
             pose = pose_by_track.get(track_id)
             contact = False
             crossing = False
+            contact_points: list[tuple[int, tuple[float, float]]] = []
             if near and pose is not None:
-                contact = self._wrist_contact(
+                contact_points = self._contact_wrist_points(
                     pose,
                     start_map,
                     end_map,
@@ -845,6 +993,7 @@ class FenceDetectionService:
                     rotation,
                     intrinsics,
                 )
+                contact = bool(contact_points)
                 crossing = self._crossing_motion(
                     person_state,
                     pose,
@@ -854,6 +1003,26 @@ class FenceDetectionService:
                 )
             person_state.contact_hits = person_state.contact_hits + 1 if contact else 0
             person_state.cross_hits = person_state.cross_hits + 1 if crossing else 0
+            action_score, action_point = self._update_tamper_motion(
+                person_state,
+                pose,
+                contact_points,
+                now,
+            )
+            person_state.tamper_action_score = action_score
+            action_candidate = (
+                bool(settings.FENCE_TAMPER_ENABLED)
+                and contact
+                and pose is not None
+                and pose.posture is not Posture.CLIMBING
+                and action_score
+                >= float(settings.FENCE_TAMPER_ACTION_SCORE_THRESHOLD)
+            )
+            if action_candidate:
+                person_state.tamper_hits += 1
+            else:
+                person_state.tamper_hits = max(0, person_state.tamper_hits - 1)
+                person_state.tamper_confirmed = False
 
             next_behavior = FenceBehavior.NORMAL
             if person_state.near_hits >= int(settings.FENCE_NEAR_STABLE_FRAMES):
@@ -865,12 +1034,43 @@ class FenceDetectionService:
                     next_behavior = FenceBehavior.CONTACT
                 if person_state.cross_hits >= int(settings.FENCE_CROSS_STABLE_FRAMES):
                     next_behavior = FenceBehavior.CLIMBING_SUSPECTED
+                elif (
+                    action_point is not None
+                    and person_state.tamper_hits
+                    >= int(settings.FENCE_TAMPER_STABLE_FRAMES)
+                ):
+                    if person_state.tamper_confirmed:
+                        next_behavior = FenceBehavior.TAMPERING_CONFIRMED
+                    else:
+                        next_behavior = FenceBehavior.TAMPERING_SUSPECTED
+                        self._start_pending_tamper(
+                            person_state,
+                            now=now,
+                            contact_pixel=action_point,
+                            person_height=max(1.0, float(bbox[3] - bbox[1])),
+                        )
 
             if next_behavior != person_state.behavior:
                 person_state.behavior = next_behavior
                 event = self._event_for_transition(person_state, now)
                 if event is not None:
                     events.append(event)
+
+        confirmed = self._update_structure_evidence(
+            frame_bgr=frame_bgr,
+            origin=origin,
+            rotation=rotation,
+            intrinsics=intrinsics,
+            ground_z=ground_z,
+            near_bboxes=near_bboxes,
+            now=now,
+        )
+        if confirmed is not None:
+            state = self._person_states.get(confirmed.track_id)
+            if state is not None:
+                state.tamper_confirmed = True
+                state.behavior = FenceBehavior.TAMPERING_CONFIRMED
+            events.append(confirmed)
 
         ttl = float(settings.FENCE_TRACK_TTL_SECONDS)
         for track_id in [
@@ -914,7 +1114,7 @@ class FenceDetectionService:
                 result.append((float(point.x), float(point.y)))
         return result
 
-    def _wrist_contact(
+    def _contact_wrist_points(
         self,
         pose: PoseObservation,
         start: dict[str, Any],
@@ -923,21 +1123,28 @@ class FenceDetectionService:
         origin: Vec3,
         rotation: Mat3,
         intrinsics: CameraIntrinsics,
-    ) -> bool:
-        wrists = self._visible_points(pose, (LEFT_WRIST, RIGHT_WRIST))
+    ) -> list[tuple[int, tuple[float, float]]]:
+        wrists: list[tuple[int, tuple[float, float]]] = []
+        for index in (LEFT_WRIST, RIGHT_WRIST):
+            if index >= len(pose.keypoints):
+                continue
+            point = pose.keypoints[index]
+            if point.confidence >= float(settings.FENCE_KEYPOINT_CONFIDENCE):
+                wrists.append((index, (float(point.x), float(point.y))))
         if not wrists:
-            return False
+            return []
         segment_dx = float(end["x"]) - float(start["x"])
         segment_dy = float(end["y"]) - float(start["y"])
         length = math.hypot(segment_dx, segment_dy)
         if length <= 1e-6:
-            return False
+            return []
         normal_x, normal_y = -segment_dy / length, segment_dx / length
         numerator = (
             normal_x * (float(start["x"]) - origin[0])
             + normal_y * (float(start["y"]) - origin[1])
         )
-        for wrist in wrists:
+        result: list[tuple[int, tuple[float, float]]] = []
+        for index, wrist in wrists:
             ray = self._pixel_ray_world(wrist, rotation, intrinsics)
             denominator = normal_x * ray[0] + normal_y * ray[1]
             if abs(denominator) <= 1e-6:
@@ -956,8 +1163,396 @@ class FenceDetectionService:
                 intersection[0], intersection[1], start, end
             )
             if segment_distance <= float(settings.FENCE_CONTACT_SEGMENT_MARGIN_M):
-                return True
-        return False
+                result.append((index, wrist))
+        return result
+
+    def _update_tamper_motion(
+        self,
+        state: _PersonFenceState,
+        pose: PoseObservation | None,
+        contact_points: list[tuple[int, tuple[float, float]]],
+        now: float,
+    ) -> tuple[float, tuple[float, float] | None]:
+        window = max(0.2, float(settings.FENCE_TAMPER_WINDOW_SECONDS))
+        cutoff = now - window
+        for history in state.wrist_history.values():
+            while history and history[0][0] < cutoff:
+                history.popleft()
+        if pose is None or not contact_points:
+            return 0.0, None
+
+        x1, y1, x2, y2 = pose.bbox
+        height = max(1.0, float(y2 - y1))
+        center_x = (x1 + x2) / 2.0
+        center_y = (y1 + y2) / 2.0
+        current_by_index = dict(contact_points)
+        for index, point in contact_points:
+            history = state.wrist_history.setdefault(index, deque())
+            history.append(
+                (
+                    now,
+                    (point[0] - center_x) / height,
+                    (point[1] - center_y) / height,
+                )
+            )
+
+        best_score = 0.0
+        best_point: tuple[float, float] | None = None
+        for index, history in state.wrist_history.items():
+            score, _, _ = repetitive_motion_score(
+                history,
+                min_duration_seconds=float(
+                    settings.FENCE_TAMPER_MIN_DURATION_SECONDS
+                ),
+                min_travel_ratio=float(settings.FENCE_TAMPER_MIN_TRAVEL_RATIO),
+                min_reversals=int(settings.FENCE_TAMPER_MIN_REVERSALS),
+            )
+            if score > best_score and index in current_by_index:
+                best_score = score
+                best_point = current_by_index[index]
+        return best_score, best_point
+
+    def _start_pending_tamper(
+        self,
+        state: _PersonFenceState,
+        *,
+        now: float,
+        contact_pixel: tuple[float, float],
+        person_height: float,
+    ) -> None:
+        grace = max(0.5, float(settings.FENCE_TAMPER_CONFIRM_GRACE_SECONDS))
+        current = self._pending_tamper
+        if current is not None and current.track_id != state.track_id:
+            if state.tamper_action_score <= current.action_score:
+                return
+            started_at = now
+        else:
+            started_at = current.started_at if current is not None else now
+        self._pending_tamper = _PendingTamper(
+            track_id=state.track_id,
+            started_at=started_at,
+            last_action_at=now,
+            expires_at=now + grace,
+            contact_pixel=contact_pixel,
+            person_height=person_height,
+            action_score=state.tamper_action_score,
+        )
+
+    @staticmethod
+    def _world_point_to_pixel(
+        point: Vec3,
+        origin: Vec3,
+        rotation: Mat3,
+        intrinsics: CameraIntrinsics,
+    ) -> tuple[float, float] | None:
+        delta = tuple(point[index] - origin[index] for index in range(3))
+        # _camera_pose returns the optical-to-world rotation, so projection uses
+        # its transpose to recover camera x/y/z.
+        camera = tuple(
+            sum(rotation[row][column] * delta[row] for row in range(3))
+            for column in range(3)
+        )
+        if camera[2] <= 0.05:
+            return None
+        fx, fy, cx, cy = intrinsics
+        return (
+            fx * camera[0] / camera[2] + cx,
+            fy * camera[1] / camera[2] + cy,
+        )
+
+    def _fence_image_mask(
+        self,
+        *,
+        origin: Vec3,
+        rotation: Mat3,
+        intrinsics: CameraIntrinsics,
+        ground_z: float,
+    ) -> np.ndarray | None:
+        if self._target_fence is None:
+            return None
+        raw_start = self._target_fence["start"]
+        raw_end = self._target_fence["end"]
+        start_x, start_y = float(raw_start["x"]), float(raw_start["y"])
+        end_x, end_y = float(raw_end["x"]), float(raw_end["y"])
+        segment_dx, segment_dy = end_x - start_x, end_y - start_y
+        segment_length = math.hypot(segment_dx, segment_dy)
+        if segment_length <= 1e-6:
+            return None
+        # A hand-drawn fence may be much longer than the current field of view.
+        # Project only the eight-metre neighborhood around the point aimed at by
+        # the gimbal so remote endpoints behind the camera do not invalidate it.
+        if self._target_point is not None:
+            along = max(
+                0.0,
+                min(
+                    segment_length,
+                    (
+                        (self._target_point["x"] - start_x) * segment_dx
+                        + (self._target_point["y"] - start_y) * segment_dy
+                    )
+                    / segment_length,
+                ),
+            )
+            local_start = max(0.0, along - 4.0) / segment_length
+            local_end = min(segment_length, along + 4.0) / segment_length
+            start = {
+                "x": start_x + segment_dx * local_start,
+                "y": start_y + segment_dy * local_start,
+            }
+            end = {
+                "x": start_x + segment_dx * local_end,
+                "y": start_y + segment_dy * local_end,
+            }
+        else:
+            start = raw_start
+            end = raw_end
+        top_z = ground_z + max(
+            0.5,
+            float(settings.FENCE_TAMPER_STRUCTURE_HEIGHT_M),
+        )
+        world_points: tuple[Vec3, ...] = (
+            (float(start["x"]), float(start["y"]), ground_z),
+            (float(end["x"]), float(end["y"]), ground_z),
+            (float(end["x"]), float(end["y"]), top_z),
+            (float(start["x"]), float(start["y"]), top_z),
+        )
+        projected = [
+            self._world_point_to_pixel(point, origin, rotation, intrinsics)
+            for point in world_points
+        ]
+        if any(point is None for point in projected):
+            return None
+        width = int(settings.AI_FRAME_WIDTH)
+        height = int(settings.AI_FRAME_HEIGHT)
+        polygon = np.asarray(
+            [
+                (
+                    int(round(max(-width * 4, min(width * 5, point[0])))),
+                    int(round(max(-height * 4, min(height * 5, point[1])))),
+                )
+                for point in projected
+                if point is not None
+            ],
+            dtype=np.int32,
+        )
+        mask = np.zeros((height, width), dtype=np.uint8)
+        cv2.fillConvexPoly(mask, polygon, 255)
+        if int(cv2.countNonZero(mask)) < int(
+            settings.FENCE_TAMPER_STRUCTURE_MIN_EDGE_PIXELS
+        ):
+            return None
+        return mask
+
+    @staticmethod
+    def _gray_frame(frame_bgr: bytes) -> np.ndarray | None:
+        width = int(settings.AI_FRAME_WIDTH)
+        height = int(settings.AI_FRAME_HEIGHT)
+        if len(frame_bgr) != width * height * 3:
+            return None
+        frame = np.frombuffer(frame_bgr, dtype=np.uint8).reshape((height, width, 3))
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return cv2.GaussianBlur(gray, (3, 3), 0)
+
+    def _structure_change_ratio(
+        self,
+        current_gray: np.ndarray,
+        current_mask: np.ndarray,
+        near_bboxes: list[tuple[int, int, int, int]],
+        pending: _PendingTamper,
+    ) -> float | None:
+        reference_gray = self._structure_reference_gray
+        reference_mask = self._structure_reference_mask
+        if reference_gray is None or reference_mask is None:
+            return None
+
+        reference_float = reference_gray.astype(np.float32)
+        current_float = current_gray.astype(np.float32)
+        window = cv2.createHanningWindow(
+            (reference_gray.shape[1], reference_gray.shape[0]),
+            cv2.CV_32F,
+        )
+        shift, response = cv2.phaseCorrelate(
+            reference_float,
+            current_float,
+            window,
+        )
+        if (
+            not math.isfinite(shift[0])
+            or not math.isfinite(shift[1])
+            or response < 0.03
+            or math.hypot(*shift)
+            > float(settings.FENCE_TAMPER_ALIGN_MAX_SHIFT_PX)
+        ):
+            return None
+
+        transform = np.asarray(
+            ((1.0, 0.0, -shift[0]), (0.0, 1.0, -shift[1])),
+            dtype=np.float32,
+        )
+        size = (reference_gray.shape[1], reference_gray.shape[0])
+        aligned_gray = cv2.warpAffine(
+            current_gray,
+            transform,
+            size,
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE,
+        )
+        aligned_mask = cv2.warpAffine(
+            current_mask,
+            transform,
+            size,
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+        )
+        valid_mask = cv2.bitwise_and(reference_mask, aligned_mask)
+
+        patch_radius = max(
+            24,
+            int(
+                round(
+                    pending.person_height
+                    * float(settings.FENCE_TAMPER_STRUCTURE_PATCH_RATIO)
+                )
+            ),
+        )
+        patch_mask = np.zeros_like(valid_mask)
+        patch_center = (
+            int(round(pending.contact_pixel[0] - shift[0])),
+            int(round(pending.contact_pixel[1] - shift[1])),
+        )
+        cv2.circle(patch_mask, patch_center, patch_radius, 255, thickness=-1)
+        valid_mask = cv2.bitwise_and(valid_mask, patch_mask)
+
+        for bbox in near_bboxes:
+            padding = max(6, int(round((bbox[3] - bbox[1]) * 0.08)))
+            left = max(0, int(round(bbox[0] - shift[0])) - padding)
+            top = max(0, int(round(bbox[1] - shift[1])) - padding)
+            right = min(size[0], int(round(bbox[2] - shift[0])) + padding)
+            bottom = min(size[1], int(round(bbox[3] - shift[1])) + padding)
+            valid_mask[top:bottom, left:right] = 0
+
+        reference_edges = cv2.Canny(reference_gray, 60, 150)
+        current_edges = cv2.Canny(aligned_gray, 60, 150)
+        reference_edges = cv2.bitwise_and(reference_edges, valid_mask)
+        reference_count = int(cv2.countNonZero(reference_edges))
+        if reference_count < int(settings.FENCE_TAMPER_STRUCTURE_MIN_EDGE_PIXELS):
+            return None
+        current_dilated = cv2.dilate(
+            current_edges,
+            np.ones((3, 3), dtype=np.uint8),
+            iterations=1,
+        )
+        lost_edges = cv2.bitwise_and(
+            reference_edges,
+            cv2.bitwise_not(current_dilated),
+        )
+        return min(1.0, cv2.countNonZero(lost_edges) / reference_count)
+
+    def _update_structure_evidence(
+        self,
+        *,
+        frame_bgr: bytes | None,
+        origin: Vec3,
+        rotation: Mat3,
+        intrinsics: CameraIntrinsics,
+        ground_z: float,
+        near_bboxes: list[tuple[int, int, int, int]],
+        now: float,
+    ) -> FenceBehaviorEvent | None:
+        pending = self._pending_tamper
+        if pending is not None and now > pending.expires_at:
+            self._pending_tamper = None
+            self._structure_change_hits = 0
+            pending = None
+        if (
+            not bool(settings.FENCE_TAMPER_ENABLED)
+            or not bool(settings.FENCE_TAMPER_STRUCTURE_ENABLED)
+            or frame_bgr is None
+        ):
+            return None
+
+        current_gray = self._gray_frame(frame_bgr)
+        current_mask = self._fence_image_mask(
+            origin=origin,
+            rotation=rotation,
+            intrinsics=intrinsics,
+            ground_z=ground_z,
+        )
+        if current_gray is None or current_mask is None:
+            return None
+
+        if pending is not None and self._structure_reference_gray is not None:
+            ratio = self._structure_change_ratio(
+                current_gray,
+                current_mask,
+                near_bboxes,
+                pending,
+            )
+            if ratio is not None:
+                self._last_structure_change_ratio = ratio
+                if ratio >= float(
+                    settings.FENCE_TAMPER_STRUCTURE_CHANGE_THRESHOLD
+                ):
+                    self._structure_change_hits += 1
+                else:
+                    self._structure_change_hits = 0
+            if self._structure_change_hits >= int(
+                settings.FENCE_TAMPER_STRUCTURE_STABLE_FRAMES
+            ):
+                event = self._confirmed_tamper_event(pending, now)
+                self._pending_tamper = None
+                self._invalidate_structure_reference()
+                return event
+
+        if self._pending_tamper is None and not near_bboxes:
+            self._reference_clear_hits += 1
+            if self._reference_clear_hits >= int(
+                settings.FENCE_TAMPER_REFERENCE_CLEAR_FRAMES
+            ):
+                self._structure_reference_gray = current_gray.copy()
+                self._structure_reference_mask = current_mask.copy()
+                self._structure_reference_at = now
+                self._last_structure_change_ratio = 0.0
+        else:
+            self._reference_clear_hits = 0
+        return None
+
+    def _confirmed_tamper_event(
+        self,
+        pending: _PendingTamper,
+        now: float,
+    ) -> FenceBehaviorEvent | None:
+        state = self._person_states.get(pending.track_id)
+        if state is not None:
+            state.tamper_confirmed = True
+            state.behavior = FenceBehavior.TAMPERING_CONFIRMED
+            last_at = state.last_events.get(FenceBehavior.TAMPERING_CONFIRMED, 0.0)
+            state.last_events[FenceBehavior.TAMPERING_CONFIRMED] = now
+        else:
+            last_at = 0.0
+        self._last_tamper_behavior = FenceBehavior.TAMPERING_CONFIRMED
+        self._last_tamper_at = now
+        if now - last_at < float(settings.FENCE_ALERT_COOLDOWN_SECONDS):
+            return None
+        threshold = max(
+            0.01,
+            float(settings.FENCE_TAMPER_STRUCTURE_CHANGE_THRESHOLD),
+        )
+        structure_score = min(1.0, self._last_structure_change_ratio / threshold)
+        confidence = min(
+            0.99,
+            0.55 + 0.25 * pending.action_score + 0.20 * structure_score,
+        )
+        return FenceBehaviorEvent(
+            behavior=FenceBehavior.TAMPERING_CONFIRMED,
+            track_id=pending.track_id,
+            confidence=confidence,
+            duration_seconds=max(0.0, now - pending.started_at),
+            fence_id=str(self._target_fence["id"]),
+            action_score=pending.action_score,
+            structure_change_ratio=self._last_structure_change_ratio,
+            evidence_level="action_and_structure",
+        )
 
     def _crossing_motion(
         self,
@@ -996,6 +1591,7 @@ class FenceDetectionService:
             FenceBehavior.DWELLING,
             FenceBehavior.CONTACT,
             FenceBehavior.CLIMBING_SUSPECTED,
+            FenceBehavior.TAMPERING_SUSPECTED,
         }:
             return None
         last_at = state.last_events.get(state.behavior, 0.0)
@@ -1006,13 +1602,26 @@ class FenceDetectionService:
             FenceBehavior.DWELLING: 0.7,
             FenceBehavior.CONTACT: 0.8,
             FenceBehavior.CLIMBING_SUSPECTED: 0.9,
+            FenceBehavior.TAMPERING_SUSPECTED: min(
+                0.9,
+                0.55 + 0.35 * state.tamper_action_score,
+            ),
         }[state.behavior]
+        if state.behavior is FenceBehavior.TAMPERING_SUSPECTED:
+            self._last_tamper_behavior = state.behavior
+            self._last_tamper_at = now
         return FenceBehaviorEvent(
             behavior=state.behavior,
             track_id=state.track_id,
             confidence=confidence,
             duration_seconds=max(0.0, now - (state.near_since or now)),
             fence_id=str(self._target_fence["id"]),
+            action_score=state.tamper_action_score,
+            evidence_level=(
+                "repetitive_contact"
+                if state.behavior is FenceBehavior.TAMPERING_SUSPECTED
+                else "behavior"
+            ),
         )
 
 

@@ -87,7 +87,8 @@ export type PointCloudLayer = {
 type NavRightRailProps = {
   bounds: PcdBounds | null
   canOperate: boolean
-  estopSending: boolean
+  localizationStopSending: boolean
+  softStopSending: boolean
   executionPath: GlobalPath | null
   globalPath: GlobalPath | null
   layers: PointCloudLayer[]
@@ -101,7 +102,8 @@ type NavRightRailProps = {
   fencesVisible: boolean
   onAddWaypoint: (pos: { x: number; y: number; z: number; yaw: number }) => void
   onDeleteWaypoint: (waypointId: string) => void
-  onEmergencyStop: () => void
+  onSoftStop: () => void
+  onStopLocalization: () => void
   onGoToWaypoint: (waypointId: string) => void
   onMouseMapPositionChange: (pos: { x: number; y: number } | null) => void
   onSetPose: (pos: { x: number; y: number; z: number; yaw: number }) => void
@@ -113,7 +115,8 @@ type NavRightRailProps = {
 export function NavRightRail({
   bounds,
   canOperate,
-  estopSending,
+  localizationStopSending,
+  softStopSending,
   executionPath,
   globalPath,
   layers,
@@ -127,7 +130,8 @@ export function NavRightRail({
   fencesVisible,
   onAddWaypoint,
   onDeleteWaypoint,
-  onEmergencyStop,
+  onSoftStop,
+  onStopLocalization,
   onGoToWaypoint,
   onMouseMapPositionChange,
   onSetPose,
@@ -171,11 +175,19 @@ export function NavRightRail({
       />
       <section className="pcd-rail-footer">
         <button
-          className="pcd-estop-button"
-          onClick={onEmergencyStop}
-          disabled={estopSending || !canOperate}
+          className="pcd-soft-stop-button"
+          onClick={onSoftStop}
+          disabled={softStopSending || localizationStopSending || !canOperate}
         >
-          {estopSending ? '急停发送中' : '导航急停'}
+          {softStopSending ? '软停发送中' : '导航软停'}
+        </button>
+        <button
+          className="pcd-localization-stop-button"
+          onClick={onStopLocalization}
+          disabled={softStopSending || localizationStopSending || !canOperate}
+          title="停止导航规划、雷达重定位以及 map→odom / TF 发布"
+        >
+          {localizationStopSending ? '正在停止...' : '停止导航和TF定位'}
         </button>
       </section>
     </aside>

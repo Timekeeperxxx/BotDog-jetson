@@ -97,6 +97,32 @@ def test_registry_contains_weather_inference_controls() -> None:
     assert all(configs[key]["is_hot_reloadable"] is False for key in expected)
 
 
+def test_registry_contains_fence_tamper_controls() -> None:
+    configs = ConfigService.DEFAULT_CONFIGS
+    expected = {
+        "fence_tamper_enabled",
+        "fence_tamper_window_seconds",
+        "fence_tamper_min_duration_seconds",
+        "fence_tamper_min_travel_ratio",
+        "fence_tamper_min_reversals",
+        "fence_tamper_action_score_threshold",
+        "fence_tamper_stable_frames",
+        "fence_tamper_structure_enabled",
+        "fence_tamper_structure_height_m",
+        "fence_tamper_structure_patch_ratio",
+        "fence_tamper_structure_change_threshold",
+        "fence_tamper_structure_stable_frames",
+        "fence_tamper_structure_min_edge_pixels",
+        "fence_tamper_reference_clear_frames",
+        "fence_tamper_confirm_grace_seconds",
+        "fence_tamper_align_max_shift_px",
+    }
+
+    assert expected.issubset(configs)
+    assert all(configs[key]["category"] == "ai" for key in expected)
+    assert all(configs[key]["is_hot_reloadable"] is False for key in expected)
+
+
 def test_restart_only_config_does_not_mutate_live_setting() -> None:
     original_ai_fps = settings.AI_FPS
     try:

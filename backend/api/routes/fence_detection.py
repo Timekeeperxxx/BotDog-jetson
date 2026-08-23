@@ -32,6 +32,20 @@ async def fence_detection_status(
             "behavior": "normal",
             "behavior_track_id": None,
             "persons": [],
+            "tamper": {
+                "enabled": bool(settings.FENCE_TAMPER_ENABLED),
+                "structure_check_enabled": bool(
+                    settings.FENCE_TAMPER_STRUCTURE_ENABLED
+                ),
+                "reference_ready": False,
+                "reference_age_seconds": None,
+                "pending": False,
+                "pending_track_id": None,
+                "action_score": 0.0,
+                "structure_change_ratio": 0.0,
+                "last_result": None,
+                "last_result_age_seconds": None,
+            },
             "missing_calibration": [],
             "gimbal_error": None,
         }

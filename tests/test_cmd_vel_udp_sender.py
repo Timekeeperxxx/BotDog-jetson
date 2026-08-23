@@ -42,7 +42,8 @@ def test_cmd_vel_sender_uses_ros_safe_topic_and_shared_udp_protocol():
 
     assert 'DEFAULT_TOPIC = "/cmd_vel_safe"' in sender_source
     assert "NavigationVelocityHeartbeat" in sender_source
-    assert "create_timer" in sender_source
+    assert 'name="cmd-vel-udp-heartbeat"' in sender_source
+    assert "create_timer" not in sender_source
     assert "pack_navigation_velocity" in sender_source
     assert "unitree_sdk" not in sender_source.lower()
     assert 'exec /usr/bin/python3 "$SCRIPT_DIR/cmd_vel_ros2_udp_sender.py"' in start_source
