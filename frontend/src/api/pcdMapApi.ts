@@ -635,3 +635,17 @@ export function triggerNavEmergencyStop(): Promise<{ success: boolean; topic: st
     { method: 'POST' },
   )
 }
+
+export type LocalizationDiagnostics = {
+  scene_id: string | null
+  phase: string
+  level: 'info' | 'error'
+  message: string
+  navigation_ready: boolean
+  match: string | null
+  events: { timestamp: number; phase: string; message: string; level: 'info' | 'error' }[]
+}
+
+export function getLocalizationDiagnostics(): Promise<LocalizationDiagnostics> {
+  return requestJson(getApiUrl('/api/v1/nav/localization/diagnostics'), { signal: AbortSignal.timeout(8000) })
+}

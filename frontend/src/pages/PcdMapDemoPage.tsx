@@ -18,7 +18,6 @@ import {
   setRosbagRecordingEnabled,
   triggerNavEmergencyStop,
   waitInitialposeReady,
-  waitNavigationRuntimeReady,
 } from '../api/pcdMapApi'
 import { detectWebGLSupport } from '../components/pcd/webglSupport'
 import { useRobotControl } from '../hooks/useRobotControl'
@@ -40,6 +39,7 @@ import type {
 import { validateWaypointName } from '../utils/navWaypointValidation'
 import { MIN_MAPPING_RUNTIME_SECONDS, useNavMappingControls } from './nav/useNavMappingControls'
 import { useNavPointCloudViewModel } from './nav/useNavPointCloudViewModel'
+import { useLocalizationDiagnostics } from './nav/useLocalizationDiagnostics'
 import { useNavScenes } from './nav/useNavScenes'
 import { useNavTasks } from './nav/useNavTasks'
 import {
@@ -57,7 +57,6 @@ import {
   formatRestartHealthLog,
   getNavigationStatusNotice,
   getRelocationNotice,
-  summarizeLocalizationStatus,
 } from './nav/navPageUtils'
 import type { LogItem, RelocationPromptState } from './nav/navPageUtils'
 
@@ -114,40 +113,10 @@ export function PcdMapDemoPage() {
   // ── 高危操作确认 ──
   const [goToConfirm, setGoToConfirm] = useState<NavWaypoint | null>(null)
   const { telemetry } = useBotDogWebSocket()
+  const localizationRequestRef = useRef(0)
+  useEffect(() => () => { localizationRequestRef.current += 1 }, [])
   const navWs = useNavWebSocket()
   const { robotPose, globalPath, executionPath, localizationStatus, navigationStatus, setInitialState } = navWs
-  const relocationNotice = getRelocationNotice(relocationPrompt)
-  const waypointModeNotice = addMode
-    ? { title: '3D ground 标点', message: '在 3D 蓝色 ground.pcd 上按住并拖动确定朝向。' }
-    : null
-  const fenceModeNotice = fenceMode
-    ? { title: '两点式围栏标记', message: '在 3D 地面依次点击围栏起点和终点；第二次点击后自动保存。' }
-    : null
-  const poseModeNotice = toolMode === 'pose'
-    ? { title: '重定位模式', message: '在 3D 蓝色 ground.pcd 上按住当前位置，拖动确定朝向。' }
-    : null
-  const localizationNotice = localizationStatus && localizationStatus.status !== 'ok'
-    ? { title: '定位状态', message: summarizeLocalizationStatus(localizationStatus.status, localizationStatus.message) }
-    : null
-  const navigationNotice = getNavigationStatusNotice(navigationStatus)
-  const stateNotice = relocationNotice ?? fenceModeNotice ?? waypointModeNotice ?? poseModeNotice ?? localizationNotice ?? navigationNotice
-  const stateNoticeKind = relocationPrompt.status !== 'idle'
-    ? relocationPrompt.status === 'nav-waiting'
-      ? 'waiting'
-      : relocationPrompt.status === 'nav-ready'
-        ? 'ready'
-        : relocationPrompt.status
-    : addMode || fenceMode || toolMode === 'pose'
-      ? 'ready'
-      : localizationNotice
-        ? 'waiting'
-        : navigationNotice?.kind ?? 'idle'
-  const currentNotice = operationNotice?.kind === 'error'
-    ? operationNotice
-    : stateNotice ?? operationNotice
-  const currentNoticeKind = currentNotice === operationNotice
-    ? operationNotice?.kind ?? 'idle'
-    : stateNoticeKind
   const {
     startCommand,
     stopCommand,
@@ -165,12 +134,6 @@ export function PcdMapDemoPage() {
     startCommand,
     stopCommand,
   })
-
-  useEffect(() => {
-    if (relocationPrompt.status === 'localized' && localizationStatus?.status === 'ok') {
-      setRelocationPrompt({ status: 'idle', message: '' })
-    }
-  }, [localizationStatus?.status, relocationPrompt.status])
 
   const addLog = useCallback((message: string, level: LogItem['level'] = 'info') => {
     const timestamp = Date.now()
@@ -250,6 +213,9 @@ export function PcdMapDemoPage() {
   const formatRestartHealth = formatRestartHealthLog
 
   const handleSceneChanging = useCallback(() => {
+    localizationRequestRef.current += 1
+    setRelocationPrompt({ status: 'idle', message: '' })
+    setOperationNotice(null)
     setAddMode(false)
     setFenceMode(false)
     setFences([])
@@ -382,6 +348,53 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, selectedSceneId, selectedSceneNavigable, waypoints])
 
+  const diagnostic = useLocalizationDiagnostics(selectedSceneId, canOperate && ['idle', 'nav-waiting', 'nav-ready'].includes(relocationPrompt.status))
+  const diagnosticNotice = diagnostic && diagnostic.phase !== 'idle'
+    ? { title: diagnostic.level === 'error' ? '定位诊断 · 需要处理' : diagnostic.phase === 'ready' ? '定位与导航已就绪' : '定位诊断 · 进行中', message: diagnostic.message }
+    : null
+  const displayLocalizationStatus = diagnosticNotice && diagnostic
+    ? { status: diagnostic.phase === 'ready' ? 'ok' : 'initializing', message: diagnostic.message, frame_id: 'map', source: 'diagnostics', timestamp: Date.now() / 1000 }
+    : relocationPrompt.status !== 'idle'
+      ? { status: 'initializing', message: relocationPrompt.message, frame_id: 'map', source: 'frontend', timestamp: Date.now() / 1000 }
+      : localizationStatus
+
+  const relocationNotice = getRelocationNotice(relocationPrompt)
+  const waypointModeNotice = addMode
+    ? { title: '3D ground 标点', message: '在 3D 蓝色 ground.pcd 上按住并拖动确定朝向。' }
+    : null
+  const fenceModeNotice = fenceMode
+    ? { title: '两点式围栏标记', message: '在 3D 地面依次点击围栏起点和终点；第二次点击后自动保存。' }
+    : null
+  const poseModeNotice = toolMode === 'pose'
+    ? { title: '重定位模式', message: '在 3D 蓝色 ground.pcd 上按住当前位置，拖动确定朝向。' }
+    : null
+  const localizationNotice = displayLocalizationStatus && displayLocalizationStatus.status !== 'ok'
+    ? { title: '定位状态', message: displayLocalizationStatus.message }
+    : null
+  const navigationNotice = getNavigationStatusNotice(navigationStatus)
+  const stateNotice = (diagnostic?.phase === 'ready' ? navigationNotice : null) ?? diagnosticNotice ?? relocationNotice ?? fenceModeNotice ?? waypointModeNotice ?? poseModeNotice ?? localizationNotice ?? navigationNotice
+  const stateNoticeKind = diagnostic?.phase === 'ready' && navigationNotice
+    ? navigationNotice.kind
+    : diagnosticNotice
+    ? diagnostic?.level === 'error' ? 'error' : diagnostic?.phase === 'ready' ? 'ready' : 'waiting'
+    : relocationPrompt.status !== 'idle'
+    ? ['nav-waiting', 'localized'].includes(relocationPrompt.status)
+      ? 'waiting'
+      : relocationPrompt.status === 'nav-ready'
+        ? 'ready'
+        : relocationPrompt.status
+    : addMode || fenceMode || toolMode === 'pose'
+      ? 'ready'
+      : localizationNotice
+        ? 'waiting'
+        : navigationNotice?.kind ?? 'idle'
+  const currentNotice = operationNotice?.kind === 'error'
+    ? operationNotice
+    : stateNotice ?? operationNotice
+  const currentNoticeKind = currentNotice === operationNotice
+    ? operationNotice?.kind ?? 'idle'
+    : stateNoticeKind
+
   const handleSetPose = useCallback(async (pos: { x: number; y: number; z: number; yaw: number }) => {
     if (!selectedSceneId) return
     if (!canOperate || !selectedSceneNavigable) {
@@ -398,7 +411,10 @@ export function PcdMapDemoPage() {
       frame_id: 'map',
     }
 
+    const request = ++localizationRequestRef.current
     try {
+      setOperationNotice(null)
+      setRelocationPrompt({ status: 'localized', message: '[接收层] 正在提交初始位姿' })
       setInitialState({
         robotPose: null,
         globalPath: null,
@@ -412,21 +428,17 @@ export function PcdMapDemoPage() {
         },
       })
       const pose = await setLocalizationPose(payload)
+      if (request !== localizationRequestRef.current) return
       setToolMode('none')
       setRelocationPrompt({
         status: 'nav-waiting',
-        message: '重定位已发送，正在构建 global_planner 静态图；大场景首次加载可能需要 2–3 分钟。',
+        message: '[接收层] 初始位姿已发送，等待本轮实时诊断。',
       })
       addLog(
         `已发送重定位: x=${pose.x.toFixed(3)}, y=${pose.y.toFixed(3)}, z=${pose.z.toFixed(3)}, yaw=${pose.yaw.toFixed(3)}`,
       )
-      const ready = await waitNavigationRuntimeReady(600)
-      setRelocationPrompt({
-        status: 'nav-ready',
-        message: ready.message || 'global_planner 已加载完成，导航和任务可用。',
-      })
-      addLog(ready.message || 'global_planner 已加载完成，导航和任务可用')
     } catch (error) {
+      if (request !== localizationRequestRef.current) return
       const message = error instanceof Error
         ? error.message
         : '设置重定位位姿失败'
@@ -610,6 +622,8 @@ export function PcdMapDemoPage() {
       return
     }
 
+    const request = ++localizationRequestRef.current
+    setOperationNotice(null)
     setAddMode(false)
     setFenceMode(false)
     setToolMode('none')
@@ -620,6 +634,7 @@ export function PcdMapDemoPage() {
     })
     try {
       const result = await restartNavigationLocalization()
+      if (request !== localizationRequestRef.current) return
       if (!result.success || !result.running || !result.startup_ready) {
         throw new Error(result.message || '导航定位关键进程未就绪')
       }
@@ -631,6 +646,7 @@ export function PcdMapDemoPage() {
       addLog('导航定位进程已拉起，正在等待 Super-LIO initialpose 接收状态')
 
       const ready = await waitInitialposeReady(result.initialpose_wait_log_offset ?? 0, 60)
+      if (request !== localizationRequestRef.current) return
       setToolMode('pose')
       setRelocationPrompt({
         status: 'ready',
@@ -638,6 +654,7 @@ export function PcdMapDemoPage() {
       })
       addLog(`${ready.message}，已自动进入重定位标记模式`)
     } catch (error) {
+      if (request !== localizationRequestRef.current) return
       const message = error instanceof Error && error.name === 'AbortError'
         ? '重启导航定位请求超时，后端可能仍在执行，请查看 restart_navigation_localization.log'
         : error instanceof Error
@@ -950,7 +967,7 @@ export function PcdMapDemoPage() {
             selectedSceneReady={selectedSceneReady}
             selectedSceneNavigable={selectedSceneNavigable}
             selectedSceneMessage={selectedSceneMessage}
-            localizationStatus={localizationStatus}
+            localizationStatus={displayLocalizationStatus}
             onToggle={() => setInfoOpen((value) => !value)}
           />
 
@@ -1035,7 +1052,7 @@ export function PcdMapDemoPage() {
         <NavMessageCenter
           notice={currentNotice}
           noticeKind={currentNoticeKind}
-          logs={logs}
+          logs={[...(diagnostic?.events ?? []).map((event) => ({ ...event, id: event.timestamp, timestamp: event.timestamp * 1000, message: `[历史阶段] ${event.message}` })), ...logs].sort((a, b) => b.timestamp - a.timestamp).slice(0, 30)}
           expanded={logsExpanded}
           onToggleExpanded={() => setLogsExpanded((value) => !value)}
         />

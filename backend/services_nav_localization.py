@@ -902,6 +902,8 @@ def restart_navigation_localization() -> dict[str, Any]:
 
     with _restart_lock:
         scene = load_current_scene(strict=False)
+        from .services_nav_diagnostics import diagnostics
+        diagnostics.begin(_restart_log_path(), scene.get("scene_id"), "starting")
         log_offset = get_restart_log_offset()
         previous_navigation_pid = _read_pid_file(_named_pid_path("navigation"))
         nav_logger.info("收到导航定位重启请求，准备清理旧进程并启动脚本")

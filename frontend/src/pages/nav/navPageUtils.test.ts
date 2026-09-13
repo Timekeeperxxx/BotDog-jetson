@@ -75,6 +75,13 @@ describe('navPageUtils', () => {
     })
   })
 
+  it('preserves the exact failure layer and details in the primary notice', () => {
+    const message = '[TF/规划控制层] ICP 已成功，但 map TF 等待超时；SCAN controller 未就绪。请检查控制进程。'
+    expect(getRelocationNotice({ status: 'error', message })?.message).toBe(message)
+    expect(getRelocationNotice({ status: 'nav-waiting', message })?.message).toBe(message)
+    expect(getRelocationNotice({ status: 'localized', message: '正在提交' })?.title).toBe('提交初始位姿')
+  })
+
   it('trims global path from current robot pose', () => {
     const trimmed = trimGlobalPathByRobotPose(
       {

@@ -211,13 +211,13 @@ export function getRelocationNotice(prompt: RelocationPromptState) {
     case 'ready':
       return { title: '现在标记重定位点', message: '在 3D 蓝色 ground.pcd 上按住当前位置，拖动确定朝向。' }
     case 'localized':
-      return { title: '重定位已发送', message: '正在等待位姿恢复。' }
+      return { title: '提交初始位姿', message: prompt.message }
     case 'nav-waiting':
-      return { title: '导航控制链路恢复中', message: compactRuntimeMessage(prompt.message) }
+      return { title: '定位与导航诊断', message: prompt.message }
     case 'nav-ready':
       return { title: '导航和任务可用', message: prompt.message || 'global_planner 已加载完成。' }
     case 'error':
-      return { title: '重定位未就绪', message: compactRuntimeMessage(prompt.message) }
+      return { title: '重定位未就绪', message: prompt.message }
     case 'idle':
       return null
   }

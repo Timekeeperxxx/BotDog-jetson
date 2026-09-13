@@ -440,7 +440,7 @@ async def nav_set_localization_pose(
     user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
-    from ...services_nav_localization import inspect_relocation_initialization, save_localization_pose
+    from ...services_nav_localization import save_localization_pose
     from ...services_nav_state import reset_localization_tracking, update_localization_status
     from ...services_pcd_maps import PcdMapError
     from ...lidar_mount import base_pose_to_lidar_initial_position
@@ -460,6 +460,9 @@ async def nav_set_localization_pose(
             pitch=pose["pitch"],
             yaw=pose["yaw"],
         )
+        from ...services_nav_diagnostics import diagnostics
+        from ...services_nav_localization import _restart_log_path
+        diagnostics.begin(_restart_log_path(), body.map_id)
         initial_pose_result = bridge.publish_initial_pose(
             x=lidar_x,
             y=lidar_y,
@@ -476,15 +479,7 @@ async def nav_set_localization_pose(
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 
-    relocation_init = inspect_relocation_initialization(timeout_s=2.0)
-    relocation_message = relocation_init["message"]
-    message = (
-        f"已发布 initial_pose: base_footprint="
-        f"[{pose['x']:.3f}, {pose['y']:.3f}, {pose['z']:.3f}], "
-        f"lidar=[{lidar_x:.3f}, {lidar_y:.3f}, {lidar_z:.3f}], "
-        f"roll={pose['roll']:.3f}, pitch={pose['pitch']:.3f}, yaw={pose['yaw']:.3f}；"
-        f"{relocation_message}"
-    )
+    message = "[接收层] 已发布初始位姿，等待定位节点接收；实时进度见定位诊断"
 
     update_localization_status(
         {
@@ -586,6 +581,23 @@ async def nav_wait_initialpose_ready(
     result["initialpose_topic"] = subscriber_result["topic"]
     result["message"] = f"{result['message']}；{subscriber_result['message']}"
     return result
+
+
+@router.get("/localization/diagnostics")
+async def nav_localization_diagnostics(user: AuthUserInternal = Depends(require_operator)):
+    from ...services_nav_diagnostics import diagnostics
+    from ...services_nav_localization import _restart_log_path, assert_navigation_runtime_ready
+
+    def inspect():
+        with diagnostics.lock:
+            diagnostics.read(_restart_log_path())
+            try:
+                assert_navigation_runtime_ready()
+                return diagnostics.snapshot(ready=True)
+            except (RuntimeError, FileNotFoundError, ValueError) as exc:
+                return diagnostics.snapshot(health_error=str(exc))
+
+    return await asyncio.to_thread(inspect)
 
 
 @router.get("/localization/navigation-ready")

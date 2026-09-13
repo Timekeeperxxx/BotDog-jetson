@@ -11,7 +11,6 @@ import {
 import type { LocalizationStatus, RobotPose } from '../../types/navState'
 import type { PcdSceneMetadata } from '../../types/pcdMap'
 import type { LogItem } from './navPageUtils'
-import { summarizeLocalizationStatus } from './navPageUtils'
 
 type SceneInfoDrawerProps = {
   open: boolean
@@ -115,7 +114,7 @@ export function SceneInfoDrawer({
                 className={localizationStatus.status === 'ok' ? 'pcd-bounds' : 'pcd-warning'}
                 title={localizationStatus.message}
               >
-                {summarizeLocalizationStatus(localizationStatus.status, localizationStatus.message)}
+                {localizationStatus.message}
               </div>
             ) : null}
           </div>
@@ -191,7 +190,7 @@ export function NavMessageCenter({
         >
           <span className="pcd-message-log-title">
             <ScrollText size={15} />
-            <strong>操作日志</strong>
+            <strong>历史日志（非当前状态）</strong>
             <i>{logs.length}</i>
             {errorCount > 0 ? <i className="is-error">{errorCount} 错误</i> : null}
           </span>
@@ -208,7 +207,7 @@ export function NavMessageCenter({
         {expanded ? (
           <div className="pcd-message-log-history" role="log" aria-label="导航历史日志">
             <div className="pcd-message-log-history-head">
-              <strong>操作日志</strong>
+              <strong>历史日志（非当前状态）</strong>
               <span>最近 {logs.length} 条，最多保留 30 条</span>
             </div>
             {logs.length > 0 ? (
