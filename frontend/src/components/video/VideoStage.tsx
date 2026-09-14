@@ -281,7 +281,7 @@ export function VideoStage({
                               <span className="block truncate text-[9px] font-medium opacity-55">{option.description}</span>
                             </span>
                             <span className={`relative h-5 w-9 shrink-0 rounded-full transition ${active ? 'bg-emerald-300' : 'bg-white/15'}`}>
-                              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-black shadow transition-transform ${active ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                              <span className={`absolute left-0 top-0.5 h-4 w-4 rounded-full bg-black shadow transition-transform ${active ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
                             </span>
                           </button>
                         );
