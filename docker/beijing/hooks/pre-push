@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        refs/heads/main|refs/heads/master)
+            echo "拒绝推送到 $remote_ref；请使用开发分支。" >&2
+            exit 1
+            ;;
+    esac
+done

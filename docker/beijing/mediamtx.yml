@@ -1,0 +1,14 @@
+logLevel: info
+rtspAddress: 127.0.0.1:8556
+protocols: [tcp]
+rtmp: no
+hls: no
+srt: no
+webrtcAddress: 127.0.0.1:8891
+webrtcLocalUDPAddress: 127.0.0.1:8191
+webrtcAdditionalHosts: [127.0.0.1]
+paths:
+  cam:
+    source: rtsp://192.168.123.100:554/
+    sourceProtocol: tcp
+    sourceOnDemand: yes

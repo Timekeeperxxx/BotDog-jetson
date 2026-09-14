@@ -22,10 +22,11 @@ from .services_radar_health import (
 
 recording_logger = get_logger("雷达录包")
 
-NAVIGATION_ROOT = Path("/home/jetson/Projects/Navigation")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+NAVIGATION_ROOT = Path(os.environ.get("ROBOT_NAV_WS", PROJECT_ROOT.parent / "Navigation"))
 RECORD_SCRIPT = NAVIGATION_ROOT / "adapters/legacy_scripts/record_mapping_sensors.sh"
-ROSBAG_ROOT = Path("/home/jetson/Projects/Bags")
-LOG_ROOT = Path("/home/jetson/Projects/BotDog/logs")
+ROSBAG_ROOT = Path(os.environ.get("ROBOT_ROSBAG_ROOT", PROJECT_ROOT.parent / "Bags"))
+LOG_ROOT = Path(os.environ.get("ROBOT_NAV_LOG_ROOT", PROJECT_ROOT / "logs"))
 ROSBAG_STOP_TIMEOUT_SECONDS = 30
 
 
@@ -198,7 +199,9 @@ class RosbagRecordingService:
                     "NAV_ENV_FILE": "/dev/null",
                     "ROBOT_NAV_WS": str(NAVIGATION_ROOT),
                     "ROBOT_NAV_LOG_ROOT": str(LOG_ROOT),
-                    "ROBOT_NAV_RUNTIME_ROOT": "/home/jetson/Projects/Navigation/runtime",
+                    "ROBOT_NAV_RUNTIME_ROOT": os.environ.get(
+                        "ROBOT_NAV_RUNTIME_ROOT", str(NAVIGATION_ROOT / "runtime")
+                    ),
                 }
             )
 
