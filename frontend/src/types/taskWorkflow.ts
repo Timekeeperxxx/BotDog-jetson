@@ -19,10 +19,16 @@ export type WorkflowAutoTrackControlStep = {
   enabled: boolean
 }
 
+export type WorkflowFenceDetectionControlStep = {
+  type: 'fence_detection_control'
+  enabled: boolean
+}
+
 export type WorkflowStep =
   | WorkflowNavigateWaypointStep
   | WorkflowPostureControlStep
   | WorkflowAutoTrackControlStep
+  | WorkflowFenceDetectionControlStep
 
 export type TaskDefinition = {
   id: string

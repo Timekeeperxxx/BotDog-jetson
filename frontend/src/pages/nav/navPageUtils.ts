@@ -17,6 +17,7 @@ import type {
   TaskDraft,
   TaskDraftStep,
   WorkflowAutoTrackControlStep,
+  WorkflowFenceDetectionControlStep,
   WorkflowNavigateWaypointStep,
   WorkflowPostureControlStep,
   WorkflowStep,
@@ -53,6 +54,7 @@ export const WORKFLOW_STEP_TYPE_LABELS: Record<WorkflowStep['type'], string> = {
   navigate_waypoint: '导航到定点',
   posture_control: '姿态控制',
   auto_track_control: '自动跟踪联动',
+  fence_detection_control: '围栏检测',
 }
 
 export const POSTURE_LABELS: Record<'stand' | 'crouch', string> = {
@@ -102,9 +104,9 @@ export function createDraftStepByType(type: WorkflowStep['type']): TaskDraftStep
       posture: 'stand',
     }
   }
-  if (type === 'auto_track_control') {
+  if (type === 'auto_track_control' || type === 'fence_detection_control') {
     return {
-      type: 'auto_track_control',
+      type,
       enabled: true,
     }
   }
@@ -170,11 +172,11 @@ export function patchTaskDraftStep(
                 ...(patch as Partial<WorkflowPostureControlStep>),
                 posture: (patch as Partial<WorkflowPostureControlStep>).posture ?? item.posture,
               }
-            : item.type === 'auto_track_control'
+            : (item.type === 'auto_track_control' || item.type === 'fence_detection_control')
               ? {
                   ...item,
-                  ...(patch as Partial<WorkflowAutoTrackControlStep>),
-                  enabled: (patch as Partial<WorkflowAutoTrackControlStep>).enabled ?? item.enabled,
+                  ...(patch as Partial<WorkflowAutoTrackControlStep | WorkflowFenceDetectionControlStep>),
+                  enabled: (patch as Partial<WorkflowAutoTrackControlStep | WorkflowFenceDetectionControlStep>).enabled ?? item.enabled,
                 }
             : {
                 ...item,
@@ -437,9 +439,9 @@ export function buildTaskDraftFromTask(task: TaskDefinition): TaskDraft {
       continue
     }
 
-    if (step.type === 'auto_track_control' && typeof step.enabled === 'boolean') {
+    if ((step.type === 'auto_track_control' || step.type === 'fence_detection_control') && typeof step.enabled === 'boolean') {
       steps.push({
-        type: 'auto_track_control',
+        type: step.type,
         enabled: step.enabled,
       })
     }
@@ -480,9 +482,9 @@ export function buildWorkflowStepsFromDraft(steps: TaskDraftStep[]): WorkflowSte
       continue
     }
 
-    if (step.type === 'auto_track_control' && typeof step.enabled === 'boolean') {
+    if ((step.type === 'auto_track_control' || step.type === 'fence_detection_control') && typeof step.enabled === 'boolean') {
       workflowSteps.push({
-        type: 'auto_track_control',
+        type: step.type,
         enabled: step.enabled,
       })
     }
@@ -532,12 +534,12 @@ export function validateWorkflowStepsFromDraft(
       continue
     }
 
-    if (step.type === 'auto_track_control') {
+    if (step.type === 'auto_track_control' || step.type === 'fence_detection_control') {
       if (typeof step.enabled !== 'boolean') {
-        return { ok: false, message: `${stepLabel}自动跟踪联动步骤必须选择开启或关闭` }
+        return { ok: false, message: `${stepLabel}${getWorkflowStepTypeLabel(step.type)}步骤必须选择开启或关闭` }
       }
       workflowSteps.push({
-        type: 'auto_track_control',
+        type: step.type,
         enabled: step.enabled,
       })
       continue
@@ -625,6 +627,9 @@ export function getWorkflowStepTargetLabel(step: TaskDraftStep | WorkflowStep, w
   if (step.type === 'posture_control') {
     return POSTURE_LABELS[step.posture]
   }
+  if (step.type === 'fence_detection_control') {
+    return step.enabled ? '开启围栏检测' : '关闭围栏检测'
+  }
   if (step.type === 'auto_track_control') {
     return AUTO_TRACK_CONTROL_LABELS[step.enabled ? 'enabled' : 'disabled']
   }
@@ -643,8 +648,8 @@ export function summarizeWorkflowSteps(steps: Array<TaskDraftStep | WorkflowStep
       if (step.type === 'posture_control') {
         return POSTURE_LABELS[step.posture] || '姿态控制'
       }
-      if (step.type === 'auto_track_control') {
-        return AUTO_TRACK_CONTROL_LABELS[step.enabled ? 'enabled' : 'disabled']
+      if (step.type === 'auto_track_control' || step.type === 'fence_detection_control') {
+        return getWorkflowStepTargetLabel(step)
       }
       return '无效步骤'
     })

@@ -51,7 +51,7 @@ describe('NavToolStrip task controls', () => {
     renderToolStrip()
     const buttons = screen.getAllByRole('button')
     expect(buttons[0]).toHaveAccessibleName('添加围栏')
-    expect(buttons[1]).toHaveAccessibleName('开启围栏检测')
+    expect(screen.queryByRole('button', { name: /[开关].*围栏检测/ })).not.toBeInTheDocument()
   })
 })
 
@@ -63,7 +63,6 @@ function createToolStripProps(
     fenceMode: false,
     fenceAddAvailable: true,
     fenceDetectionStatus: null,
-    fenceDetectionLoading: false,
     fenceDetectionError: null,
     currentCmd: null,
     followRobot: false,
@@ -95,7 +94,6 @@ function createToolStripProps(
     wallColorMode: 'solid',
     onCheckRadar: vi.fn(),
     onToggleFenceMode: vi.fn(),
-    onSetFenceDetectionEnabled: vi.fn(),
     onToggleRosbag: vi.fn(),
     onStopSelectedTask: vi.fn(),
     onToggleFollowRobot: vi.fn(),

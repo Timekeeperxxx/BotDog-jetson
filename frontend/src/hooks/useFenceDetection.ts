@@ -1,14 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  disableFenceDetection,
-  enableFenceDetection,
   getFenceDetectionStatus,
 } from '../api/fenceDetectionApi'
 import type { FenceDetectionStatus } from '../types/fenceDetection'
 
 export function useFenceDetection() {
   const [status, setStatus] = useState<FenceDetectionStatus | null>(null)
-  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async (reportError = false) => {
@@ -37,21 +34,5 @@ export function useFenceDetection() {
     }
   }, [refresh])
 
-  const setEnabled = useCallback(async (enabled: boolean) => {
-    if (loading) return
-    setLoading(true)
-    setError(null)
-    try {
-      const next = enabled
-        ? await enableFenceDetection()
-        : await disableFenceDetection()
-      setStatus(next)
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : `${enabled ? '开启' : '关闭'}围栏检测失败`)
-    } finally {
-      setLoading(false)
-    }
-  }, [loading])
-
-  return { status, loading, error, setEnabled, refresh }
+  return { status, error }
 }

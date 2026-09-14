@@ -1,4 +1,4 @@
-import { Loader2, ScanLine, ShieldCheck } from 'lucide-react'
+import { ScanLine } from 'lucide-react'
 import type { FenceBehavior, FenceDetectionState, FenceDetectionStatus } from '../../types/fenceDetection'
 
 const STATE_LABELS: Record<FenceDetectionState, string> = {
@@ -25,10 +25,8 @@ type Props = {
   canAdd: boolean
   canOperate: boolean
   status: FenceDetectionStatus | null
-  loading: boolean
   error: string | null
   onToggleAdd: () => void
-  onSetDetectionEnabled: (enabled: boolean) => void
 }
 
 export function NavFenceControls({
@@ -36,10 +34,8 @@ export function NavFenceControls({
   canAdd,
   canOperate,
   status,
-  loading,
   error,
   onToggleAdd,
-  onSetDetectionEnabled,
 }: Props) {
   const enabled = status?.enabled ?? false
   const showStatus = enabled || Boolean(error)
@@ -68,15 +64,6 @@ export function NavFenceControls({
       >
         <ScanLine size={15} />
         <span>{adding ? '退出围栏标记' : '添加围栏'}</span>
-      </button>
-      <button
-        type="button"
-        className={`pcd-tool-button ${enabled ? 'is-active' : ''}`}
-        disabled={!canOperate || loading}
-        onClick={() => onSetDetectionEnabled(!enabled)}
-      >
-        {loading ? <Loader2 size={15} className="pcd-spin" /> : <ShieldCheck size={15} />}
-        <span>{enabled ? '关闭围栏检测' : '开启围栏检测'}</span>
       </button>
     </div>
   )

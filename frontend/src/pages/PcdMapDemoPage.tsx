@@ -976,7 +976,6 @@ export function PcdMapDemoPage() {
             fenceMode={fenceMode}
             fenceAddAvailable={Boolean((preview || tileManifest) && selectedSceneNavigable && webglSupported)}
             fenceDetectionStatus={fenceDetection.status}
-            fenceDetectionLoading={fenceDetection.loading}
             fenceDetectionError={fenceDetection.error}
             currentCmd={currentCmd}
             followRobot={followRobot}
@@ -1008,7 +1007,6 @@ export function PcdMapDemoPage() {
             wallColorMode={wallColorMode}
             onCheckRadar={() => void handleCheckRadar()}
             onToggleFenceMode={handleToggleFenceMode}
-            onSetFenceDetectionEnabled={(enabled) => void fenceDetection.setEnabled(enabled)}
             onToggleRosbag={() => void handleToggleRosbag()}
             onStopSelectedTask={handleStopSelectedTask}
             onToggleFollowRobot={handleToggleFollowRobot}

@@ -364,3 +364,19 @@ describe('navPageUtils', () => {
     ).toEqual([{ type: 'auto_track_control', enabled: false }])
   })
 })
+
+it('preserves fence detection on/off steps through task editing and serialization', () => {
+  const draft = patchTaskDraftStep(
+    { name: '围栏巡检', mapId: 'scene-a', steps: [{ type: 'navigate_waypoint', waypointId: 'a' }] },
+    0, { type: 'fence_detection_control' },
+  )
+  expect(draft.steps).toEqual([{ type: 'fence_detection_control', enabled: true }])
+  const disabled = patchTaskDraftStep(draft, 0, { enabled: false })
+  const steps = buildWorkflowStepsFromDraft([...draft.steps, ...disabled.steps])
+  expect(steps).toEqual([
+    { type: 'fence_detection_control', enabled: true },
+    { type: 'fence_detection_control', enabled: false },
+  ])
+  expect(validateWorkflowStepsFromDraft(steps)).toEqual({ ok: true, steps })
+  expect(summarizeWorkflowSteps(steps)).toBe('开启围栏检测 -> 关闭围栏检测')
+})

@@ -103,6 +103,7 @@ export function TaskCreatorDrawer({
                   <div className="pcd-flow-card-content">
                     <div className="pcd-flow-card-selects">
                       <select
+                        aria-label={`第 ${index + 1} 步类型`}
                         className="pcd-task-type-select"
                         value={step.type}
                         onChange={(event) => onDraftStepChange(index, { type: event.target.value as TaskDraftStep['type'] })}
@@ -111,9 +112,11 @@ export function TaskCreatorDrawer({
                         <option value="navigate_waypoint">{getWorkflowStepTypeLabel('navigate_waypoint')}</option>
                         <option value="posture_control">{getWorkflowStepTypeLabel('posture_control')}</option>
                         <option value="auto_track_control">{getWorkflowStepTypeLabel('auto_track_control')}</option>
+                        <option value="fence_detection_control">围栏检测</option>
                       </select>
                       {step.type === 'navigate_waypoint' ? (
                         <select
+                          aria-label={`第 ${index + 1} 步选项`}
                           className="pcd-task-value-select"
                           value={step.waypointId}
                           onChange={(event) => onDraftStepChange(index, { waypointId: event.target.value })}
@@ -128,6 +131,7 @@ export function TaskCreatorDrawer({
                         </select>
                       ) : step.type === 'posture_control' ? (
                         <select
+                          aria-label={`第 ${index + 1} 步选项`}
                           className="pcd-task-value-select"
                           value={step.posture}
                           onChange={(event) =>
@@ -140,6 +144,7 @@ export function TaskCreatorDrawer({
                         </select>
                       ) : (
                         <select
+                          aria-label={`第 ${index + 1} 步选项`}
                           className="pcd-task-value-select"
                           value={step.enabled ? 'enabled' : 'disabled'}
                           onChange={(event) =>
@@ -147,8 +152,8 @@ export function TaskCreatorDrawer({
                           }
                           disabled={!draft.mapId}
                         >
-                          <option value="enabled">开启自动跟踪</option>
-                          <option value="disabled">关闭自动跟踪</option>
+                          <option value="enabled">{step.type === 'fence_detection_control' ? '开启围栏检测' : '开启自动跟踪'}</option>
+                          <option value="disabled">{step.type === 'fence_detection_control' ? '关闭围栏检测' : '关闭自动跟踪'}</option>
                         </select>
                       )}
                     </div>
@@ -185,7 +190,7 @@ export function TaskCreatorDrawer({
         <div className="pcd-task-editor-footer pcd-task-editor-footer-wide">
           <div className="pcd-task-editor-hint">
             任务与当前地图固定绑定，只能使用该地图中的导航点。任务名称不能为空，步骤通过下拉框配置。
-            自动跟踪联动会在流程执行到该步骤时立即开启或关闭。
+            自动跟踪和围栏检测会在流程执行到对应步骤时开启或关闭；需要结束检测时，请添加关闭围栏检测步骤。
             {draft.mapId && draft.mapId === selectedSceneId ? ' 当前场景已加载。' : ''}
             {!selectedSceneNavigable && selectedSceneMessage ? ` ${selectedSceneMessage}` : ''}
           </div>

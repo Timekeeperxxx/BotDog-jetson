@@ -100,6 +100,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._nav_status_subscription: Any | None = None
         self._planning_status_subscription: Any | None = None
         self._auto_track_control_subscription: Any | None = None
+        self._fence_detection_control_subscription: Any | None = None
         self._obstacle_status_subscription: Any | None = None
         # global_planner assigns a monotonically increasing generation to each
         # accepted goal.  Keep that identity alongside the UI state so a late
@@ -1091,10 +1092,48 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             self._handle_auto_track_control_message,
             10,
         )
+        self._fence_detection_control_subscription = self._node.create_subscription(
+            String, "/nav/task/fence_detection_control",
+            self._handle_fence_detection_control_message, 10,
+        )
         nav_logger.info(
             "ROS2 导航自动跟踪联动订阅已启动：topic={}",
             settings.ROS_NAV_AUTO_TRACK_CONTROL_TOPIC,
         )
+
+    def _handle_fence_detection_control_message(self, msg: Any) -> None:
+        try:
+            payload = json.loads(msg.data)
+            if not isinstance(payload, dict) or not isinstance(payload.get("enabled"), bool):
+                raise ValueError("enabled 必须是布尔值")
+        except (AttributeError, ValueError, TypeError) as exc:
+            nav_logger.warning("围栏检测任务消息无效：{}", exc)
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._apply_fence_detection_workflow_control(payload), self._loop,
+        )
+
+    async def _apply_fence_detection_workflow_control(self, payload: dict[str, Any]) -> None:
+        from .fence_detection_service import get_fence_detection_service
+
+        try:
+            service = get_fence_detection_service()
+            if service is None:
+                raise RuntimeError("围栏检测服务未初始化")
+            enabled = payload["enabled"]
+            if enabled and not (settings.AI_ENABLED and settings.POSE_ENABLED):
+                raise ValueError("开启围栏检测需要启用 AI 人员检测和姿态检测")
+            status = await service.enable() if enabled else await service.disable(center_gimbal=True)
+            self._submit_broadcast("nav.fence_detection_control", {
+                **payload, "success": True, "state": status["state"],
+            })
+            nav_logger.info("围栏检测任务步骤已执行：{}", payload)
+        except Exception as exc:
+            nav_logger.exception("围栏检测任务步骤失败：{}", exc)
+            self._submit_alert(
+                event_type="NAVIGATION", event_code="FENCE_DETECTION_CONTROL_FAILED",
+                severity="warning", message=f"围栏检测任务步骤失败：{exc}",
+            )
 
     def _handle_auto_track_control_message(self, msg: Any) -> None:
         raw_data = str(getattr(msg, "data", "") or "").strip()

@@ -149,6 +149,7 @@ class RosNavLifecycleMixin:
             self._nav_status_subscription = None
             self._planning_status_subscription = None
             self._auto_track_control_subscription = None
+            self._fence_detection_control_subscription = None
             self._estop_publisher = None
             self._initial_pose_publisher = None
             self._cloud_subscription = None
