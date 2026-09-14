@@ -32,6 +32,7 @@ class EvidenceRecord:
     image_url: Optional[str]
     gps_lat: Optional[float]
     gps_lon: Optional[float]
+    evidence_id: Optional[int] = None
 
 
 class AlertService:
@@ -92,12 +93,11 @@ class AlertService:
         )
 
         # 存储到数据库
-        if session:
-            try:
-                await self._store_evidence(evidence, session)
-                logger.info(f"证据记录已保存: {evidence.event_type}")
-            except Exception as e:
-                logger.error(f"保存证据记录失败: {e}")
+        try:
+            await self._store_evidence(evidence, session)
+            logger.info(f"证据记录已保存: {evidence.event_type}")
+        except Exception as e:
+            logger.error(f"保存证据记录失败: {e}")
 
         # 广播告警（如果有 WebSocket 连接）
         await self._broadcast_alert(alert, evidence)
@@ -112,12 +112,13 @@ class AlertService:
         severity: str,
         message: str,
         confidence: Optional[float],
-        file_path: str,
+        file_path: Optional[str],
         image_url: Optional[str],
         gps_lat: Optional[float],
         gps_lon: Optional[float],
         task_id: Optional[int],
         session: Optional[AsyncSession] = None,
+        **extra: Any,
     ) -> EvidenceRecord:
         """
         处理 AI 识别告警。
@@ -126,7 +127,7 @@ class AlertService:
             task_id=task_id,
             event_type=event_type,
             event_code=event_code,
-            severity=severity,
+            severity=severity.upper(),
             message=message,
             confidence=confidence,
             file_path=file_path,
@@ -135,20 +136,19 @@ class AlertService:
             gps_lon=gps_lon,
         )
 
-        if session:
-            try:
-                await self._store_evidence(evidence, session)
-                logger.info(f"证据记录已保存: {evidence.event_type}")
-            except Exception as e:
-                logger.error(f"保存证据记录失败: {e}")
+        try:
+            await self._store_evidence(evidence, session)
+            logger.info(f"证据记录已保存: {evidence.event_type}")
+        except Exception as e:
+            logger.error(f"保存证据记录失败: {e}")
 
-        await self._broadcast_alert_payload(evidence=evidence)
+        await self._broadcast_alert_payload(evidence=evidence, **extra)
         return evidence
 
     async def _store_evidence(
         self,
         evidence: EvidenceRecord,
-        session: AsyncSession,
+        session: Optional[AsyncSession],
     ) -> None:
         """
         存储证据到数据库。
@@ -157,6 +157,13 @@ class AlertService:
             evidence: 证据记录
             session: 数据库会话
         """
+        if session is None:
+            from .database import get_session_factory
+
+            async with get_session_factory()() as owned_session:
+                await self._store_evidence(evidence, owned_session)
+            return
+
         from .models import AnomalyEvidence
 
         db_evidence = AnomalyEvidence(
@@ -174,7 +181,10 @@ class AlertService:
         )
 
         session.add(db_evidence)
+        await session.flush()
+        evidence_id = db_evidence.evidence_id
         await session.commit()
+        evidence.evidence_id = evidence_id
 
     async def _broadcast_alert(
         self,
@@ -200,6 +210,7 @@ class AlertService:
         evidence: EvidenceRecord,
         temperature: Optional[float] = None,
         threshold: Optional[float] = None,
+        **extra: Any,
     ) -> None:
         """
         广播告警消息负载。
@@ -216,7 +227,7 @@ class AlertService:
             self._event_broadcaster = get_global_event_broadcaster()
             logger.debug(f"使用回退的全局 broadcaster: {id(self._event_broadcaster)}")
 
-        payload: Dict[str, Any] = {}
+        payload: Dict[str, Any] = dict(extra)
         if temperature is not None:
             payload["temperature"] = temperature
         if threshold is not None:
@@ -227,7 +238,7 @@ class AlertService:
             event_code=evidence.event_code,
             severity=evidence.severity,
             message=evidence.message,
-            evidence_id=None,  # 当前广播不附带数据库主键
+            evidence_id=evidence.evidence_id,
             image_url=evidence.image_url,
             gps_lat=evidence.gps_lat,
             gps_lon=evidence.gps_lon,

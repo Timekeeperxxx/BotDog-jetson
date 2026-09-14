@@ -2088,13 +2088,14 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         # ALERT_RAISED 走前端既有告警 UI，无需新增前端事件类型。
         if self._loop.is_closed():
             return
+        from .alert_service import AlertService
+
         future = asyncio.run_coroutine_threadsafe(
-            self._broadcaster.broadcast_alert(
-                event_type=event_type,
-                event_code=event_code,
-                severity=severity,
-                message=message,
-                **extra,
+            AlertService(self._broadcaster).handle_ai_event(
+                event_type=event_type, event_code=event_code,
+                severity=severity, message=message,
+                confidence=None, file_path=None, image_url=None,
+                gps_lat=None, gps_lon=None, task_id=None, **extra,
             ),
             self._loop,
         )

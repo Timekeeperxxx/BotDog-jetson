@@ -88,6 +88,12 @@ export default function IndustrialConsoleComplete() {
   const { guardStatus, toggleGuardMission, abortGuardMission } = useGuardMissionControl();
   const { isUiFullscreen, toggleFullscreen } = useFullscreenControl();
 
+  const openAlertEvidence = (id: number) => {
+    evidence.setSearchQuery('');
+    setActiveTab('history');
+    void evidence.openEvidence(id);
+  };
+
   const openNavPatrolPage = useCallback(() => {
     window.open('/nav-patrol.html', '_blank', 'noopener,noreferrer');
   }, []);
@@ -139,11 +145,6 @@ export default function IndustrialConsoleComplete() {
   // WebSocket 连接
   useEffect(() => { connectWs(); return () => { disconnectWs(); }; }, [connectWs, disconnectWs]);
 
-  useEffect(() => {
-    if (activeTab !== 'history') return;
-    void fetchEvidence();
-  }, [activeTab, fetchEvidence]);
-
   useVideoReconnectEffects({
     activeTab,
     connectWhep,
@@ -168,7 +169,10 @@ export default function IndustrialConsoleComplete() {
       <AuthStatusBar variant="overlay" />
       <Sidebar
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={(tab) => {
+          setActiveTab(tab);
+          if (tab === 'history') void fetchEvidence();
+        }}
         onOpenNavPatrolPage={openNavPatrolPage}
         onOpenAdminPage={openAdminPage}
         onOpenConfig={() => setShowConfigPanel(true)}
@@ -238,6 +242,7 @@ export default function IndustrialConsoleComplete() {
               whepStatus,
               alerts,
               onClearAlerts: clearAlerts,
+              onOpenEvidence: openAlertEvidence,
               connectWs,
               connectWhep,
             }}

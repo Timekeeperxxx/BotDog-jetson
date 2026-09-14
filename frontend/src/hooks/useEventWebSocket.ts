@@ -7,7 +7,7 @@ import { getWsUrl } from '../config/api';
 import type { AlertEvent, AIStatus, EventWebSocketStatus, AutoTrackStatus } from '../types/event';
 import type { TrackDecision } from './useAutoTrack';
 import type { TrackOverlayData } from '../components/TrackOverlay1';
-import { ALERT_MERGE_WINDOW_MS, mergeAlertEvent } from './alertEventPolicy';
+import { ALERT_MERGE_WINDOW_MS, mergeAlertEvent, parseAlertEvent } from './alertEventPolicy';
 
 export interface EventHookState {
   status: EventWebSocketStatus;
@@ -125,23 +125,8 @@ export function useEventWebSocket(): EventHookState {
             return;
           }
 
-          if (
-            ![
-              'ALERT_RAISED',
-              'STRANGER_TARGET_LOCKED',
-              'AUTO_TRACK_STARTED',
-              'AUTO_TRACK_STOPPED',
-              'AUTO_TRACK_MANUAL_OVERRIDE',
-            ].includes(message.msg_type) || !message.payload
-          ) {
-            return;
-          }
-
-          const payload = message.payload as Partial<AlertEvent>;
-          const alert: AlertEvent = {
-            ...payload,
-            timestamp: message.timestamp || payload.timestamp || '',
-          } as AlertEvent;
+          const alert = parseAlertEvent(message);
+          if (!alert) return;
 
           setLatestAlert(alert);
           setAlerts((prev) => mergeAlertEvent(prev, alert));

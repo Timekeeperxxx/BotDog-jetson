@@ -1,12 +1,13 @@
 """证据链路由。"""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from ...auth.dependencies import require_admin, require_viewer
 from ...auth.schemas import AuthUserInternal
 from ...auth.service import safe_write_audit_log
 from ...database import get_db
-from ...schemas import EvidenceBulkDeleteRequest, EvidenceDeleteResponse, EvidenceListResponse
+from ...models import AnomalyEvidence
+from ...schemas import EvidenceItem, EvidenceBulkDeleteRequest, EvidenceDeleteResponse, EvidenceListResponse
 from ...services_evidence import delete_evidence_by_ids, list_evidence
 
 router = APIRouter(prefix="/api/v1/evidence", tags=["evidence"])
@@ -44,6 +45,18 @@ async def get_evidence(
             for row in rows
         ]
     )
+
+
+@router.get("/{evidence_id}", response_model=EvidenceItem)
+async def get_evidence_detail(
+    evidence_id: int,
+    user: AuthUserInternal = Depends(require_viewer),
+    db=Depends(get_db),
+) -> EvidenceItem:
+    row = await db.get(AnomalyEvidence, evidence_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="告警记录不存在或已删除")
+    return EvidenceItem.model_validate(row, from_attributes=True)
 
 
 @router.delete("/{evidence_id}", response_model=EvidenceDeleteResponse)

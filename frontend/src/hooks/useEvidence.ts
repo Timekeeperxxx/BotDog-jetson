@@ -13,6 +13,7 @@ export interface UseEvidenceState {
   searchQuery: string;
   setSearchQuery: Dispatch<SetStateAction<string>>;
   fetchEvidence: () => Promise<void>;
+  openEvidence: (id: number) => Promise<void>;
   deleteEvidenceByIds: (ids: number[]) => Promise<void>;
   deleteEvidenceSingle: (id: number) => void;
   deleteEvidenceSelected: () => void;
@@ -43,6 +44,23 @@ export function useEvidence(): UseEvidenceState {
       setSelectedEvidence(new Set());
     } catch (err) {
       setEvidenceError(err instanceof Error ? err.message : '加载失败');
+    } finally {
+      setEvidenceLoading(false);
+    }
+  }, []);
+
+  const openEvidence = useCallback(async (id: number) => {
+    setLightboxItem(null);
+    setEvidenceLoading(true);
+    setEvidenceError(null);
+    try {
+      const res = await fetch(getApiUrl(`/api/v1/evidence/${id}`));
+      if (!res.ok) throw new Error(res.status === 404 ? '告警记录不存在或已删除' : '详情加载失败，请重试');
+      const item: EvidenceItem = await res.json();
+      setEvidenceItems((items) => [item, ...items.filter((row) => row.evidence_id !== item.evidence_id)]);
+      setLightboxItem(item);
+    } catch (err) {
+      setEvidenceError(err instanceof Error ? err.message : '详情加载失败');
     } finally {
       setEvidenceLoading(false);
     }
@@ -124,6 +142,7 @@ export function useEvidence(): UseEvidenceState {
     searchQuery,
     setSearchQuery,
     fetchEvidence,
+    openEvidence,
     deleteEvidenceByIds,
     deleteEvidenceSingle,
     deleteEvidenceSelected,

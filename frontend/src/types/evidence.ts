@@ -2,13 +2,13 @@ export type EvidenceSeverity = 'INFO' | 'WARNING' | 'CRITICAL';
 
 export interface EvidenceItem {
   evidence_id: number;
-  task_id: number;
+  task_id: number | null;
   event_type: string;
   event_code?: string | null;
   severity: EvidenceSeverity;
   message?: string | null;
   confidence?: number | null;
-  file_path: string;
+  file_path: string | null;
   image_url?: string | null;
   gps_lat?: number | null;
   gps_lon?: number | null;

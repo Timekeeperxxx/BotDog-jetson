@@ -1,3 +1,4 @@
+import { alertSummary } from '../../hooks/alertEventPolicy';
 import { getApiUrl } from '../../config/api';
 import type { AlertEvent } from '../../types/event';
 
@@ -11,54 +12,40 @@ function getImageUrl(imageUrl?: string | null): string | null {
 
 export interface DetectionAlertProps {
   data: AlertEvent;
+  onOpenEvidence: (id: number) => void;
 }
 
-export function DetectionAlert({ data }: DetectionAlertProps) {
-  const isStranger = data.severity === 'CRITICAL';
+export function DetectionAlert({ data, onOpenEvidence }: DetectionAlertProps) {
+  const severity = String(data.severity || 'INFO').toUpperCase();
   const imageSrc = getImageUrl(data.image_url);
+  const summary = alertSummary(data);
+  const hasEvidence = typeof data.evidence_id === 'number' && data.evidence_id > 0;
   const severityLabel: Record<string, string> = {
-    CRITICAL: '紧急告警',
-    WARNING: '警告',
-    INFO: '提示',
+    CRITICAL: '紧急', WARNING: '警告', INFO: '提示',
   };
-  const displaySeverity = severityLabel[data.severity] ?? data.severity;
-
+  const tone = severity === 'CRITICAL' ? 'text-red-300' : severity === 'WARNING' ? 'text-amber-300' : 'text-sky-300';
   return (
-    <div className="group bg-zinc-900 border-2 border-white/10 p-3 rounded-xl shadow-2xl hover:border-white transition-all cursor-pointer">
-      <div className="flex items-center justify-between mb-3 border-b border-white/5 pb-2">
-        <div className="flex items-center space-x-2">
-          <div className={`w-2 h-2 rounded-full ${isStranger ? 'bg-red-500 animate-pulse' : 'bg-orange-500'}`} />
-          <span className="text-[10px] font-black tracking-widest text-white">
-            {displaySeverity}
-          </span>
-          {(data.repeat_count ?? 1) > 1 && (
-            <span className="rounded bg-red-500/20 px-1.5 py-0.5 text-[9px] font-black text-red-300">
-              ×{data.repeat_count}
-            </span>
-          )}
-        </div>
-        <span className="text-[10px] font-mono font-black text-slate-400">
-          {new Date(data.timestamp).toLocaleTimeString('zh-CN', { hour12: false })}
+    <button
+      type="button"
+      disabled={!hasEvidence}
+      onClick={() => hasEvidence && onOpenEvidence(data.evidence_id!)}
+      aria-label={`${summary}，${hasEvidence ? '查看数据库详情' : '暂无数据库记录'}`}
+      className="w-full text-left bg-zinc-900 border border-white/15 p-3 rounded-xl enabled:cursor-pointer enabled:hover:border-white/60 focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-2 transition-colors"
+    >
+      <span className="flex items-center justify-between gap-2 mb-2 text-xs">
+        <span className={`font-bold ${tone}`}>{severityLabel[severity] || '提示'}</span>
+        <span className="text-slate-400 tabular-nums">
+          {Number.isFinite(Date.parse(data.timestamp)) ? new Date(data.timestamp).toLocaleTimeString('zh-CN', { hour12: false }) : '时间未知'}
         </span>
-      </div>
-      <div className="flex space-x-4 items-center">
-        {imageSrc && (
-          <div className="w-14 h-14 rounded-lg overflow-hidden border-2 border-white/20 bg-black shadow-inner shrink-0">
-            <img src={imageSrc} className="w-full h-full object-cover opacity-90 group-hover:scale-110 transition-transform" />
-          </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <p className="text-[12px] font-black text-white truncate leading-tight tracking-wide">{data.message}</p>
-          {data.confidence !== undefined && (
-            <div className="flex items-center space-x-2 mt-2">
-              <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden border border-white/5">
-                <div className="h-full bg-white" style={{ width: `${data.confidence * 100}%` }} />
-              </div>
-              <p className="text-[10px] text-white font-mono font-black">{(data.confidence * 100).toFixed(0)}%</p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+      </span>
+      <span className="flex gap-3 items-center">
+        {imageSrc && <img src={imageSrc} alt="告警现场截图" className="w-12 h-12 rounded object-cover shrink-0" />}
+        <span className="text-sm font-bold text-white break-words leading-5">{summary}</span>
+      </span>
+      <span className="flex flex-wrap items-center justify-between gap-2 mt-2 text-xs text-slate-400">
+        <span>{(data.repeat_count ?? 1) > 1 ? `累计 ${data.repeat_count} 次` : ''}</span>
+        <span>{hasEvidence ? ((data.repeat_count ?? 1) > 1 ? '最新详情 →' : '查看详情 →') : '暂无数据库记录'}</span>
+      </span>
+    </button>
   );
 }

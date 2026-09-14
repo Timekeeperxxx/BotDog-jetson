@@ -24,6 +24,7 @@ export interface ConsoleRightPanelProps {
   whepStatus: WhepState;
   alerts: AlertEvent[];
   onClearAlerts: () => void;
+  onOpenEvidence: (id: number) => void;
   connectWs: () => void;
   connectWhep: () => void;
 }
@@ -45,6 +46,7 @@ export function ConsoleRightPanel({
   whepStatus,
   alerts,
   onClearAlerts,
+  onOpenEvidence,
   connectWs,
   connectWhep,
 }: ConsoleRightPanelProps) {
@@ -183,7 +185,7 @@ export function ConsoleRightPanel({
             </div>
           ) : (
             alerts.slice(0, 15).map((a, i) => (
-              <DetectionAlert key={`${a.timestamp}-${i}`} data={a} />
+              <DetectionAlert key={`${a.timestamp}-${i}`} data={a} onOpenEvidence={onOpenEvidence} />
             ))
           )}
         </div>
