@@ -148,8 +148,8 @@ class Settings(BaseSettings):
     POSE_MIN_VISIBLE_KEYPOINTS: int = 5
     POSE_FRAME_SKIP: int = 1
     POSE_STABLE_HITS: int = 3
-    POSE_CROUCH_SECONDS: float = 4.0
-    POSE_LOITER_SECONDS: float = 20.0
+    POSE_CROUCH_SECONDS: float = 3.0
+    POSE_LOITER_SECONDS: float = 5.0
     POSE_EVENT_COOLDOWN_SECONDS: float = 15.0
     POSE_TRACK_TTL_SECONDS: float = 3.0
     POSE_OVERLAY_INTERVAL_SECONDS: float = 0.2

@@ -423,12 +423,12 @@ class AIWorkerProcessingMixin:
             "POSE_CROUCHING": (
                 "E_POSE_CROUCHING",
                 "WARNING",
-                "检测到重点区域人员持续蹲伏",
+                "检测到人员持续蹲伏",
             ),
             "POSE_LOITERING": (
                 "E_POSE_LOITERING",
                 "WARNING",
-                "检测到重点区域人员长时间停留",
+                "检测到人员徘徊",
             ),
         }
         gps = self._get_latest_gps()

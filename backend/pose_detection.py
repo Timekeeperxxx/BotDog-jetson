@@ -1,8 +1,8 @@
 """人体姿态推理、轻量跟踪与时序事件判定。
 
 第一阶段只使用 COCO 17 点人体骨架，不在单帧上直接宣称发生了复杂行为。
-攀爬、蹲伏、倒地和徘徊事件都需要连续帧确认。攀爬和倒地属于全画面安全
-事件；重点区只用于限制持续蹲伏和徘徊，减少普通活动造成的误报。
+攀爬、蹲伏、倒地和徘徊事件均在全画面判断；蹲伏和徘徊按连续时长触发，
+人员缺失后清零，蹲伏姿态中断后重新计时。重点区信息仅供观察结果展示。
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ class _TrackState:
     bbox: tuple[int, int, int, int]
     first_seen_at: float
     last_seen_at: float
-    inside_since: float | None = None
+    visible_since: float | None = None
     posture: Posture = Posture.UNKNOWN
     posture_since: float = 0.0
     # 最近若干帧的 (时间, 姿态) 采样，用滑动窗口投票替代连续帧确认，
@@ -358,8 +358,8 @@ class PoseEventEngine:
         keypoint_confidence: float = 0.35,
         min_visible_keypoints: int = 5,
         stable_hits: int = 3,
-        crouch_seconds: float = 4.0,
-        loiter_seconds: float = 20.0,
+        crouch_seconds: float = 3.0,
+        loiter_seconds: float = 5.0,
         event_cooldown_seconds: float = 15.0,
         track_ttl_seconds: float = 3.0,
         match_iou_threshold: float = 0.25,
@@ -397,6 +397,15 @@ class PoseEventEngine:
         timestamp = time.monotonic() if now is None else now
         self._drop_stale_tracks(timestamp)
         assignments = self._assign_tracks(poses)
+        for track_id, state in self._tracks.items():
+            if track_id not in assignments.values():
+                state.visible_since = None
+                state.posture = Posture.UNKNOWN
+                state.posture_window.clear()
+                state.posture_present_since.clear()
+                state.motion_history.clear()
+                state.last_events.pop("POSE_CROUCHING", None)
+                state.last_events.pop("POSE_LOITERING", None)
         observations: list[PoseObservation] = []
         events: list[PoseEvent] = []
 
@@ -432,13 +441,11 @@ class PoseEventEngine:
 
             state.bbox = pose.bbox
             state.last_seen_at = timestamp
-            if inside_zone:
-                if state.inside_since is None:
-                    state.inside_since = timestamp
-            else:
-                state.inside_since = None
+            if state.visible_since is None:
+                state.visible_since = timestamp
 
             if posture != state.posture:
+                state.last_events.pop("POSE_CROUCHING", None)
                 state.posture = posture
                 state.posture_since = timestamp
 
@@ -476,11 +483,7 @@ class PoseEventEngine:
             ):
                 state.motion_history.popleft()
 
-            dwell_seconds = (
-                max(0.0, timestamp - state.inside_since)
-                if state.inside_since is not None
-                else 0.0
-            )
+            dwell_seconds = max(0.0, timestamp - state.visible_since)
             observation = PoseObservation(
                 track_id=track_id,
                 bbox=pose.bbox,
@@ -574,17 +577,15 @@ class PoseEventEngine:
 
         if (
             observation.posture is Posture.CROUCHING
-            and observation.inside_zone
             and posture_confirmed
-            and posture_duration >= self._crouch_seconds
+            and now - state.posture_since >= self._crouch_seconds
         ):
             event_specs.append(
-                ("POSE_CROUCHING", observation.posture_confidence, posture_duration)
+                ("POSE_CROUCHING", observation.posture_confidence, now - state.posture_since)
             )
 
         if (
-            observation.inside_zone
-            and observation.dwell_seconds >= self._loiter_seconds
+            observation.dwell_seconds >= self._loiter_seconds
         ):
             dwell_confidence = _clamp(
                 0.65 + 0.3 * observation.dwell_seconds / max(self._loiter_seconds, 1.0)

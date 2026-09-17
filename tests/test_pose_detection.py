@@ -279,7 +279,7 @@ def test_bbox_scale_change_suppresses_climb_motion_event() -> None:
     assert all_events == []
 
 
-def test_zone_events_stay_disabled_until_a_zone_is_configured() -> None:
+def test_loitering_works_without_configured_zones() -> None:
     points = _keypoints()
     points[9] = PoseKeypoint(30.0, 35.0, 0.95)
     points[13] = PoseKeypoint(38.0, 118.0, 0.95)
@@ -295,9 +295,15 @@ def test_zone_events_stay_disabled_until_a_zone_is_configured() -> None:
     assert [event.event_type for event in events] == [
         "POSE_CLIMBING_SUSPECTED"
     ]
+    _, events = engine.update(
+        [_pose(keypoints=points)],
+        zone_gate=_Zone(True, configured=False),
+        now=1.2,
+    )
+    assert "POSE_LOITERING" in [event.event_type for event in events]
 
 
-def test_loiter_event_uses_continuous_zone_dwell_and_cooldown() -> None:
+def test_loiter_event_uses_continuous_visibility_and_cooldown() -> None:
     engine = PoseEventEngine(
         stable_hits=1,
         loiter_seconds=5.0,
@@ -314,6 +320,50 @@ def test_loiter_event_uses_continuous_zone_dwell_and_cooldown() -> None:
 
     _observations, events = engine.update([_pose()], zone_gate=_Zone(True), now=7.0)
     assert events == []
+
+
+def test_full_frame_loitering_resets_on_missing_person():
+    for zone in (_Zone(False), _Zone(True, configured=False)):
+        engine = PoseEventEngine(stable_hits=1)
+        for t in (0, 1, 2, 3, 4, 4.9):
+            _, events = engine.update([_pose()], zone_gate=zone, now=t)
+            assert not events
+        observations, events = engine.update([_pose()], zone_gate=zone, now=5)
+        track_id = observations[0].track_id
+        assert [(e.event_type, e.duration_seconds) for e in events] == [("POSE_LOITERING", 5)]
+        engine.update([], zone_gate=zone, now=5.1)
+        observations, events = engine.update([_pose()], zone_gate=zone, now=5.2)
+        assert observations[0].track_id == track_id
+        assert observations[0].dwell_seconds == 0
+        assert not events
+        for t in (6, 7, 8, 9, 10.1):
+            _, events = engine.update([_pose()], zone_gate=zone, now=t)
+            assert not events
+        _, events = engine.update([_pose()], zone_gate=zone, now=10.3)
+        assert [e.event_type for e in events] == ["POSE_LOITERING"]
+        assert abs(events[0].duration_seconds - 5.1) < 1e-6
+
+
+def test_full_frame_crouching_resets_on_posture_interruption_or_absence():
+    points = _keypoints()
+    points[11] = PoseKeypoint(40.0, 100.0, 0.95)
+    points[13] = PoseKeypoint(18.0, 128.0, 0.95)
+    points[15] = PoseKeypoint(55.0, 134.0, 0.95)
+    crouch = _pose(keypoints=points)
+    for interruption in ([], [_pose()]):
+        engine = PoseEventEngine(stable_hits=1, loiter_seconds=100)
+        def update(poses, t):
+            return engine.update(poses, zone_gate=_Zone(False), now=t)[1]
+        for t in (0, 1, 2, 2.9):
+            assert not update([crouch], t)
+        events = update([crouch], 3)
+        assert [(e.event_type, e.duration_seconds) for e in events] == [("POSE_CROUCHING", 3)]
+        assert not update(interruption, 3.1)
+        for t in (3.2, 4, 5, 6.1):
+            assert not update([crouch], t)
+        events = update([crouch], 6.3)
+        assert [e.event_type for e in events] == ["POSE_CROUCHING"]
+        assert abs(events[0].duration_seconds - 3.1) < 1e-6
 
 
 def test_iou_tracker_keeps_identity_for_moving_person() -> None:
