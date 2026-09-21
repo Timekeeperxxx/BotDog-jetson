@@ -6,11 +6,12 @@ import {
   getPcdSceneTile,
   getPcdSceneTileManifest,
   listPcdScenes,
+  listFences,
   listWaypoints,
   selectPcdScene,
 } from '../../api/pcdMapApi'
 import type { GlobalPath, LocalizationStatus, NavigationStatus, RobotPose } from '../../types/navState'
-import type { NavWaypoint, PcdSceneItem, PcdSceneMetadata, PcdScenePreview, PcdSceneLayerRole, PcdSceneRootTile, PcdSceneTileManifest, PointCloudPoints } from '../../types/pcdMap'
+import type { NavFence, NavWaypoint, PcdSceneItem, PcdSceneMetadata, PcdScenePreview, PcdSceneLayerRole, PcdSceneRootTile, PcdSceneTileManifest, PointCloudPoints } from '../../types/pcdMap'
 import { getPointCount } from '../../utils/pointCloudPoints'
 
 const SELECTED_SCENE_STORAGE_KEY = 'botdog-nav-selected-scene'
@@ -46,6 +47,7 @@ type InitialStatePayload = {
 export type UseNavScenesOptions = {
   setInitialState: (state: InitialStatePayload) => void
   onWaypointsLoaded: (waypoints: NavWaypoint[]) => void
+  onFencesLoaded: (fences: NavFence[]) => void
   onLog: (message: string, level?: 'info' | 'error') => void
   onSceneChanging?: () => void
 }
@@ -53,6 +55,7 @@ export type UseNavScenesOptions = {
 export function useNavScenes({
   setInitialState,
   onWaypointsLoaded,
+  onFencesLoaded,
   onLog,
   onSceneChanging,
 }: UseNavScenesOptions) {
@@ -185,7 +188,7 @@ export function useNavScenes({
       setMetadata(nextMetadata)
       onLog(`已读取场景 metadata: ${sceneId}`)
 
-      const [pointCloudData, nextWaypoints] = await Promise.all([
+      const [pointCloudData, nextWaypoints, nextFences] = await Promise.all([
         getPcdSceneTileManifest(sceneId)
           .then((manifest) => ({ manifest, preview: null as PcdScenePreview | null }))
           .catch(async (error: unknown) => {
@@ -196,11 +199,18 @@ export function useNavScenes({
             return { manifest: null, preview: await getPcdScenePreview(sceneId) }
           }),
         listWaypoints(sceneId).catch(() => ({ items: [] as NavWaypoint[] })),
+        listFences(sceneId).catch((error: unknown) => {
+          if (requestId === selectRequestRef.current) {
+            onLog(error instanceof Error ? error.message : '读取场景围栏失败', 'error')
+          }
+          return { items: [] as NavFence[] }
+        }),
       ])
       if (requestId !== selectRequestRef.current) return false
       setTileManifest(pointCloudData.manifest)
       setPreview(pointCloudData.preview)
       onWaypointsLoaded(nextWaypoints.items)
+      onFencesLoaded(nextFences.items)
       if (pointCloudData.manifest) {
         const rootPoints = pointCloudData.manifest.root_tiles.reduce((sum, tile) => sum + tile.point_count, 0)
         onLog(
@@ -244,7 +254,7 @@ export function useNavScenes({
         setLoading(false)
       }
     }
-  }, [onSceneChanging, onWaypointsLoaded, onLog, setInitialState])
+  }, [onSceneChanging, onWaypointsLoaded, onFencesLoaded, onLog, setInitialState])
 
   useEffect(() => {
     void refreshScenes()

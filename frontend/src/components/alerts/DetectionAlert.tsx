@@ -1,3 +1,5 @@
+import { useRef } from 'react';
+import { useAlertDisplayReceipt } from '../../hooks/useAlertDisplayReceipt';
 import { alertSummary } from '../../hooks/alertEventPolicy';
 import { getApiUrl } from '../../config/api';
 import type { AlertEvent } from '../../types/event';
@@ -16,6 +18,8 @@ export interface DetectionAlertProps {
 }
 
 export function DetectionAlert({ data, onOpenEvidence }: DetectionAlertProps) {
+  const alertRef = useRef<HTMLButtonElement>(null);
+  useAlertDisplayReceipt(alertRef, data.evidence_id, Boolean(data.timing));
   const severity = String(data.severity || 'INFO').toUpperCase();
   const imageSrc = getImageUrl(data.image_url);
   const summary = alertSummary(data);
@@ -26,6 +30,7 @@ export function DetectionAlert({ data, onOpenEvidence }: DetectionAlertProps) {
   const tone = severity === 'CRITICAL' ? 'text-red-300' : severity === 'WARNING' ? 'text-amber-300' : 'text-sky-300';
   return (
     <button
+      ref={alertRef}
       type="button"
       disabled={!hasEvidence}
       onClick={() => hasEvidence && onOpenEvidence(data.evidence_id!)}

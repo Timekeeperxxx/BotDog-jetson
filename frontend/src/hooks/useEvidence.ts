@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { getApiUrl } from '../config/api';
 import type { EvidenceItem } from '../types/evidence';
 
@@ -6,6 +6,8 @@ export interface UseEvidenceState {
   evidenceItems: EvidenceItem[];
   evidenceLoading: boolean;
   evidenceError: string | null;
+  detailLoading: boolean;
+  detailError: string | null;
   selectedEvidence: Set<number>;
   evidenceDeleting: boolean;
   lightboxItem: EvidenceItem | null;
@@ -27,11 +29,15 @@ export function useEvidence(): UseEvidenceState {
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const listRequestRef = useRef(0);
   const [selectedEvidence, setSelectedEvidence] = useState<Set<number>>(new Set());
   const [evidenceDeleting, setEvidenceDeleting] = useState(false);
   const [lightboxItem, setLightboxItem] = useState<EvidenceItem | null>(null);
 
   const fetchEvidence = useCallback(async () => {
+    const request = ++listRequestRef.current;
     setEvidenceLoading(true);
     setEvidenceError(null);
     try {
@@ -40,29 +46,30 @@ export function useEvidence(): UseEvidenceState {
         throw new Error(`HTTP ${res.status}`);
       }
       const data = await res.json();
-      setEvidenceItems(data.items || []);
-      setSelectedEvidence(new Set());
+      if (request !== listRequestRef.current) return;
+      const items: EvidenceItem[] = data.items || [];
+      setEvidenceItems(items);
+      setSelectedEvidence((selected) => new Set(items.filter((item) => selected.has(item.evidence_id)).map((item) => item.evidence_id)));
     } catch (err) {
-      setEvidenceError(err instanceof Error ? err.message : '加载失败');
+      if (request === listRequestRef.current) setEvidenceError(err instanceof Error ? err.message : '加载失败');
     } finally {
-      setEvidenceLoading(false);
+      if (request === listRequestRef.current) setEvidenceLoading(false);
     }
   }, []);
 
   const openEvidence = useCallback(async (id: number) => {
     setLightboxItem(null);
-    setEvidenceLoading(true);
-    setEvidenceError(null);
+    setDetailLoading(true);
+    setDetailError(null);
     try {
       const res = await fetch(getApiUrl(`/api/v1/evidence/${id}`));
       if (!res.ok) throw new Error(res.status === 404 ? '告警记录不存在或已删除' : '详情加载失败，请重试');
       const item: EvidenceItem = await res.json();
-      setEvidenceItems((items) => [item, ...items.filter((row) => row.evidence_id !== item.evidence_id)]);
       setLightboxItem(item);
     } catch (err) {
-      setEvidenceError(err instanceof Error ? err.message : '详情加载失败');
+      setDetailError(err instanceof Error ? err.message : '详情加载失败');
     } finally {
-      setEvidenceLoading(false);
+      setDetailLoading(false);
     }
   }, []);
 
@@ -135,6 +142,8 @@ export function useEvidence(): UseEvidenceState {
     evidenceItems,
     evidenceLoading,
     evidenceError,
+    detailLoading,
+    detailError,
     selectedEvidence,
     evidenceDeleting,
     lightboxItem,

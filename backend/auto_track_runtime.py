@@ -7,6 +7,7 @@ from typing import Optional
 
 from .auto_track_snapshot import _save_snapshot_to_disk
 from .config import settings
+from .stranger_policy import is_authorized_person
 from .logging_config import logger
 from .tracking_types import (
     ActiveTarget,
@@ -19,31 +20,13 @@ from .tracking_types import (
 
 
 class AutoTrackRuntimeMixin:
-    async def _stop_if_target_has_helmet(
-        self,
-        target: ActiveTarget,
-        matched: DetectionResult,
-        helmet_person_ids: set[int],
-        helmets: list[DetectionResult],
-        frame: bytes,
-        task_id: Optional[int | str],
+    async def _stop_if_target_authorized(
+        self, matched: DetectionResult, frame: bytes, task_id: Optional[int | str],
     ) -> bool:
-        has_helmet = (
-            target.track_id in helmet_person_ids
-            or any(self._part_belongs_to_person(helmet.bbox, matched.bbox) for helmet in helmets)
-        )
-        if has_helmet:
-            target.helmet_hits += 1
-            if target.helmet_hits >= self._helmet_person_abort_frames:
-                logger.info(
-                    f"[AutoTrackService] FOLLOWING→STOPPED(helmet确认): "
-                    f"track_id={target.track_id} 连续 {target.helmet_hits} 帧"
-                )
-                await self._stop_with_snapshot(TrackStopReason.HELMET_CONFIRMED, frame, task_id)
-                return True
-        else:
-            target.helmet_hits = 0
-        return False
+        if not is_authorized_person(matched):
+            return False
+        await self._stop_with_snapshot(TrackStopReason.IDENTITY_CONFIRMED, frame, task_id)
+        return True
 
     async def _lock_and_follow(
         self,
@@ -303,8 +286,13 @@ class AutoTrackRuntimeMixin:
     def _is_mission_active(self, task_id: Optional[int | str]) -> bool:
         # 与 AI Worker 保持一致：
         # 解除对 state_machine.state == SystemState.IN_MISSION（需要下位机心跳）的强依赖
-        # 手动开启自动跟踪时允许独立工作；导航联动开启时仍要求有任务上下文。
-        return self._standalone_enabled or task_id is not None
+        # 手动开启自动跟踪时允许独立工作；导航联动也可由正在运行的围栏检测提供上下文。
+        from .fence_detection_service import get_fence_detection_service
+
+        fence = get_fence_detection_service()
+        return self._standalone_enabled or task_id is not None or bool(
+            fence is not None and fence.enabled and fence.tracking_override
+        )
 
     def _is_stranger(self, track_id: int) -> bool:
         """通过 StrangerPolicy 判断是否为陌生人（已知人员不跟踪）。"""

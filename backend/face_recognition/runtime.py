@@ -75,13 +75,14 @@ class FaceRecognitionRuntime:
             and int(getattr(item, "track_id", -1)) >= 0
         ]
         if not self.enabled:
+            self._tracks.clear()
             for person in persons:
                 self._set_result(person, "unavailable", None, None, None)
             return
 
-        due = frame_index % self.frame_skip == 0
+        # 授权用于报警决策，每个处理帧均检查，不能让背对人员沿用旧身份。
         face_matches: dict[int, FaceMatch] = {}
-        if due and persons:
+        if persons:
             try:
                 for face in self.engine.detect(frame_bgr):
                     person = self._person_for_face(face, persons)
@@ -93,6 +94,7 @@ class FaceRecognitionRuntime:
                         continue
                     face_matches[int(person.track_id)] = self.matcher.match(extraction.embedding)
             except FaceEngineError:
+                self._tracks.clear()
                 for person in persons:
                     self._set_result(person, "unavailable", None, None, None)
                 return
@@ -104,6 +106,9 @@ class FaceRecognitionRuntime:
             match = face_matches.get(track_id)
             if match is not None:
                 self._update_state(state, match)
+            else:
+                state = _TrackState(status="no_face", last_seen=timestamp)
+                self._tracks[track_id] = state
             self._set_result(
                 person,
                 state.status,

@@ -9,12 +9,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .alert_service import get_alert_service
+from .alert_timing import observation_timing
 from .config import settings
 from .lightweight_tracker import calc_iou
 from .logging_config import get_logger
 from .models import InspectionTask
 from .pose_detection import PoseEvent, PoseObservation
 from .schemas import utc_now_iso
+from .stranger_policy import is_authorized_person
 from .tracking_types import DetectionResult as TrackDetectionResult
 from .ws_event_broadcaster import get_event_broadcaster
 
@@ -53,7 +55,10 @@ class AIWorkerProcessingMixin:
 
         async with self._session_factory() as session:
             task = await _get_latest_running_task(session)
-            self._current_task_id = task.task_id if task else self._get_active_navigation_task_id()
+            task_id = task.task_id if task else self._get_active_navigation_task_id()
+            if task_id != self._current_task_id:
+                self._reset_detection_state()
+                self._current_task_id = task_id
 
     def _get_active_navigation_task_id(self) -> str | None:
         try:
@@ -161,10 +166,13 @@ class AIWorkerProcessingMixin:
         return self._suspect_skip if self._is_suspect_mode() else self._patrol_skip
 
     def _reset_detection_state(self) -> None:
+        self._person_alert_last_seen.clear()
+        self._person_pose_hits.clear()
         self._hits = 0
         self._misses = 0
         self._in_alert = False
         self._weapon_active_until = 0.0
+        self._weapon_first_seen.clear()
         for class_name in self._weapon_hits:
             self._weapon_hits[class_name] = 0
             self._weapon_last_bbox[class_name] = None
@@ -237,6 +245,7 @@ class AIWorkerProcessingMixin:
             if not class_detections:
                 self._weapon_hits[class_name] = 0
                 self._weapon_last_bbox[class_name] = None
+                self._weapon_first_seen.pop(class_name, None)
                 continue
 
             if previous_bbox is None:
@@ -257,6 +266,7 @@ class AIWorkerProcessingMixin:
                 )
 
             if previous_bbox is None or not spatially_consistent:
+                self._weapon_first_seen[class_name] = getattr(self, "_current_frame_received_at", None)
                 self._weapon_hits[class_name] = 1
             else:
                 self._weapon_hits[class_name] = min(
@@ -282,12 +292,12 @@ class AIWorkerProcessingMixin:
         t_detect_end: float = 0.0,
         *,
         allow_motion_services: bool = True,
+        allow_auto_track: bool | None = None,
     ) -> None:
         """
         处理检测结果。
 
-        优先路径：将结果交给 AutoTrackService 处理（包含状态机、控制命令、抓拍）。
-        兼容路径：若 AutoTrackService 未启用，回退到原有「检测即告警」逻辑。
+        人员告警独立于运动模式；跟踪和守卫只负责各自控制流程。
         """
         from .auto_track_service import get_auto_track_service
         from .guard_mission_service import get_guard_mission_service
@@ -313,12 +323,14 @@ class AIWorkerProcessingMixin:
             if d.bbox is not None
         ]
 
+        await self._process_person_alerts(detections, frame)
+
         if allow_motion_services and guard_mission is not None and guard_mission.enabled:
             guard_mission.update_effective_fps(effective_fps)
             await guard_mission.process_frame(track_detections, frame)
             return
 
-        if allow_motion_services and auto_track is not None:
+        if (allow_motion_services if allow_auto_track is None else allow_auto_track) and auto_track is not None:
             await auto_track.process_frame(
                 detections=track_detections,
                 frame=frame,
@@ -330,44 +342,52 @@ class AIWorkerProcessingMixin:
             if auto_track._enabled:
                 return
 
-        # 多类别模型上线后，head/helmet 只作为前端叠框信息；旧告警路径仍只对
-        # 主目标检测器确认的 person 抓拍。姿态模型补齐的人体框置信度阈值更低，
-        # 其用途是叠层/跟踪辅助，不能单独触发“陌生人”告警。
-        alert_detections = [
-            d
-            for d in detections
-            if d.label == "person" and not getattr(d, "is_pose_fallback", False)
+    async def _report_face_service_fault(self, error: str | None) -> None:
+        if error is None:
+            self._face_fault_reported = False
+            return
+        if self._face_fault_reported:
+            return
+        try:
+            async with self._session_factory() as session:
+                await get_alert_service().handle_ai_event(
+                    event_type="SYSTEM_FAULT", event_code="E_FACE_SERVICE_UNAVAILABLE",
+                    severity="WARNING", message=f"人脸识别服务故障: {error}",
+                    confidence=None, file_path=None, image_url=None,
+                    gps_lat=None, gps_lon=None,
+                    task_id=self._current_task_id if isinstance(self._current_task_id, int) else None,
+                    session=session,
+                )
+            self._face_fault_reported = True
+        except Exception as exc:
+            ai_logger.error("记录人脸服务故障失败：{}", exc)
+
+    async def _process_person_alerts(self, detections, frame: bytes) -> None:
+        self._person_alert_frame += 1
+        tick = self._person_alert_frame
+        persons = [
+            d for d in detections
+            if d.label == "person"
         ]
-        detection = alert_detections[0] if alert_detections else None
-
-        if detection:
-            self._hits += 1
-            self._misses = 0
-        else:
-            self._misses += 1
-            self._hits = 0
-
-        if self._in_alert and self._misses >= self._reset_misses:
-            self._in_alert = False
-
-        if detection is None:
-            return
-
-        if self._in_alert:
-            return
-
-        now = asyncio.get_event_loop().time()
-        if now - self._last_alert_time < self._cooldown_seconds:
-            return
-
-        if self._hits < self._stable_hits:
-            return
-
-        await self._raise_alert(detection, frame)
-        self._in_alert = True
-        self._last_alert_time = now
-        self._hits = 0
-        self._misses = 0
+        present_ids = {d.track_id for d in persons}
+        for track_id, last_seen in list(self._person_alert_last_seen.items()):
+            if track_id in present_ids:
+                self._person_alert_last_seen[track_id] = tick
+            elif tick - last_seen >= self._reset_misses:
+                del self._person_alert_last_seen[track_id]
+        for detection in persons:
+            if is_authorized_person(detection):
+                continue
+            if detection.track_id in self._person_alert_last_seen:
+                continue
+            if (
+                getattr(detection, "is_pose_fallback", False)
+                and self._person_pose_hits.get(detection.track_id, 0)
+                < max(1, settings.POSE_STABLE_HITS)
+            ):
+                continue
+            await self._raise_alert(detection, frame)
+            self._person_alert_last_seen[detection.track_id] = tick
 
     async def _raise_alert(self, detection: DetectionResult, frame: bytes) -> None:
         image_path, image_url = await self._save_snapshot(frame)
@@ -383,6 +403,15 @@ class AIWorkerProcessingMixin:
             "knife": "刀具",
         }
         label_zh_value = label_zh.get(detection.label, detection.label)
+        message = f"检测到目标: {label_zh_value}"
+        if detection.label == "person":
+            reason = {
+                "unknown": "人脸未匹配",
+                "no_face": "无可用人脸",
+                "unavailable": "人脸识别服务不可用",
+                "pending": "身份尚未确认",
+            }.get(getattr(detection, "face_status", None), "无有效身份结果")
+            message = f"检测到未授权人员: {reason}"
 
         alert_service = get_alert_service()
 
@@ -390,8 +419,11 @@ class AIWorkerProcessingMixin:
             await alert_service.handle_ai_event(
                 event_type="AI_DETECTION",
                 event_code=f"E_AI_{detection.label.upper()}",
+                timing=observation_timing(
+                    self._weapon_first_seen.get(detection.label) if detection.label in self._weapon_hits
+                    else getattr(self, '_current_frame_received_at', None)),
                 severity="CRITICAL",
-                message=f"检测到目标: {label_zh_value}",
+                message=message,
                 confidence=detection.confidence,
                 file_path=str(image_path),
                 image_url=image_url,
@@ -410,10 +442,15 @@ class AIWorkerProcessingMixin:
             return
 
         event_meta = {
+            "POSE_DAMAGE_SUSPECTED": (
+                "E_POSE_DAMAGE_SUSPECTED",
+                "WARNING",
+                "检测到疑似破坏动作（双手胸前持续往复）",
+            ),
             "POSE_CLIMBING_SUSPECTED": (
                 "E_POSE_CLIMBING_SUSPECTED",
                 "CRITICAL",
-                "检测到人员疑似攀爬",
+                "检测到人员疑似攀爬或翻越",
             ),
             "POSE_LYING": (
                 "E_POSE_LYING",
@@ -453,6 +490,9 @@ class AIWorkerProcessingMixin:
             )
             async with self._session_factory() as session:
                 await alert_service.handle_ai_event(
+                    timing=observation_timing(
+                        event.observed_monotonic, duration=duration,
+                        threshold=event.threshold_seconds, source='pose_observation_window'),
                     event_type=event.event_type,
                     event_code=code,
                     severity=severity,
@@ -491,7 +531,7 @@ class AIWorkerProcessingMixin:
                 "FENCE_CLIMBING_SUSPECTED",
                 "E_FENCE_CLIMBING_SUSPECTED",
                 "CRITICAL",
-                "检测到人员疑似翻越围栏",
+                "检测到人员疑似攀爬围栏",
             ),
         }
         gps = self._get_latest_gps()
@@ -508,6 +548,10 @@ class AIWorkerProcessingMixin:
             )
             async with self._session_factory() as session:
                 await alert_service.handle_ai_event(
+                    timing=observation_timing(
+                        getattr(self, '_current_frame_received_at', None),
+                        duration=event.duration_seconds if event.behavior is FenceBehavior.DWELLING else 0.0,
+                        threshold=settings.FENCE_DWELL_SECONDS if event.behavior is FenceBehavior.DWELLING else 0.0),
                     event_type=event_type,
                     event_code=event_code,
                     severity=severity,

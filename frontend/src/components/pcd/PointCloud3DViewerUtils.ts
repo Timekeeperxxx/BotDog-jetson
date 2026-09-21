@@ -20,13 +20,12 @@ export const ROBOT_ARROW_LENGTH = 1.1
 export const ROBOT_ARROW_HEAD_LENGTH = 0.34
 export const ROBOT_ARROW_HEAD_WIDTH = 0.22
 // Keep these in sync with Navigation/src/nav_bringup/config/scan_planner.yaml.
-// Relative to the map -> base_footprint origin, the two circle centres are
-// 0.22 m and 0.63 m behind the robot along its local x axis; each has a
-// 0.27 m radius.
+// The two circle centres sit 0.205 m ahead of and behind base_footprint;
+// their midpoint is the robot pose, and each has a 0.27 m radius.
 export const SCAN_BODY_CYLINDER_RADIUS = 0.27
 export const SCAN_BODY_CYLINDER_HEIGHT = 0.43
 export const SCAN_BODY_CYLINDER_CENTER_Z_OFFSET = -0.115
-export const SCAN_BODY_CYLINDER_OFFSETS = [-0.22, -0.63] as const
+export const SCAN_BODY_CYLINDER_OFFSETS = [0.205, -0.205] as const
 export const GLOBAL_PATH_RADIUS = 0.06
 export const GLOBAL_PATH_NODE_RADIUS = 0.06
 export const WAYPOINT_SCREEN_DIAMETER_PX = 13

@@ -224,7 +224,8 @@ def test_nav_auto_track_mode_endpoint_enables_tracking_during_active_navigation(
     assert calls == ["enable", "audit", "disable", "audit"]
 
 
-def test_explicit_auto_track_workflow_starts_disabled_until_control_step(monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_explicit_auto_track_workflow_starts_disabled_until_control_step(monkeypatch) -> None:
     calls: list[str] = []
 
     class DummyAutoTrack:
@@ -243,7 +244,7 @@ def test_explicit_auto_track_workflow_starts_disabled_until_control_step(monkeyp
     dummy = DummyAutoTrack()
     monkeypatch.setattr("backend.auto_track_service.get_auto_track_service", lambda: dummy)
 
-    result = ensure_auto_track_enabled_for_navigation(
+    result = await ensure_auto_track_enabled_for_navigation(
         {
             "id": "task_001",
             "steps": [

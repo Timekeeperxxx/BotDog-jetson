@@ -1,4 +1,5 @@
 import { Battery, Crosshair, Loader2 } from 'lucide-react'
+import { useId, useState } from 'react'
 import { NavWaypointPanel } from '../../components/pcd/NavWaypointPanel'
 import { NavFencePanel } from '../../components/pcd/NavFencePanel'
 import { PointCloudTopDownCanvas } from '../../components/pcd/PointCloudTopDownCanvas'
@@ -135,6 +136,13 @@ export function NavRightRail({
   onToggleFenceEnabled,
   onDeleteFence,
 }: NavRightRailProps) {
+  const [activeTab, setActiveTab] = useState<'waypoints' | 'fences'>('waypoints')
+  const tabId = useId()
+  const tabs = [
+    { id: 'waypoints', label: '导航点', count: waypoints.length },
+    { id: 'fences', label: '围栏', count: fences.length },
+  ] as const
+
   return (
     <aside className="pcd-right-rail">
       <PointCloudTopDownCanvas
@@ -153,22 +161,62 @@ export function NavRightRail({
         onAddWaypoint={onAddWaypoint}
         onSetPose={onSetPose}
       />
-      <NavWaypointPanel
-        waypoints={waypoints}
-        goToSending={goToSending}
-        navigatingWaypointId={navigatingWaypointId}
-        sceneNavigable={sceneNavigable}
-        onGoTo={onGoToWaypoint}
-        onDelete={onDeleteWaypoint}
-      />
-      <NavFencePanel
-        fences={fences}
-        visible={fencesVisible}
-        canOperate={canOperate}
-        onToggleVisible={onToggleFencesVisible}
-        onToggleEnabled={onToggleFenceEnabled}
-        onDelete={onDeleteFence}
-      />
+      <section className="pcd-rail-lists">
+        <div className="pcd-rail-tabs" role="tablist" aria-label="场景标记">
+          {tabs.map((tab, index) => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              id={`${tabId}-${tab.id}`}
+              aria-selected={activeTab === tab.id}
+              aria-controls={`${tabId}-panel`}
+              tabIndex={activeTab === tab.id ? 0 : -1}
+              onClick={() => setActiveTab(tab.id)}
+              onKeyDown={(event) => {
+                let next: number
+                if (event.key === 'ArrowRight') next = (index + 1) % tabs.length
+                else if (event.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length
+                else if (event.key === 'Home') next = 0
+                else if (event.key === 'End') next = tabs.length - 1
+                else return
+                event.preventDefault()
+                setActiveTab(tabs[next].id)
+                event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
+              }}
+            >
+              {tab.label}<span>{tab.count}</span>
+            </button>
+          ))}
+        </div>
+        <div
+          className="pcd-rail-tab-content"
+          role="tabpanel"
+          id={`${tabId}-panel`}
+          aria-labelledby={`${tabId}-${activeTab}`}
+          tabIndex={0}
+        >
+          {activeTab === 'waypoints' ? (
+            <NavWaypointPanel
+              waypoints={waypoints}
+              goToSending={goToSending}
+              navigatingWaypointId={navigatingWaypointId}
+              sceneNavigable={sceneNavigable}
+              onGoTo={onGoToWaypoint}
+              onDelete={onDeleteWaypoint}
+            />
+          ) : (
+            <NavFencePanel
+              fences={fences}
+              visible={fencesVisible}
+              canOperate={canOperate}
+              onToggleVisible={onToggleFencesVisible}
+              onToggleEnabled={onToggleFenceEnabled}
+              onDelete={onDeleteFence}
+            />
+          )}
+        </div>
+      </section>
       <section className="pcd-rail-footer">
         <button
           className="pcd-estop-button"

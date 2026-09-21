@@ -127,12 +127,12 @@ export function AdminFaceIdentitiesPage() {
 
       <AdminCard
         title="人员库"
-        subtitle="每个人员最多 5 个模板；注册图片必须且只能有一张清晰正脸，原图不会保存。"
+        subtitle="每个人员最多 15 个模板；注册图片必须且只能有一张清晰正脸，原图不会保存。"
         actions={<ToolbarButton onClick={openCreate}><ScanFace size={14} className="inline-block" /> 新增人员</ToolbarButton>}
       >
         {error ? <div className="mb-4 rounded-md border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300">{error}</div> : null}
         {!loading && identities.length === 0 ? (
-          <EmptyState title="暂无人员" description="先新增人员，再上传一到五张清晰正脸照片。" />
+          <EmptyState title="暂无人员" description="先新增人员，再上传一到十五张清晰正脸照片。" />
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full">
@@ -151,7 +151,7 @@ export function AdminFaceIdentitiesPage() {
                         ))}
                         <label className="cursor-pointer rounded border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-xs text-sky-300 hover:bg-sky-500/20">
                           <Upload size={12} className="mr-1 inline-block" /> 上传正脸
-                          <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={saving || identity.templates.length >= 5} onChange={(event) => { void uploadTemplate(identity, event.target.files?.[0]); event.currentTarget.value = '' }} />
+                          <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={saving || identity.templates.length >= 15} onChange={(event) => { void uploadTemplate(identity, event.target.files?.[0]); event.currentTarget.value = '' }} />
                         </label>
                       </div>
                     </TableCell>

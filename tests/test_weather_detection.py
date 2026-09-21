@@ -73,6 +73,25 @@ def test_weather_service_rejects_low_confidence_adverse_label() -> None:
     assert status["raw_label"] == "sandstorm"
 
 
+def test_weather_service_maps_rime_to_snow_with_existing_threshold() -> None:
+    for confidence, expected in ((0.8, "snow"), (0.4, "normal")):
+        service = WeatherDetectionService(
+            enabled=True,
+            classifier=FakeClassifier([
+                {"rime": confidence, "snow": 0.1, "dew": 0.1}
+            ] * 3),
+            min_confidence=0.55,
+            stable_votes=3,
+        )
+        for _ in range(3):
+            status = service.process_frame(b"frame")
+        assert status["state"] == "ready"
+        assert status["label"] == expected
+        assert status["raw_label"] == "rime"
+        assert status["probabilities"]["snow"] == round(confidence + 0.1, 4)
+        assert status["probabilities"]["normal"] == round(0.9 - confidence, 4)
+
+
 def test_weather_service_reports_initialization_failure_without_raising() -> None:
     service = WeatherDetectionService(
         enabled=True,

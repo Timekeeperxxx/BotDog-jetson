@@ -23,6 +23,7 @@ LOG_CATEGORY_ORDER = {
 }
 
 BACKEND_LOG_NAMES = {
+    "alerts.log",
     "backend.log",
     "access.log",
     "debug.log",

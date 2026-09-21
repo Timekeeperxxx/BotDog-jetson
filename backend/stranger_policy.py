@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from .logging_config import logger
 
@@ -91,3 +91,11 @@ def get_stranger_policy() -> Optional[StrangerPolicy]:
 def set_stranger_policy(policy: StrangerPolicy) -> None:
     global _stranger_policy
     _stranger_policy = policy
+
+
+def is_authorized_person(detection: Any) -> bool:
+    """仅已确认匹配到启用身份库的人员免于未授权告警。"""
+    return (
+        getattr(detection, "face_status", None) == "recognized"
+        and getattr(detection, "identity_id", None) is not None
+    )

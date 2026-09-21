@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import json
 import time
 from types import SimpleNamespace
@@ -278,20 +280,21 @@ def test_nav_status_invalid_json_is_ignored(monkeypatch):
     assert broadcast_calls == []
 
 
-def test_nav_auto_track_workflow_message_applies_control_on_backend_loop(monkeypatch):
+@pytest.mark.asyncio
+async def test_nav_auto_track_workflow_message_applies_control_on_backend_loop(monkeypatch):
     broadcast_calls: list[tuple[str, dict[str, object]]] = []
     bridge = _make_bridge(monkeypatch, broadcast_calls)
     control_calls: list[bool] = []
 
-    class ImmediateLoop:
-        @staticmethod
-        def call_soon_threadsafe(callback, *args):
-            callback(*args)
-
-    bridge._loop = ImmediateLoop()
+    scheduled = []
+    bridge._loop = object()
+    monkeypatch.setattr(
+        "backend.services_ros_nav.asyncio.run_coroutine_threadsafe",
+        lambda coroutine, loop: scheduled.append(coroutine),
+    )
     monkeypatch.setattr(
         "backend.api.routes.nav_auto_track_helpers.apply_auto_track_workflow_control",
-        lambda enabled: (
+        AsyncMock(side_effect=lambda enabled: (
             control_calls.append(enabled)
             or {
                 "requested": True,
@@ -299,7 +302,7 @@ def test_nav_auto_track_workflow_message_applies_control_on_backend_loop(monkeyp
                 "state": "IDLE" if enabled else "DISABLED",
                 "message": "ok",
             }
-        ),
+        )),
     )
 
     bridge._handle_auto_track_control_message(
@@ -315,6 +318,7 @@ def test_nav_auto_track_workflow_message_applies_control_on_backend_loop(monkeyp
         )
     )
 
+    await scheduled[0]
     assert control_calls == [True]
     assert broadcast_calls == [
         (

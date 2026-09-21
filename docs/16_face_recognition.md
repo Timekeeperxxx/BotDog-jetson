@@ -25,11 +25,11 @@
 - [YuNet `face_detection_yunet_2023mar.onnx`](https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx)
 - [SFace `face_recognition_sface_2021dec.onnx`](https://github.com/opencv/opencv_zoo/blob/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx)
 
-默认检测阈值为 0.80，余弦身份匹配阈值为 0.45，连续三次命中后显示确认姓名。每个人员最多五个模板；图片最大 8MB/1200 万像素，格式限 JPEG、PNG、WebP，且必须恰好包含一张最小边长 64px 的人脸。
+默认检测阈值为 0.80，余弦身份匹配阈值为 0.45，连续三次命中后显示确认姓名。每个人员最多十五个模板；图片最大 8MB/1200 万像素，格式限 JPEG、PNG、WebP，且必须恰好包含一张最小边长 64px 的人脸。
 
 后台注册会先应用手机照片的 EXIF 方向，将超大图片等比例缩放到最长边 1920px，并在没有检测结果时尝试四个方向及注册专用阈值 `FACE_ENROLL_DETECT_THRESHOLD`。该宽松阈值不会影响实时视频检测。
 
-为保证没有巡检任务时也能在操作台持续看到识别结果，需要配置 `AI_ENABLED=true`、`AI_CONTINUOUS_DETECTION_ENABLED=true` 和 `FACE_RECOGNITION_ENABLED=true`。视觉页面首次打开时默认显示 AI 叠层；用户仍可通过画面底部的眼睛按钮关闭，选择会保存在浏览器本地。
+默认关闭 `AI_CONTINUOUS_DETECTION_ENABLED`，等待巡检或显式开启的检测任务后再识别。若明确需要无任务时持续识别，可配置 `AI_ENABLED=true`、`AI_CONTINUOUS_DETECTION_ENABLED=true` 和 `FACE_RECOGNITION_ENABLED=true`；这也会持续产生检测告警，并非仅显示人脸姓名。视觉页面首次打开时默认显示 AI 叠层；用户仍可通过画面底部的眼睛按钮关闭，选择会保存在浏览器本地。
 
 可在项目根目录运行 `.venv/bin/python scripts/validate-face-recognition.py`，使用仓库内的两张合成人脸和真实 ONNX 模型验证已知人员命中、未知人员拒绝及模板删除后立即失效。
 

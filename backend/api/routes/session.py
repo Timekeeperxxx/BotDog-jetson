@@ -1,8 +1,10 @@
 """巡检任务会话路由。"""
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 
 from ...database import get_db
+from ...models import InspectionTask
 from ...logging_config import logger
 from ...schemas import (
     SessionStartRequest,
@@ -17,17 +19,24 @@ from ...state_machine_state import get_state_machine
 router = APIRouter(prefix="/api/v1/session", tags=["session"])
 
 
+@router.get("/current", response_model=SessionStartResponse | None)
+async def session_current(db=Depends(get_db)):
+    result = await db.execute(
+        select(InspectionTask)
+        .where(InspectionTask.status == "running")
+        .order_by(InspectionTask.started_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 @router.post("/start", response_model=SessionStartResponse)
 async def session_start(
     body: SessionStartRequest,
     db=Depends(get_db),
 ) -> SessionStartResponse:
     """
-    启动新巡检任务（Session）。
-
-    当前阶段：
-    - 不做用户鉴权与并发 Session 限制；
-    - 每次调用都会新建一条任务记录。
+    启动巡检；已有运行中的会话时返回该会话，避免重复启动。
     """
 
     task = await create_task(db, task_name=body.task_name)
@@ -86,7 +95,8 @@ async def session_stop(
 
     state_machine = get_state_machine()
     if state_machine is not None:
-        state_machine.update_mission_status(False)
+        current = await session_current(db)
+        state_machine.update_mission_status(current is not None)
     else:
         logger.warning("Session stop succeeded but StateMachine is not initialized")
 

@@ -240,14 +240,27 @@ def test_ai_frame_skip_uses_patrol_skip_without_tracking(
     assert worker._get_frame_skip() == 2
 
 
+@pytest.mark.parametrize("continuous", [False, True])
 def test_ai_continuous_detection_runs_without_task_or_tracking(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    continuous: bool,
 ) -> None:
     worker = _worker(tmp_path, monkeypatch)
-    monkeypatch.setattr(workers_ai.settings, "AI_CONTINUOUS_DETECTION_ENABLED", True)
+    monkeypatch.setattr(workers_ai.settings, "AI_CONTINUOUS_DETECTION_ENABLED", continuous)
+
+    import backend.auto_track_service as auto_track_service
+    import backend.fence_detection_service as fence_detection_service
+    import backend.guard_mission_service as guard_mission_service
+
+    monkeypatch.setattr(auto_track_service, "get_auto_track_service", lambda: None)
+    monkeypatch.setattr(fence_detection_service, "get_fence_detection_service", lambda: None)
+    monkeypatch.setattr(guard_mission_service, "get_guard_mission_service", lambda: None)
 
     assert worker._current_task_id is None
+    assert worker._is_mission_active() is continuous
+    worker._current_task_id = 1
+    monkeypatch.setattr(workers_ai.settings, "AI_PASSIVE_SESSION_DETECTION_ENABLED", True)
     assert worker._is_mission_active() is True
 
 
@@ -488,7 +501,7 @@ def test_weapon_filter_can_be_disabled(
     assert worker._filter_weapon_detections([candidate], []) == [candidate]
 
 
-def test_pose_person_fallback_is_marked_as_non_alert_evidence() -> None:
+def test_pose_person_fallback_keeps_source_marker() -> None:
     observation = PoseObservation(
         track_id=9,
         bbox=(100, 40, 220, 340),
@@ -508,11 +521,12 @@ def test_pose_person_fallback_is_marked_as_non_alert_evidence() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pose_person_fallback_does_not_raise_legacy_stranger_alert(
+async def test_pose_person_fallback_requires_stability_and_deduplicates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "POSE_STABLE_HITS", 3)
 
     import backend.auto_track_service as auto_track_service
     import backend.guard_mission_service as guard_mission_service
@@ -531,6 +545,8 @@ async def test_pose_person_fallback_does_not_raise_legacy_stranger_alert(
         confidence=0.36,
         bbox=(100, 40, 220, 340),
         is_pose_fallback=True,
+        track_id=9,
+        face_status="unknown",
     )
 
     for _ in range(worker._stable_hits + 2):
@@ -539,15 +555,32 @@ async def test_pose_person_fallback_does_not_raise_legacy_stranger_alert(
     assert alerts == []
     assert worker._hits == 0
 
+    for hits in (1, 2):
+        worker._person_pose_hits[9] = hits
+        await worker._process_detection([fallback], b"unconfirmed")
+    assert alerts == []
+    worker._person_pose_hits[9] = 3
+    fallback.face_status, fallback.identity_id = "recognized", 1
+    await worker._process_detection([fallback], b"known-person")
+    assert alerts == []
+    fallback.face_status, fallback.identity_id = "unknown", None
+    await worker._process_detection([fallback], b"confirmed-person")
+    await worker._process_detection([fallback], b"same-person")
+    assert alerts == [fallback]
+
     primary = DetectionResult(
         label="person",
         confidence=0.91,
         bbox=(100, 40, 220, 340),
+        track_id=10,
     )
     for _ in range(worker._stable_hits):
         await worker._process_detection([primary], b"real-person")
 
-    assert alerts == [primary]
+    assert alerts == [fallback, primary]
+    worker._reset_detection_state()
+    assert worker._person_pose_hits == {}
+    assert worker._person_alert_last_seen == {}
 
 
 @pytest.mark.asyncio
@@ -778,3 +811,70 @@ async def test_ai_ffmpeg_output_backlog_forces_stream_restart(
     assert process.terminated is True
     assert worker._ffmpeg_last_exit_reason == "output_buffer_backlog"
     assert worker._ffmpeg_stream_unavailable is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tracking_override", [False, True])
+async def test_fence_worker_only_passes_frames_to_tracking_when_linked(tmp_path, monkeypatch, tracking_override):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    worker = _worker(tmp_path, monkeypatch)
+    worker._detector = _FastDetector()
+    auto_track = _FakeAutoTrack(enabled=True)
+    auto_track.process_frame = AsyncMock()
+    guard = SimpleNamespace(enabled=True, process_frame=AsyncMock(), update_effective_fps=Mock())
+    fence = SimpleNamespace(enabled=True, tracking_override=tracking_override, process_frame=Mock(return_value=[]))
+    monkeypatch.setattr("backend.auto_track_service.get_auto_track_service", lambda: auto_track)
+    monkeypatch.setattr("backend.guard_mission_service.get_guard_mission_service", lambda: guard)
+    monkeypatch.setattr("backend.fence_detection_service.get_fence_detection_service", lambda: fence)
+
+    await worker._detect_and_process_frame(b"\0", frame_index=1)
+    assert auto_track.process_frame.await_count == int(tracking_override)
+    guard.process_frame.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chest_damage_event_creates_formal_alert_with_snapshot(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    from backend import workers_ai_processing
+    from backend.pose_detection import PoseEvent, Posture
+    worker = _worker(tmp_path, monkeypatch)
+    snapshot = tmp_path / "damage.jpg"
+    monkeypatch.setattr(worker, "_save_snapshot", AsyncMock(return_value=(snapshot, "/damage.jpg")))
+    alert = AsyncMock()
+    monkeypatch.setattr(workers_ai_processing, "get_alert_service", lambda: alert)
+    event = PoseEvent("POSE_DAMAGE_SUSPECTED", 3, .7, (0, 0, 100, 200), Posture.STANDING, .8)
+    await worker._process_pose_events([event], b"frame")
+    worker._save_snapshot.assert_awaited_once_with(b"frame")
+    kwargs = alert.handle_ai_event.call_args.kwargs
+    assert kwargs["event_code"] == "E_POSE_DAMAGE_SUSPECTED"
+    assert kwargs["event_type"] == "POSE_DAMAGE_SUSPECTED"
+    assert "疑似破坏动作" in kwargs["message"]
+    assert kwargs["file_path"] == str(snapshot)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('enabled', [False, True])
+async def test_patrol_gates_behavior_and_weapon_detection(tmp_path, monkeypatch, enabled):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+    worker = _worker(tmp_path, monkeypatch)
+    worker._detector = _FastDetector()
+    worker._pose_detector = object()
+    worker._pose_event_engine = Mock()
+    worker._pose_event_engine.update.return_value = ([], [])
+    monkeypatch.setattr(workers_ai.settings, 'POSE_FRAME_SKIP', 1)
+    monkeypatch.setattr(worker, '_infer_pose', AsyncMock(return_value=([], 1.0, 0.1)))
+    monkeypatch.setattr(worker, '_is_weapon_due', lambda _: True)
+    monkeypatch.setattr(worker, '_infer_weapon', AsyncMock(return_value=([], 0.1)))
+    monkeypatch.setattr(worker, '_process_weapon_detections', AsyncMock())
+    monkeypatch.setattr(worker, '_process_detection', AsyncMock())
+    monkeypatch.setattr(worker, '_broadcast_pose_overlay', AsyncMock())
+    monkeypatch.setattr(worker, '_report_face_service_fault', AsyncMock())
+    fence = SimpleNamespace(enabled=enabled, tracking_override=False, process_frame=Mock(return_value=[]))
+    monkeypatch.setattr('backend.fence_detection_service.get_fence_detection_service', lambda: fence)
+    await worker._detect_and_process_frame(b'frame', frame_index=1)
+    assert worker._pose_event_engine.update.call_args.kwargs['events_enabled'] is enabled
+    assert worker._process_weapon_detections.await_count == int(enabled)
+    worker._process_detection.assert_awaited_once()

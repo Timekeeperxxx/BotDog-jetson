@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import inspect, text
 
 from .config import settings
 
@@ -76,6 +77,9 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         from . import models, models_config  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
+        columns = await conn.run_sync(lambda c: {col['name'] for col in inspect(c).get_columns('anomaly_evidence')})
+        if 'timing' not in columns:
+            await conn.execute(text('ALTER TABLE anomaly_evidence ADD COLUMN timing JSON'))
 
 
 __all__ = ["Base", "get_db", "get_engine", "get_session_factory", "init_db"]

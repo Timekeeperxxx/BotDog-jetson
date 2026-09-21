@@ -36,7 +36,7 @@ export function VideoHud({
 }: VideoHudProps) {
   return (
     <>
-      <div className="absolute top-4 left-4 z-10">
+      <div data-overlay-obstacle className="absolute top-4 left-4 z-10">
         <div className="bg-black/25 border-l-2 border-blue-500 px-3 py-2.5 font-mono text-[10px] flex flex-col gap-1.5">
           <div className="flex items-center gap-1.5">
             <span className="text-white/40 uppercase">清晰度:</span>
@@ -61,7 +61,7 @@ export function VideoHud({
         )}
       </div>
 
-      <div className="absolute bottom-20 left-4 z-10 font-mono text-[10px]">
+      <div data-overlay-obstacle className="absolute bottom-20 left-4 z-10 font-mono text-[10px]">
         <div className="bg-black/50 border-l-2 border-emerald-500/60 px-2.5 py-1.5 flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <span className="text-white/40 uppercase">AI帧</span>
@@ -93,7 +93,7 @@ export function VideoHud({
         </div>
       </div>
 
-      <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
+      <div data-overlay-obstacle className="absolute top-4 right-4 z-10 flex flex-col gap-2">
         <div className="bg-black/40 border border-white/10 px-3 py-2 text-[10px] font-mono text-white/80">
           <div className="uppercase tracking-widest text-white/40 mb-1">WHEP</div>
           <div className="flex items-center gap-2">

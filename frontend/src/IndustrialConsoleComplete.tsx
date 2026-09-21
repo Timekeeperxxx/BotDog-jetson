@@ -82,7 +82,6 @@ export default function IndustrialConsoleComplete() {
   const [isAiStatsExpanded, setIsAiStatsExpanded] = useState(false);
 
   const evidence = useEvidence();
-  const { fetchEvidence } = evidence;
   const { missionTaskId, isMissionRunning, toggleMission } = useMissionControl(addLog);
   const { isAudioPlaying, toggleAudio } = useAudioControl();
   const { guardStatus, toggleGuardMission, abortGuardMission } = useGuardMissionControl();
@@ -169,10 +168,7 @@ export default function IndustrialConsoleComplete() {
       <AuthStatusBar variant="overlay" />
       <Sidebar
         activeTab={activeTab}
-        onTabChange={(tab) => {
-          setActiveTab(tab);
-          if (tab === 'history') void fetchEvidence();
-        }}
+        onTabChange={setActiveTab}
         onOpenNavPatrolPage={openNavPatrolPage}
         onOpenAdminPage={openAdminPage}
         onOpenConfig={() => setShowConfigPanel(true)}
@@ -262,7 +258,7 @@ export default function IndustrialConsoleComplete() {
             onAudioToggle={toggleAudio}
           />
         ) : (
-          <EvidencePanel evidence={evidence} />
+          <EvidencePanel evidence={evidence} latestEvidenceId={alerts[0]?.evidence_id} />
         )}
       </main>
 

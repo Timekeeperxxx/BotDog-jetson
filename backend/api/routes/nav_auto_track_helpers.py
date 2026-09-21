@@ -64,7 +64,7 @@ def task_has_auto_track_control(task: dict[str, Any]) -> bool:
     )
 
 
-def apply_auto_track_workflow_control(enabled: bool) -> dict[str, Any]:
+async def apply_auto_track_workflow_control(enabled: bool) -> dict[str, Any]:
     from ...auto_track_service import get_auto_track_service
     from ...control_arbiter import get_control_arbiter
     from ...guard_mission_service import get_guard_mission_service
@@ -89,14 +89,13 @@ def apply_auto_track_workflow_control(enabled: bool) -> dict[str, Any]:
         if guard_mission is not None and guard_mission.enabled:
             guard_mission.enabled = False
 
-        if hasattr(auto_track, "enable_for_navigation"):
-            auto_track.enable_for_navigation()
-        else:
-            auto_track.enable()
-        if hasattr(auto_track, "resume"):
-            auto_track.resume()
+        from ...fence_detection_service import enable_auto_tracking
+
+        await enable_auto_tracking(for_navigation=True)
     elif bool(current_status.get("enabled")):
-        auto_track.disable()
+        from ...fence_detection_service import disable_auto_tracking
+
+        await disable_auto_tracking()
 
     status = auto_track.get_status()
     return {
@@ -108,9 +107,9 @@ def apply_auto_track_workflow_control(enabled: bool) -> dict[str, Any]:
     }
 
 
-def ensure_auto_track_enabled_for_navigation(task: dict[str, Any]) -> dict[str, Any]:
+async def ensure_auto_track_enabled_for_navigation(task: dict[str, Any]) -> dict[str, Any]:
     if task_has_auto_track_control(task):
-        result = apply_auto_track_workflow_control(False)
+        result = await apply_auto_track_workflow_control(False)
         return {
             **result,
             "requested": False,
@@ -118,7 +117,7 @@ def ensure_auto_track_enabled_for_navigation(task: dict[str, Any]) -> dict[str, 
         }
 
     if not task_auto_track_requested(task):
-        result = apply_auto_track_workflow_control(False)
+        result = await apply_auto_track_workflow_control(False)
         return {
             **result,
             "requested": False,
@@ -146,12 +145,9 @@ def ensure_auto_track_enabled_for_navigation(task: dict[str, Any]) -> dict[str, 
             "message": "自动跟踪服务未初始化",
         }
 
-    if hasattr(auto_track, "enable_for_navigation"):
-        auto_track.enable_for_navigation()
-    else:
-        auto_track.enable()
-    if hasattr(auto_track, "resume"):
-        auto_track.resume()
+    from ...fence_detection_service import enable_auto_tracking
+
+    await enable_auto_tracking(for_navigation=True)
 
     status = auto_track.get_status()
     return {

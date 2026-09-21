@@ -1,0 +1,31 @@
+import { act, cleanup, render } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
+import { DetectionAlert } from '../components/alerts/DetectionAlert';
+import { apiFetch } from '../api/apiFetch';
+vi.mock('../api/apiFetch', () => ({ apiFetch: vi.fn() }));
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+it('仅在可见卡片呈现后回传校时后的时间，不增加卡片文案', async () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => frames.push(cb));
+  vi.stubGlobal('cancelAnimationFrame', vi.fn());
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 100, height: 100, top: 0, left: 0, right: 100, bottom: 100 } as DOMRect);
+  vi.mocked(apiFetch).mockResolvedValueOnce({ server_time: '2026-09-17T08:00:00.000Z' }).mockResolvedValueOnce({});
+  const { container } = render(<DetectionAlert data={{ event_type:'AI_DETECTION', event_code:'E_AI_PERSON', severity:'WARNING', message:'人员', timestamp:'2026-09-17T08:00:00Z', evidence_id:123, timing:{} }} onOpenEvidence={vi.fn()} />);
+  expect(apiFetch).not.toHaveBeenCalled();
+  await act(async () => { frames.shift()!(0); frames.shift()!(0); });
+  expect(apiFetch).toHaveBeenCalledTimes(2);
+  const [path, init] = vi.mocked(apiFetch).mock.calls[1];
+  expect(path).toBe('/api/v1/evidence/123/displayed');
+  const body = JSON.parse(init!.body as string);
+  expect(Date.parse(body.displayed_at)).toBeGreaterThan(Date.parse('2026-09-17T07:59:59Z'));
+  expect(body.clock_uncertainty_ms).toBeGreaterThanOrEqual(1);
+  expect(container.textContent).not.toContain('延迟');
+});
+it('后台页面不记为已经显示', () => {
+  vi.mocked(apiFetch).mockClear();
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+  const raf = vi.fn(); vi.stubGlobal('requestAnimationFrame', raf); vi.stubGlobal('cancelAnimationFrame', vi.fn());
+  render(<DetectionAlert data={{ event_type:'AI_DETECTION', event_code:'E_AI_PERSON', severity:'WARNING', message:'人员', timestamp:'2026-09-17T08:00:00Z', evidence_id:124, timing:{} }} onOpenEvidence={vi.fn()} />);
+  expect(raf).not.toHaveBeenCalled(); expect(apiFetch).not.toHaveBeenCalled();
+});

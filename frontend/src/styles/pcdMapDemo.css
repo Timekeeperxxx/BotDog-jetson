@@ -1354,9 +1354,9 @@
 }
 
 .pcd-right-rail {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: grid;
+  grid-template-rows: minmax(0, min(36%, 260px)) minmax(0, 1fr) auto;
+  gap: 10px;
   overflow: hidden;
 }
 
@@ -1368,8 +1368,91 @@
 }
 
 .pcd-topdown-shell {
-  flex: 0 0 340px;
-  min-height: 340px;
+  min-height: 0;
+}
+
+.pcd-rail-lists {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(8, 15, 19, 0.9);
+}
+
+.pcd-rail-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 6px 48px 6px 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.pcd-rail-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #8ea3ad;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pcd-rail-tabs button[aria-selected="true"] {
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.1);
+  color: #e0f2fe;
+}
+
+.pcd-rail-tabs button:hover {
+  color: #e0f2fe;
+}
+
+.pcd-rail-tabs button:focus-visible,
+.pcd-rail-tab-content:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: -2px;
+}
+
+.pcd-rail-tabs button span {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pcd-rail-tab-content {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pcd-rail-tab-content > .pcd-waypoint-panel {
+  padding: 10px;
+  border: 0;
+  background: transparent;
+}
+
+.pcd-rail-tab-content .pcd-panel-header,
+.pcd-rail-tab-content .pcd-panel-heading > div {
+  display: none;
+}
+
+.pcd-rail-tab-content .pcd-panel-heading {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.pcd-rail-tab-content .pcd-empty {
+  margin: 0;
+  padding: 8px 0;
+  background: transparent;
 }
 
 .pcd-topdown-toolbar {
@@ -1422,6 +1505,22 @@
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 7px;
   background: rgba(15, 23, 42, 0.5);
+  flex-shrink: 0;
+}
+
+.pcd-rail-tab-content .pcd-waypoint-item {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.pcd-rail-tab-content .pcd-waypoint-item > div:first-child {
+  min-width: 0;
+}
+
+.pcd-rail-tab-content .pcd-waypoint-item small {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #8ea3ad;
+  font-size: 11px;
 }
 
 .pcd-waypoint-actions {
@@ -2300,8 +2399,7 @@
   }
 
   .pcd-right-rail {
-    display: flex;
-    flex-direction: column;
+    height: 540px;
   }
 
   .pcd-main-stage {

@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     LargeBinary,
     Boolean,
     CheckConstraint,
@@ -207,6 +208,8 @@ class AnomalyEvidence(Base):
     event_code: Mapped[str | None] = mapped_column(String)
     severity: Mapped[str] = mapped_column(String, nullable=False, default="CRITICAL")
     message: Mapped[str | None] = mapped_column(Text)
+
+    timing: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     confidence: Mapped[float | None] = mapped_column(Float)
 

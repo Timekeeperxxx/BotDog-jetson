@@ -1155,16 +1155,14 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         task_id = str(payload.get("task_id") or "").strip() or None
         step_index = payload.get("step_index")
         try:
-            self._loop.call_soon_threadsafe(
-                self._apply_auto_track_workflow_control,
-                enabled,
-                task_id,
-                step_index,
+            asyncio.run_coroutine_threadsafe(
+                self._apply_auto_track_workflow_control(enabled, task_id, step_index),
+                self._loop,
             )
         except RuntimeError as exc:
             nav_logger.warning("导航自动跟踪联动调度失败：{}", exc)
 
-    def _apply_auto_track_workflow_control(
+    async def _apply_auto_track_workflow_control(
         self,
         enabled: bool,
         task_id: str | None,
@@ -1173,7 +1171,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         try:
             from .api.routes.nav_auto_track_helpers import apply_auto_track_workflow_control
 
-            result = apply_auto_track_workflow_control(enabled)
+            result = await apply_auto_track_workflow_control(enabled)
         except Exception as exc:
             nav_logger.exception(
                 "任务流程自动跟踪联动执行失败：task_id={} step_index={} enabled={} error={}",

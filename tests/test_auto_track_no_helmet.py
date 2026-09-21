@@ -22,6 +22,7 @@ class _ControlService:
 
     async def handle_command(self, cmd: str, **kwargs: Any) -> None:
         self.commands.append((cmd, kwargs))
+        return SimpleNamespace(result="ACCEPTED")
 
 
 class _Broadcaster:
@@ -193,21 +194,19 @@ async def test_auto_track_locks_only_person_with_head_without_helmet(
 
 
 @pytest.mark.asyncio
-async def test_auto_track_ignores_person_without_head_or_with_helmet(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_auto_track_uses_identity_instead_of_head_or_helmet(tmp_path, monkeypatch):
     service = _service(tmp_path, monkeypatch)
+    for i in range(1, 6):
+        await service.process_frame([_person(), _helmet()], b"", frame_index=i, current_task_id="task")
+    assert service._state == AutoTrackState.FOLLOWING
 
-    await service.process_frame([_person()], b"", frame_index=1, current_task_id="task")
-    await service.process_frame([_person()], b"", frame_index=2, current_task_id="task")
-    assert service.get_status()["state"] == AutoTrackState.IDLE.value
-    assert service.get_status()["active_target"] is None
-
-    await service.process_frame([_person(), _head(), _helmet()], b"", frame_index=3, current_task_id="task")
-    await service.process_frame([_person(), _head(), _helmet()], b"", frame_index=4, current_task_id="task")
-    assert service.get_status()["state"] == AutoTrackState.IDLE.value
-    assert service.get_status()["active_target"] is None
+    service = _service(tmp_path, monkeypatch)
+    person = _person()
+    person.face_status = "recognized"
+    person.identity_id = 1
+    for i in range(1, 7):
+        await service.process_frame([person], b"", frame_index=i, current_task_id="task")
+    assert service._state == AutoTrackState.IDLE
 
 
 @pytest.mark.asyncio
@@ -313,27 +312,19 @@ async def test_navigation_auto_track_enable_still_requires_task_context(
 
 
 @pytest.mark.asyncio
-async def test_tracking_stops_when_target_has_helmet_for_five_frames(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_tracking_ignores_helmet_and_stops_on_confirmed_identity(tmp_path, monkeypatch):
     service = _service(tmp_path, monkeypatch)
-
     await _feed_head_person_frames(service, start_frame=1, count=5)
-    assert service.get_status()["state"] == AutoTrackState.FOLLOWING.value
-
-    for frame_index in range(6, 10):
-        await service.process_frame([_person(), _head(), _helmet()], b"", frame_index=frame_index, current_task_id="task")
-        status = service.get_status()
-        assert status["state"] == AutoTrackState.FOLLOWING.value
-        assert status["active_target"]["helmet_hits"] == frame_index - 5
-
-    await service.process_frame([_person(), _head(), _helmet()], b"", frame_index=10, current_task_id="task")
+    for i in range(6, 11):
+        await service.process_frame([_person(), _head(), _helmet()], b"", frame_index=i, current_task_id="task")
+    assert service._state == AutoTrackState.FOLLOWING
+    person = _person()
+    person.face_status = "recognized"
+    person.identity_id = 1
+    await service.process_frame([person], b"", frame_index=11, current_task_id="task")
     await asyncio.sleep(0)
-
-    status = service.get_status()
-    assert status["state"] == AutoTrackState.STOPPED.value
-    assert status["stop_reason"] == TrackStopReason.HELMET_CONFIRMED.value
+    assert service._state == AutoTrackState.STOPPED
+    assert service._stop_reason == TrackStopReason.IDENTITY_CONFIRMED
     assert any(cmd == "stop" for cmd, _ in service._control_service.commands)
 
 
@@ -636,3 +627,120 @@ async def test_gimbal_failure_stops_instead_of_blind_forward(
     assert service._control_service.commands[-1][0] == "stop"
     assert not any(cmd == "forward" for cmd, _ in service._control_service.commands)
     assert service.get_status()["gimbal_connected"] is False
+
+
+@pytest.mark.asyncio
+async def test_tracking_toggle_preserves_fence_and_resumes_after_stop(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    from backend import auto_track_service, fence_detection_service
+
+    gimbal = _Gimbal()
+    auto_track = _service(tmp_path, monkeypatch, default_enabled=False,
+                          gimbal_enabled=True, gimbal_service=gimbal)
+    fence = fence_detection_service.FenceDetectionService(gimbal_service=gimbal)
+    monkeypatch.setattr(auto_track_service, "get_auto_track_service", lambda: auto_track)
+    monkeypatch.setattr(fence_detection_service, "get_fence_detection_service", lambda: fence)
+    fence._return_yaw_to_default = AsyncMock()
+    fence._control_step_locked = AsyncMock()
+    await fence.enable()
+    fence._target_fence = {"id": "fence-a"}
+    await fence_detection_service.enable_auto_tracking(for_navigation=True)
+    assert fence.enabled and auto_track.get_status()["enabled"]
+    assert fence.tracking_override and fence.get_status()["state"] == "tracking"
+    assert auto_track._is_mission_active(None)  # 围栏提供上下文，无导航任务也能跟踪。
+    assert not auto_track._standalone_enabled
+    assert gimbal.velocities == [(0.0, 0.0)]
+    await fence._control_step(100.0)
+    fence._control_step_locked.assert_not_awaited()
+    assert fence.process_frame(detections=[], poses=[], frame_monotonic=100.0) == []
+
+    # 必须等待旧跟踪帧退出并完成停车，才能恢复围栏控制。
+    async with auto_track._frame_lock:
+        switching = asyncio.create_task(fence_detection_service.disable_auto_tracking())
+        await asyncio.sleep(0)
+        assert not switching.done()
+        assert fence.tracking_override
+    await switching
+    assert fence.enabled and not auto_track.get_status()["enabled"]
+    assert not fence.tracking_override
+    assert fence.get_status()["state"] == "finding"
+    assert fence.get_status()["target_fence_id"] == "fence-a"
+    assert auto_track._control_service.commands[-1][0] == "stop"
+    await fence._control_step(101.0)
+    fence._control_step_locked.assert_awaited_once_with(101.0)
+    fence._return_yaw_to_default.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_disabling_fence_during_tracking_does_not_move_camera(tmp_path, monkeypatch):
+    from backend import auto_track_service, fence_detection_service
+
+    gimbal = _Gimbal()
+    auto_track = _service(tmp_path, monkeypatch)
+    fence = fence_detection_service.FenceDetectionService(gimbal_service=gimbal)
+    monkeypatch.setattr(auto_track_service, "get_auto_track_service", lambda: auto_track)
+    monkeypatch.setattr(fence_detection_service, "get_fence_detection_service", lambda: fence)
+    await fence.enable()  # 先开跟踪再开围栏，也保留跟踪。
+    assert auto_track.get_status()["enabled"] and fence.tracking_override
+    await fence.disable()
+    assert not fence.enabled and auto_track.get_status()["enabled"]
+    assert gimbal.velocities == []
+
+
+@pytest.mark.asyncio
+async def test_failed_fence_stop_does_not_enable_tracking(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    from backend import auto_track_service, fence_detection_service
+
+    auto_track = _service(tmp_path, monkeypatch, default_enabled=False)
+    gimbal = SimpleNamespace(jog=AsyncMock(side_effect=OSError("stop failed")))
+    fence = fence_detection_service.FenceDetectionService(gimbal_service=gimbal)
+    monkeypatch.setattr(auto_track_service, "get_auto_track_service", lambda: auto_track)
+    monkeypatch.setattr(fence_detection_service, "get_fence_detection_service", lambda: fence)
+    await fence.enable()
+    with pytest.raises(OSError, match="stop failed"):
+        await fence_detection_service.enable_auto_tracking()
+    assert fence.enabled and not fence.tracking_override
+    assert not auto_track.get_status()["enabled"]
+
+
+@pytest.mark.asyncio
+async def test_failed_tracking_stop_keeps_fence_suspended_until_retry(tmp_path, monkeypatch):
+    from unittest.mock import AsyncMock
+    from backend import auto_track_service, fence_detection_service
+
+    auto_track = _service(tmp_path, monkeypatch)
+    fence = fence_detection_service.FenceDetectionService(gimbal_service=_Gimbal())
+    monkeypatch.setattr(auto_track_service, "get_auto_track_service", lambda: auto_track)
+    monkeypatch.setattr(fence_detection_service, "get_fence_detection_service", lambda: fence)
+    await fence.enable()
+    auto_track._control_service.handle_command = AsyncMock(
+        return_value=SimpleNamespace(result="REJECTED_ADAPTER_ERROR"),
+    )
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="REJECTED_ADAPTER_ERROR"):
+            await fence_detection_service.disable_auto_tracking()
+        assert fence.enabled and fence.tracking_override
+    auto_track._control_service.handle_command.return_value = SimpleNamespace(result="ACCEPTED")
+    await fence_detection_service.disable_auto_tracking()
+    assert fence.enabled and not fence.tracking_override
+
+
+@pytest.mark.asyncio
+async def test_confirmed_identity_clears_candidate_and_stops_lost_target(tmp_path, monkeypatch):
+    service = _service(tmp_path, monkeypatch)
+    await _feed_head_person_frames(service, start_frame=1, count=3)
+    known = _person()
+    known.face_status = "recognized"
+    known.identity_id = 7
+    await service.process_frame([known], b"", frame_index=4, current_task_id="task")
+    assert not service._candidates
+    assert service._state == AutoTrackState.IDLE
+    await _feed_head_person_frames(service, start_frame=5, count=5)
+    assert service._state == AutoTrackState.FOLLOWING
+    await service.process_frame([], b"", frame_index=10, current_task_id="task")
+    assert service._state == AutoTrackState.LOST
+    await service.process_frame([known], b"", frame_index=11, current_task_id="task")
+    await asyncio.sleep(0)
+    assert service._state == AutoTrackState.STOPPED
+    assert service._stop_reason == TrackStopReason.IDENTITY_CONFIRMED

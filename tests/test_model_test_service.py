@@ -1,11 +1,11 @@
 import json
 import os
 import subprocess
-from collections import deque
 from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 from backend import model_test_service
 from backend.pose_detection import PoseKeypoint, RawPose
@@ -98,17 +98,12 @@ def test_pose_status_distinguishes_seated_leg_geometry() -> None:
     assert model_test_service._looks_seated(pose, 0.35)
 
 
-def test_repetitive_wrist_motion_requires_reversals_and_travel() -> None:
-    repetitive = deque(
-        [(0.0, 0.0, 0.0), (0.2, 0.2, 0.0), (0.4, 0.0, 0.0),
-         (0.6, 0.2, 0.0), (0.8, 0.0, 0.0)]
+def test_pose_preview_labels_shared_damage_event():
+    runner = model_test_service.PoseStatusTensorRTRunner.__new__(
+        model_test_service.PoseStatusTensorRTRunner
     )
-    smooth = deque(
-        [(0.0, 0.0, 0.0), (0.2, 0.05, 0.0), (0.4, 0.10, 0.0),
-         (0.6, 0.15, 0.0), (0.8, 0.20, 0.0)]
-    )
-    assert model_test_service._is_repetitive_motion(repetitive)
-    assert not model_test_service._is_repetitive_motion(smooth)
+    label, _ = runner._status_for_pose(None, None, "POSE_DAMAGE_SUSPECTED")
+    assert label == "疑似破坏动作"
 
 
 def test_resolve_result_file_rejects_traversal(tmp_path: Path) -> None:

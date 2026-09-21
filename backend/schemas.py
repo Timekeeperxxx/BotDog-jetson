@@ -132,6 +132,7 @@ class LogFileTailPage(BaseModel):
 
 
 class EvidenceItem(BaseModel):
+    timing: dict | None = None
     evidence_id: int
     task_id: Optional[int] = None    # 可为 NULL：AI/温度告警可在无巡检任务时触发
     event_type: str

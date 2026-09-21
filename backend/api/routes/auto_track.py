@@ -40,7 +40,9 @@ async def auto_track_enable(
     if gm is not None and gm.enabled:
         gm.enabled = False
         logger.info("[AutoTrack] 互斥切换：已自动关闭自动驱离")
-    svc.enable()
+    from ...fence_detection_service import enable_auto_tracking
+
+    await enable_auto_tracking()
     await safe_write_audit_log(
         db,
         level="INFO",
@@ -61,7 +63,9 @@ async def auto_track_disable(
     svc = get_auto_track_service()
     if svc is None:
         raise HTTPException(status_code=503, detail="自动跟踪服务未初始化")
-    svc.disable()
+    from ...fence_detection_service import disable_auto_tracking
+
+    await disable_auto_tracking()
     await safe_write_audit_log(
         db,
         level="WARN",

@@ -314,6 +314,16 @@ async def test_localization_timestamp_reset_releases_fence_lock(
     assert status["state"] == FenceDetectionState.FINDING.value
 
 
+def test_gimbal_mount_is_below_lidar_unless_explicitly_configured(monkeypatch):
+    for axis, value in (("X", 0.425), ("Y", 0.0), ("Z", 0.90)):
+        monkeypatch.setattr(fence_runtime.settings, f"FENCE_GIMBAL_MOUNT_{axis}_M", None)
+        monkeypatch.setattr(fence_runtime.settings, f"NAV_LIDAR_MOUNT_{axis}_M", value)
+    service = FenceDetectionService(gimbal_service=_FakeGimbal())
+    assert service._mount_xyz() == pytest.approx((0.425, 0.0, 0.70))
+    monkeypatch.setattr(fence_runtime.settings, "FENCE_GIMBAL_MOUNT_Z_M", 0.75)
+    assert service._mount_xyz() == pytest.approx((0.425, 0.0, 0.75))
+
+
 @pytest.mark.asyncio
 async def test_existing_radar_mount_and_camera_fov_are_used_without_extra_calibration(
     monkeypatch: pytest.MonkeyPatch,
@@ -424,8 +434,9 @@ def test_contact_requires_continuous_frames(
     assert events[0].track_id == 7
 
 
-def test_climbing_suspected_requires_continuous_crossing_motion(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("interruption", ["standing", "missing_pose", "far"])
+def test_climbing_requires_continuous_nearby_posture_without_crossing(
+    monkeypatch: pytest.MonkeyPatch, interruption: str,
 ) -> None:
     _calibration(monkeypatch)
     monkeypatch.setattr(fence_runtime.settings, "FENCE_NEAR_STABLE_FRAMES", 3)
@@ -445,11 +456,6 @@ def test_climbing_suspected_requires_continuous_crossing_motion(
         "Detection",
         (),
         {"label": "person", "track_id": 8, "bbox": (280, 80, 360, 280)},
-    )()
-    crossed_detection = type(
-        "Detection",
-        (),
-        {"label": "person", "track_id": 8, "bbox": (280, 80, 360, 247)},
     )()
     keypoints = [PoseKeypoint(0.0, 0.0, 0.0) for _ in range(17)]
     for index, x in (
@@ -471,29 +477,29 @@ def test_climbing_suspected_requires_continuous_crossing_motion(
         inside_zone=False,
         dwell_seconds=0.0,
     )
-    crossed_observation = PoseObservation(
-        track_id=100,
-        bbox=(280, 80, 360, 247),
-        confidence=0.9,
-        keypoints=tuple(keypoints),
-        posture=Posture.CLIMBING,
-        posture_confidence=0.9,
-        inside_zone=False,
-        dwell_seconds=0.0,
-    )
+    from dataclasses import replace
 
-    assert service.process_frame(
-        detections=[before_detection], poses=[before_observation], frame_monotonic=100.0
-    ) == []
-    assert service.process_frame(
-        detections=[crossed_detection], poses=[crossed_observation], frame_monotonic=100.1
-    ) == []
-    assert service.process_frame(
-        detections=[crossed_detection], poses=[crossed_observation], frame_monotonic=100.2
-    ) == []
-    events = service.process_frame(
-        detections=[crossed_detection], poses=[crossed_observation], frame_monotonic=100.3
-    )
+    def frame(at, observation=before_observation):
+        return service.process_frame(
+            detections=[before_detection],
+            poses=[] if observation is None else [observation],
+            frame_monotonic=at,
+        )
+
+    assert frame(100.0) == []
+    assert frame(100.1) == []
+    if interruption == "standing":
+        assert frame(100.2, replace(before_observation, posture=Posture.STANDING)) == []
+    elif interruption == "missing_pose":
+        assert frame(100.2, None) == []
+    else:
+        with monkeypatch.context() as patch:
+            patch.setattr(service, "_ground_point_from_pixel", lambda *args: (0.0, 0.0))
+            assert frame(100.2) == []
+    assert frame(100.3) == []
+    assert frame(100.4) == []
+    events = frame(100.5)
     assert len(events) == 1
     assert events[0].behavior is FenceBehavior.CLIMBING_SUSPECTED
     assert events[0].track_id == 8
+    assert frame(100.55) == []  # 持续同一行为不重复告警。

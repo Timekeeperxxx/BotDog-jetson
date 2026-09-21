@@ -187,11 +187,13 @@ class FaceIdentityService:
         frame_height: int,
     ) -> None:
         if not settings.FACE_RECOGNITION_ENABLED:
+            self.runtime.clear()
             for detection in detections:
                 if getattr(detection, "label", "") == "person":
                     detection.face_status = "unavailable"
             return
         if not self._available:
+            self.runtime.clear()
             for detection in detections:
                 if getattr(detection, "label", "") == "person":
                     detection.face_status = "unavailable"

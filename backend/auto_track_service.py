@@ -13,7 +13,7 @@
 - 通过 ControlService 下发跟踪控制命令
 - 广播跟踪状态事件
 - 触发抓拍（锁定时 + 可选终止时）
-- 接入 StrangerPolicy：已知人员不触发跟踪
+- 已确认的人脸身份不触发未授权跟踪
 
 设计原则：
 - 状态转换集中在 process_frame() 一处，避免散落
@@ -22,6 +22,8 @@
 """
 
 from __future__ import annotations
+
+from .stranger_policy import is_authorized_person
 
 import asyncio
 import time
@@ -122,6 +124,8 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         self._enabled: bool = default_enabled
         self._standalone_enabled: bool = default_enabled
         self._paused: bool = False
+        self._frame_lock = asyncio.Lock()
+        self._gimbal_stop_task: asyncio.Task | None = None
         self._state: AutoTrackState = (
             AutoTrackState.IDLE if default_enabled else AutoTrackState.DISABLED
         )
@@ -221,6 +225,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
 
     def enable(self) -> None:
         """手动启用自动跟踪：不依赖巡检/导航任务也可以独立跟踪。"""
+        self._check_fence_released()
         self._enabled = True
         self._standalone_enabled = True
         self._paused = False
@@ -230,24 +235,46 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
 
     def enable_for_navigation(self) -> None:
         """导航联动启用：只在存在导航/巡检任务上下文时处理跟踪帧。"""
+        self._check_fence_released()
         self._enabled = True
         self._paused = False
         if self._state == AutoTrackState.DISABLED:
             self._state = AutoTrackState.IDLE
         logger.info("[AutoTrackService] 自动跟踪已启用（导航联动）")
 
-    def disable(self) -> None:
+    @staticmethod
+    def _check_fence_released() -> None:
+        from .fence_detection_service import get_fence_detection_service
+
+        fence = get_fence_detection_service()
+        if fence is not None and fence.enabled and not fence.tracking_override:
+            raise ValueError("围栏检测正在运行，请通过模式开关切换到自动跟踪")
+
+    async def disable_for_fence(self) -> None:
+        """等待正在处理的帧退出，再完成停车和云台停止后交接。"""
+        async with self._frame_lock:
+            if self._gimbal_stop_task is not None:
+                await self._gimbal_stop_task
+                self._gimbal_stop_task = None
+            self.disable(stop_motion=False)
+            ack = await self._control_service.handle_command("stop")
+            if ack.result != "ACCEPTED":
+                raise RuntimeError(f"停止自动跟踪失败：{ack.result}")
+            if self._gimbal_enabled and self._gimbal_service is not None:
+                await self._gimbal_service.jog(pitch_velocity_dps=0.0, yaw_velocity_dps=0.0)
+
+    def disable(self, *, stop_motion: bool = True) -> None:
         if self._enabled:
             logger.info("[AutoTrackService] 自动跟踪已禁用")
         self._enabled = False
         self._standalone_enabled = False
         self._paused = False
-        self._do_stop(TrackStopReason.DISABLED, send_stop_command=True)
+        self._do_stop(TrackStopReason.DISABLED, send_stop_command=stop_motion)
         self._state = AutoTrackState.DISABLED
         if self._control_arbiter:
             self._control_arbiter.release_control(ControlOwner.AUTO_TRACK)
-        if self._gimbal_enabled and self._gimbal_service is not None:
-            asyncio.create_task(self._stop_gimbal_yaw())
+        if stop_motion and self._gimbal_enabled and self._gimbal_service is not None:
+            self._gimbal_stop_task = asyncio.create_task(self._stop_gimbal_yaw())
 
     def pause(self) -> None:
         if not self._enabled:
@@ -463,6 +490,20 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         t_start: float = 0.0,
         t_detect_end: float = 0.0,
     ) -> None:
+        async with self._frame_lock:
+            await self._process_frame(
+                detections, frame, frame_index, current_task_id, t_start, t_detect_end,
+            )
+
+    async def _process_frame(
+        self,
+        detections: list[DetectionResult],
+        frame: bytes,
+        frame_index: int,
+        current_task_id: Optional[int | str] = None,
+        t_start: float = 0.0,
+        t_detect_end: float = 0.0,
+    ) -> None:
         """
         处理单帧检测结果，驱动 7 态状态机。
         由 AIWorker 在每帧推理后调用。
@@ -484,17 +525,20 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                 self._state = AutoTrackState.IDLE
             logger.info("[AutoTrackService] 仲裁器已释放人工覆盖，自动恢复跟踪")
 
-        # 自动跟踪只选择“person + head 且没有 helmet”的 person 框。
-        # 一旦锁定，后续跟踪仍使用全部 person 框续跟，不再要求每帧都能看到 head。
+        # 身份授权独立于是否戴安全帽；已授权人员仍保留以解除当前跟踪。
         persons = [d for d in detections if d.class_name == "person"]
-        no_helmet_persons = self._filter_no_helmet_persons(detections)
+        unauthorized_persons = [d for d in persons if not is_authorized_person(d)]
 
         # 为无 track_id 的检测结果分配降级 IOU ID
         persons = self._assign_fallback_ids(persons, frame_index)
-        no_helmet_ids = {d.track_id for d in no_helmet_persons if d.track_id >= 0}
-        no_helmet_persons = [d for d in persons if d.track_id in no_helmet_ids]
+        unauthorized_ids = {d.track_id for d in unauthorized_persons if d.track_id >= 0}
+        unauthorized_persons = [d for d in persons if d.track_id in unauthorized_ids]
         helmets = [d for d in detections if d.class_name == "helmet"]
         helmet_person_ids = self._filter_helmet_person_ids(detections, persons)
+        no_helmet_ids = {d.track_id for d in self._filter_no_helmet_persons(detections)}
+        for person in persons:
+            if is_authorized_person(person):
+                self._candidates.pop(person.track_id, None)
 
         # 只有在启用且未暂停的情况下，才执行状态机和跟踪逻辑
         if self._enabled and not self._paused:
@@ -505,9 +549,9 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             else:
                 # ── 状态机分发 ────────────────────────────────────────────────────
                 if self._state == AutoTrackState.IDLE:
-                    await self._on_idle(no_helmet_persons, frame, current_task_id)
+                    await self._on_idle(unauthorized_persons, frame, current_task_id)
                 elif self._state == AutoTrackState.DETECTING:
-                    await self._on_detecting(no_helmet_persons, frame, current_task_id)
+                    await self._on_detecting(unauthorized_persons, frame, current_task_id)
                 elif self._state == AutoTrackState.FOLLOWING:
                     await self._on_following(persons, helmet_person_ids, helmets, frame, current_task_id)
                 elif self._state == AutoTrackState.LOST:
@@ -539,7 +583,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                         "display_name": d.display_name,
                         "face_status": d.face_status,
                         "face_score": round(d.face_score, 4) if d.face_score is not None else None,
-                        "is_stranger": self._is_stranger(d.track_id) if d.class_name == "person" else None,
+                        "is_stranger": not is_authorized_person(d) if d.class_name == "person" else None,
                         "safety_status": "no_helmet" if d.class_name == "person" and d.track_id in no_helmet_ids else None,
                     }
                     for d in detections
@@ -554,7 +598,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
                         "display_name": d.display_name,
                         "face_status": d.face_status,
                         "face_score": round(d.face_score, 4) if d.face_score is not None else None,
-                        "is_stranger": self._is_stranger(d.track_id),
+                        "is_stranger": not is_authorized_person(d),
                         "safety_status": "no_helmet" if d.track_id in no_helmet_ids else None,
                     }
                     for d in persons
@@ -599,10 +643,6 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             x1, y1, x2, y2 = det.bbox
             anchor = ((x1 + x2) // 2, y2)
             if not self._zone_service.is_inside_zone(anchor):
-                continue
-
-            # 检查 StrangerPolicy
-            if not self._is_stranger(det.track_id):
                 continue
 
             # 新候选
@@ -659,7 +699,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         for det in persons:
             if det.track_id not in self._candidates:
                 anchor = ((det.bbox[0] + det.bbox[2]) // 2, det.bbox[3])
-                if self._zone_service.is_inside_zone(anchor) and self._is_stranger(det.track_id):
+                if self._zone_service.is_inside_zone(anchor):
                     self._candidates[det.track_id] = TargetCandidate.from_detection(
                         track_id=det.track_id,
                         bbox=det.bbox,
@@ -727,7 +767,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
         target.anchor_point = anchor
         target.last_seen_ts = now
         target.lost_count = 0
-        if await self._stop_if_target_has_helmet(target, matched, helmet_person_ids, helmets, frame, task_id):
+        if await self._stop_if_target_authorized(matched, frame, task_id):
             return
 
         # 区域判断
@@ -1159,7 +1199,7 @@ class AutoTrackService(AutoTrackRuntimeMixin, AutoTrackDetectionMixin):
             x1, y1, x2, y2 = matched.bbox
             target.anchor_point = ((x1 + x2) // 2, y2)
             target.last_seen_ts = time.monotonic()
-            if await self._stop_if_target_has_helmet(target, matched, helmet_person_ids, helmets, frame, task_id):
+            if await self._stop_if_target_authorized(matched, frame, task_id):
                 return
             self._state = AutoTrackState.FOLLOWING
             self._tracking_phase = "AIMING"

@@ -265,7 +265,13 @@ class AIWorker(AIWorkerProcessingMixin):
         self._current_task_id: Optional[int | str] = None
         self._last_task_check_time: float = 0.0
 
-        # 兼容路径状态（仅当 auto_track_service 未启用时使用）
+        # 按轨迹去重；身份恢复不删除历史报警，避免同一人员反复告警。
+        self._person_alert_last_seen: dict[int, int] = {}
+        self._person_pose_hits: dict[int, int] = {}
+        self._person_alert_frame = 0
+        self._face_fault_reported = False
+
+        # 兼容状态（状态接口保留）
         self._hits = 0
         self._misses = 0
         self._in_alert = False
@@ -321,6 +327,7 @@ class AIWorker(AIWorkerProcessingMixin):
         self._weapon_hits = {
             class_name: 0 for class_name in settings.WEAPON_TARGET_CLASSES
         }
+        self._weapon_first_seen: dict[str, float | None] = {}
         self._weapon_last_bbox = {
             class_name: None for class_name in settings.WEAPON_TARGET_CLASSES
         }
@@ -430,6 +437,8 @@ class AIWorker(AIWorkerProcessingMixin):
                     keypoint_confidence=settings.POSE_KEYPOINT_CONFIDENCE,
                     min_visible_keypoints=settings.POSE_MIN_VISIBLE_KEYPOINTS,
                     stable_hits=settings.POSE_STABLE_HITS,
+                    chest_motion_seconds=settings.POSE_CHEST_MOTION_SECONDS,
+                    chest_motion_span=settings.POSE_CHEST_MOTION_SPAN,
                     crouch_seconds=settings.POSE_CROUCH_SECONDS,
                     loiter_seconds=settings.POSE_LOITER_SECONDS,
                     event_cooldown_seconds=settings.POSE_EVENT_COOLDOWN_SECONDS,
@@ -800,6 +809,17 @@ class AIWorker(AIWorkerProcessingMixin):
         frame_index: int,
         frame_read_at: float | None = None,
     ) -> None:
+        self._current_frame_received_at = frame_read_at
+        from .fence_detection_service import get_fence_detection_service
+
+        fence_detection = get_fence_detection_service()
+        fence_enabled = fence_detection is not None and fence_detection.enabled
+        if not fence_enabled:
+            self._weapon_active_until = 0.0
+            self._weapon_first_seen.clear()
+            for label in self._weapon_hits:
+                self._weapon_hits[label] = 0
+                self._weapon_last_bbox[label] = None
         pose_observations_for_overlay: list[PoseObservation] | None = None
         fresh_pose_observations: list[PoseObservation] = []
         pose_due = (
@@ -807,7 +827,7 @@ class AIWorker(AIWorkerProcessingMixin):
             and self._pose_event_engine is not None
             and frame_index % max(1, int(settings.POSE_FRAME_SKIP)) == 0
         )
-        weapon_due = self._is_weapon_due(frame_index)
+        weapon_due = fence_enabled and self._is_weapon_due(frame_index)
         # TensorRT engine 的第一次 predict() 会惰性创建执行上下文。每个支路先
         # 顺序预热，后续才允许独立 engine 并发，避免 CUDA 初始化竞争。
         run_pose_parallel = (
@@ -887,8 +907,14 @@ class AIWorker(AIWorkerProcessingMixin):
                 observations, pose_events = self._pose_event_engine.update(
                     raw_poses,
                     zone_gate=get_zone_service(),
-                    now=pose_started_at,
+                    events_enabled=fence_enabled,
+                    now=frame_read_at if frame_read_at is not None else pose_started_at,
                 )
+                # 仅统计新推理的连续命中；用于显示的缓存人体框不增加确认次数。
+                self._person_pose_hits = {
+                    observation.track_id: self._person_pose_hits.get(observation.track_id, 0) + 1
+                    for observation in observations
+                }
                 if observations:
                     self._latest_pose_observations = observations
                     self._latest_pose_observations_at = time.monotonic()
@@ -964,10 +990,6 @@ class AIWorker(AIWorkerProcessingMixin):
             except Exception as exc:  # noqa: BLE001
                 ai_logger.warning("多源融合采样失败，本帧已跳过：{}", exc)
 
-            from .fence_detection_service import get_fence_detection_service
-
-            fence_detection = get_fence_detection_service()
-            fence_enabled = fence_detection is not None and fence_detection.enabled
             if fence_detection is not None and fence_enabled:
                 fence_events = fence_detection.process_frame(
                     detections=detections,
@@ -980,15 +1002,28 @@ class AIWorker(AIWorkerProcessingMixin):
 
             from .services_face_identities import get_face_identity_service
 
-            face_service = get_face_identity_service()
-            await face_service.ensure_initialized(self._session_factory)
-            await face_service.annotate_frame(
-                frame,
-                detections,
-                frame_index,
-                self._frame_width,
-                self._frame_height,
-            )
+            face_error = None
+            try:
+                face_service = get_face_identity_service()
+                await face_service.ensure_initialized(self._session_factory)
+                await face_service.annotate_frame(
+                    frame, detections, frame_index,
+                    self._frame_width, self._frame_height,
+                )
+                health = face_service.status()
+                if not health["available"] or not health["enabled"]:
+                    face_error = health.get("error") or "人脸识别服务不可用或已禁用"
+                elif any(d.face_status == "unavailable" for d in persons):
+                    face_error = "人脸推理失败"
+            except Exception as exc:
+                face_error = str(exc)
+                # 识别故障不能中断人员告警链。
+                ai_logger.error("人脸识别服务故障：{}", exc)
+                for detection in persons:
+                    detection.face_status = "unavailable"
+                    detection.identity_id = None
+                    detection.display_name = None
+            await self._report_face_service_fault(face_error)
             if pose_observations_for_overlay is not None or weapon_due:
                 await self._broadcast_pose_overlay(
                     pose_observations_for_overlay
@@ -996,14 +1031,15 @@ class AIWorker(AIWorkerProcessingMixin):
                     else self._latest_pose_observations,
                     detections,
                 )
-            # 围栏模式只拥有云台，不允许原有 AutoTrack/Guard 分支同时下发机体
-            # 运动或争抢云台；原有非运动检测告警仍照常工作。
+            # 围栏保留开启状态；显式跟踪联动接管时只放行 AutoTrack，
+            # Guard 仍不可争抢控制，围栏几何判定等待恢复观察后继续。
             await self._process_detection(
                 detections,
                 frame,
                 t_start,
                 t_detect_end,
                 allow_motion_services=not fence_enabled,
+                allow_auto_track=not fence_enabled or fence_detection.tracking_override,
             )
 
             t_done = time.monotonic()

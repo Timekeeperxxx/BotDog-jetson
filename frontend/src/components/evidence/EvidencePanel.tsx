@@ -69,14 +69,18 @@ function RecordingVideoModal({ item, onClose }: { item: RecordingItem; onClose: 
 
 export interface EvidencePanelProps {
   evidence: UseEvidenceState;
+  latestEvidenceId?: number;
 }
 
-export function EvidencePanel({ evidence }: EvidencePanelProps) {
+export function EvidencePanel({ evidence, latestEvidenceId }: EvidencePanelProps) {
   const {
     searchQuery,
     setSearchQuery,
     evidenceLoading,
     evidenceError,
+    detailLoading,
+    detailError,
+    fetchEvidence,
     selectedEvidence,
     evidenceDeleting,
     filteredEvidence,
@@ -87,6 +91,10 @@ export function EvidencePanel({ evidence }: EvidencePanelProps) {
     lightboxItem,
     setLightboxItem,
   } = evidence;
+
+  useEffect(() => {
+    void fetchEvidence();
+  }, [fetchEvidence, latestEvidenceId]);
 
   const [activeSubTab, setActiveSubTab] = useState<'evidence' | 'recordings'>('evidence');
   const [videoModalItem, setVideoModalItem] = useState<RecordingItem | null>(null);
@@ -313,6 +321,8 @@ export function EvidencePanel({ evidence }: EvidencePanelProps) {
         )}
       </div>
 
+      {detailLoading && <p role="status" className="py-3 text-sm text-slate-300">正在加载告警详情...</p>}
+      {detailError && <p role="alert" className="py-3 text-sm text-red-300">{detailError}</p>}
       <EvidenceLightbox item={lightboxItem} onClose={() => setLightboxItem(null)} />
       {videoModalItem && (
         <RecordingVideoModal item={videoModalItem} onClose={() => setVideoModalItem(null)} />

@@ -147,6 +147,8 @@ class Settings(BaseSettings):
     POSE_KEYPOINT_CONFIDENCE: float = 0.35
     POSE_MIN_VISIBLE_KEYPOINTS: int = 5
     POSE_FRAME_SKIP: int = 1
+    POSE_CHEST_MOTION_SECONDS: float = 0.8  # 双手胸前往复的最短观察时长，待现场预试
+    POSE_CHEST_MOTION_SPAN: float = 0.15  # 每只手最小运动幅度 / 肩髋长度
     POSE_STABLE_HITS: int = 3
     POSE_CROUCH_SECONDS: float = 3.0
     POSE_LOITER_SECONDS: float = 5.0
@@ -168,7 +170,7 @@ class Settings(BaseSettings):
     FACE_MIN_SIZE_PX: int = 64
     FACE_MAX_UPLOAD_BYTES: int = 8 * 1024 * 1024
     FACE_MAX_IMAGE_PIXELS: int = 12_000_000
-    FACE_MAX_TEMPLATES_PER_IDENTITY: int = 5
+    FACE_MAX_TEMPLATES_PER_IDENTITY: int = 15
 
     # 抓拍存储目录（用于 /api/v1/static）
     SNAPSHOT_DIR: str = 'data/snapshots'
@@ -191,9 +193,7 @@ class Settings(BaseSettings):
     FENCE_NEAR_STABLE_FRAMES: int = 3
     FENCE_CONTACT_SEGMENT_MARGIN_M: float = 0.25
     FENCE_CONTACT_STABLE_FRAMES: int = 3
-    FENCE_CROSS_MARGIN_M: float = 0.25
-    FENCE_CROSS_STABLE_FRAMES: int = 3
-    FENCE_CROSS_REQUIRE_CLIMBING_POSTURE: bool = True
+    FENCE_CROSS_STABLE_FRAMES: int = 3  # 保留旧配置名：现用于靠近围栏时攀爬姿态的连续确认
     FENCE_KEYPOINT_CONFIDENCE: float = 0.35
     FENCE_TRACK_TTL_SECONDS: float = 2.0
     FENCE_ALERT_COOLDOWN_SECONDS: float = 15.0
@@ -208,7 +208,7 @@ class Settings(BaseSettings):
     FENCE_FRAME_SAMPLE_TOLERANCE_SECONDS: float = 0.6
     FENCE_GIMBAL_MIN_YAW_DEG: float = -170.0
     FENCE_GIMBAL_MAX_YAW_DEG: float = 170.0
-    # 平移为空时直接复用 NAV_LIDAR_MOUNT_X/Y/Z；用户确认云台和相机
+    # 平移为空时 X/Y 复用 NAV_LIDAR_MOUNT_X/Y，云台轴 Z 比雷达低 0.20 米；用户确认云台和相机
     # 安装姿态均朝向 base_footprint 正前方，因此安装角和相机偏移默认 0。
     FENCE_GIMBAL_MOUNT_X_M: float | None = None
     FENCE_GIMBAL_MOUNT_Y_M: float | None = None

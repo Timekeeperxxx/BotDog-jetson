@@ -1,4 +1,4 @@
-import { ScanLine } from 'lucide-react'
+import { Loader2, ScanLine, ShieldCheck } from 'lucide-react'
 import type { FenceBehavior, FenceDetectionState, FenceDetectionStatus } from '../../types/fenceDetection'
 
 const STATE_LABELS: Record<FenceDetectionState, string> = {
@@ -6,6 +6,7 @@ const STATE_LABELS: Record<FenceDetectionState, string> = {
   finding: '正在查找围栏',
   gimbal_moving: '云台转动中',
   detecting: '检测中',
+  tracking: '已开启 · 跟踪联动中',
   not_found: '未找到围栏',
   out_of_range: '围栏超出范围',
   localization_unavailable: '定位不可用',
@@ -17,7 +18,7 @@ const BEHAVIOR_LABELS: Record<FenceBehavior, string> = {
   approaching: '靠近围栏',
   dwelling: '围栏附近停留',
   contact: '接触围栏',
-  climbing_suspected: '疑似翻越',
+  climbing_suspected: '疑似攀爬',
 }
 
 type Props = {
@@ -25,8 +26,10 @@ type Props = {
   canAdd: boolean
   canOperate: boolean
   status: FenceDetectionStatus | null
+  loading: boolean
   error: string | null
   onToggleAdd: () => void
+  onSetDetectionEnabled: (enabled: boolean) => void
 }
 
 export function NavFenceControls({
@@ -34,8 +37,10 @@ export function NavFenceControls({
   canAdd,
   canOperate,
   status,
+  loading,
   error,
   onToggleAdd,
+  onSetDetectionEnabled,
 }: Props) {
   const enabled = status?.enabled ?? false
   const showStatus = enabled || Boolean(error)
@@ -45,7 +50,7 @@ export function NavFenceControls({
       {showStatus ? (
         <div className="pcd-fence-status-popover" role="status">
           <strong>{error ?? (status ? STATE_LABELS[status.state] : '读取状态中')}</strong>
-          {!error && status ? (
+          {!error && status && status.state !== 'tracking' ? (
             <div>
               <span>目标 {status.target_fence_id ?? '--'}</span>
               <span>距离 {status.distance_m == null ? '--' : `${status.distance_m.toFixed(2)} m`}</span>
@@ -64,6 +69,16 @@ export function NavFenceControls({
       >
         <ScanLine size={15} />
         <span>{adding ? '退出围栏标记' : '添加围栏'}</span>
+      </button>
+      <button
+        type="button"
+        className={`pcd-tool-button ${enabled ? 'is-active' : ''}`}
+        disabled={!canOperate || loading || status === null}
+        aria-busy={loading}
+        onClick={() => onSetDetectionEnabled(!enabled)}
+      >
+        {loading ? <Loader2 size={15} className="pcd-spin" /> : <ShieldCheck size={15} />}
+        <span>{enabled ? '关闭围栏检测' : '开启围栏检测'}</span>
       </button>
     </div>
   )

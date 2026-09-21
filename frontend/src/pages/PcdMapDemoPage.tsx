@@ -83,7 +83,6 @@ export function PcdMapDemoPage() {
   const [fencesVisible, setFencesVisible] = useState(true)
   const [addMode, setAddMode] = useState(false)
   const [fenceMode, setFenceMode] = useState(false)
-  const fenceLoadRequestRef = useRef(0)
   const [activeDrawer, setActiveDrawer] = useState<'task' | 'map' | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
   const [followRobot, setFollowRobot] = useState(false)
@@ -163,26 +162,29 @@ export function PcdMapDemoPage() {
   }, [])
 
   useEffect(() => {
-    if (!canOperate) return
+    if (!canOperate || navAutoTrackLoading) return
     let cancelled = false
+    let timer: number | undefined
 
     const syncNavAutoTrackMode = async () => {
       try {
         const result = await getNavAutoTrackMode()
-        if (cancelled) return
-        setNavAutoTrackEnabled(result.enabled)
+        if (!cancelled) setNavAutoTrackEnabled(result.auto_track_enabled)
       } catch (error) {
         if (!cancelled) {
           addLog(error instanceof Error ? error.message : '读取导航自动跟踪状态失败', 'error')
         }
+      } finally {
+        if (!cancelled) timer = window.setTimeout(() => void syncNavAutoTrackMode(), 1500)
       }
     }
 
     void syncNavAutoTrackMode()
     return () => {
       cancelled = true
+      window.clearTimeout(timer)
     }
-  }, [addLog, canOperate])
+  }, [addLog, canOperate, navAutoTrackLoading, fenceDetection.status?.enabled])
 
   useEffect(() => {
     if (!canOperate) {
@@ -251,26 +253,11 @@ export function PcdMapDemoPage() {
   } = useNavScenes({
     setInitialState,
     onWaypointsLoaded: setWaypoints,
+    onFencesLoaded: setFences,
     onLog: addLog,
     onSceneChanging: handleSceneChanging,
   })
 
-  useEffect(() => {
-    const requestId = ++fenceLoadRequestRef.current
-    if (!selectedSceneId) {
-      setFences([])
-      return
-    }
-    void listFences(selectedSceneId)
-      .then((result) => {
-        if (requestId === fenceLoadRequestRef.current) setFences(result.items)
-      })
-      .catch((error: unknown) => {
-        if (requestId !== fenceLoadRequestRef.current) return
-        setFences([])
-        addLog(error instanceof Error ? error.message : '读取场景围栏失败', 'error')
-      })
-  }, [addLog, selectedSceneId])
   const sceneDisplayPointCount = useMemo(() => {
     if (!tileManifest) return null
     const tier = pointCloudQualityMode === 'performance'
@@ -866,7 +853,7 @@ export function PcdMapDemoPage() {
     setNavAutoTrackLoading(true)
     try {
       const result = await setNavAutoTrackMode(nextEnabled)
-      setNavAutoTrackEnabled(result.enabled)
+      setNavAutoTrackEnabled(result.auto_track_enabled)
       addLog(result.message)
     } catch (error) {
       addLog(error instanceof Error ? error.message : '切换导航自动跟踪失败', 'error')
@@ -976,6 +963,8 @@ export function PcdMapDemoPage() {
             fenceMode={fenceMode}
             fenceAddAvailable={Boolean((preview || tileManifest) && selectedSceneNavigable && webglSupported)}
             fenceDetectionStatus={fenceDetection.status}
+            fenceDetectionLoading={fenceDetection.loading}
+            onSetFenceDetectionEnabled={(enabled) => void fenceDetection.setEnabled(enabled)}
             fenceDetectionError={fenceDetection.error}
             currentCmd={currentCmd}
             followRobot={followRobot}

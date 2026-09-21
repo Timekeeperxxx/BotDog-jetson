@@ -155,6 +155,12 @@ def setup_logging(*, force: bool = False) -> None:
         **file_options,
     )
     logger.add(
+        logs_dir / "alerts.log",
+        level="INFO",
+        filter=lambda record: record["extra"].get("alert_log", False),
+        **file_options,
+    )
+    logger.add(
         logs_dir / "debug.log",
         level="DEBUG",
         filter=_debug_file_filter,

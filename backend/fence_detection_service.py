@@ -32,6 +32,7 @@ class FenceDetectionState(str, Enum):
     FINDING = "finding"
     GIMBAL_MOVING = "gimbal_moving"
     DETECTING = "detecting"
+    TRACKING = "tracking"
     NOT_FOUND = "not_found"
     OUT_OF_RANGE = "out_of_range"
     LOCALIZATION_UNAVAILABLE = "localization_unavailable"
@@ -69,9 +70,8 @@ class _PersonFenceState:
     behavior: FenceBehavior = FenceBehavior.NORMAL
     near_hits: int = 0
     contact_hits: int = 0
-    cross_hits: int = 0
+    climb_hits: int = 0
     near_since: float | None = None
-    baseline_side: int | None = None
     last_events: dict[FenceBehavior, float] = field(default_factory=dict)
 
 
@@ -96,18 +96,6 @@ def closest_point_on_segment(
 
 def _normalize_degrees(value: float) -> float:
     return (value + 180.0) % 360.0 - 180.0
-
-
-def _signed_line_distance(
-    point: tuple[float, float],
-    start: tuple[float, float],
-    end: tuple[float, float],
-) -> float:
-    dx, dy = end[0] - start[0], end[1] - start[1]
-    length = math.hypot(dx, dy)
-    if length <= 1e-6:
-        return 0.0
-    return (dx * (point[1] - start[1]) - dy * (point[0] - start[0])) / length
 
 
 Mat3 = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
@@ -175,6 +163,7 @@ class FenceDetectionService:
         self._gimbal_service = gimbal_service
         self._control_lock = asyncio.Lock()
         self._enabled = False
+        self._tracking_override = False
         self._state = FenceDetectionState.DISABLED
         self._detail = "围栏检测未开启"
         self._scene_id: str | None = None
@@ -196,6 +185,10 @@ class FenceDetectionService:
     @property
     def enabled(self) -> bool:
         return self._enabled
+
+    @property
+    def tracking_override(self) -> bool:
+        return self._tracking_override
 
     def _set_state(self, state: FenceDetectionState, detail: str) -> None:
         if state != self._state or detail != self._detail:
@@ -247,7 +240,13 @@ class FenceDetectionService:
 
     async def enable(self) -> dict[str, Any]:
         async with self._control_lock:
+            from .auto_track_service import get_auto_track_service
+
             self._enabled = True
+            auto_track = get_auto_track_service()
+            self._tracking_override = bool(
+                auto_track is not None and auto_track.get_status()["enabled"]
+            )
             self._scene_id = None
             self._clear_lock()
             self._person_states.clear()
@@ -255,28 +254,37 @@ class FenceDetectionService:
             self._invalidated_at = None
             self._last_pose_ros_timestamp = None
             self._last_gimbal_error = None
-            self._set_state(FenceDetectionState.FINDING, "正在读取当前场景围栏")
+            if self._tracking_override:
+                self._set_state(FenceDetectionState.TRACKING, "跟踪联动已接管云台；关闭联动后恢复围栏观察")
+            else:
+                self._set_state(FenceDetectionState.FINDING, "正在读取当前场景围栏")
             return self.get_status()
 
     async def disable(self, *, center_gimbal: bool = True) -> dict[str, Any]:
         async with self._control_lock:
-            was_enabled = self._enabled
-            self._enabled = False
-            self._clear_lock()
-            self._person_states.clear()
-            self._samples.clear()
-            self._scene_id = None
-            self._invalidated_at = None
-            self._last_pose_ros_timestamp = None
-            self._set_state(FenceDetectionState.DISABLED, "围栏检测未开启")
-            if center_gimbal and was_enabled:
-                try:
-                    await self._return_yaw_to_default()
-                    self._last_gimbal_error = None
-                except (OSError, GcuProtocolError, ValueError) as exc:
-                    self._last_gimbal_error = str(exc)
-                    logger.warning("关闭围栏检测后云台 yaw 归中失败：{}", exc)
-            return self.get_status()
+            return await self._disable_locked(center_gimbal=center_gimbal)
+
+    async def _disable_locked(self, *, center_gimbal: bool) -> dict[str, Any]:
+        was_enabled = self._enabled and not self._tracking_override
+        self._tracking_override = False
+        if was_enabled and not center_gimbal:
+            await self._gimbal_service.jog(pitch_velocity_dps=0.0, yaw_velocity_dps=0.0)
+        self._enabled = False
+        self._clear_lock()
+        self._person_states.clear()
+        self._samples.clear()
+        self._scene_id = None
+        self._invalidated_at = None
+        self._last_pose_ros_timestamp = None
+        self._set_state(FenceDetectionState.DISABLED, "围栏检测未开启")
+        if center_gimbal and was_enabled:
+            try:
+                await self._return_yaw_to_default()
+                self._last_gimbal_error = None
+            except (OSError, GcuProtocolError, ValueError) as exc:
+                self._last_gimbal_error = str(exc)
+                logger.warning("关闭围栏检测后云台 yaw 归中失败：{}", exc)
+        return self.get_status()
 
     def _clear_lock(self) -> None:
         self._target_fence = None
@@ -299,7 +307,9 @@ class FenceDetectionService:
         return (
             self._finite_setting("FENCE_GIMBAL_MOUNT_X_M", "NAV_LIDAR_MOUNT_X_M"),
             self._finite_setting("FENCE_GIMBAL_MOUNT_Y_M", "NAV_LIDAR_MOUNT_Y_M"),
-            self._finite_setting("FENCE_GIMBAL_MOUNT_Z_M", "NAV_LIDAR_MOUNT_Z_M"),
+            (float(settings.NAV_LIDAR_MOUNT_Z_M) - 0.20
+             if settings.FENCE_GIMBAL_MOUNT_Z_M is None
+             else float(settings.FENCE_GIMBAL_MOUNT_Z_M)),
         )
 
     def _check_calibration(self) -> bool:
@@ -383,7 +393,33 @@ class FenceDetectionService:
         async with self._control_lock:
             if not self._enabled:
                 return
+            if self._tracking_override:
+                from .auto_track_service import get_auto_track_service
+
+                auto_track = get_auto_track_service()
+                if auto_track is not None and not auto_track.get_status()["enabled"]:
+                    await self._resume_after_tracking_locked(auto_track)
+                return
             await self._control_step_locked(now)
+
+    async def _suspend_for_tracking_locked(self) -> None:
+        if self._tracking_override:
+            return
+        await self._gimbal_service.jog(pitch_velocity_dps=0.0, yaw_velocity_dps=0.0)
+        self._tracking_override = True
+        self._samples.clear()
+        self._person_states.clear()
+        self._settled_since = None
+        self._yaw_motion_active = False
+        self._set_state(FenceDetectionState.TRACKING, "跟踪联动已接管云台；关闭联动后恢复围栏观察")
+
+    async def _resume_after_tracking_locked(self, auto_track) -> None:
+        await auto_track.disable_for_fence()
+        self._tracking_override = False
+        self._samples.clear()
+        self._person_states.clear()
+        self._settled_since = None
+        self._set_state(FenceDetectionState.FINDING, "跟踪已停止，正在恢复围栏观察")
 
     async def _control_step_locked(self, now: float) -> None:
         if not self._check_calibration():
@@ -828,13 +864,12 @@ class FenceDetectionService:
             else:
                 person_state.near_hits = 0
                 person_state.contact_hits = 0
-                person_state.cross_hits = 0
+                person_state.climb_hits = 0
                 person_state.near_since = None
-                person_state.baseline_side = None
 
             pose = pose_by_track.get(track_id)
             contact = False
-            crossing = False
+            climbing = False
             if near and pose is not None:
                 contact = self._wrist_contact(
                     pose,
@@ -845,15 +880,9 @@ class FenceDetectionService:
                     rotation,
                     intrinsics,
                 )
-                crossing = self._crossing_motion(
-                    person_state,
-                    pose,
-                    ground_point,
-                    start_map,
-                    end_map,
-                )
+                climbing = pose.posture is Posture.CLIMBING
             person_state.contact_hits = person_state.contact_hits + 1 if contact else 0
-            person_state.cross_hits = person_state.cross_hits + 1 if crossing else 0
+            person_state.climb_hits = person_state.climb_hits + 1 if climbing else 0
 
             next_behavior = FenceBehavior.NORMAL
             if person_state.near_hits >= int(settings.FENCE_NEAR_STABLE_FRAMES):
@@ -863,7 +892,7 @@ class FenceDetectionService:
                     next_behavior = FenceBehavior.DWELLING
                 if person_state.contact_hits >= int(settings.FENCE_CONTACT_STABLE_FRAMES):
                     next_behavior = FenceBehavior.CONTACT
-                if person_state.cross_hits >= int(settings.FENCE_CROSS_STABLE_FRAMES):
+                if person_state.climb_hits >= int(settings.FENCE_CROSS_STABLE_FRAMES):
                     next_behavior = FenceBehavior.CLIMBING_SUSPECTED
 
             if next_behavior != person_state.behavior:
@@ -959,34 +988,6 @@ class FenceDetectionService:
                 return True
         return False
 
-    def _crossing_motion(
-        self,
-        state: _PersonFenceState,
-        pose: PoseObservation,
-        ground_point: tuple[float, float],
-        start: dict[str, Any],
-        end: dict[str, Any],
-    ) -> bool:
-        margin = float(settings.FENCE_CROSS_MARGIN_M)
-        foot_side_value = _signed_line_distance(
-            ground_point,
-            (float(start["x"]), float(start["y"])),
-            (float(end["x"]), float(end["y"])),
-        )
-        if state.baseline_side is None and abs(foot_side_value) >= margin:
-            state.baseline_side = 1 if foot_side_value > 0 else -1
-        if state.baseline_side is None:
-            return False
-        if (
-            abs(foot_side_value) < margin
-            or (1 if foot_side_value > 0 else -1) == state.baseline_side
-        ):
-            return False
-        return (
-            not bool(settings.FENCE_CROSS_REQUIRE_CLIMBING_POSTURE)
-            or pose.posture is Posture.CLIMBING
-        )
-
     def _event_for_transition(
         self,
         state: _PersonFenceState,
@@ -1026,3 +1027,46 @@ def get_fence_detection_service() -> FenceDetectionService | None:
 def set_fence_detection_service(service: FenceDetectionService | None) -> None:
     global _fence_detection_service
     _fence_detection_service = service
+
+
+async def enable_auto_tracking(*, for_navigation: bool = False) -> None:
+    """围栏保持开启，跟踪联动临时接管云台。"""
+    from .auto_track_service import get_auto_track_service
+
+    auto_track = get_auto_track_service()
+    if auto_track is None:
+        raise RuntimeError("自动跟踪服务未初始化")
+    enable = (
+        getattr(auto_track, "enable_for_navigation", auto_track.enable)
+        if for_navigation else auto_track.enable
+    )
+    fence = get_fence_detection_service()
+    if fence is None:
+        enable()
+        if for_navigation and hasattr(auto_track, "resume"):
+            auto_track.resume()
+        return
+    async with fence._control_lock:
+        if fence.enabled:
+            await fence._suspend_for_tracking_locked()
+        enable()
+        if for_navigation and hasattr(auto_track, "resume"):
+            auto_track.resume()
+
+
+async def disable_auto_tracking() -> None:
+    """停止跟踪后，恢复仍处于开启状态的围栏观察。"""
+    from .auto_track_service import get_auto_track_service
+
+    auto_track = get_auto_track_service()
+    if auto_track is None:
+        raise RuntimeError("自动跟踪服务未初始化")
+    fence = get_fence_detection_service()
+    if fence is None:
+        auto_track.disable()
+        return
+    async with fence._control_lock:
+        if fence.enabled and fence.tracking_override:
+            await fence._resume_after_tracking_locked(auto_track)
+        else:
+            auto_track.disable()

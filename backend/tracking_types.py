@@ -55,6 +55,7 @@ class TrackStopReason(str, Enum):
     E_STOP         = "E_STOP"         # 急停
     VIDEO_LOST     = "VIDEO_LOST"     # 视频流断开
     MARKED_KNOWN   = "MARKED_KNOWN"   # 目标被标记为已知人员
+    IDENTITY_CONFIRMED = "IDENTITY_CONFIRMED"  # 人脸身份已确认，解除未授权跟踪
     HELMET_CONFIRMED = "HELMET_CONFIRMED"  # 跟踪目标连续识别到安全帽
 
 

@@ -45,5 +45,5 @@ it('按主键读取详情，删除后显示错误并清除旧详情', async () =
   expect(result.current.lightboxItem).toEqual(record);
   await act(() => result.current.openEvidence(123));
   expect(result.current.lightboxItem).toBeNull();
-  expect(result.current.evidenceError).toBe('告警记录不存在或已删除');
+  expect(result.current.detailError).toBe('告警记录不存在或已删除');
 });

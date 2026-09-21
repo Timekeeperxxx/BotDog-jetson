@@ -2,8 +2,8 @@
 
 The deployed baseline model predicts eleven visual weather phenomena.  The
 product contract only exposes four classes: normal, rain, snow and sandstorm.
-Labels outside the three adverse-weather classes are therefore treated as
-normal until a site-specific four-class checkpoint replaces the baseline.
+Rime is grouped with snow. Other labels outside the three adverse-weather
+classes are treated as normal.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ WEATHER_LABELS_ZH = {
 RAW_TO_PRODUCT_LABEL = {
     "rain": "rain",
     "snow": "snow",
+    "rime": "snow",
     "sandstorm": "sandstorm",
 }
 
@@ -309,7 +310,7 @@ class WeatherDetectionService:
 
         target_probabilities = {
             "rain": cleaned.get("rain", 0.0),
-            "snow": cleaned.get("snow", 0.0),
+            "snow": cleaned.get("snow", 0.0) + cleaned.get("rime", 0.0),
             "sandstorm": cleaned.get("sandstorm", 0.0),
         }
         target_sum = min(1.0, sum(target_probabilities.values()))

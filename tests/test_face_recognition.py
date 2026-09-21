@@ -162,3 +162,93 @@ async def test_passive_track_overlay_keeps_face_identity_fields(tmp_path: Path, 
     assert overlay["detections"][0]["identity_id"] == 2
     assert overlay["detections"][0]["face_status"] == "recognized"
     assert overlay["detections"][0]["face_score"] == 0.78
+
+
+def test_authorized_face_is_revoked_when_face_missing_or_engine_fails():
+    from backend.face_recognition.engine import FaceEngineError
+    matcher = FaceMatcher(threshold=0.45)
+    matcher.replace([FaceTemplateRecord(1, 9, "测试人员A", _unit(0))])
+    engine = _FakeEngine()
+    runtime = FaceRecognitionRuntime(engine, matcher, frame_skip=10, confirm_hits=1)
+    person = SimpleNamespace(label="person", bbox=(0, 0, 110, 120), track_id=4)
+    frame = np.zeros((120, 120, 3), dtype=np.uint8)
+    runtime.process(frame, [person], 1)
+    assert person.face_status == "recognized"
+    engine.detect = lambda frame: []
+    runtime.process(frame, [person], 2)
+    assert person.face_status == "no_face"
+    assert person.identity_id is None
+    def fail(frame):
+        raise FaceEngineError("test unavailable")
+    engine.detect = fail
+    runtime.process(frame, [person], 3)
+    assert person.face_status == "unavailable"
+    assert not runtime._tracks
+
+
+@pytest.mark.asyncio
+async def test_person_alerts_fail_closed_and_deduplicate_per_track(monkeypatch):
+    from unittest.mock import AsyncMock
+    from backend.workers_ai_processing import AIWorkerProcessingMixin
+    from backend import auto_track_service, guard_mission_service
+    worker = AIWorkerProcessingMixin()
+    worker._person_alert_last_seen = {}
+    worker._person_pose_hits = {}
+    worker._person_alert_frame = 0
+    worker._reset_misses = 2
+    worker._get_frame_skip = lambda: 1
+    worker._frames_processed = 1
+    worker._current_task_id = None
+    worker._raise_alert = AsyncMock()
+    auto = SimpleNamespace(_enabled=True, process_frame=AsyncMock())
+    monkeypatch.setattr(auto_track_service, "get_auto_track_service", lambda: auto)
+    monkeypatch.setattr(guard_mission_service, "get_guard_mission_service", lambda: None)
+    def person(track_id, status, identity=None):
+        return SimpleNamespace(label="person", bbox=(0, 0, 100, 200), confidence=.9,
+                               track_id=track_id, face_status=status, identity_id=identity)
+    known = person(1, "recognized", 9)
+    unknown = person(2, "unknown")
+    back = person(3, "no_face")
+    fault = person(4, "unavailable")
+    pending = person(5, "pending")
+    fallback = person(6, "no_face")
+    fallback.is_pose_fallback = True
+    detections = [known, unknown, back, fault, pending, fallback]
+    await worker._process_detection(detections, b"")
+    assert worker._raise_alert.await_count == 4
+    assert auto.process_frame.await_count == 1
+    await worker._process_detection(detections, b"")
+    assert worker._raise_alert.await_count == 4
+    unknown.face_status, unknown.identity_id = "recognized", 10
+    await worker._process_detection(detections, b"")
+    unknown.face_status, unknown.identity_id = "no_face", None
+    await worker._process_detection(detections, b"")
+    assert worker._raise_alert.await_count == 4
+    await worker._process_detection([], b"")
+    await worker._process_detection([], b"")
+    await worker._process_detection([unknown], b"")
+    assert worker._raise_alert.await_count == 5
+
+
+@pytest.mark.asyncio
+async def test_face_service_fault_is_separate_and_reported_once(monkeypatch):
+    from unittest.mock import AsyncMock
+    from backend import workers_ai_processing
+    class Session:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            pass
+    worker = workers_ai_processing.AIWorkerProcessingMixin()
+    worker._face_fault_reported = False
+    worker._session_factory = Session
+    worker._current_task_id = None
+    alerts = SimpleNamespace(handle_ai_event=AsyncMock())
+    monkeypatch.setattr(workers_ai_processing, "get_alert_service", lambda: alerts)
+    await worker._report_face_service_fault("unavailable")
+    await worker._report_face_service_fault("unavailable")
+    assert alerts.handle_ai_event.await_count == 1
+    assert alerts.handle_ai_event.call_args.kwargs["event_code"] == "E_FACE_SERVICE_UNAVAILABLE"
+    await worker._report_face_service_fault(None)
+    await worker._report_face_service_fault("unavailable")
+    assert alerts.handle_ai_event.await_count == 2

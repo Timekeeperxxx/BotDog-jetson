@@ -9,7 +9,7 @@ from __future__ import annotations
 import subprocess
 import time
 import uuid
-from collections import Counter, deque
+from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -451,7 +451,6 @@ class PoseStatusTensorRTRunner:
         self.model = YOLO(str(model_path), task="pose")
         self.frame_time = 0.0
         self.label_counts: Counter[str] = Counter()
-        self.wrist_history: dict[tuple[int, int], deque[tuple[float, float, float]]] = {}
         self.event_engine: Any = None
         self.reset()
 
@@ -460,11 +459,12 @@ class PoseStatusTensorRTRunner:
 
         self.frame_time = 0.0
         self.label_counts.clear()
-        self.wrist_history.clear()
         self.event_engine = PoseEventEngine(
             keypoint_confidence=settings.POSE_KEYPOINT_CONFIDENCE,
             min_visible_keypoints=settings.POSE_MIN_VISIBLE_KEYPOINTS,
             stable_hits=settings.POSE_STABLE_HITS,
+            chest_motion_seconds=settings.POSE_CHEST_MOTION_SECONDS,
+            chest_motion_span=settings.POSE_CHEST_MOTION_SPAN,
             crouch_seconds=settings.POSE_CROUCH_SECONDS,
             loiter_seconds=settings.POSE_LOITER_SECONDS,
             event_cooldown_seconds=settings.POSE_EVENT_COOLDOWN_SECONDS,
@@ -487,9 +487,11 @@ class PoseStatusTensorRTRunner:
             verbose=False,
         )
         if not results:
+            self.event_engine.update([], now=self.frame_time)
             return frame.copy(), 0
         result = results[0]
         if result.keypoints is None or result.boxes is None:
+            self.event_engine.update([], now=self.frame_time)
             return result.plot(labels=False), 0
 
         raw_poses: list[RawPose] = []
@@ -541,8 +543,8 @@ class PoseStatusTensorRTRunner:
             return "疑似攀爬/翻越", COLORS[3]
         if event_type == "POSE_LYING":
             return "倒地/躺卧", COLORS[3]
-        if self._has_repetitive_wrist_motion(observation):
-            return "疑似破坏围栏动作", COLORS[3]
+        if event_type == "POSE_DAMAGE_SUSPECTED":
+            return "疑似破坏动作", COLORS[3]
         if observation.posture is Posture.CLIMBING:
             return "疑似攀爬/翻越", COLORS[2]
         if observation.posture is Posture.LYING:
@@ -554,25 +556,6 @@ class PoseStatusTensorRTRunner:
         if observation.posture is Posture.STANDING:
             return "站立", COLORS[1]
         return "姿态不确定", COLORS[0]
-
-    def _has_repetitive_wrist_motion(self, observation: Any) -> bool:
-        x1, y1, x2, y2 = observation.bbox
-        height = max(1.0, float(y2 - y1))
-        now = self.frame_time
-        suspicious = False
-        for wrist_index in (9, 10):
-            if wrist_index >= len(observation.keypoints):
-                continue
-            wrist = observation.keypoints[wrist_index]
-            if wrist.confidence < settings.POSE_KEYPOINT_CONFIDENCE:
-                continue
-            key = (observation.track_id, wrist_index)
-            history = self.wrist_history.setdefault(key, deque())
-            history.append((now, (wrist.x - x1) / height, (wrist.y - y1) / height))
-            while history and now - history[0][0] > 1.8:
-                history.popleft()
-            suspicious = suspicious or _is_repetitive_motion(history)
-        return suspicious
 
 
 def _looks_seated(raw_pose: Any, keypoint_confidence: float) -> bool:
@@ -597,31 +580,6 @@ def _looks_seated(raw_pose: Any, keypoint_confidence: float) -> bool:
         if thigh_is_horizontal and lower_leg_drops:
             seated_votes += 1
     return visible_legs > 0 and seated_votes >= max(1, visible_legs // 2)
-
-
-def _is_repetitive_motion(
-    history: deque[tuple[float, float, float]],
-) -> bool:
-    if len(history) < 5 or history[-1][0] - history[0][0] < 0.8:
-        return False
-    x_values = [item[1] for item in history]
-    y_values = [item[2] for item in history]
-    x_travel = sum(abs(right - left) for left, right in zip(x_values, x_values[1:]))
-    y_travel = sum(abs(right - left) for left, right in zip(y_values, y_values[1:]))
-    values = x_values if x_travel >= y_travel else y_values
-    movements = [
-        right - left
-        for left, right in zip(values, values[1:])
-        if abs(right - left) >= 0.025
-    ]
-    reversals = sum(
-        1
-        for previous, current in zip(movements, movements[1:])
-        if previous * current < 0
-    )
-    travel = max(x_travel, y_travel)
-    span = max(values) - min(values)
-    return reversals >= 2 and travel >= 0.35 and span >= 0.12
 
 
 @lru_cache(maxsize=8)

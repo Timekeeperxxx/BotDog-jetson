@@ -269,7 +269,16 @@ async def update_system_config(
             reason=reason,
         )
 
-        runtime_apply = _apply_runtime_update(key, value)
+        if key == "auto_track_enabled":
+            from ...fence_detection_service import disable_auto_tracking, enable_auto_tracking
+
+            if _parse_bool(value):
+                await enable_auto_tracking()
+            else:
+                await disable_auto_tracking()
+            runtime_apply = {"applied": True, "target": "auto_track", "message": "运行时已生效"}
+        else:
+            runtime_apply = _apply_runtime_update(key, value)
 
         await safe_write_audit_log(
             db,

@@ -28,6 +28,7 @@ type NavToolStripProps = {
   fenceMode: boolean
   fenceAddAvailable: boolean
   fenceDetectionStatus: FenceDetectionStatus | null
+  fenceDetectionLoading: boolean
   fenceDetectionError: string | null
   currentCmd: string | null
   followRobot: boolean
@@ -59,6 +60,7 @@ type NavToolStripProps = {
   wallColorMode: WallColorMode
   onCheckRadar: () => void
   onToggleFenceMode: () => void
+  onSetFenceDetectionEnabled: (enabled: boolean) => void
   onToggleRosbag: () => void
   onStopSelectedTask: () => void
   onToggleFollowRobot: () => void
@@ -77,6 +79,7 @@ export function NavToolStrip({
   fenceMode,
   fenceAddAvailable,
   fenceDetectionStatus,
+  fenceDetectionLoading,
   fenceDetectionError,
   currentCmd,
   followRobot,
@@ -108,6 +111,7 @@ export function NavToolStrip({
   wallColorMode,
   onCheckRadar,
   onToggleFenceMode,
+  onSetFenceDetectionEnabled,
   onToggleRosbag,
   onStopSelectedTask,
   onToggleFollowRobot,
@@ -139,8 +143,10 @@ export function NavToolStrip({
           canAdd={fenceAddAvailable}
           canOperate={canOperate}
           status={fenceDetectionStatus}
+          loading={fenceDetectionLoading}
           error={fenceDetectionError}
           onToggleAdd={onToggleFenceMode}
+          onSetDetectionEnabled={onSetFenceDetectionEnabled}
         />
         <button
           className={`pcd-tool-button ${followRobot ? 'is-active' : ''}`}

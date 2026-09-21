@@ -10,6 +10,7 @@
  */
 
 import { useEffect, useRef, useCallback } from 'react';
+import { placeOverlayLabel, type LabelRect } from './overlayLabelLayout';
 import {
   DEFAULT_AI_OVERLAY_VISIBILITY,
   type AiOverlayVisibility,
@@ -107,6 +108,11 @@ export function TrackOverlay({
 
     if (!data || data.frame_w <= 0 || data.frame_h <= 0) return;
 
+    const labels: { text: string; bbox: number[]; background: string; color: string }[] = [];
+    const occupied: LabelRect[] = Array.from(parent.querySelectorAll('[data-overlay-obstacle]')).map(element => {
+      const area = element.getBoundingClientRect();
+      return { x: area.left - rect.left, y: area.top - rect.top, width: area.width, height: area.height };
+    });
     const sx = cw / data.frame_w;
     const sy = ch / data.frame_h;
 
@@ -228,12 +234,7 @@ export function TrackOverlay({
         ? '人脸'
         : (classLabels[className] ?? className);
       const headerText = `${baseLabel}${idPart}${faceLabel} ${(p.conf * 100).toFixed(0)}%`;
-      ctx.font = 'bold 10px monospace';
-      const headerWidth = Math.max(ctx.measureText(headerText).width + 10, 64);
-      ctx.fillStyle = colors.label;
-      ctx.fillRect(rx, ry - 16, headerWidth, 16);
-      ctx.fillStyle = '#fff';
-      ctx.fillText(headerText, rx + 5, ry - 4);
+      labels.push({ text: headerText, bbox: p.bbox, background: colors.label, color: '#fff' });
 
       const showNoHelmetTag = visibility.helmet && p.safety_status === 'no_helmet';
       const showIdentityTag = visibility.face && p.is_stranger !== undefined && p.is_stranger !== null;
@@ -241,13 +242,7 @@ export function TrackOverlay({
         const tagText = showNoHelmetTag
           ? 'NO_HELMET'
           : (p.is_stranger ? "STRANGER" : "KNOWN");
-        const w = ctx.measureText(tagText).width + 8;
-        ctx.fillStyle = showNoHelmetTag
-          ? 'rgba(230,0,0,0.9)'
-          : (p.is_stranger ? 'rgba(220,0,0,0.85)' : 'rgba(0,180,80,0.85)');
-        ctx.fillRect(rx, y2 * sy, w, 14);
-        ctx.fillStyle = '#fff';
-        ctx.fillText(tagText, rx + 4, y2 * sy + 10);
+        labels.push({ text: tagText, bbox: p.bbox, background: colors.label, color: '#fff' });
       }
       
       ctx.restore();
@@ -318,14 +313,7 @@ export function TrackOverlay({
         );
         ctx.setLineDash([]);
         const label = `${postureLabels[pose.posture] ?? pose.posture} #${pose.track_id}`;
-        ctx.font = 'bold 11px sans-serif';
-        const labelWidth = ctx.measureText(label).width + 10;
-        const labelX = x1 * sx;
-        const labelY = Math.max(16, y1 * sy - 20);
-        ctx.fillStyle = 'rgba(10,10,15,0.78)';
-        ctx.fillRect(labelX, labelY, labelWidth, 18);
-        ctx.fillStyle = color;
-        ctx.fillText(label, labelX + 5, labelY + 13);
+        labels.push({ text: label, bbox: pose.bbox, background: 'rgba(10,10,15,0.94)', color });
       }
       ctx.restore();
     }
@@ -442,13 +430,7 @@ export function TrackOverlay({
 
       // 锁定状态标签框
       const stateBadge = data.state && data.state !== 'IDLE' ? data.state : 'TRACKING';
-      const badgeW = ctx.measureText(stateBadge).width + 30; // 预估宽度
-
-      ctx.fillStyle = 'rgba(255,40,40,0.9)';
-      ctx.fillRect(rx, ry - 18, Math.max(badgeW, 80), 18);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 11px monospace';
-      ctx.fillText(`🎯 ${stateBadge}`, rx + 4, ry - 5);
+      labels.push({ text: `锁定 ${stateBadge}`, bbox: data.active_bbox, background: 'rgba(180,20,20,0.94)', color: '#fff' });
 
       // anchor 点（底部中心）
       const anchorX = (x1 + x2) / 2 * sx;
@@ -469,6 +451,7 @@ export function TrackOverlay({
       const stateText = data.state || '';
 
       ctx.save();
+      occupied.push({ x: 4, y: ch - 52, width: 320, height: 48 });
       // 背景
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
       ctx.fillRect(4, ch - 52, 320, 48);
@@ -492,6 +475,23 @@ export function TrackOverlay({
       }
       ctx.restore();
     }
+    // 最后绘制标签，避免其他目标的框线或骨架穿过文字。
+    ctx.save();
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textBaseline = 'top';
+    for (const label of labels) {
+      const [x1, y1, x2, y2] = label.bbox;
+      const x = Math.max(0, x1 * sx), y = Math.max(0, y1 * sy);
+      const bounds = { x, y, width: Math.min(cw, x2 * sx) - x, height: Math.min(ch, y2 * sy) - y };
+      const placed = placeOverlayLabel(label.text, bounds, occupied, text => ctx.measureText(text).width);
+      if (!placed) continue;
+      occupied.push(placed);
+      ctx.fillStyle = label.background;
+      ctx.fillRect(placed.x, placed.y, placed.width, placed.height);
+      ctx.fillStyle = label.color;
+      placed.lines.forEach((line, index) => ctx.fillText(line, placed.x + 4, placed.y + 2 + index * 16));
+    }
+    ctx.restore();
   }, [data, videoRef, visibility]);
 
   useEffect(() => {

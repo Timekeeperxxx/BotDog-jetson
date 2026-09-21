@@ -3,6 +3,7 @@ export type FenceDetectionState =
   | 'finding'
   | 'gimbal_moving'
   | 'detecting'
+  | 'tracking'
   | 'not_found'
   | 'out_of_range'
   | 'localization_unavailable'

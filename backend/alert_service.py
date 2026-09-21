@@ -9,7 +9,7 @@
 """
 
 from typing import Optional, Dict, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,8 @@ from .temperature_monitor import TemperatureAlert
 from .logging_config import logger
 from .config import settings
 from .schemas import utc_now_iso
+from .alert_timing import log_alert_timing
+from datetime import datetime
 
 
 @dataclass
@@ -33,6 +35,7 @@ class EvidenceRecord:
     gps_lat: Optional[float]
     gps_lon: Optional[float]
     evidence_id: Optional[int] = None
+    timing: dict = field(default_factory=lambda: {"generated_at": utc_now_iso(), "source": "event_start_unavailable"})
 
 
 class AlertService:
@@ -118,6 +121,7 @@ class AlertService:
         gps_lon: Optional[float],
         task_id: Optional[int],
         session: Optional[AsyncSession] = None,
+        timing: dict | None = None,
         **extra: Any,
     ) -> EvidenceRecord:
         """
@@ -135,6 +139,15 @@ class AlertService:
             gps_lat=gps_lat,
             gps_lon=gps_lon,
         )
+
+        if timing:
+            evidence.timing.update(timing)
+        # 生成时间在抓拍完成、进入告警服务时记录；不冒充事件起点。
+        evidence.timing['generated_at'] = utc_now_iso()
+        if evidence.timing.get('eligible_at'):
+            generated = datetime.fromisoformat(evidence.timing['generated_at'].replace('Z', '+00:00'))
+            eligible = datetime.fromisoformat(evidence.timing['eligible_at'].replace('Z', '+00:00'))
+            evidence.timing['generation_delay_ms'] = round((generated - eligible).total_seconds() * 1000, 1)
 
         try:
             await self._store_evidence(evidence, session)
@@ -177,7 +190,8 @@ class AlertService:
             image_url=evidence.image_url,
             gps_lat=evidence.gps_lat,
             gps_lon=evidence.gps_lon,
-            created_at=utc_now_iso(),  # UTC ISO8601 with Z, 前端按本地时区正确显示
+            timing=evidence.timing,
+            created_at=evidence.timing["generated_at"],
         )
 
         session.add(db_evidence)
@@ -220,6 +234,7 @@ class AlertService:
             temperature: 温度值（可选）
             threshold: 阈值（可选）
         """
+        log_alert_timing(evidence.evidence_id, evidence.event_code, evidence.message, evidence.timing, "generated")
         # 使用注入的 broadcaster 实例
         if self._event_broadcaster is None:
             # 回退到全局单例
@@ -228,6 +243,7 @@ class AlertService:
             logger.debug(f"使用回退的全局 broadcaster: {id(self._event_broadcaster)}")
 
         payload: Dict[str, Any] = dict(extra)
+        payload["timing"] = evidence.timing
         if temperature is not None:
             payload["temperature"] = temperature
         if threshold is not None:

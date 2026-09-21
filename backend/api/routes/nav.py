@@ -165,14 +165,13 @@ async def nav_set_auto_track_mode(
             guard_mission = get_guard_mission_service()
             if guard_mission is not None and guard_mission.enabled:
                 guard_mission.enabled = False
-            if hasattr(auto_track, "enable_for_navigation"):
-                auto_track.enable_for_navigation()
-            else:
-                auto_track.enable()
-            if hasattr(auto_track, "resume"):
-                auto_track.resume()
+            from ...fence_detection_service import enable_auto_tracking
+
+            await enable_auto_tracking(for_navigation=True)
         elif not body.enabled:
-            auto_track.disable()
+            from ...fence_detection_service import disable_auto_tracking
+
+            await disable_auto_tracking()
 
     await safe_write_audit_log(
         db,
@@ -273,7 +272,7 @@ async def nav_execute_task(
         _ensure_localization_ready_for_navigation()
         _ensure_navigation_runtime_ready()
         cmd_vel_result = start_cmd_vel_script()
-        auto_track_result = _ensure_auto_track_enabled_for_navigation(task)
+        auto_track_result = await _ensure_auto_track_enabled_for_navigation(task)
         _request_navigation_control()
         try:
             nav_start_result = bridge.publish_navigation_start(True)
@@ -350,7 +349,7 @@ async def nav_stop_task(
         task = get_nav_task(task_id)
         _cancel_pending_auto_track_resume("nav_task_stop")
         if _task_has_auto_track_control(task):
-            _apply_auto_track_workflow_control(False)
+            await _apply_auto_track_workflow_control(False)
         try:
             task_stop_result = bridge.publish_navigation_task_start(False)
         except RuntimeError:
