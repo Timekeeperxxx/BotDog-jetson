@@ -77,10 +77,14 @@ export function EvidencePanel({ evidence, latestEvidenceId }: EvidencePanelProps
     searchQuery,
     setSearchQuery,
     evidenceLoading,
+    evidenceLoadingMore,
+    evidenceHasMore,
+    evidenceLoadMoreError,
     evidenceError,
     detailLoading,
     detailError,
     fetchEvidence,
+    loadMoreEvidence,
     selectedEvidence,
     evidenceDeleting,
     filteredEvidence,
@@ -153,7 +157,7 @@ export function EvidencePanel({ evidence, latestEvidenceId }: EvidencePanelProps
               onClick={toggleAllEvidence}
               className="px-4 py-3 text-[10px] font-black uppercase tracking-widest border-2 border-white/20 text-white hover:border-white transition-all"
             >
-              {filteredEvidence.length > 0 && filteredEvidence.every((item) => selectedEvidence.has(item.evidence_id)) ? '取消全选' : '全选'}
+              {filteredEvidence.length > 0 && filteredEvidence.every((item) => selectedEvidence.has(item.evidence_id)) ? '取消全选' : '全选当前结果'}
             </button>
             <button
               onClick={deleteEvidenceSelected}
@@ -192,25 +196,32 @@ export function EvidencePanel({ evidence, latestEvidenceId }: EvidencePanelProps
               <p className="text-xs text-red-400">{evidenceError}</p>
             </div>
           ) : filteredEvidence.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-slate-500 space-y-4">
+            <div className="flex flex-col items-center justify-center min-h-64 text-slate-500 space-y-4">
               <ShieldCheck size={64} className="text-white/10" />
-              <p className="text-sm font-black uppercase tracking-widest text-white/20">暂无告警记录</p>
+              <p className="text-sm font-black uppercase tracking-widest text-white/20">暂无匹配记录</p>
+              {evidenceHasMore && (
+                <button onClick={() => void loadMoreEvidence()} disabled={evidenceLoadingMore} className="px-6 py-3 border border-white/20 text-sm font-bold text-white disabled:opacity-50">
+                  {evidenceLoadingMore ? '加载中…' : evidenceLoadMoreError ? '加载失败，点击重试' : '继续加载抓拍'}
+                </button>
+              )}
+              {evidenceLoadMoreError && <p role="alert" className="text-xs text-red-400">{evidenceLoadMoreError}</p>}
             </div>
           ) : (
+            <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-10">
-              {filteredEvidence.map((item, i) => {
+              {filteredEvidence.map((item) => {
                 const imageSrc = getImageUrl(item.image_url || undefined);
                 const confidence = item.confidence ?? undefined;
                 const timestamp = item.created_at || '';
                 return (
                   <div
-                    key={`${item.evidence_id}-${i}`}
+                  key={item.evidence_id}
                     onClick={() => setLightboxItem(item)}
                     className="group bg-zinc-900 border-2 border-white/10 hover:border-white transition-all duration-500 rounded-2xl overflow-hidden flex flex-col shadow-[0_30px_60px_-12px_rgba(0,0,0,0.8)] cursor-pointer"
                   >
                     <div className="relative h-48 bg-black shrink-0">
                       {imageSrc ? (
-                        <img src={imageSrc} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 group-hover:scale-105 transition-all duration-700" />
+                        <img src={imageSrc} alt={item.message || '告警抓拍'} loading="lazy" className="w-full h-full object-cover opacity-80 group-hover:opacity-100 group-hover:scale-105 transition-all duration-700" />
                       ) : (
                         <div className="w-full h-full flex flex-col items-center justify-center bg-zinc-800/60">
                           <Thermometer size={36} className="text-white/20 mb-1" />
@@ -264,6 +275,19 @@ export function EvidencePanel({ evidence, latestEvidenceId }: EvidencePanelProps
                 );
               })}
             </div>
+            {evidenceHasMore && (
+              <div className="flex justify-center py-8">
+                <button
+                  onClick={() => void loadMoreEvidence()}
+                  disabled={evidenceLoadingMore}
+                  className="px-6 py-3 border border-white/20 text-sm font-bold text-white hover:border-white disabled:opacity-50"
+                >
+                  {evidenceLoadingMore ? '加载中…' : evidenceLoadMoreError ? '加载失败，点击重试' : '加载更多抓拍'}
+                </button>
+                {evidenceLoadMoreError && <p role="alert" className="mt-2 text-center text-xs text-red-400">{evidenceLoadMoreError}</p>}
+              </div>
+            )}
+            </>
           )
         )}
 

@@ -21,6 +21,10 @@ export function useNavMappingControls({
   canOperate,
   refreshScenes,
 }: UseNavMappingControlsOptions) {
+  const [mappingNotice, setMappingNotice] = useState<{
+    title: string; message: string; kind: 'ready' | 'error'
+  } | null>(null)
+  const dismissMappingNotice = useCallback(() => setMappingNotice(null), [])
   const [mappingActive, setMappingActive] = useState(false)
   const [mappingSending, setMappingSending] = useState(false)
   const [mappingPreflightChecking, setMappingPreflightChecking] = useState(false)
@@ -52,6 +56,14 @@ export function useNavMappingControls({
           return
         }
         if (!status.running) {
+          if (status.scene_name && status.saved != null) {
+            setMappingNotice({
+              title: status.saved ? '地图保存完成' : '地图保存未完成',
+              message: `${status.scene_name}：${status.message || (status.saved ? '已保存，可在场景列表查看' : '请查看建图日志')}`,
+              kind: status.saved ? 'ready' : 'error',
+            })
+            if (status.saved) void refreshScenes()
+          }
           return
         }
 
@@ -73,9 +85,14 @@ export function useNavMappingControls({
     return () => {
       cancelled = true
     }
-  }, [addLog, canOperate])
+  }, [addLog, canOperate, refreshScenes])
 
   const applySaveResult = useCallback((result: Awaited<ReturnType<typeof getMappingStatus>>) => {
+    setMappingNotice({
+      title: result.saved ? '地图保存完成' : '地图保存未完成',
+      message: `${result.scene_name || '当前场景'}：${result.message || (result.saved ? '已保存，可在场景列表查看' : '请查看建图日志')}`,
+      kind: result.saved ? 'ready' : 'error',
+    })
     if (result.saved) {
       addLog(result.message || '地图已保存')
       setTimeout(() => {
@@ -96,7 +113,7 @@ export function useNavMappingControls({
   }, [addLog, refreshScenes])
 
   useEffect(() => {
-    if (!canOperate || !mappingSaving) return
+    if (!canOperate || !mappingSaving || mappingSending) return
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
 
@@ -108,6 +125,13 @@ export function useNavMappingControls({
           timer = setTimeout(() => {
             void pollSaveStatus()
           }, 2000)
+          return
+        }
+        if (status.running) {
+          setMappingActive(true)
+          setMappingSaving(false)
+          setMappingStartTime(status.started_at ? status.started_at * 1000 : Date.now())
+          setMappingNotice({ title: '停止建图未确认', message: '后端仍在建图，请重新点击结束建图。', kind: 'error' })
           return
         }
         applySaveResult(status)
@@ -127,7 +151,7 @@ export function useNavMappingControls({
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [addLog, applySaveResult, canOperate, mappingSaving])
+  }, [addLog, applySaveResult, canOperate, mappingSaving, mappingSending])
 
   const handleStopMapping = useCallback(async (options?: { skipMinRuntimeCheck?: boolean }) => {
     if (!canOperate) return
@@ -142,6 +166,7 @@ export function useNavMappingControls({
     }
 
     setMappingStopConfirmOpen(false)
+    setMappingNotice(null)
     // 用户确认结束后立即退出前端建图模式并断开实时点云。
     // 地图文件仍由后端继续保存，不能让最长 30 分钟的保存等待阻塞前端视图。
     setMappingActive(false)
@@ -153,9 +178,7 @@ export function useNavMappingControls({
       const result = await setMappingEnabled(false)
       if (!result.saving) applySaveResult(result)
     } catch (error) {
-      addLog(error instanceof Error ? error.message : '停止建图失败', 'error')
-      setMappingSessionInfo(null)
-      setMappingSaving(false)
+      addLog(`${error instanceof Error ? error.message : '停止请求未确认'}；正在查询后台状态，请勿重复操作`, 'error')
     } finally {
       setMappingSending(false)
     }
@@ -180,6 +203,7 @@ export function useNavMappingControls({
     }
 
     setMappingSceneError(null)
+    setMappingNotice(null)
     setMappingSending(true)
     try {
       const preflightController = new AbortController()
@@ -249,6 +273,8 @@ export function useNavMappingControls({
 
   return {
     closeMappingDialog,
+    dismissMappingNotice,
+    mappingNotice,
     confirmStopMapping,
     handleConfirmStartMapping,
     handleToggleMapping,

@@ -409,35 +409,15 @@ def test_chest_motion_emits_shared_event_under_two_seconds_and_cools_down():
     assert .8 <= hits[0].duration_seconds < 2
 
 
-def test_chest_motion_rejects_one_hand_low_hands_static_body_and_invalid_points():
-    for mode in ("one", "low", "still", "missing", "nan"):
-        engine = PoseEventEngine()
-        for i in range(16):
-            assert not _damage_events(engine, _chest_pose(i, mode=mode, translate=i * 2, scale=1 + i * .01), i * .2)
 
 
-def test_chest_motion_resets_after_missing_pose_keypoints_or_time_gap():
-    for mode in ("lost", "missing", "gap"):
-        engine = PoseEventEngine(event_cooldown_seconds=0)
-        for i in range(4):
-            assert not _damage_events(engine, _chest_pose(i), i * .2)
-        restart = 1.0
-        if mode == "lost":
-            engine.update([], now=.8)
-        elif mode == "missing":
-            assert not _damage_events(engine, _chest_pose(0, mode="missing"), .8)
-        else:
-            restart = 2.0
-        for i in range(4):
-            assert not _damage_events(engine, _chest_pose(i), restart + i * .2)
-        assert _damage_events(engine, _chest_pose(4), restart + .8)
 
 
 def test_chest_motion_does_not_combine_hands_from_different_people():
     engine = PoseEventEngine()
     for i in range(10):
-        a = _chest_pose(i, mode="one")
-        b = _chest_pose(i, mode="one", translate=300)
+        a = _chest_pose(i, mode="missing")
+        b = _chest_pose(i, mode="missing", translate=300)
         b = RawPose((300, 300, 400, 500), b.confidence, b.keypoints)
         _, events = engine.update([a, b], now=i * .2)
         assert not any(e.event_type == "POSE_DAMAGE_SUSPECTED" for e in events)
@@ -541,3 +521,161 @@ def test_alternating_normal_steps_do_not_trigger_vault() -> None:
         points[15 + leg] = PoseKeypoint(40 + leg * 20, 180, .95)
         _, events = engine.update([_pose(keypoints=points)], now=i * .2)
         assert not events
+
+
+def _supported_crossing_pose(offset: float = 0.0) -> RawPose:
+    points = _keypoints()
+    points[13] = PoseKeypoint(20, 105, .95)
+    points[15] = PoseKeypoint(5 + offset, 110, .95)
+    # 另一只脚不可见，不能依赖双脚同时有效。
+    points[16] = PoseKeypoint(80, 195, .1)
+    return _pose(keypoints=points)
+
+
+def test_supported_crossing_requires_multiple_frames_and_motion() -> None:
+    engine = PoseEventEngine()
+    _, events = engine.update([_pose()], now=0)
+    assert not events
+    _, events = engine.update([_supported_crossing_pose()], now=.1)
+    assert not events
+    _, events = engine.update([_supported_crossing_pose(-15)], now=.2)
+    assert [e.event_type for e in events] == ['POSE_CLIMBING_SUSPECTED']
+    # 仍沿用统一告警冷却。
+    _, events = engine.update([_supported_crossing_pose()], now=.3)
+    assert not events
+
+
+def test_supported_crossing_rejects_static_pose_translation_and_small_jitter() -> None:
+    for moving_camera in (False, True):
+        engine = PoseEventEngine(loiter_seconds=100)
+        for i in range(8):
+            pose = _supported_crossing_pose((i % 2) * 2)
+            scale = 1 + i * .05 if moving_camera else 1
+            dx, dy = (i * 5, i * 3) if moving_camera else (0, 0)
+            pose = _pose(bbox=tuple(round(v * scale + (dx if j % 2 == 0 else dy))
+                                   for j, v in enumerate(pose.bbox)),
+                         keypoints=[PoseKeypoint(p.x * scale + dx, p.y * scale + dy, p.confidence)
+                                    for p in pose.keypoints])
+            _, events = engine.update([pose], now=i * .1)
+            assert not events
+
+
+def test_supported_crossing_does_not_join_long_gaps_or_disabled_frames() -> None:
+    for mode in ('missing', 'disabled', 'invalid'):
+        engine = PoseEventEngine()
+        engine.update([_supported_crossing_pose()], now=0)
+        if mode == 'missing':
+            engine.update([], now=.1)
+        elif mode == 'disabled':
+            engine.update([_supported_crossing_pose()], now=.1, events_enabled=False)
+        else:
+            points = list(_supported_crossing_pose().keypoints)
+            points[11] = PoseKeypoint(float('nan'), 110, .95)
+            engine.update([_pose(keypoints=points)], now=.1)
+        _, events = engine.update([_supported_crossing_pose(-20)], now=.2 if mode == 'disabled' else .6)
+        assert not events
+
+
+def test_supported_crossing_continues_after_foot_drops_and_brief_missing_pose():
+    for gap in ('none', 'missing', 'invalid'):
+        engine = PoseEventEngine()
+        engine.update([_supported_crossing_pose()], now=0)
+        if gap != 'none':
+            points = list(_supported_crossing_pose().keypoints)
+            points[11] = PoseKeypoint(40, 110, .1)
+            _, events = engine.update([] if gap == 'missing' else [_pose(keypoints=points)], now=.1)
+            assert not events
+        points = list(_supported_crossing_pose().keypoints)
+        points[15] = PoseKeypoint(0, 150, .95)
+        points[9] = PoseKeypoint(30, 65, .95)
+        points[10] = PoseKeypoint(70, 65, .95)
+        continuation = _pose(keypoints=points)
+        _, events = engine.update([continuation], now=.2)
+        assert any(e.event_type == 'POSE_CLIMBING_SUSPECTED' for e in events)
+        # 相同后续姿势，没有严格的起始抬腿证据时不能触发。
+        engine = PoseEventEngine()
+        for i in range(5):
+            _, events = engine.update([continuation], now=i*.1)
+            assert not any(e.event_type == 'POSE_CLIMBING_SUSPECTED' for e in events)
+
+
+def test_damage_action_does_not_require_a_configured_or_inside_zone():
+    for zone in (None, _Zone(False, configured=False), _Zone(False), _Zone(True)):
+        engine = PoseEventEngine()
+        hits = []
+        for i in range(16):
+            _, events = engine.update([_chest_pose(i)], zone_gate=zone, now=i * .2)
+            hits.extend(e for e in events if e.event_type == "POSE_DAMAGE_SUSPECTED")
+        assert len(hits) == 1
+
+
+def test_chest_motion_rejects_low_hands_static_body_and_invalid_points():
+    for mode in ("low", "still", "missing", "nan"):
+        engine = PoseEventEngine()
+        for i in range(16):
+            assert not _damage_events(engine, _chest_pose(i, mode=mode, translate=i * 2, scale=1 + i * .01), i * .2)
+
+
+def test_chest_motion_tolerates_brief_occlusion_but_resets_long_gaps():
+    for mode in ("lost", "missing", "gap"):
+        engine = PoseEventEngine(event_cooldown_seconds=0)
+        for i in range(4):
+            assert not _damage_events(engine, _chest_pose(i), i * .2)
+        if mode == "lost":
+            engine.update([], now=.8)
+        elif mode == "missing":
+            assert not _damage_events(engine, _chest_pose(0, mode="missing"), .8)
+        if mode != "gap":
+            assert _damage_events(engine, _chest_pose(0), 1.0)
+        else:
+            for i in range(4):
+                assert not _damage_events(engine, _chest_pose(i), 2.0 + i * .2)
+            assert _damage_events(engine, _chest_pose(4), 2.8)
+
+
+def test_chest_activity_accepts_one_moving_hand_without_hips_or_reversals():
+    engine = PoseEventEngine()
+    hits = []
+    for i in range(5):
+        points = list(_chest_pose(0).keypoints)
+        points[9] = PoseKeypoint(30 + 2 * i, 80, .95)
+        points[11] = points[12] = PoseKeypoint(0, 0, .1)
+        hits += _damage_events(engine, _pose(keypoints=points), i * .2)
+    assert len(hits) == 1
+    assert hits[0].duration_seconds == .8
+
+
+def test_chest_activity_rejects_tiny_jitter_and_single_adjustment():
+    for tiny in (True, False):
+        engine = PoseEventEngine()
+        for i in range(12):
+            points = list(_chest_pose(0).keypoints)
+            shift = (i % 2) * .5 if tiny else (10 if i >= 2 else 0)
+            points[9] = PoseKeypoint(30 + shift, 80, .95)
+            assert not _damage_events(engine, _pose(keypoints=points), i * .2)
+
+
+def test_chest_or_higher_accepts_either_hand_and_axis_without_reversals():
+    for hand in (9, 10):
+        for axis in (0, 1):
+            for height in (80, 20, -20):
+                engine = PoseEventEngine()
+                hits = []
+                for i in range(5):
+                    points = list(_chest_pose(0).keypoints)
+                    points[9] = PoseKeypoint(30, height, .95)
+                    points[10] = PoseKeypoint(70, height, .95)
+                    wrist = points[hand]
+                    points[hand] = PoseKeypoint(wrist.x + (2*i if axis == 0 else 0),
+                                                wrist.y - (2*i if axis == 1 else 0), .95)
+                    hits += _damage_events(engine, _pose(keypoints=points), i*.2)
+                assert len(hits) == 1, (hand, axis, height)
+
+
+def test_one_hand_below_chest_does_not_trigger():
+    for low_hand in (9, 10):
+        engine = PoseEventEngine()
+        for i in range(10):
+            points = list(_chest_pose(i).keypoints)
+            points[low_hand] = PoseKeypoint(points[low_hand].x, 120, .95)
+            assert not _damage_events(engine, _pose(keypoints=points), i*.2)

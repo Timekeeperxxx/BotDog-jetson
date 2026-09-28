@@ -3,6 +3,8 @@ import time
 from datetime import datetime, timezone
 
 
+UNTIMED_EVENT_CODES = {"NAV_PATH_BLOCKED", "NAV_BLOCK_CLEARED"}
+
 def observation_timing(observed: float | None, *, duration: float = 0.0,
                        threshold: float = 0.0, source: str = 'backend_frame_received') -> dict:
     if observed is None:
@@ -16,6 +18,8 @@ def observation_timing(observed: float | None, *, duration: float = 0.0,
 
 
 def log_alert_timing(evidence_id, event_code, message, timing, stage):
+    if event_code in UNTIMED_EVENT_CODES:
+        return
     import json
     from .logging_config import logger
     logger.bind(domain='告警日志', alert_log=True).info('{}', json.dumps({

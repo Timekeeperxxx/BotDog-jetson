@@ -6,7 +6,7 @@ import {
   saveNavTask,
   stopNavTask,
 } from '../../api/pcdMapApi'
-import type { GlobalPath, LocalizationStatus, NavigationStatus, RobotPose } from '../../types/navState'
+import type { TaskRoute, GlobalPath, LocalizationStatus, NavigationStatus, RobotPose } from '../../types/navState'
 import type { PcdSceneItem } from '../../types/pcdMap'
 import type { TaskDefinition, TaskDraft, TaskDraftStep } from '../../types/taskWorkflow'
 import {
@@ -27,6 +27,7 @@ import type { LogItem } from './navPageUtils'
 
 type InitialStatePayload = {
   robotPose?: RobotPose | null
+  taskRoute?: TaskRoute | null
   globalPath?: GlobalPath | null
   executionPath?: GlobalPath | null
   localizationStatus?: LocalizationStatus | null
@@ -252,6 +253,7 @@ export function useNavTasks({
           throw new Error(`任务场景 ${task.mapName} 切换失败，任务未启动`)
         }
       }
+      setInitialState({ taskRoute: null, globalPath: null, executionPath: null })
       const result = await executeNavTask(task.id)
       setNavigatingWaypointId(null)
       setInitialState({

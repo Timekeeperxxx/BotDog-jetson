@@ -68,6 +68,7 @@ NAV_ROUTES = [
     ("DELETE", "/api/v1/nav/pcd-maps/{map_id}/fences/{fence_id}"),
     # 导航急停
     ("POST",   "/api/v1/nav/e-stop"),
+    ("POST",   "/api/v1/nav/localization/stop"),
 ]
 
 AUTH_ROUTES = [

@@ -21,6 +21,16 @@ export type GlobalPath = {
   timestamp: number
 }
 
+export type TaskRoute = {
+  task_id: string
+  run_id: string
+  frame_id: string
+  status: 'planning' | 'ready' | 'running' | 'completed' | 'failed' | 'canceled'
+  current_index: number
+  segments: { points: GlobalPathPoint[]; waypoint: GlobalPathPoint & { name: string; yaw: number } }[]
+  timestamp?: number
+}
+
 export type NavigationStatus = {
   status: string
   target_waypoint_id: string | null
@@ -50,6 +60,7 @@ export type NavStateResponse = {
   robot_pose: RobotPose | null
   navigation_status: NavigationStatus
   localization_status: LocalizationStatus
+  task_route?: TaskRoute | null
   global_path: GlobalPath | null
   execution_path: GlobalPath | null
 }
@@ -65,6 +76,7 @@ export type NavWebSocketEvent =
   | { type: 'nav.robot_pose'; data: RobotPose | null; timestamp?: string }
   | { type: 'nav.navigation_status'; data: NavigationStatus; timestamp?: string }
   | { type: 'nav.localization_status'; data: LocalizationStatus; timestamp?: string }
+  | { type: 'nav.task_route'; data: TaskRoute | null; timestamp?: string }
   | { type: 'nav.global_path'; data: GlobalPath | null; timestamp?: string }
   | { type: 'nav.execution_path'; data: GlobalPath | null; timestamp?: string }
   | { type: 'nav.mapping_cloud'; data: MappingCloud; timestamp?: string }

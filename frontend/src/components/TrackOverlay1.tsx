@@ -17,6 +17,9 @@ import {
 } from './video/videoStagePreferences';
 
 export interface TrackOverlayData {
+  received_at_ms?: number;
+  pose_received_at_ms?: number;
+  tracking_received_at_ms?: number;
   detections?: {
     bbox: number[];
     conf: number;
@@ -28,6 +31,9 @@ export interface TrackOverlayData {
     display_name?: string | null;
     face_status?: 'pending' | 'recognized' | 'unknown' | 'unavailable' | null;
     face_score?: number | null;
+    fence_behavior?: string | null;
+    fence_action_score?: number;
+    fence_structure_change_ratio?: number;
   }[];
   poses?: {
     track_id: number;
@@ -40,6 +46,7 @@ export interface TrackOverlayData {
     keypoints: number[][];
   }[];
   keypoint_confidence?: number;
+  active_actions?: string[];
   persons: {
     bbox: number[];
     conf: number;
@@ -51,6 +58,9 @@ export interface TrackOverlayData {
     display_name?: string | null;
     face_status?: 'pending' | 'recognized' | 'unknown' | 'unavailable' | null;
     face_score?: number | null;
+    fence_behavior?: string | null;
+    fence_action_score?: number;
+    fence_structure_change_ratio?: number;
   }[];
   active_bbox: number[] | null;
   zone_bbox?: number[] | null;        // 防区 bounding box [x1,y1,x2,y2]
@@ -107,6 +117,12 @@ export function TrackOverlay({
     ctx.clearRect(0, 0, cw, ch);
 
     if (!data || data.frame_w <= 0 || data.frame_h <= 0) return;
+    const now = performance.now();
+    if (data.received_at_ms !== undefined && now - data.received_at_ms >= 750) return;
+    const showTracking = visibility.tracking && (
+      data.tracking_received_at_ms === undefined || now - data.tracking_received_at_ms < 750
+    );
+
 
     const labels: { text: string; bbox: number[]; background: string; color: string }[] = [];
     const occupied: LabelRect[] = Array.from(parent.querySelectorAll('[data-overlay-obstacle]')).map(element => {
@@ -116,7 +132,7 @@ export function TrackOverlay({
     const sx = cw / data.frame_w;
     const sy = ch / data.frame_h;
 
-    if (visibility.tracking) {
+    if (showTracking) {
       // ─── 1. 水平死区（两条蓝色虚线） ─────────────────────────────
       const centerX = cw / 2;
       const dbPx = data.deadband_px * sx;
@@ -154,9 +170,8 @@ export function TrackOverlay({
       ctx.restore();
     }
 
-    const allDetections = data.detections?.length
-      ? data.detections
-      : data.persons.map((p) => ({ ...p, class_name: p.class_name || 'person' }));
+    const allDetections = data.detections
+      ?? data.persons.map((p) => ({ ...p, class_name: p.class_name || 'person' }));
 
     const overlayDetections = allDetections.filter((detection) => {
       const className = detection.class_name || 'person';
@@ -166,6 +181,113 @@ export function TrackOverlay({
         return visibility.helmet || (visibility.face && Boolean(detection.face_status));
       }
       return visibility.helmet;
+    });
+
+    const poseFresh = data.pose_received_at_ms === undefined || now - data.pose_received_at_ms < 750;
+    const visiblePoses = visibility.pose && poseFresh ? (data.poses ?? []) : [];
+    const postureLabels: Record<string, string> = {
+      standing: '站立',
+      crouching: '蹲伏',
+      lying: '倒地/躺卧',
+      climbing_suspected: '疑似攀爬',
+      unknown: '姿态待确认',
+    };
+    const postureColors: Record<string, string> = {
+      standing: 'rgba(50,220,180,0.95)',
+      crouching: 'rgba(255,180,40,0.98)',
+      lying: 'rgba(255,70,70,0.98)',
+      climbing_suspected: 'rgba(255,40,120,0.98)',
+      unknown: 'rgba(180,190,210,0.8)',
+    };
+
+    type LabelLine = {
+      text: string;
+      background: string;
+      color: string;
+      font?: string;
+    };
+
+    const fitLabelText = (text: string, maxWidth: number) => {
+      if (ctx.measureText(text).width <= maxWidth) return text;
+      const ellipsis = '…';
+      if (ctx.measureText(ellipsis).width > maxWidth) return '';
+
+      let low = 0;
+      let high = text.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        if (ctx.measureText(`${text.slice(0, middle)}${ellipsis}`).width <= maxWidth) {
+          low = middle;
+        } else {
+          high = middle - 1;
+        }
+      }
+      return `${text.slice(0, low)}${ellipsis}`;
+    };
+
+    const drawLabelsInsideBox = (
+      boxX: number,
+      boxY: number,
+      boxWidth: number,
+      boxHeight: number,
+      lines: LabelLine[],
+      placement: 'top' | 'bottom',
+    ) => {
+      const rowHeight = 16;
+      const paddingX = 4;
+      const availableRows = Math.max(0, Math.floor(boxHeight / rowHeight));
+      const visibleLines = lines.filter((line) => line.text).slice(0, availableRows);
+      if (boxWidth < 8 || visibleLines.length === 0) return;
+
+      const stackHeight = visibleLines.length * rowHeight;
+      const startY = placement === 'top' ? boxY : boxY + boxHeight - stackHeight;
+      visibleLines.forEach((line, index) => {
+        ctx.font = line.font ?? 'bold 10px monospace';
+        const fittedText = fitLabelText(line.text, Math.max(0, boxWidth - paddingX * 2));
+        if (!fittedText) return;
+        const rowY = startY + index * rowHeight;
+        const backgroundWidth = Math.min(
+          boxWidth,
+          ctx.measureText(fittedText).width + paddingX * 2,
+        );
+        ctx.fillStyle = line.background;
+        ctx.fillRect(boxX, rowY, backgroundWidth, rowHeight);
+        ctx.fillStyle = line.color;
+        ctx.fillText(fittedText, boxX + paddingX, rowY + 12);
+      });
+    };
+
+    const bboxIou = (first: number[], second: number[]) => {
+      if (first.length !== 4 || second.length !== 4) return 0;
+      const intersectionWidth = Math.max(0, Math.min(first[2], second[2]) - Math.max(first[0], second[0]));
+      const intersectionHeight = Math.max(0, Math.min(first[3], second[3]) - Math.max(first[1], second[1]));
+      const intersection = intersectionWidth * intersectionHeight;
+      const firstArea = Math.max(0, first[2] - first[0]) * Math.max(0, first[3] - first[1]);
+      const secondArea = Math.max(0, second[2] - second[0]) * Math.max(0, second[3] - second[1]);
+      const union = firstArea + secondArea - intersection;
+      return union > 0 ? intersection / union : 0;
+    };
+
+    // 姿态模型与人员检测模型会为同一个人产生近似外框。按 IoU 一对一合并，
+    // 将姿态结果放进人员框中，避免重复边框和标签互相遮挡。
+    const poseByDetectionIndex = new Map<number, number>();
+    const matchedPoseIndexes = new Set<number>();
+    overlayDetections.forEach((detection, detectionIndex) => {
+      if ((detection.class_name || 'person') !== 'person') return;
+      let bestPoseIndex = -1;
+      let bestIou = 0;
+      visiblePoses.forEach((pose, poseIndex) => {
+        if (matchedPoseIndexes.has(poseIndex)) return;
+        const iou = bboxIou(detection.bbox, pose.bbox);
+        if (iou > bestIou) {
+          bestIou = iou;
+          bestPoseIndex = poseIndex;
+        }
+      });
+      if (bestPoseIndex >= 0 && bestIou >= 0.25) {
+        poseByDetectionIndex.set(detectionIndex, bestPoseIndex);
+        matchedPoseIndexes.add(bestPoseIndex);
+      }
     });
 
     const colorForClass = (className: string, isStranger?: boolean | null, safetyStatus?: string | null) => {
@@ -197,8 +319,8 @@ export function TrackOverlay({
       return { box: 'rgba(220,220,220,0.85)', label: 'rgba(80,80,80,0.92)' };
     };
 
-    // ─── 3. 所有 YOLO 检测框：person / head / helmet ───────────────
-    for (const p of overlayDetections) {
+    // ─── 3. 所有 YOLO 检测框：person / head / helmet / weapon ──────
+    for (const [detectionIndex, p] of overlayDetections.entries()) {
       if (!Array.isArray(p.bbox) || p.bbox.length !== 4) continue;
 
       const [x1, y1, x2, y2] = p.bbox;
@@ -208,10 +330,23 @@ export function TrackOverlay({
       const visibleSafetyStatus = visibility.helmet ? p.safety_status : null;
       const visibleStrangerStatus = visibility.face ? p.is_stranger : null;
       const colors = colorForClass(className, visibleStrangerStatus, visibleSafetyStatus);
+      const fenceLabels: Record<string, string> = {
+        approaching: '靠近围栏',
+        dwelling: '围栏徘徊',
+        contact: '接触围栏',
+        climbing_suspected: '疑似翻越',
+        tampering_suspected: '疑似破坏围栏',
+        tampering_confirmed: '确认破坏围栏',
+      };
+      const fenceLabel = className === 'person' && p.fence_behavior
+        ? fenceLabels[p.fence_behavior] ?? ''
+        : '';
+      const isFenceTamper = p.fence_behavior === 'tampering_suspected'
+        || p.fence_behavior === 'tampering_confirmed';
 
       ctx.save();
-      ctx.strokeStyle = colors.box;
-      ctx.lineWidth = className === 'person' ? 1.8 : 1.5;
+      ctx.strokeStyle = isFenceTamper ? 'rgba(255,45,45,0.98)' : colors.box;
+      ctx.lineWidth = isFenceTamper ? 3 : (className === 'person' ? 1.8 : 1.5);
       ctx.strokeRect(rx, ry, rw, rh);
 
       const idPart = p.track_id !== undefined && p.track_id >= 0 ? ` #${p.track_id}` : '';
@@ -219,32 +354,63 @@ export function TrackOverlay({
         ? (p.face_status === 'recognized' && p.display_name
           ? ` · ${p.display_name}`
           : p.face_status === 'unknown'
-            ? ' · 未知人员'
+            ? ' · 未授权'
             : p.face_status === 'pending'
               ? ' · 识别中'
               : p.face_status === 'unavailable'
-                ? ' · 人脸不可用'
+                ? ' · 未授权'
                 : '')
         : '';
       const classLabels: Record<string, string> = {
+        person: '人员',
+        helmet: '安全帽',
         guns: '枪械',
         knife: '刀具',
       };
       const baseLabel = className === 'person' && !visibility.helmet && visibility.face
         ? '人脸'
         : (classLabels[className] ?? className);
-      const headerText = `${baseLabel}${idPart}${faceLabel} ${(p.conf * 100).toFixed(0)}%`;
-      labels.push({ text: headerText, bbox: p.bbox, background: colors.label, color: '#fff' });
-
+      const fencePart = fenceLabel ? ` · ${fenceLabel}` : '';
+      const headerText = `${baseLabel}${idPart}${faceLabel}${fencePart} ${(p.conf * 100).toFixed(0)}%`;
       const showNoHelmetTag = visibility.helmet && p.safety_status === 'no_helmet';
       const showIdentityTag = visibility.face && p.is_stranger !== undefined && p.is_stranger !== null;
-      if (className === 'person' && (showNoHelmetTag || showIdentityTag)) {
-        const tagText = showNoHelmetTag
-          ? 'NO_HELMET'
-          : (p.is_stranger ? "STRANGER" : "KNOWN");
-        labels.push({ text: tagText, bbox: p.bbox, background: colors.label, color: '#fff' });
+      const labelLines: LabelLine[] = [{
+        text: headerText,
+        background: colors.label,
+        color: '#fff',
+      }];
+
+      const matchedPoseIndex = poseByDetectionIndex.get(detectionIndex);
+      if (className === 'person' && matchedPoseIndex !== undefined) {
+        const pose = visiblePoses[matchedPoseIndex];
+        const poseColor = postureColors[pose.posture] ?? postureColors.unknown;
+        labelLines.push({
+          text: `姿态：${postureLabels[pose.posture] ?? pose.posture} ${(pose.posture_confidence * 100).toFixed(0)}%`,
+          background: 'rgba(10,10,15,0.78)',
+          color: poseColor,
+          font: 'bold 10px sans-serif',
+        });
       }
-      
+
+      if (className === 'person' && (showNoHelmetTag || showIdentityTag)) {
+        const statusParts: string[] = [];
+        if (showNoHelmetTag) statusParts.push('未戴安全帽');
+        if (showIdentityTag) statusParts.push(p.is_stranger ? '未授权' : '已授权');
+        labelLines.push({
+          text: statusParts.join(' · '),
+          background: showNoHelmetTag || p.is_stranger
+            ? 'rgba(220,0,0,0.88)'
+            : 'rgba(0,150,75,0.88)',
+          color: '#fff',
+        });
+      }
+
+      // 人员信息放在框内底部，以避开人员头部区域中的 head / helmet 子框；
+      // 其余目标的标签放在各自检测框内顶部。
+      for (const label of labelLines) {
+        labels.push({ ...label, bbox: p.bbox });
+      }
+
       ctx.restore();
     }
 
@@ -255,26 +421,14 @@ export function TrackOverlay({
       [11, 13], [13, 15], [12, 14], [14, 16],
       [0, 1], [0, 2], [1, 3], [2, 4],
     ];
-    const postureLabels: Record<string, string> = {
-      standing: '站立',
-      crouching: '蹲伏',
-      lying: '倒地/躺卧',
-      climbing_suspected: '疑似攀爬',
-      unknown: '姿态待确认',
-    };
-    const postureColors: Record<string, string> = {
-      standing: 'rgba(50,220,180,0.95)',
-      crouching: 'rgba(255,180,40,0.98)',
-      lying: 'rgba(255,70,70,0.98)',
-      climbing_suspected: 'rgba(255,40,120,0.98)',
-      unknown: 'rgba(180,190,210,0.8)',
-    };
     const keypointThreshold = data.keypoint_confidence ?? 0.35;
 
-    for (const pose of visibility.pose ? (data.poses ?? []) : []) {
+    for (const [poseIndex, pose] of visiblePoses.entries()) {
       const color = postureColors[pose.posture] ?? postureColors.unknown;
       const points = pose.keypoints;
       ctx.save();
+      // 姿态骨架在检测标签之后绘制时使用底层合成，避免骨架线覆盖人员文字。
+      ctx.globalCompositeOperation = 'destination-over';
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
       ctx.lineWidth = 2;
@@ -300,26 +454,31 @@ export function TrackOverlay({
         ctx.fill();
       }
 
-      if (Array.isArray(pose.bbox) && pose.bbox.length === 4) {
+      // 已匹配的姿态信息已经合并进人员框，不再重复绘制姿态外框。
+      if (!matchedPoseIndexes.has(poseIndex) && Array.isArray(pose.bbox) && pose.bbox.length === 4) {
         const [x1, y1, x2, y2] = pose.bbox;
+        const rx = x1 * sx;
+        const ry = y1 * sy;
+        const rw = (x2 - x1) * sx;
+        const rh = (y2 - y1) * sy;
+        ctx.globalCompositeOperation = 'source-over';
         ctx.setLineDash([5, 3]);
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = color;
-        ctx.strokeRect(
-          x1 * sx,
-          y1 * sy,
-          (x2 - x1) * sx,
-          (y2 - y1) * sy,
-        );
+        ctx.strokeRect(rx, ry, rw, rh);
         ctx.setLineDash([]);
-        const label = `${postureLabels[pose.posture] ?? pose.posture} #${pose.track_id}`;
-        labels.push({ text: label, bbox: pose.bbox, background: 'rgba(10,10,15,0.94)', color });
+        drawLabelsInsideBox(rx, ry, rw, rh, [{
+          text: `姿态：${postureLabels[pose.posture] ?? pose.posture} ${(pose.posture_confidence * 100).toFixed(0)}% #${pose.track_id}`,
+          background: 'rgba(10,10,15,0.78)',
+          color,
+          font: 'bold 10px sans-serif',
+        }], 'bottom');
       }
       ctx.restore();
     }
 
     // ─── 3.5. 人的脚点记录 ──────────────────────────────────────
-    if (visibility.tracking && data.foot_points && data.foot_points.length > 0) {
+    if (showTracking && data.foot_points && data.foot_points.length > 0) {
       for (const fp of data.foot_points) {
         const fx = fp.x * sx;
         const fy = fp.y * sy;
@@ -340,7 +499,7 @@ export function TrackOverlay({
     }
 
     // ─── 3.8. 边缘裕量保护区（红色半透明条带 + 三侧安全边界线） ──────────
-    if (visibility.tracking && data.edge_margin_ratio && data.edge_margin_ratio > 0) {
+    if (showTracking && data.edge_margin_ratio && data.edge_margin_ratio > 0) {
       const mx = cw * data.edge_margin_ratio;
       const my = ch * data.edge_margin_ratio;
       const dangerColor = 'rgba(255, 60, 60, 0.13)';
@@ -374,7 +533,7 @@ export function TrackOverlay({
     }
 
     // ─── 4. 防区多边形（黄色，优先画旋转四边形） ─────────────────────
-    if (visibility.tracking && data.zone_polygon && data.zone_polygon.length >= 3) {
+    if (showTracking && data.zone_polygon && data.zone_polygon.length >= 3) {
       // 精确旋转四边形
       const pts = data.zone_polygon.map(([px, py]) => [px * sx, py * sy]);
       ctx.save();
@@ -397,7 +556,7 @@ export function TrackOverlay({
       ctx.font = 'bold 11px monospace';
       ctx.fillText('🟡 防区(颜色检测)', pts[0][0] + 3, pts[0][1] - 5);
       ctx.restore();
-    } else if (visibility.tracking && data.zone_bbox) {
+    } else if (showTracking && data.zone_bbox) {
       // 回退：轴对齐矩形
       const [x1, y1, x2, y2] = data.zone_bbox;
       const rx = x1 * sx, ry = y1 * sy;
@@ -418,7 +577,7 @@ export function TrackOverlay({
     }
 
     // ─── 6. 锁定目标（红色加粗框） ──────────────────────────────────
-    if (visibility.tracking && data.active_bbox) {
+    if (showTracking && data.active_bbox) {
       const [x1, y1, x2, y2] = data.active_bbox;
       const rx = x1 * sx, ry = y1 * sy;
       const rw = (x2 - x1) * sx, rh = (y2 - y1) * sy;
@@ -443,7 +602,7 @@ export function TrackOverlay({
     }
 
     // ─── 5. 决策信息（左下角） ───────────────────────────────────────
-    if (visibility.tracking && (data.command || data.state)) {
+    if (showTracking && (data.command || data.state)) {
       const cmdLabel: Record<string, string> = {
         forward: '↑ 前进', left: '← 左转', right: '→ 右转', stop: '■ 停止',
       };
@@ -496,7 +655,11 @@ export function TrackOverlay({
 
   useEffect(() => {
     draw();
-  }, [draw]);
+    if (data?.received_at_ms === undefined) return;
+    const remaining = Math.max(0, 750 - (performance.now() - data.received_at_ms));
+    const timer = window.setTimeout(draw, remaining + 1);
+    return () => window.clearTimeout(timer);
+  }, [draw, data?.received_at_ms]);
 
   // 窗口 resize 时重绘
   useEffect(() => {

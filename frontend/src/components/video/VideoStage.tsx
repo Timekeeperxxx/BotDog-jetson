@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Camera, Gauge, Layers3, Maximize2, Minimize2, Play, SlidersHorizontal, Square, Video, VideoOff } from 'lucide-react';
+import { PoseActionWarning } from '../alerts/PoseActionWarning';
 import { TrackOverlay } from '../TrackOverlay1';
 import { CameraControlPanel } from './CameraControlPanel';
 import { CameraVideo } from './CameraVideo';
@@ -101,6 +102,7 @@ export function VideoStage({
     <div className="flex-1 flex min-h-0 relative">
       <div className={`flex-1 bg-black relative overflow-hidden transition-all duration-300 ${isUiFullscreen ? 'fixed inset-0 z-[100]' : 'border-r border-white/20'}`}>
         <CameraVideo videoRef={videoRef} />
+        <PoseActionWarning actions={trackOverlay?.active_actions} />
         {trackOverlay && mainOverlayEnabled && (
           <TrackOverlay
             data={trackOverlay}

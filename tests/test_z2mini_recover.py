@@ -173,3 +173,30 @@ def test_pipeline_escalates_service_failure_to_camera_reboot() -> None:
     assert reboot_recovery in script
     assert script.index(service_recovery) < script.index(reboot_recovery)
     assert 'CAM1_RECOVERY_REBOOT_ENABLED="${CAM1_RECOVERY_REBOOT_ENABLED:-1}"' in script
+
+
+def test_pipeline_retries_hardware_after_bounded_software_fallback() -> None:
+    script = (
+        Path(__file__).resolve().parents[1] / "scripts" / "run-pipeline.sh"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        'CAM1_SOFTWARE_FALLBACK_RETRY_SECONDS="${CAM1_SOFTWARE_FALLBACK_RETRY_SECONDS:-60}"'
+        in script
+    )
+    assert 'timeout --signal=TERM --kill-after=5 "${max_runtime_seconds}s"' in script
+    assert 'run_cam1_ffmpeg libx264 "$CAM1_SOFTWARE_FALLBACK_RETRY_SECONDS"' in script
+    assert 'software fallback window ended; retrying gst-nvenc' in script
+
+
+def test_pipeline_discards_stale_frames_and_repairs_fallback_timestamps() -> None:
+    script = (
+        Path(__file__).resolve().parents[1] / "scripts" / "run-pipeline.sh"
+    ).read_text(encoding="utf-8")
+
+    assert 'CAM1_GST_QUEUE_BUFFERS="${CAM1_GST_QUEUE_BUFFERS:-3}"' in script
+    assert 'queue max-size-buffers="$CAM1_GST_QUEUE_BUFFERS"' in script
+    assert 'disable-dpb="$CAM1_GST_DISABLE_DPB"' in script
+    assert "-fflags nobuffer+discardcorrupt+genpts" in script
+    assert "output_timing_args=(-vsync vfr)" in script
+    assert "-avoid_negative_ts make_non_negative" in script

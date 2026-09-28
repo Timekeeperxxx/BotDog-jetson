@@ -7,6 +7,7 @@ from backend.weather_detection import WeatherDetectionService
 
 class FakeClassifier:
     device = "cpu"
+    runtime = "fake"
 
     def __init__(self, outputs: list[Mapping[str, float]]) -> None:
         self._outputs = list(outputs)
@@ -28,7 +29,7 @@ def test_weather_service_stabilizes_rain_after_required_votes() -> None:
         enabled=True,
         classifier=classifier,
         min_confidence=0.55,
-        smoothing_window=5,
+        smoothing_window=3,
         stable_votes=3,
     )
 
@@ -41,6 +42,7 @@ def test_weather_service_stabilizes_rain_after_required_votes() -> None:
     assert status["label_zh"] == "雨"
     assert status["frames_processed"] == 3
     assert status["radar_fused"] is False
+    assert status["runtime"] == "fake"
 
 
 def test_weather_service_maps_non_product_class_to_normal() -> None:
@@ -104,3 +106,38 @@ def test_weather_service_reports_initialization_failure_without_raising() -> Non
     assert status["state"] == "failed"
     assert status["last_error"] == "model missing"
     assert status["frames_processed"] == 0
+
+
+def test_three_sample_rounds_and_change_followups(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr('backend.weather_detection.time.monotonic', lambda: now[0])
+    rounds = [('normal','normal','rain'), ('rain','rain','normal'),
+              ('snow','rain','snow'), ('snow','snow','rain'),
+              ('normal','rain','snow'), ('snow','snow','normal')]
+    service = WeatherDetectionService(enabled=True, classifier=FakeClassifier(
+        [{label: .9} for batch in rounds for label in batch]))
+    expected = [('normal',300),('rain',10),('snow',10),('snow',300),('snow',10),('snow',300)]
+    for index,(label,delay) in enumerate(expected):
+        old = service.get_status()['label']
+        for _ in range(2):
+            assert service.process_frame(b'frame')['label'] == old
+        status = service.process_frame(b'frame')
+        assert status['label'] == label
+        assert status['round_samples'] == 0
+        assert status['rounds_processed'] == index+1
+        assert service.next_sample_at == now[0]+delay
+        now[0] = service.next_sample_at
+
+
+def test_failed_round_discards_partial_votes_and_retries_in_ten_seconds(monkeypatch):
+    monkeypatch.setattr('backend.weather_detection.time.monotonic', lambda: 100)
+    service = WeatherDetectionService(enabled=True,classifier=FakeClassifier([
+        {'rain': .9}, {}, {'snow': .9}, {'snow': .9}, {'normal': .9}]))
+    service.process_frame(b'frame')
+    failed = service.process_frame(b'frame')
+    assert failed['state'] == 'degraded'
+    assert failed['round_samples'] == 0
+    assert service.next_sample_at == 110
+    assert service.process_frame(b'frame')['label'] == 'unknown'
+    assert service.process_frame(b'frame')['label'] == 'unknown'
+    assert service.process_frame(b'frame')['label'] == 'snow'

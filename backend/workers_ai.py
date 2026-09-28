@@ -107,6 +107,7 @@ class _YoloDetector(_BaseDetector):
         frame_height: int,
         inference_imgsz: int,
         use_bytetrack: bool,
+        class_aliases: dict[str, str] | None = None,
     ) -> None:
         import numpy as np  # noqa: F811
         self._np = np
@@ -140,14 +141,15 @@ class _YoloDetector(_BaseDetector):
         # 缓存模型类别名映射。不得把 cls=0 写死为 person：独立武器模型的
         # cls=0 是 guns，类别应始终以模型元数据为准。
         raw_names = self._model.names
+        aliases = class_aliases or {}
         if isinstance(raw_names, dict):
             self._class_names = {
-                int(class_id): str(class_name)
+                int(class_id): aliases.get(str(class_name), str(class_name))
                 for class_id, class_name in raw_names.items()
             }
         else:
             self._class_names = {
-                class_id: str(class_name)
+                class_id: aliases.get(str(class_name), str(class_name))
                 for class_id, class_name in enumerate(raw_names)
             }
         missing_classes = self._target_classes.difference(self._class_names.values())
@@ -167,6 +169,37 @@ class _YoloDetector(_BaseDetector):
         """返回置信度最高的单个目标（兼容老路径）。"""
         results = self.detect_many(frame_bytes)
         return results[0] if results else None
+
+    def _result_to_detections(
+        self,
+        result,
+        *,
+        offset_x: int = 0,
+        offset_y: int = 0,
+    ) -> list[DetectionResult]:
+        if result is None or result.boxes is None or len(result.boxes) == 0:
+            return []
+        detections: list[DetectionResult] = []
+        for box in result.boxes:
+            cls_id = int(box.cls[0])
+            cls_name = self._class_names.get(cls_id, str(cls_id))
+            if cls_name not in self._target_classes:
+                continue
+            xyxy = box.xyxy[0].tolist()
+            detections.append(
+                DetectionResult(
+                    label=cls_name,
+                    confidence=float(box.conf[0]),
+                    bbox=(
+                        int(xyxy[0]) + offset_x,
+                        int(xyxy[1]) + offset_y,
+                        int(xyxy[2]) + offset_x,
+                        int(xyxy[3]) + offset_y,
+                    ),
+                    track_id=int(box.id[0]) if box.id is not None else -1,
+                )
+            )
+        return detections
 
     def detect_many(self, frame_bytes: bytes) -> list[DetectionResult]:
         """返回所有目标类别的检测结果列表，使用 ByteTrack 提供稳定 track_id。"""
@@ -201,33 +234,84 @@ class _YoloDetector(_BaseDetector):
                 verbose=False,
             )
 
-        if not results or len(results[0].boxes) == 0:
+        if not results:
             return []
+        return self._result_to_detections(results[0])
 
-        detections = []
-        for box in results[0].boxes:
-            cls_id = int(box.cls[0])
-            cls_name = self._class_names.get(cls_id, str(cls_id))
-            conf = float(box.conf[0])
-
-            if cls_name not in self._target_classes:
+    def detect_many_regions(
+        self,
+        frame_bytes: bytes,
+        regions: list[tuple[int, int, int, int]],
+        *,
+        expand_ratio: float,
+        max_regions: int,
+        nms_iou: float,
+    ) -> list[DetectionResult]:
+        """在人员区域内放大检测，并把武器框映射回完整画面坐标。"""
+        frame = self._np.frombuffer(frame_bytes, dtype=self._np.uint8)
+        frame = frame.reshape((self._frame_height, self._frame_width, 3))
+        ordered_regions = sorted(
+            regions,
+            key=lambda item: max(0, item[2] - item[0]) * max(0, item[3] - item[1]),
+            reverse=True,
+        )[: max(1, int(max_regions))]
+        detections: list[DetectionResult] = []
+        for region in ordered_regions:
+            x1, y1, x2, y2 = region
+            width = max(1, x2 - x1)
+            height = max(1, y2 - y1)
+            crop_x1 = max(0, int(x1 - width * expand_ratio))
+            crop_y1 = max(0, int(y1 - height * expand_ratio))
+            crop_x2 = min(self._frame_width, int(x2 + width * expand_ratio))
+            crop_y2 = min(self._frame_height, int(y2 + height * expand_ratio))
+            if crop_x2 <= crop_x1 or crop_y2 <= crop_y1:
                 continue
+            crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+            results = self._model.predict(
+                crop,
+                conf=self._confidence,
+                imgsz=self._inference_imgsz,
+                verbose=False,
+            )
+            if results:
+                detections.extend(
+                    self._result_to_detections(
+                        results[0],
+                        offset_x=crop_x1,
+                        offset_y=crop_y1,
+                    )
+                )
 
-            # 提取 bbox (x1,y1,x2,y2)
-            xyxy = box.xyxy[0].tolist()
-            bbox = (int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3]))
+        kept: list[DetectionResult] = []
+        for detection in sorted(
+            detections, key=lambda item: item.confidence, reverse=True
+        ):
+            if detection.bbox is None:
+                continue
+            if any(
+                previous.label == detection.label
+                and previous.bbox is not None
+                and self._bbox_iou(previous.bbox, detection.bbox) >= nms_iou
+                for previous in kept
+            ):
+                continue
+            kept.append(detection)
+        return kept
 
-            # 提取 YOLO 分配的稳定 track_id（无则 -1）
-            track_id = int(box.id[0]) if box.id is not None else -1
-
-            detections.append(DetectionResult(
-                label=cls_name,
-                confidence=conf,
-                bbox=bbox,
-                track_id=track_id,
-            ))
-
-        return detections
+    @staticmethod
+    def _bbox_iou(
+        first: tuple[int, int, int, int],
+        second: tuple[int, int, int, int],
+    ) -> float:
+        x1 = max(first[0], second[0])
+        y1 = max(first[1], second[1])
+        x2 = min(first[2], second[2])
+        y2 = min(first[3], second[3])
+        intersection = max(0, x2 - x1) * max(0, y2 - y1)
+        first_area = max(0, first[2] - first[0]) * max(0, first[3] - first[1])
+        second_area = max(0, second[2] - second[0]) * max(0, second[3] - second[1])
+        union = first_area + second_area - intersection
+        return intersection / union if union > 0 else 0.0
 
 
 class AIWorker(AIWorkerProcessingMixin):
@@ -298,12 +382,14 @@ class AIWorker(AIWorkerProcessingMixin):
             0.2, float(settings.AI_FFMPEG_MEMORY_CHECK_INTERVAL_SECONDS)
         )
         self._ffmpeg_peak_rss_bytes = 0
+        self._ffmpeg_frame_timeout_s = max(1.0, float(settings.AI_FFMPEG_FRAME_TIMEOUT_SECONDS))
         self._frame_process_timeout_s = max(1.0, float(settings.AI_FRAME_PROCESS_TIMEOUT_SECONDS))
         self._max_frame_age_s = max(0.05, float(settings.AI_MAX_FRAME_AGE_SECONDS))
         self._event_send_timeout_s = max(0.005, float(settings.AI_EVENT_SEND_TIMEOUT_SECONDS))
         self._last_frame_started_at = 0.0
         self._last_frame_completed_at = 0.0
         self._last_frame_timeout_reason: str | None = None
+        self._pending_inferences: dict[asyncio.Task, str] = {}
         self._latest_frame_index = 0
         self._last_processed_frame_index = 0
         self._queued_frames_dropped = 0
@@ -316,6 +402,7 @@ class AIWorker(AIWorkerProcessingMixin):
         self._last_end_to_end_ms = 0.0
         self._pose_frames_processed = 0
         self._pose_events_count = 0
+        self._pose_inference_deferred = False
         self._last_pose_overlay_broadcast = 0.0
         self._pose_status = "disabled"
         self._pose_detector: UltralyticsPoseDetector | None = None
@@ -405,6 +492,10 @@ class AIWorker(AIWorkerProcessingMixin):
                     frame_height=self._frame_height,
                     inference_imgsz=settings.WEAPON_INFERENCE_IMGSZ,
                     use_bytetrack=False,
+                    class_aliases={
+                        "Firearm": "guns",
+                        "Melee_Weapon": "knife",
+                    },
                 )
                 self._weapon_status = "ready"
                 weapon_logger.info(
@@ -469,6 +560,62 @@ class AIWorker(AIWorkerProcessingMixin):
             ),
         }
 
+    async def _await_inference(self, stage: str, awaitable):
+        task = asyncio.create_task(awaitable)
+        self._pending_inferences[task] = stage
+
+        def completed(done):
+            self._pending_inferences.pop(done, None)
+            if not done.cancelled():
+                done.exception()  # 外层超时后仍回收底层异常，避免遗留 Task 警告。
+
+        task.add_done_callback(completed)
+        return await asyncio.shield(task)
+
+    async def _run_inference(self, stage: str, function, *args, **kwargs):
+        return await self._await_inference(stage, asyncio.to_thread(function, *args, **kwargs))
+
+    async def _wait_for_pending_inferences(self, stop_event: asyncio.Event) -> None:
+        stopped = asyncio.create_task(stop_event.wait())
+        try:
+            # ponytail: 线程真正挂死时只能等待；强制恢复需将推理隔离到可终止的子进程。
+            while self._pending_inferences and not stop_event.is_set():
+                await asyncio.wait(
+                    [*self._pending_inferences, stopped],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+        finally:
+            stopped.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stopped
+
+    async def _warmup_models(self) -> None:
+        frame = bytes(self._frame_size)
+        models = [
+            ("主检测预热", self._detector, "_detector_warmed_up", "detect_many"),
+            ("姿态预热", self._pose_detector, "_pose_warmed_up", "detect"),
+            ("刀枪预热", self._weapon_detector, "_weapon_warmed_up", "detect_many"),
+        ]
+        for stage, detector, flag, method in models:
+            if detector is None or getattr(self, flag):
+                continue
+            started = time.monotonic()
+            self._startup_status = "warming_up"
+            self._startup_detail = stage
+            ai_logger.info("{}开始", stage)
+            infer = getattr(detector, method, None) or detector.detect
+            try:
+                await asyncio.wait_for(
+                    self._run_inference(stage, infer, frame),
+                    timeout=max(1.0, float(settings.AI_MODEL_WARMUP_TIMEOUT_SECONDS)),
+                )
+            except asyncio.TimeoutError as exc:
+                raise AIWorkerFrameTimeout(f"{stage}超时，等待初始化结束") from exc
+            setattr(self, flag, True)
+            ai_logger.info("{}完成：{:.1f}ms", stage, (time.monotonic() - started) * 1000)
+        self._startup_status = "ready"
+        self._startup_detail = "模型预热完成，等待最新视频帧"
+
     async def start(self, stop_event: asyncio.Event) -> None:
         ai_logger.info(
             "AI Worker 已启动：fps={}，分辨率={}x{}，rtsp_sources={}，pose={}，"
@@ -494,23 +641,35 @@ class AIWorker(AIWorkerProcessingMixin):
             await self._update_current_task_id()
             if not self._is_mission_active():
                 self._reset_detection_state()
+                if self._weather_service.available and time.monotonic() >= self._weather_service.next_sample_at:
+                    await self._sample_weather_round_idle()
+                    continue
                 await asyncio.sleep(0.5)
                 continue
 
             loop_start = asyncio.get_event_loop().time()
             try:
+                # 独立预热，不把 TensorRT/NMS 首次初始化塞进实时帧的 15 秒预算。
+                await self._warmup_models()
                 await self._run_ffmpeg_loop(stop_event)
             except asyncio.CancelledError:
                 break
             except AIWorkerFrameTimeout as exc:
-                ai_logger.critical("AI 单帧处理超时：{}", exc)
-                if settings.AI_EXIT_ON_FRAME_TIMEOUT:
-                    ai_logger.critical(
-                        "AI 推理线程可能已卡死，后端将退出并交给 systemd 自动重启"
-                    )
-                    os._exit(75)
+                self._startup_status = "waiting"
+                self._startup_detail = f"丢弃超时帧，等待在途推理完成后自动恢复：{exc}"
+                self._last_frame_timeout_reason = str(exc)
+                ai_logger.error("{}", self._startup_detail)
+                self._last_status_broadcast = 0.0
+                await self._maybe_broadcast_status()
+                await self._wait_for_pending_inferences(stop_event)
+                if stop_event.is_set():
+                    return
+                self._startup_status = "ready"
+                self._startup_detail = "在途推理已结束，重新拉取最新画面"
+                ai_logger.info("{}", self._startup_detail)
             except Exception as exc:  # noqa: BLE001
                 ai_logger.exception("AI Worker 运行异常：{}", exc)
+                await self._wait_for_pending_inferences(stop_event)
 
             if stop_event.is_set():
                 break
@@ -532,6 +691,34 @@ class AIWorker(AIWorkerProcessingMixin):
 
         ai_logger.info("AI Worker 已停止")
 
+    async def _sample_weather_round_idle(self) -> None:
+        """Take a scheduled weather round without starting robot control."""
+        process = None
+        stderr_task = None
+        try:
+            process = await self._start_ffmpeg()
+            if process.stdout is None:
+                raise AIWorkerError("天气刷新拉流失败")
+            stderr_task = asyncio.create_task(self._drain_stderr(process))
+            while time.monotonic() >= self._weather_service.next_sample_at:
+                frame = await asyncio.wait_for(
+                    process.stdout.readexactly(self._frame_size),
+                    timeout=self._ffmpeg_frame_timeout_s,
+                )
+                await self._maybe_process_weather(frame)
+        except (AIWorkerError, asyncio.TimeoutError, asyncio.IncompleteReadError, OSError) as exc:
+            self._weather_service.cancel_refresh(f"天气刷新未取得视频帧：{exc}")
+            ai_logger.warning("空闲天气采样未完成：{}", exc)
+        finally:
+            if process is not None:
+                await self._terminate_ffmpeg_process(process, reason="weather_refresh")
+            if stderr_task is not None:
+                stderr_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await stderr_task
+            self._last_status_broadcast = 0.0
+            await self._maybe_broadcast_status()
+
     async def _run_ffmpeg_loop(self, stop_event: asyncio.Event) -> None:
         process = await self._start_ffmpeg()
         if process.stdout is None:
@@ -539,21 +726,27 @@ class AIWorker(AIWorkerProcessingMixin):
         stderr_task = asyncio.create_task(self._drain_stderr(process))
 
         frame_queue: asyncio.Queue[_AIFrame] = asyncio.Queue(maxsize=1)
+        from .frame_rate_limiter import FrameRateLimiter
+        limiter = FrameRateLimiter(settings.AI_FPS)
+        sampled_index = 0
 
         async def reader_task() -> None:
             frame_index = 0
-            minimum_emit_period_s = 1.0 / max(1, int(settings.AI_FPS))
-            last_emit_at = 0.0
+            last_read_at = time.monotonic()
             try:
                 while not stop_event.is_set():
-                    frame = await process.stdout.readexactly(self._frame_size)
+                    frame = await asyncio.wait_for(
+                        process.stdout.readexactly(self._frame_size),
+                        timeout=self._ffmpeg_frame_timeout_s,
+                    )
                     read_at = time.monotonic()
-                    # 持续读空 FFmpeg stdout，避免反压到解码器；仅把达到 AI_FPS
-                    # 周期的最新帧送入推理。限频不再依赖相机错误的 H.264 时间基。
-                    if last_emit_at and read_at - last_emit_at < minimum_emit_period_s:
+                    read_gap = read_at - last_read_at
+                    last_read_at = read_at
+                    if settings.AI_STREAM_READER == "gstreamer" and read_gap > self._max_frame_age_s:
+                        # 原生 queue 会丢旧帧，但管道里已开始写的那一帧不能撤回。
                         self._queued_frames_dropped += 1
                         continue
-                    last_emit_at = read_at
+                    # 每个解码帧都覆盖旧帧；限频放在消费端，不能先丢掉更新的画面。
                     if self._ffmpeg_stream_unavailable and not self._stream_restored_logged:
                         self._stream_restored_logged = True
                         self._ffmpeg_stream_unavailable = False
@@ -569,6 +762,14 @@ class AIWorker(AIWorkerProcessingMixin):
                         frame_queue,
                         _AIFrame(data=frame, index=frame_index, read_at=read_at),
                     )
+            except asyncio.TimeoutError:
+                self._ffmpeg_last_exit_reason = "frame_read_timeout"
+                self._ffmpeg_stream_unavailable = True
+                self._ffmpeg_unavailable_reason = "frame_read_timeout"
+                video_logger.warning(
+                    "AI 拉流连续 {:.1f}s 无完整帧，停止并重连", self._ffmpeg_frame_timeout_s
+                )
+                await self._terminate_ffmpeg_process(process, reason="frame_read_timeout")
             except asyncio.IncompleteReadError:
                 if self._ffmpeg_last_exit_reason == "unknown":
                     self._ffmpeg_last_exit_reason = "stdout_closed"
@@ -599,6 +800,10 @@ class AIWorker(AIWorkerProcessingMixin):
                     self._reset_detection_state()
                     break
 
+                # 数据库/任务状态检查期间也可能到达新帧，推理前再取最新的一帧。
+                while not frame_queue.empty():
+                    ai_frame = frame_queue.get_nowait()
+                    self._queued_frames_dropped += 1
                 frame_age_s = time.monotonic() - ai_frame.read_at
                 self._last_frame_age_ms = round(frame_age_s * 1000, 1)
                 if frame_age_s > self._max_frame_age_s:
@@ -606,8 +811,12 @@ class AIWorker(AIWorkerProcessingMixin):
                     self._queued_frames_dropped += 1
                     continue
 
+                if not limiter.allow(time.monotonic()):
+                    self._queued_frames_dropped += 1
+                    continue
+                sampled_index += 1
                 skip = self._get_frame_skip()
-                if skip > 1 and (ai_frame.index % skip) != 0:
+                if skip > 1 and (sampled_index % skip) != 0:
                     continue
 
                 await self._process_frame_with_timeout(
@@ -629,7 +838,12 @@ class AIWorker(AIWorkerProcessingMixin):
             with contextlib.suppress(asyncio.CancelledError):  # CancelledError 不是 Exception，须单独捕获
                 await stderr_task
 
-            await self._terminate_ffmpeg_process(process, reason="loop_stopped")
+            # 读任务已退出，收空管道以释放 subprocess transport；否则重连时会残留管道。
+            drain = asyncio.create_task(process.communicate())
+            try:
+                await self._terminate_ffmpeg_process(process, reason="loop_stopped")
+            finally:
+                await drain
             if (
                 not stop_event.is_set()
                 and self._ffmpeg_last_exit_reason != "stream_restored"
@@ -777,14 +991,14 @@ class AIWorker(AIWorkerProcessingMixin):
         except asyncio.TimeoutError as exc:
             reason = (
                 f"frame_index={frame_index} timeout={self._frame_process_timeout_s:.1f}s "
-                f"frames_processed={self._frames_processed}"
+                f"frames_processed={self._frames_processed} "
+                f"pending_stages={list(self._pending_inferences.values())}"
             )
             self._last_frame_timeout_reason = reason
             self._ffmpeg_last_exit_reason = f"AI_Frame_Process_Timeout({reason})"
             await self._notify_auto_track_video_lost(self._ffmpeg_last_exit_reason)
             video_logger.error(
-                "AI 单帧处理超时，准备恢复：{}。"
-                "若卡在 YOLO/TensorRT/CUDA 推理线程，当前进程需要重启才能释放底层状态。",
+                "AI 单帧处理超时：{}。丢弃旧帧，等待在途推理后自动恢复；不退出后端。",
                 reason,
             )
             raise AIWorkerFrameTimeout(reason) from exc
@@ -814,20 +1028,35 @@ class AIWorker(AIWorkerProcessingMixin):
 
         fence_detection = get_fence_detection_service()
         fence_enabled = fence_detection is not None and fence_detection.enabled
-        if not fence_enabled:
-            self._weapon_active_until = 0.0
-            self._weapon_first_seen.clear()
-            for label in self._weapon_hits:
-                self._weapon_hits[label] = 0
-                self._weapon_last_bbox[label] = None
+        # 刀枪支路不再跟随围栏开关：围栏是区域判定，刀枪是独立告警。
+        # 这里以前会在围栏关闭时清空刀枪的命中计数与冷却状态，等于让整条
+        # 支路停摆，现已移除；刀枪状态由 _process_weapon_detections 自行维护。
         pose_observations_for_overlay: list[PoseObservation] | None = None
         fresh_pose_observations: list[PoseObservation] = []
-        pose_due = (
+        pose_events = []
+        fence_events = []
+        # 摄像头通常以 20~25 FPS 输入，而 Worker 只消费最新帧。原始 frame_index
+        # 会一次跳过数帧，拿它做取模可能导致 skip=2 仍然帧帧命中。各 AI 支路
+        # 必须按实际进入推理的帧计数调度，才能得到稳定的 1/N 采样频率。
+        inference_cycle_index = self._frames_processed + 1
+        pose_scheduled = (
             self._pose_detector is not None
             and self._pose_event_engine is not None
-            and frame_index % max(1, int(settings.POSE_FRAME_SKIP)) == 0
+            and (
+                self._pose_inference_deferred
+                or inference_cycle_index % max(1, int(settings.POSE_FRAME_SKIP)) == 0
+            )
         )
-        weapon_due = fence_enabled and self._is_weapon_due(frame_index)
+        now = time.monotonic()
+        weapon_active = now < self._weapon_active_until
+        weapon_due = self._is_weapon_due(inference_cycle_index, now=now)
+        # 巡逻态下避免主检测、姿态、武器三个 TensorRT engine 同时争抢 GPU：
+        # 与刀枪同轮冲突的姿态帧，本轮直接跳过，等下一个姿态周期再来。
+        # 这里以前会把「下一轮必跑」标记置真，那次顺延之后姿态就变成帧帧推理，
+        # 实测耗时与主检测同量级，把吞吐砍半；该标记已停用。
+        defer_pose_for_weapon = pose_scheduled and weapon_due and not weapon_active
+        pose_due = pose_scheduled and not defer_pose_for_weapon
+        self._pose_inference_deferred = False
         # TensorRT engine 的第一次 predict() 会惰性创建执行上下文。每个支路先
         # 顺序预热，后续才允许独立 engine 并发，避免 CUDA 初始化竞争。
         run_pose_parallel = (
@@ -838,6 +1067,7 @@ class AIWorker(AIWorkerProcessingMixin):
         )
         run_weapon_parallel = (
             weapon_due
+            and not bool(settings.WEAPON_PERSON_CROP_ENABLED)
             and self._parallel_inference_enabled
             and self._detector_warmed_up
             and self._weapon_warmed_up
@@ -855,43 +1085,28 @@ class AIWorker(AIWorkerProcessingMixin):
         t_start = time.monotonic()
         try:
             if hasattr(self._detector, 'detect_many'):
-                detections = await asyncio.to_thread(self._detector.detect_many, frame)
+                detections = await self._run_inference("主检测", self._detector.detect_many, frame)
             else:
                 # _SimulatedDetector/_NullDetector 回退到 detect() 兼容
-                single = await asyncio.to_thread(self._detector.detect, frame)
+                single = await self._run_inference("主检测", self._detector.detect, frame)
                 detections = [single] if single else []
             t_detect_end = time.monotonic()
             self._last_detect_ms = round((t_detect_end - t_start) * 1000, 1)
             self._detector_warmed_up = True
 
-            if weapon_due:
-                if weapon_task is None:
-                    weapon_detections, weapon_ms = await self._infer_weapon(frame)
-                else:
-                    weapon_detections, weapon_ms = await weapon_task
-                    weapon_task_consumed = True
-                self._weapon_warmed_up = True
-                self._last_weapon_ms = weapon_ms
-                self._weapon_frames_processed += 1
-                self._weapon_detections_count += len(weapon_detections)
-                person_detections = [
-                    detection for detection in detections
-                    if detection.label == "person"
-                ]
-                eligible_weapon_detections = self._filter_weapon_detections(
-                    weapon_detections,
-                    person_detections,
-                )
-                self._weapon_filtered_detections_count += (
-                    len(weapon_detections) - len(eligible_weapon_detections)
-                )
-                detections.extend(eligible_weapon_detections)
-                await self._process_weapon_detections(
-                    eligible_weapon_detections,
-                    frame,
-                )
-            else:
-                self._last_weapon_ms = 0.0
+            # 位置先到：不等姿态、刀枪和人脸，不把旧身份用于本帧。
+            if any(item.label == "person" for item in detections):
+                await self._broadcast_pose_overlay([], detections, stage="location", force=True)
+
+            # Person crops need a current-frame person even when the helmet
+            # detector misses it. Run pose now instead of deferring it, and do
+            # not use cached display boxes to trigger weapon inference.
+            if (weapon_due and settings.WEAPON_PERSON_CROP_ENABLED
+                    and not any(d.label == "person" for d in detections)
+                    and self._pose_detector is not None
+                    and self._pose_event_engine is not None):
+                pose_due = True
+                self._pose_inference_deferred = False
 
             if pose_due:
                 if pose_task is None:
@@ -915,24 +1130,58 @@ class AIWorker(AIWorkerProcessingMixin):
                     observation.track_id: self._person_pose_hits.get(observation.track_id, 0) + 1
                     for observation in observations
                 }
-                if observations:
-                    self._latest_pose_observations = observations
-                    self._latest_pose_observations_at = time.monotonic()
-                elif (
-                    time.monotonic() - self._latest_pose_observations_at
-                    > self._pose_person_grace_seconds
-                ):
-                    self._latest_pose_observations = []
+                # 新推理已确认无人时立即清除，不能再把旧人体框包装成当前结果。
+                self._latest_pose_observations = observations
+                self._latest_pose_observations_at = time.monotonic()
                 self._pose_frames_processed += 1
                 self._pose_events_count += len(pose_events)
-                await self._process_pose_events(pose_events, frame)
                 pose_observations_for_overlay = observations
                 fresh_pose_observations = observations
+                await self._broadcast_pose_overlay(
+                    observations,
+                    self._merge_pose_person_fallback(detections, observations),
+                    stage="pose_location", force=True,
+                )
             else:
                 self._last_pose_ms = 0.0
 
-            await self._maybe_process_weather(frame)
+            if weapon_due:
+                person_detections = [
+                    detection for detection in self._merge_pose_person_fallback(detections, fresh_pose_observations)
+                    if detection.label == "person"
+                ]
+                if weapon_task is None:
+                    weapon_detections, weapon_ms = await self._infer_weapon(
+                        frame,
+                        person_detections,
+                    )
+                else:
+                    weapon_detections, weapon_ms = await weapon_task
+                    weapon_task_consumed = True
+                self._weapon_warmed_up = True
+                self._last_weapon_ms = weapon_ms
+                self._weapon_frames_processed += 1
+                self._weapon_detections_count += len(weapon_detections)
+                eligible_weapon_detections = self._filter_weapon_detections(
+                    weapon_detections,
+                    person_detections,
+                )
+                self._weapon_filtered_detections_count += (
+                    len(weapon_detections) - len(eligible_weapon_detections)
+                )
+                detections.extend(eligible_weapon_detections)
 
+            else:
+                self._last_weapon_ms = 0.0
+
+            # 天气只需低频分类。若本帧已有姿态/武器 GPU 任务，顺延到下一空闲
+            # 周期，避免天气的 30~50 ms 再叠加到延迟尖峰上。
+            await self._maybe_process_weather(
+                frame,
+                defer=pose_due or weapon_due,
+            )
+
+            preview_detections = list(detections)
             detections = self._merge_pose_person_fallback(
                 detections,
                 self._latest_pose_observations,
@@ -994,22 +1243,23 @@ class AIWorker(AIWorkerProcessingMixin):
                 fence_events = fence_detection.process_frame(
                     detections=detections,
                     poses=fresh_pose_observations,
+                    frame_bgr=frame,
                     frame_monotonic=(
                         frame_read_at if frame_read_at is not None else time.monotonic()
                     ),
                 )
-                await self._process_fence_events(fence_events, frame)
 
             from .services_face_identities import get_face_identity_service
 
+            face_stage_started = time.monotonic()
             face_error = None
             try:
                 face_service = get_face_identity_service()
-                await face_service.ensure_initialized(self._session_factory)
-                await face_service.annotate_frame(
-                    frame, detections, frame_index,
+                await self._await_inference("人脸初始化", face_service.ensure_initialized(self._session_factory))
+                await self._await_inference("人脸", face_service.annotate_frame(
+                    frame, detections, inference_cycle_index,
                     self._frame_width, self._frame_height,
-                )
+                ))
                 health = face_service.status()
                 if not health["available"] or not health["enabled"]:
                     face_error = health.get("error") or "人脸识别服务不可用或已禁用"
@@ -1024,13 +1274,32 @@ class AIWorker(AIWorkerProcessingMixin):
                     detection.identity_id = None
                     detection.display_name = None
             await self._report_face_service_fault(face_error)
-            if pose_observations_for_overlay is not None or weapon_due:
-                await self._broadcast_pose_overlay(
-                    pose_observations_for_overlay
-                    if pose_observations_for_overlay is not None
-                    else self._latest_pose_observations,
-                    detections,
-                )
+            self._last_face_stage_ms = round((time.monotonic() - face_stage_started) * 1000, 1)
+            overlay_stage_started = time.monotonic()
+            await self._broadcast_pose_overlay(
+                pose_observations_for_overlay
+                if pose_observations_for_overlay is not None
+                else self._latest_pose_observations,
+                detections,
+                force=True,
+            )
+            self._last_overlay_stage_ms = round((time.monotonic() - overlay_stage_started) * 1000, 1)
+            # Preview keeps only this frame's results; never reuse held overlays.
+            from .ai_sync_preview import publish as publish_preview
+            publish_preview(
+                frame, self._frame_width, self._frame_height,
+                frame_read_at if frame_read_at is not None else t_start,
+                preview_detections, fresh_pose_observations, pose_due, weapon_due,
+            )
+
+            events_stage_started = time.monotonic()
+            # 先发布画框，再保存证据和广播告警；这些 I/O 不应拖住当前画面。
+            if weapon_due:
+                await self._process_weapon_detections(eligible_weapon_detections, frame)
+            if pose_due:
+                await self._process_pose_events(pose_events, frame)
+            if fence_enabled:
+                await self._process_fence_events(fence_events, frame)
             # 围栏保留开启状态；显式跟踪联动接管时只放行 AutoTrack，
             # Guard 仍不可争抢控制，围栏几何判定等待恢复观察后继续。
             await self._process_detection(
@@ -1041,6 +1310,8 @@ class AIWorker(AIWorkerProcessingMixin):
                 allow_motion_services=not fence_enabled,
                 allow_auto_track=not fence_enabled or fence_detection.tracking_override,
             )
+
+            self._last_events_stage_ms = round((time.monotonic() - events_stage_started) * 1000, 1)
 
             t_done = time.monotonic()
             self._last_postprocess_ms = round((t_done - t_detect_end) * 1000, 1)
@@ -1095,36 +1366,63 @@ class AIWorker(AIWorkerProcessingMixin):
         if self._pose_detector is None:
             return [], time.monotonic(), 0.0
         pose_started_at = time.monotonic()
-        raw_poses = await asyncio.to_thread(self._pose_detector.detect, frame)
+        raw_poses = await self._run_inference("姿态", self._pose_detector.detect, frame)
         pose_ms = round((time.monotonic() - pose_started_at) * 1000, 1)
         return raw_poses, pose_started_at, pose_ms
 
-    def _is_weapon_due(self, frame_index: int, *, now: float | None = None) -> bool:
+    def _is_weapon_due(self, cycle_index: int, *, now: float | None = None) -> bool:
         if self._weapon_detector is None:
             return False
         current_time = time.monotonic() if now is None else now
         if current_time < self._weapon_active_until:
             return True
-        return frame_index % self._weapon_frame_skip == 0
+        return cycle_index % self._weapon_frame_skip == 0
 
     async def _infer_weapon(
         self,
         frame: bytes,
+        persons: list[DetectionResult] | None = None,
     ) -> tuple[list[DetectionResult], float]:
         if self._weapon_detector is None:
             return [], 0.0
         weapon_started_at = time.monotonic()
-        detections = await asyncio.to_thread(self._weapon_detector.detect_many, frame)
+        if bool(settings.WEAPON_PERSON_CROP_ENABLED):
+            regions = [
+                person.bbox
+                for person in (persons or [])
+                if person.bbox is not None
+            ]
+            if not regions:
+                return [], round((time.monotonic() - weapon_started_at) * 1000, 1)
+            detections = await self._run_inference("刀枪裁剪",
+                self._weapon_detector.detect_many_regions,
+                frame,
+                regions,
+                expand_ratio=max(
+                    0.0,
+                    min(2.0, float(settings.WEAPON_PERSON_CROP_EXPAND_RATIO)),
+                ),
+                max_regions=max(1, int(settings.WEAPON_PERSON_CROP_MAX_REGIONS)),
+                nms_iou=max(
+                    0.0,
+                    min(1.0, float(settings.WEAPON_PERSON_CROP_NMS_IOU)),
+                ),
+            )
+        else:
+            detections = await self._run_inference("刀枪", self._weapon_detector.detect_many, frame)
         weapon_ms = round((time.monotonic() - weapon_started_at) * 1000, 1)
         return detections, weapon_ms
 
-    async def _maybe_process_weather(self, frame: bytes) -> None:
+    async def _maybe_process_weather(self, frame: bytes, *, defer: bool = False) -> None:
         if not self._weather_service.available:
             self._last_weather_ms = 0.0
             return
         now = time.monotonic()
-        interval = max(0.5, float(settings.WEATHER_INTERVAL_SECONDS))
-        if now - self._last_weather_inference_at < interval:
+        # 轮间由天气服务安排 300/10 秒；轮内连续取三张新帧。
+        if now < self._weather_service.next_sample_at or now - self._last_weather_inference_at < 0.5:
+            self._last_weather_ms = 0.0
+            return
+        if defer:
             self._last_weather_ms = 0.0
             return
 
@@ -1132,7 +1430,7 @@ class AIWorker(AIWorkerProcessingMixin):
         # cannot enqueue duplicate GPU work for the immediately following frame.
         self._last_weather_inference_at = now
         started = time.monotonic()
-        status = await asyncio.to_thread(self._weather_service.process_frame, frame)
+        status = await self._run_inference("天气", self._weather_service.process_frame, frame)
         self._last_weather_ms = round((time.monotonic() - started) * 1000, 1)
         self._weather_warmed_up = status["state"] in {"ready", "warming_up"}
         weather_logger.debug(
@@ -1177,6 +1475,26 @@ class AIWorker(AIWorkerProcessingMixin):
             "-pix_fmt", "bgr24",
             "-",
         ]
+
+        if settings.AI_STREAM_READER == "gstreamer":
+            if self._frame_width % 4:
+                raise AIWorkerError("GStreamer BGR 输出要求 AI_FRAME_WIDTH 为 4 的倍数")
+            # 原生线程持续解码；Python 暂停读管道时，只保留一个最新完整帧。
+            # NVIDIA 插件可能向 stdout 打印启动信息，原始图像独占 fd 3。
+            command = [
+                "bash", "-c", 'exec "$@" 3>&1 1>/dev/null', "ai-reader",
+                "nice", "-n", "10", "gst-launch-1.0", "-q",
+                "rtspsrc", f"location={self._current_rtsp_url}", "protocols=tcp",
+                "latency=30", "drop-on-latency=true", "do-retransmission=false",
+                "tcp-timeout=5000000", "!", "rtph264depay", "!",
+                "video/x-h264,stream-format=byte-stream,alignment=au", "!",
+                "nvv4l2decoder", "enable-max-performance=true", "!", "nvvidconv", "!",
+                f"video/x-raw,format=BGRx,width={self._frame_width},height={self._frame_height}",
+                "!", "videoconvert", "!", "video/x-raw,format=BGR", "!",
+                "queue", "max-size-buffers=1", "max-size-bytes=0", "max-size-time=0",
+                "leaky=downstream", "!", "fdsink", "fd=3", "sync=false", "async=false",
+            ]
+            video_logger.info("AI 硬件解码启用：原生队列仅保留最新帧")
 
         self._ffmpeg_last_exit_reason = "unknown"
         self._stream_restored_logged = False
@@ -1279,12 +1597,18 @@ class AIWorker(AIWorkerProcessingMixin):
                     continue
 
                 self._ffmpeg_last_exit_reason = reason
+                if reason == "RTSP_Protocol_Error":
+                    self._ffmpeg_stream_unavailable = True
+                    self._ffmpeg_unavailable_reason = reason
+                    video_logger.warning("AI RTSP 协议失步，停止并重连：{}", text[:160])
+                    await self._terminate_ffmpeg_process(process, reason=reason)
+                    return
                 if not self._ffmpeg_stream_unavailable:
                     self._ffmpeg_stream_unavailable = True
                     self._ffmpeg_unavailable_reason = reason
                     await self._notify_auto_track_video_lost(reason)
                     video_logger.warning(
-                        "RTSP 流不可用，AI 识别暂时降级：rtsp={}，原因={}，3.0 秒后重试",
+                        "RTSP 流异常，等待下一完整帧；持续无帧将重连：rtsp={}，原因={}",
                         self._current_rtsp_url,
                         reason,
                     )
@@ -1357,6 +1681,8 @@ class AIWorker(AIWorkerProcessingMixin):
     @staticmethod
     def _classify_ffmpeg_failure_reason(text: str) -> Optional[str]:
         lowered = text.lower()
+        if "cseq" in lowered and "expected" in lowered and "received" in lowered:
+            return "RTSP_Protocol_Error"
         if "404 not found" in lowered:
             return "404_Not_Found"
         if "401 unauthorized" in lowered:

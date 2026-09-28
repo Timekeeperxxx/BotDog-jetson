@@ -16,7 +16,8 @@ import {
   setLocalizationPose,
   setNavAutoTrackMode,
   setRosbagRecordingEnabled,
-  triggerNavEmergencyStop,
+  stopNavigationLocalization,
+  triggerNavSoftStop,
   waitInitialposeReady,
 } from '../api/pcdMapApi'
 import { detectWebGLSupport } from '../components/pcd/webglSupport'
@@ -90,7 +91,8 @@ export function PcdMapDemoPage() {
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
   const [goToSending, setGoToSending] = useState(false)
   const goToRequestSequenceRef = useRef(0)
-  const [estopSending, setEstopSending] = useState(false)
+  const [softStopSending, setSoftStopSending] = useState(false)
+  const [localizationStopSending, setLocalizationStopSending] = useState(false)
   const [restartLocalizationSending, setRestartLocalizationSending] = useState(false)
   const [radarChecking, setRadarChecking] = useState(false)
   const [rosbagLoading, setRosbagLoading] = useState(false)
@@ -102,6 +104,7 @@ export function PcdMapDemoPage() {
     message: '',
   })
   const [keyboardControlEnabled, setKeyboardControlEnabled] = useState(false)
+  const [viewCenterPosition, setViewCenterPosition] = useState<{ x: number; y: number } | null>(null)
   const [mouseMapPosition, setMouseMapPosition] = useState<{ x: number; y: number } | null>(null)
   const [logs, setLogs] = useState<LogItem[]>([])
   const [logsExpanded, setLogsExpanded] = useState(false)
@@ -115,7 +118,7 @@ export function PcdMapDemoPage() {
   const localizationRequestRef = useRef(0)
   useEffect(() => () => { localizationRequestRef.current += 1 }, [])
   const navWs = useNavWebSocket()
-  const { robotPose, globalPath, executionPath, localizationStatus, navigationStatus, setInitialState } = navWs
+  const { robotPose, globalPath, taskRoute, executionPath, localizationStatus, navigationStatus, setInitialState } = navWs
   const {
     startCommand,
     stopCommand,
@@ -269,6 +272,8 @@ export function PcdMapDemoPage() {
   }, [pointCloudQualityMode, tileManifest])
   const {
     closeMappingDialog,
+    dismissMappingNotice,
+    mappingNotice,
     confirmStopMapping,
     handleConfirmStartMapping,
     handleToggleMapping,
@@ -375,12 +380,22 @@ export function PcdMapDemoPage() {
       : localizationNotice
         ? 'waiting'
         : navigationNotice?.kind ?? 'idle'
+  const savingNotice = mappingSaving
+    ? {
+        title: '地图正在后台保存',
+        message: `${mappingSessionInfo?.sceneName || '当前场景'}：正在完成回环优化及地图、地形保存，可能需要数分钟。请勿关闭设备，完成后会在此提示。`,
+        kind: 'waiting',
+      }
+    : null
+  const mappingStatusNotice = savingNotice ?? mappingNotice
   const currentNotice = operationNotice?.kind === 'error'
     ? operationNotice
-    : stateNotice ?? operationNotice
+    : mappingStatusNotice ?? stateNotice ?? operationNotice
   const currentNoticeKind = currentNotice === operationNotice
     ? operationNotice?.kind ?? 'idle'
-    : stateNoticeKind
+    : currentNotice === mappingStatusNotice
+      ? mappingStatusNotice?.kind ?? 'idle'
+      : stateNoticeKind
 
   const handleSetPose = useCallback(async (pos: { x: number; y: number; z: number; yaw: number }) => {
     if (!selectedSceneId) return
@@ -574,12 +589,12 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, canOperate, selectedSceneId, selectedSceneNavigable, setInitialState, waypoints])
 
-  const handleEmergencyStop = useCallback(async () => {
+  const handleSoftStop = useCallback(async () => {
     if (!canOperate) return
-    if (estopSending) return
-    setEstopSending(true)
+    if (softStopSending || localizationStopSending) return
+    setSoftStopSending(true)
     try {
-      const result = await triggerNavEmergencyStop()
+      const result = await triggerNavSoftStop()
       setNavigatingWaypointId(null)
       setInitialState({
         globalPath: null,
@@ -596,9 +611,49 @@ export function PcdMapDemoPage() {
     } catch (error) {
       addLog(error instanceof Error ? error.message : '执行导航软停失败', 'error')
     } finally {
-      setEstopSending(false)
+      setSoftStopSending(false)
     }
-  }, [addLog, canOperate, estopSending, setInitialState])
+  }, [addLog, canOperate, localizationStopSending, setInitialState, softStopSending])
+
+  const handleStopNavigationLocalization = useCallback(async () => {
+    if (!canOperate || softStopSending || localizationStopSending) return
+    const confirmed = window.confirm(
+      '将先把速度归零，再停止导航、雷达重定位和 TF 发布。重新使用前需要点击“重启导航定位”。确认继续吗？',
+    )
+    if (!confirmed) return
+
+    setLocalizationStopSending(true)
+    try {
+      const result = await stopNavigationLocalization()
+      setNavigatingWaypointId(null)
+      setToolMode('none')
+      setFollowRobot(false)
+      setInitialState({
+        robotPose: null,
+        globalPath: null,
+        executionPath: null,
+        localizationStatus: {
+          status: 'stopped',
+          frame_id: 'map',
+          source: null,
+          message: '导航和 TF 定位已停止',
+          timestamp: Date.now() / 1000,
+        },
+        navigationStatus: {
+          status: 'idle',
+          target_waypoint_id: null,
+          target_name: null,
+          message: result.message,
+          timestamp: Date.now() / 1000,
+        },
+      })
+      addLog(result.message)
+    } catch (error) {
+      addLog(error instanceof Error ? error.message : '停止导航和 TF 定位失败', 'error')
+    } finally {
+      setLocalizationStopSending(false)
+    }
+  }, [addLog, canOperate, localizationStopSending, setInitialState, softStopSending])
 
   const handleRestartNavigationLocalization = useCallback(async () => {
     if (!canOperate) return
@@ -751,6 +806,7 @@ export function PcdMapDemoPage() {
   } = useNavPointCloudViewModel({
     executionPath,
     globalPath,
+    taskRoute,
     liveMappingCloudPoints,
     mappingActive,
     mappingCloudPoints,
@@ -903,10 +959,10 @@ export function PcdMapDemoPage() {
               webglSupported={webglSupported}
               onAddWaypoint={handleAddWaypoint}
               onAddFence={handleAddFence}
+              onViewCenterChange={setViewCenterPosition}
               onGroundPointerChange={setMouseMapPosition}
               onSetPose={handleSetPose}
             />
-          </div>
           <NavDrawerCluster
             activeDrawer={activeDrawer}
             canExecuteTask={canOperate}
@@ -945,10 +1001,13 @@ export function PcdMapDemoPage() {
             onStopTask={(taskId) => void handleStopTask(taskId)}
           />
 
+          </div>
+
           <SceneInfoDrawer
             open={infoOpen}
             metadata={metadata}
             sceneDisplayPointCount={sceneDisplayPointCount}
+            viewCenterPosition={viewCenterPosition}
             mouseMapPosition={mouseMapPosition}
             robotPose={robotPose}
             selectedSceneReady={selectedSceneReady}
@@ -1013,7 +1072,8 @@ export function PcdMapDemoPage() {
         <NavRightRail
           bounds={rightRailBounds}
           canOperate={canOperate}
-          estopSending={estopSending}
+          localizationStopSending={localizationStopSending}
+          softStopSending={softStopSending}
           executionPath={displayedExecutionPath}
           globalPath={displayedGlobalPath}
           layers={rightRailLayers}
@@ -1027,7 +1087,8 @@ export function PcdMapDemoPage() {
           fencesVisible={fencesVisible}
           onAddWaypoint={handleAddWaypoint}
           onDeleteWaypoint={handleDeleteWaypoint}
-          onEmergencyStop={handleEmergencyStop}
+          onSoftStop={handleSoftStop}
+          onStopLocalization={() => void handleStopNavigationLocalization()}
           onGoToWaypoint={requestGoToWaypoint}
           onMouseMapPositionChange={setMouseMapPosition}
           onSetPose={handleSetPose}
@@ -1039,6 +1100,7 @@ export function PcdMapDemoPage() {
         <NavMessageCenter
           notice={currentNotice}
           noticeKind={currentNoticeKind}
+          onDismissNotice={!mappingSaving && currentNotice === mappingNotice ? dismissMappingNotice : undefined}
           logs={[...(diagnostic?.events ?? []).map((event) => ({ ...event, id: event.timestamp, timestamp: event.timestamp * 1000, message: `[历史阶段] ${event.message}` })), ...logs].sort((a, b) => b.timestamp - a.timestamp).slice(0, 30)}
           expanded={logsExpanded}
           onToggleExpanded={() => setLogsExpanded((value) => !value)}

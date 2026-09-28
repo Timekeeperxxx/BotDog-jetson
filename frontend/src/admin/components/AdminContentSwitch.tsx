@@ -147,9 +147,12 @@ export function AdminContentSwitch({
       <AdminEvidencePage
         evidence={evidenceData.evidenceHook.evidenceItems}
         loading={evidenceData.evidenceHook.evidenceLoading}
+        loadingMore={evidenceData.evidenceHook.evidenceLoadingMore}
+        hasMore={evidenceData.evidenceHook.evidenceHasMore}
         search={evidenceData.evidenceSearch}
         onSearchChange={evidenceData.setEvidenceSearch}
         onRefresh={() => void evidenceData.refreshEvidence()}
+        onLoadMore={() => void evidenceData.evidenceHook.loadMoreEvidence()}
         onDelete={evidenceData.deleteEvidenceItem}
       />
     )

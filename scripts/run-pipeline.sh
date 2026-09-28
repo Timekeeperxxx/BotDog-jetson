@@ -68,6 +68,12 @@ CAM1_BUFSIZE="${CAM1_BUFSIZE:-500k}"
 CAM1_GOP="${CAM1_GOP:-15}"
 CAM1_ALLOW_SOFTWARE_FALLBACK="${CAM1_ALLOW_SOFTWARE_FALLBACK:-1}"
 CAM1_GST_LATENCY="${CAM1_GST_LATENCY:-30}"
+# 硬件管线只保留极少量待处理帧；下游变慢时丢旧帧，避免画面越积越旧。
+CAM1_GST_QUEUE_BUFFERS="${CAM1_GST_QUEUE_BUFFERS:-3}"
+# 当前 Z2-Mini H.264 源无 B 帧，可关闭解码 DPB，省去额外的帧重排等待。
+CAM1_GST_DISABLE_DPB="${CAM1_GST_DISABLE_DPB:-true}"
+# NVENC 短暂失败时允许软件保画面，但不能永久停在高延迟软件路径。
+CAM1_SOFTWARE_FALLBACK_RETRY_SECONDS="${CAM1_SOFTWARE_FALLBACK_RETRY_SECONDS:-60}"
 # 主摄像头输入编码：Z2 Mini 默认 H.264；旧 HM30 可通过 CAM1_INPUT_CODEC=h265 切回。
 CAM1_INPUT_CODEC="${CAM1_INPUT_CODEC:-h264}"
 # cam1 转码器：
@@ -291,6 +297,9 @@ setsid env \
   CAM1_GOP="$CAM1_GOP" \
   CAM1_ALLOW_SOFTWARE_FALLBACK="$CAM1_ALLOW_SOFTWARE_FALLBACK" \
   CAM1_GST_LATENCY="$CAM1_GST_LATENCY" \
+  CAM1_GST_QUEUE_BUFFERS="$CAM1_GST_QUEUE_BUFFERS" \
+  CAM1_GST_DISABLE_DPB="$CAM1_GST_DISABLE_DPB" \
+  CAM1_SOFTWARE_FALLBACK_RETRY_SECONDS="$CAM1_SOFTWARE_FALLBACK_RETRY_SECONDS" \
   CAM1_INPUT_CODEC="$CAM1_INPUT_CODEC" \
   CAM1_FPS="$CAM1_FPS" \
   CAM1_WIDTH="$CAM1_WIDTH" \
@@ -421,9 +430,12 @@ setsid env \
 
   run_cam1_ffmpeg() {
     local encoder="$1"
+    local max_runtime_seconds="${2:-0}"
     local decoder_args=()
     local encoder_args=()
     local filter_args=()
+    local output_timing_args=(-vsync passthrough)
+    local runner=()
 
     if [ "$CAM1_DECODER" != "auto" ] && [ -n "$CAM1_DECODER" ]; then
       decoder_args=(-c:v "$CAM1_DECODER")
@@ -437,6 +449,7 @@ setsid env \
         ;;
       h264_v4l2m2m)
         filter_args=(-vf "scale=${CAM1_WIDTH}:${CAM1_HEIGHT}:flags=fast_bilinear")
+        output_timing_args=(-vsync vfr)
         encoder_args=(
           -c:v h264_v4l2m2m
           -b:v "$CAM1_BITRATE" -maxrate "$CAM1_MAXRATE" -bufsize "$CAM1_BUFSIZE"
@@ -445,6 +458,7 @@ setsid env \
         ;;
       h264_omx)
         filter_args=(-vf "scale=${CAM1_WIDTH}:${CAM1_HEIGHT}:flags=fast_bilinear")
+        output_timing_args=(-vsync vfr)
         encoder_args=(
           -c:v h264_omx -profile baseline
           -b:v "$CAM1_BITRATE" -bufsize "$CAM1_BUFSIZE"
@@ -453,6 +467,7 @@ setsid env \
         ;;
       libx264)
         filter_args=(-vf "scale=${CAM1_WIDTH}:${CAM1_HEIGHT}:flags=fast_bilinear")
+        output_timing_args=(-vsync vfr)
         encoder_args=(
           -c:v libx264 -preset ultrafast -tune zerolatency -threads "$CAM1_THREADS"
           -b:v "$CAM1_BITRATE" -maxrate "$CAM1_MAXRATE" -bufsize "$CAM1_BUFSIZE"
@@ -466,16 +481,21 @@ setsid env \
         ;;
     esac
 
-    log_cam1 "Starting FFmpeg cam1 (encoder=${encoder}, decoder=${CAM1_DECODER})..."
-    ffmpeg -hide_banner -nostats -loglevel "$FFMPEG_LOGLEVEL" \
-      -fflags nobuffer -flags low_delay -rtsp_transport tcp \
+    if [[ "$max_runtime_seconds" =~ ^[0-9]+$ ]] && [ "$max_runtime_seconds" -gt 0 ]; then
+      runner=(timeout --signal=TERM --kill-after=5 "${max_runtime_seconds}s")
+      log_cam1 "Starting bounded FFmpeg cam1 (encoder=${encoder}, decoder=${CAM1_DECODER}, retry_hardware_after=${max_runtime_seconds}s)..."
+    else
+      log_cam1 "Starting FFmpeg cam1 (encoder=${encoder}, decoder=${CAM1_DECODER})..."
+    fi
+    "${runner[@]}" ffmpeg -hide_banner -nostats -loglevel "$FFMPEG_LOGLEVEL" \
+      -fflags nobuffer+discardcorrupt+genpts -flags low_delay -rtsp_transport tcp \
       -stimeout 5000000 -use_wallclock_as_timestamps 1 \
       "${decoder_args[@]}" \
       -i "$CAMERA_RTSP_URL" \
       "${filter_args[@]}" \
       "${encoder_args[@]}" \
-      -vsync passthrough \
-      -muxdelay 0 -muxpreload 0 \
+      "${output_timing_args[@]}" \
+      -avoid_negative_ts make_non_negative -muxdelay 0 -muxpreload 0 -flush_packets 1 \
       -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8554/cam \
       >> "$ROOT_DIR/logs/ffmpeg.log" 2>&1
   }
@@ -515,8 +535,8 @@ setsid env \
     gst-launch-1.0 -q \
       rtspsrc location="$CAMERA_RTSP_URL" protocols=tcp latency="$CAM1_GST_LATENCY" drop-on-latency=true do-retransmission=false tcp-timeout=5000000 ! \
       "$depay_element" ! "$input_caps" ! \
-      queue max-size-buffers=30 max-size-bytes=0 max-size-time=0 leaky=downstream ! \
-      nvv4l2decoder enable-max-performance=true ! \
+      queue max-size-buffers="$CAM1_GST_QUEUE_BUFFERS" max-size-bytes=0 max-size-time=0 leaky=downstream ! \
+      nvv4l2decoder enable-max-performance=true disable-dpb="$CAM1_GST_DISABLE_DPB" num-extra-surfaces=0 ! \
       nvvidconv ! "video/x-raw(memory:NVMM),width=(int)${CAM1_WIDTH},height=(int)${CAM1_HEIGHT},format=(string)NV12" ! \
       nvv4l2h264enc bitrate="$CAM1_GST_BITRATE" vbv-size="$CAM1_GST_VBV_SIZE" control-rate=1 num-B-Frames=0 num-Ref-Frames=1 poc-type=2 iframeinterval="$CAM1_GOP" idrinterval="$CAM1_GOP" insert-sps-pps=true insert-vui=true maxperf-enable=true preset-level=1 ! \
       "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au" ! \
@@ -535,9 +555,10 @@ setsid env \
       return 0
     fi
     if [ "$CAM1_ALLOW_SOFTWARE_FALLBACK" = "1" ]; then
-      echo "[$(date "+%F %T")] gst-nvenc failed, software fallback enabled" >> "$ROOT_DIR/logs/ffmpeg.log"
-      run_cam1_ffmpeg libx264
-      return $?
+      log_cam1 "gst-nvenc failed; using software fallback for at most ${CAM1_SOFTWARE_FALLBACK_RETRY_SECONDS}s"
+      run_cam1_ffmpeg libx264 "$CAM1_SOFTWARE_FALLBACK_RETRY_SECONDS" || true
+      log_cam1 "software fallback window ended; retrying gst-nvenc"
+      return 1
     fi
     echo "[$(date "+%F %T")] gst-nvenc failed, software fallback disabled; retrying hardware path after delay" >> "$ROOT_DIR/logs/ffmpeg.log"
     return 1

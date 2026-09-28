@@ -542,6 +542,8 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(_weather_routes.router)
     app.include_router(_model_tester_routes.router)
     app.include_router(_websocket_routes.router)
+    from .ai_sync_preview import router as ai_preview_router
+    app.include_router(ai_preview_router)
 
 
 

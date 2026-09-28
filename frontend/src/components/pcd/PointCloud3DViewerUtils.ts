@@ -26,8 +26,7 @@ export const SCAN_BODY_CYLINDER_RADIUS = 0.27
 export const SCAN_BODY_CYLINDER_HEIGHT = 0.43
 export const SCAN_BODY_CYLINDER_CENTER_Z_OFFSET = -0.115
 export const SCAN_BODY_CYLINDER_OFFSETS = [0.205, -0.205] as const
-export const GLOBAL_PATH_RADIUS = 0.06
-export const GLOBAL_PATH_NODE_RADIUS = 0.06
+export const GLOBAL_PATH_WIDTH = 0.12
 export const WAYPOINT_SCREEN_DIAMETER_PX = 13
 export const WAYPOINT_LABEL_SCREEN_WIDTH_PX = 112
 export const ROBOT_SCREEN_DIAMETER_PX = 18
@@ -562,4 +561,31 @@ export function applyAdaptiveOverlayScale(
     const scale = clamp(worldWidth / adaptiveSprite.baseWidth, adaptiveSprite.minScale, adaptiveSprite.maxScale)
     object.scale.copy(adaptiveSprite.baseScale).multiplyScalar(scale)
   }
+}
+
+
+// Each source segment becomes a flat rectangle; retain measured heights and corners.
+export function createFlatPathGeometry(points: THREE.Vector3[], width: number) {
+  const vertices: number[] = []
+  for (let index = 1; index < points.length; index += 1) {
+    const a = points[index - 1]
+    const b = points[index]
+    const dx = b.x - a.x
+    const dz = b.z - a.z
+    const length = Math.hypot(dx, dz)
+    if (length < 1e-6 || ![a.x, a.y, a.z, b.x, b.y, b.z].every(Number.isFinite)) continue
+    const ox = -dz / length * width / 2
+    const oz = dx / length * width / 2
+    vertices.push(
+      a.x + ox, a.y, a.z + oz,
+      a.x - ox, a.y, a.z - oz,
+      b.x + ox, b.y, b.z + oz,
+      a.x - ox, a.y, a.z - oz,
+      b.x - ox, b.y, b.z - oz,
+      b.x + ox, b.y, b.z + oz,
+    )
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+  return geometry
 }

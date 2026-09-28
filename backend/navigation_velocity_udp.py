@@ -136,6 +136,13 @@ class NavigationVelocityUdpService:
                     )
                 except asyncio.TimeoutError:
                     continue
+                # Velocity is a current setpoint, not a sequence to replay.
+                # SDK delays can leave old commands queued in the UDP socket.
+                while True:
+                    try:
+                        payload = udp_socket.recv(4096)
+                    except BlockingIOError:
+                        break
                 await self.handle_datagram(payload)
         except asyncio.CancelledError:
             raise

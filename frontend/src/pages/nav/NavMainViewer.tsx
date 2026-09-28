@@ -26,6 +26,7 @@ type NavMainViewerProps = {
   webglSupported: boolean
   onAddWaypoint: (pos: { x: number; y: number; z: number; yaw: number }) => void
   onAddFence: (start: { x: number; y: number }, end: { x: number; y: number }) => void
+  onViewCenterChange: (pos: { x: number; y: number } | null) => void
   onGroundPointerChange: (pos: { x: number; y: number } | null) => void
   onSetPose: (pos: { x: number; y: number; z: number; yaw: number }) => void
 }
@@ -49,6 +50,7 @@ export function NavMainViewer({
   webglSupported,
   onAddWaypoint,
   onAddFence,
+  onViewCenterChange,
   onGroundPointerChange,
   onSetPose,
 }: NavMainViewerProps) {
@@ -86,6 +88,7 @@ export function NavMainViewer({
       mode={mode}
       followRobot={followRobot}
       centerHeight={centerHeight}
+      onViewCenterChange={onViewCenterChange}
       onGroundPointerChange={onGroundPointerChange}
       onAddWaypoint={onAddWaypoint}
       onAddFence={onAddFence}

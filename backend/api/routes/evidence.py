@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel, Field, AwareDatetime
 from sqlalchemy import update
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...auth.dependencies import require_admin, require_viewer
 from ...auth.schemas import AuthUserInternal
@@ -20,6 +20,8 @@ router = APIRouter(prefix="/api/v1/evidence", tags=["evidence"])
 @router.get("", response_model=EvidenceListResponse)
 async def get_evidence(
     task_id: int | None = None,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
     user: AuthUserInternal = Depends(require_viewer),
     db=Depends(get_db),
 ) -> EvidenceListResponse:
@@ -27,9 +29,11 @@ async def get_evidence(
     查询异常证据链列表。
 
     - 若提供 `task_id`，则仅返回对应任务的证据记录；
-    - 默认按照 `created_at` 倒序，最多返回 100 条。
+    - 默认按照 `created_at` 倒序，分页返回。
     """
-    rows = await list_evidence(db, task_id=task_id, limit=100)
+    rows = await list_evidence(db, task_id=task_id, limit=limit + 1, offset=offset)
+    has_more = len(rows) > limit
+    rows = rows[:limit]
     return EvidenceListResponse(
         items=[
             {
@@ -48,7 +52,10 @@ async def get_evidence(
                 "timing": row.timing,
             }
             for row in rows
-        ]
+        ],
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
     )
 
 
@@ -122,6 +129,9 @@ async def record_display(evidence_id: int, receipt: DisplayReceipt,
     row = await db.get(AnomalyEvidence, evidence_id)
     if row is None:
         raise HTTPException(404, "告警记录不存在或已删除")
+    from ...alert_timing import UNTIMED_EVENT_CODES
+    if row.event_code in UNTIMED_EVENT_CODES:
+        return {}
     timing = dict(row.timing or {})
     if timing.get('displayed_at'):
         return timing
@@ -136,6 +146,9 @@ async def record_display(evidence_id: int, receipt: DisplayReceipt,
                   clock_uncertainty_ms=receipt.clock_uncertainty_ms,
                   display_measurement='visible_page_after_animation_frames',
                   display_ack_at=now.isoformat(timespec='milliseconds').replace('+00:00', 'Z'))
+    if generated:
+        delivery = (displayed - datetime.fromisoformat(generated.replace('Z', '+00:00'))).total_seconds() * 1000
+        timing['generation_to_display_ms'] = round(delivery, 1) if delivery >= 0 else None
     if timing.get('eligible_at'):
         delay = (displayed - datetime.fromisoformat(timing['eligible_at'].replace('Z', '+00:00'))).total_seconds() * 1000
         timing['display_delay_ms'] = round(delay, 1) if delay >= 0 else None

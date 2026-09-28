@@ -21,8 +21,8 @@ import {
   type PointCloudTileStats,
 } from './PointCloudTileManager'
 import {
-  GLOBAL_PATH_NODE_RADIUS,
-  GLOBAL_PATH_RADIUS,
+  GLOBAL_PATH_WIDTH,
+  createFlatPathGeometry,
   PENDING_TARGET_SCREEN_DIAMETER_PX,
   POINT_CLOUD_MIN_ORBIT_DISTANCE,
   POINT_CLOUD_PIXEL_RATIO_LIMIT,
@@ -88,6 +88,7 @@ type Props = {
     wall: boolean
     footprint_fill: boolean
   }
+  onViewCenterChange?: (pos: { x: number; y: number } | null) => void
   onGroundPointerChange?: (pos: { x: number; y: number; z: number } | null) => void
   onAddWaypoint?: (pos: { x: number; y: number; z: number; yaw: number }) => void
   onAddFence?: (start: { x: number; y: number }, end: { x: number; y: number }) => void
@@ -118,11 +119,16 @@ export function PointCloud3DViewer({
   tiledScene = null,
   qualityMode = 'auto',
   tileVisibility = { ground: true, wall: true, footprint_fill: true },
+  onViewCenterChange,
   onGroundPointerChange,
   onAddWaypoint,
   onAddFence,
   onSetPose,
 }: Props) {
+  const viewCenterCallbackRef = useRef(onViewCenterChange)
+  useEffect(() => {
+    viewCenterCallbackRef.current = onViewCenterChange
+  }, [onViewCenterChange])
   const hostRef = useRef<HTMLDivElement | null>(null)
   const [webglSupported] = useState(() => detectWebGLSupport())
   const sceneRef = useRef<THREE.Scene | null>(null)
@@ -450,6 +456,7 @@ export function PointCloud3DViewer({
 
     let animationId = 0
     let lastRenderAt = 0
+    let lastViewCenter: { x: number; y: number } | null | undefined
     const animate = (now: number) => {
       const controlsChanged = controls.update()
       const moving = orbitInteractionActive || controlsChanged
@@ -472,6 +479,14 @@ export function PointCloud3DViewer({
       }
       const targetInterval = moving ? 1000 / 30 : 1000 / 10
       if (renderRequested || now - lastRenderAt >= targetInterval) {
+        const centre = orbitPivotAvailableRef.current
+          ? threeToMap(controls.target.x, controls.target.y, controls.target.z)
+          : null
+        const next = centre ? { x: Number(centre.x.toFixed(3)), y: Number(centre.y.toFixed(3)) } : null
+        if (lastViewCenter === undefined || next?.x !== lastViewCenter?.x || next?.y !== lastViewCenter?.y) {
+          lastViewCenter = next
+          viewCenterCallbackRef.current?.(next)
+        }
         renderer.setRenderTarget(null)
         renderer.render(scene, camera)
         lastRenderAt = now
@@ -807,82 +822,27 @@ export function PointCloud3DViewer({
 
     const zLift = 0.03
 
-    if (globalPath && globalPath.frame_id === 'map' && globalPath.points.length >= 2) {
-      const pathPoints = globalPath.points.map((point) => {
+    const paths = [
+      { path: globalPath, color: 0xfacc15, width: GLOBAL_PATH_WIDTH, lift: zLift, order: 12, depthTest: true },
+      { path: executionPath, color: 0x22d3ee, width: 0.09, lift: zLift * 2, order: 20, depthTest: false },
+    ]
+    for (const { path, color, width, lift, order, depthTest } of paths) {
+      if (!path || path.frame_id !== 'map' || path.points.length < 2) continue
+      const points = path.points.map((point) => {
         const converted = mapToThree(point.x, point.y, point.z)
-        return new THREE.Vector3(converted.x, converted.y + zLift, converted.z)
+        return new THREE.Vector3(converted.x, converted.y + lift, converted.z)
       })
-      const curve = new THREE.CatmullRomCurve3(pathPoints, false, 'centripetal')
-      const tubularSegments = Math.max(8, Math.min(pathPoints.length * 2, 480))
-      const geometry = new THREE.TubeGeometry(curve, tubularSegments, GLOBAL_PATH_RADIUS, 8, false)
-      const material = new THREE.MeshBasicMaterial({
-        color: 0xfacc15,
-        transparent: true,
-        opacity: 0.68,
-        depthTest: true,
-        depthWrite: false,
-      })
-      const pathMesh = new THREE.Mesh(geometry, material)
-      pathMesh.renderOrder = 12
-      pathGroup.add(pathMesh)
-
-      const markerStride = Math.max(1, Math.ceil(globalPath.points.length / 80))
-      globalPath.points.forEach((point, index) => {
-        const isTarget = index === globalPath.points.length - 1
-        if (!isTarget && index % markerStride !== 0) return
-        const converted = mapToThree(point.x, point.y, point.z)
-        const marker = new THREE.Mesh(
-          new THREE.SphereGeometry(isTarget ? GLOBAL_PATH_NODE_RADIUS * 1.5 : GLOBAL_PATH_NODE_RADIUS, 16, 10),
-          new THREE.MeshBasicMaterial({
-            color: isTarget ? 0x22c55e : 0xfacc15,
-            transparent: true,
-            opacity: 0.82,
-            depthTest: true,
-            depthWrite: false,
-          }),
-        )
-        marker.position.set(converted.x, converted.y + zLift, converted.z)
-        marker.renderOrder = 13
-        pathGroup.add(marker)
-      })
-    }
-
-    if (executionPath && executionPath.frame_id === 'map' && executionPath.points.length >= 2) {
-      const executionPoints = executionPath.points.map((point) => {
-        const converted = mapToThree(point.x, point.y, point.z)
-        return new THREE.Vector3(converted.x, converted.y + zLift * 2, converted.z)
-      })
-      const geometry = new THREE.BufferGeometry().setFromPoints(executionPoints)
-      const material = new THREE.LineBasicMaterial({
-        color: 0x22d3ee,
-        transparent: true,
-        opacity: 1,
-        depthTest: false,
-        depthWrite: false,
-      })
-      const line = new THREE.Line(geometry, material)
-      line.renderOrder = 20
-      pathGroup.add(line)
-
-      const markerStride = Math.max(1, Math.ceil(executionPath.points.length / 60))
-      executionPath.points.forEach((point, index) => {
-        const isEnd = index === executionPath.points.length - 1
-        if (!isEnd && index % markerStride !== 0) return
-        const converted = mapToThree(point.x, point.y, point.z)
-        const marker = new THREE.Mesh(
-          new THREE.SphereGeometry(isEnd ? GLOBAL_PATH_NODE_RADIUS * 1.7 : GLOBAL_PATH_NODE_RADIUS * 1.15, 14, 9),
-          new THREE.MeshBasicMaterial({
-            color: isEnd ? 0xf472b6 : 0x22d3ee,
-            transparent: true,
-            opacity: 1,
-            depthTest: false,
-            depthWrite: false,
-          }),
-        )
-        marker.position.set(converted.x, converted.y + zLift * 2, converted.z)
-        marker.renderOrder = 21
-        pathGroup.add(marker)
-      })
+      const mesh = new THREE.Mesh(
+        createFlatPathGeometry(points, width),
+        new THREE.MeshBasicMaterial({
+          color,
+          side: THREE.DoubleSide,
+          depthTest,
+          depthWrite: false,
+        }),
+      )
+      mesh.renderOrder = order
+      pathGroup.add(mesh)
     }
 
     return () => {

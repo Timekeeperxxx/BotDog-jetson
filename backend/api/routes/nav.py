@@ -18,6 +18,7 @@ from ...schemas import (
     LocalizationPoseDTO,
     LocalizationPoseSetRequest,
     LocalizationRestartResponse,
+    LocalizationStopResponse,
     MappingControlRequest,
     MappingControlResponse,
     NavStateResponse,
@@ -271,6 +272,8 @@ async def nav_execute_task(
         runtime_result = materialize_nav_task_runtime(task_id)
         _ensure_localization_ready_for_navigation()
         _ensure_navigation_runtime_ready()
+        from ...services_nav_localization_process import resume_navigation_soft_stop
+        resume_navigation_soft_stop()
         cmd_vel_result = start_cmd_vel_script()
         auto_track_result = await _ensure_auto_track_enabled_for_navigation(task)
         _request_navigation_control()
@@ -541,6 +544,89 @@ async def nav_restart_localization(
         ),
     )
     return result
+
+
+@router.post("/localization/stop", response_model=LocalizationStopResponse)
+async def nav_stop_localization(
+    user: AuthUserInternal = Depends(require_operator),
+    db=Depends(get_db),
+):
+    """Soft-stop motion, then stop navigation and TF localization processes."""
+    from ...control_service import get_control_service
+    from ...services_nav_localization import (
+        set_cmd_vel_estop,
+        stop_cmd_vel_script,
+        stop_navigation_processes,
+    )
+    from ...services_nav_state import (
+        clear_global_path,
+        clear_robot_pose,
+        set_navigation_idle,
+        update_localization_status,
+    )
+    from ...services_nav_task_runtime import clear_nav_task_runtime
+
+    _cancel_pending_auto_track_resume("nav_localization_stop")
+    cmd_vel_estop = set_cmd_vel_estop(True, "nav_localization_stop")
+    nav_stop_result: dict[str, object] | None = None
+
+    bridge = get_ros_nav_bridge()
+    if bridge is not None:
+        try:
+            try:
+                bridge.publish_navigation_task_start(False)
+            except RuntimeError:
+                pass
+            bridge.publish_navigation_start(False)
+            nav_stop_result = bridge.publish_navigation_stop()
+            bridge.publish_zero_cmd_vel(publish_count=20, interval_s=0.02)
+        except RuntimeError as exc:
+            nav_stop_result = {"success": False, "message": str(exc)}
+
+    control_service = get_control_service()
+    if control_service is not None:
+        try:
+            await control_service.send_navigation_velocity(0.0, 0.0, 0.0)
+        except Exception:
+            # The persistent cmd_vel clamp remains the authoritative safety
+            # barrier even if the optional hardware adapter is unavailable.
+            pass
+
+    _release_navigation_control()
+    cmd_vel_stop = await asyncio.to_thread(stop_cmd_vel_script)
+    processes = await asyncio.to_thread(stop_navigation_processes)
+    clear_nav_task_runtime()
+    clear_global_path()
+    clear_robot_pose()
+    set_navigation_idle("导航和 TF 定位已停止")
+    update_localization_status(
+        {
+            "status": "stopped",
+            "frame_id": settings.ROS_NAV_FRAME_ID,
+            "source": None,
+            "message": "导航和 TF 定位已停止",
+        }
+    )
+
+    await safe_write_audit_log(
+        db,
+        level="WARN",
+        module="BACKEND",
+        message=(
+            f"用户={user.username} 角色={user.role} 操作=nav.localization.stop "
+            f"目标=nav_tf 结果=success pids={processes.get('pids', [])} "
+            "velocity_clamped=true"
+        ),
+    )
+    return {
+        "success": True,
+        "running": False,
+        "processes": processes,
+        "cmd_vel_stop": cmd_vel_stop,
+        "cmd_vel_estop": cmd_vel_estop,
+        "nav_stop": nav_stop_result,
+        "message": "导航和 TF 定位已停止；重新使用前请点击重启导航定位",
+    }
 
 
 @router.get("/localization/initialpose-ready")
@@ -828,14 +914,25 @@ async def nav_go_to_waypoint(
                     raise RuntimeError("控制服务未就绪")
                 motion_prepare_result = await control_service.prepare_navigation_motion()
                 _ensure_latest_go_to_request(request_generation, target_key)
-                cmd_vel_result = start_cmd_vel_script()
-                _request_navigation_control()
+                from ...services_nav_localization_process import resume_navigation_soft_stop
+                resumed_soft_stop = resume_navigation_soft_stop()
+                if resumed_soft_stop:
+                    bridge.arm_soft_stop_resume()
                 try:
+                    cmd_vel_result = start_cmd_vel_script()
+                    _request_navigation_control()
                     goal_result = await asyncio.to_thread(
                         bridge.publish_goal_xyz_yaw,
                         waypoint,
                     )
                 except (RuntimeError, ValueError):
+                    if resumed_soft_stop:
+                        from ...services_nav_localization import set_cmd_vel_estop
+                        set_cmd_vel_estop(True, "nav_e_stop")
+                        try:
+                            bridge.publish_navigation_stop()
+                        except RuntimeError:
+                            pass
                     stop_cmd_vel_script()
                     _release_navigation_control()
                     raise
@@ -885,6 +982,8 @@ async def nav_emergency_stop(
     control_service = get_control_service()
 
     try:
+        global _go_to_waypoint_latest_generation
+        _go_to_waypoint_latest_generation += 1
         _cancel_pending_auto_track_resume("nav_e_stop")
         cmd_vel_estop_result = set_cmd_vel_estop(True, "nav_e_stop")
         cmd_vel_zero_result = None

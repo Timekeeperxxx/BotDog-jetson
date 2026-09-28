@@ -3,12 +3,10 @@
 
 职责边界：
 - 规则引擎判断检测到的目标是否为"陌生人"
-- 阶段 2：基于会话级 known_targets 列表判断（session-scoped 白名单）
-- 未来可扩展为策略链，接入人脸识别等外部服务
+- 人脸库识别成功的人员直接视为已知人员
+- 保留会话级 known_targets 人工白名单作为兜底
 
-注意：
-- 此处的"已知人员"仅为会话级人工标记，不构成稳定身份白名单
-- 跨任务、跨重启不复用，见 session_known_targets 表语义
+注意：人脸库是跨任务身份白名单；session_known_targets 仍只在当前会话有效。
 """
 
 from __future__ import annotations
@@ -20,29 +18,42 @@ from .logging_config import logger
 
 class StrangerPolicy:
     """
-    陌生人判定策略（阶段 2：规则引擎版）。
+    陌生人判定策略（默认拒绝）。
 
     当前策略：
-    - 所有检测到的 person 默认视为陌生人
-    - 若 track_id 在会话级 known_targets 中，则排除
-    - 未来：可插入人脸识别、人员库比对等策略链
+    - face_status=recognized 且存在 identity_id：人员库授权人员，不跟踪
+    - track_id 在会话级 known_targets 中：人工确认的已知人员，不跟踪
+    - pending/unknown/unavailable/无脸结果：未完成授权确认，仍视为陌生人
     """
 
     def __init__(self) -> None:
         # 会话级已知人员 track_id 集合（人工标记后加入）
         self._known_track_ids: set[int] = set()
 
-    def is_stranger(self, track_id: int) -> bool:
+    def is_stranger(
+        self,
+        track_id: int,
+        *,
+        face_status: str | None = None,
+        identity_id: int | None = None,
+    ) -> bool:
         """
         判断指定 track_id 是否为陌生人。
 
         Args:
             track_id: 目标跟踪 ID
 
+        人脸识别采用默认拒绝：只有明确匹配到人员库身份才算授权。检测中、
+        无法识别或匹配失败均不能自动放行。
+
         Returns:
-            True 若为陌生人（需要跟踪的目标）
+            True 若为未授权/陌生人（可进入现有跟踪流程）
         """
-        return track_id not in self._known_track_ids
+        if track_id in self._known_track_ids:
+            return False
+        if face_status == "recognized" and identity_id is not None:
+            return False
+        return True
 
     def mark_known(self, track_id: int, reason: str = "operator") -> None:
         """

@@ -1,3 +1,4 @@
+import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import {
   SCAN_BODY_CYLINDER_CENTER_Z_OFFSET,
@@ -7,6 +8,7 @@ import {
   POINT_CLOUD_MIN_ORBIT_DISTANCE,
   WAYPOINT_LABEL_SCREEN_WIDTH_PX,
   createPointCloudMaterial,
+  createFlatPathGeometry,
   createOrbitPivotMarker,
   disposeObject3D,
   getAdaptiveCameraNear,
@@ -164,5 +166,27 @@ describe('3D orbit focus', () => {
     expect(shouldShowOrbitPivotMarker(false, true)).toBe(false)
     expect(shouldShowOrbitPivotMarker(true, false)).toBe(false)
     expect(shouldShowOrbitPivotMarker(true, true)).toBe(true)
+  })
+})
+
+describe('flat navigation path', () => {
+  it('uses rectangular segments with original heights and skips duplicate points', () => {
+    const geometry = createFlatPathGeometry([
+      new THREE.Vector3(0, 0, 0),
+      new THREE.Vector3(2, 1, 0),
+      new THREE.Vector3(2, 1, 0),
+      new THREE.Vector3(2, 1, 2),
+    ], 0.12)
+    const positions = geometry.getAttribute('position')
+    expect(positions.count).toBe(12)
+    expect(positions.getZ(0)).toBeCloseTo(0.06)
+    expect(positions.getZ(1)).toBeCloseTo(-0.06)
+    expect(positions.getX(2)).toBeCloseTo(2)
+    expect(positions.getY(2)).toBeCloseTo(1)
+    expect(Array.from(positions.array).every(Number.isFinite)).toBe(true)
+    geometry.dispose()
+    const empty = createFlatPathGeometry([], 0.12)
+    expect(empty.getAttribute('position').count).toBe(0)
+    empty.dispose()
   })
 })

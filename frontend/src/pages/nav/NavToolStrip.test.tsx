@@ -55,7 +55,7 @@ describe('NavToolStrip task controls', () => {
         enabled: true, state: 'tracking', detail: '关闭联动后恢复围栏观察',
         scene_id: null, target_fence_id: null, target_point: null, distance_m: null,
         desired_yaw_deg: null, desired_pitch_deg: null, behavior: 'normal',
-        behavior_track_id: null, persons: [], missing_calibration: [], gimbal_error: null,
+        behavior_track_id: null, persons: [], tamper: { enabled: true, structure_check_enabled: true, reference_ready: false, reference_age_seconds: null, pending: false, pending_track_id: null, action_score: 0, structure_change_ratio: 0, last_result: null, last_result_age_seconds: null }, missing_calibration: [], gimbal_error: null,
       },
     })
     const { rerender } = render(<NavToolStrip {...props} />)

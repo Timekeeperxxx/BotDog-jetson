@@ -3,9 +3,12 @@ import type { VideoHudProps } from './types';
 
 function weatherText(aiStatus: VideoHudProps['aiStatus']): string {
   const weather = aiStatus?.weather;
-  if (!weather || weather.state === 'disabled' || weather.state === 'unavailable') return '未启用';
+  if (!weather) return '等待 AI 状态';
+  if (weather.state === 'disabled') return '未启用';
+  if (weather.state === 'unavailable') return '暂不可用';
   if (weather.state === 'failed') return '模型异常';
   if (weather.state === 'warming_up') return '识别中';
+  if (weather.label === 'normal') return '正常';
   const confidence = Math.round((weather.confidence ?? 0) * 100);
   return `${weather.label_zh || '未知'} ${confidence}%`;
 }

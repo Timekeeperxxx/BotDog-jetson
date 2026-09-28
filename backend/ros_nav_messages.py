@@ -221,3 +221,31 @@ def _to_optional_str(value: Any) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
+
+
+def validate_task_route(payload: Any) -> dict[str, Any]:
+    """Reject malformed ROS JSON before it reaches the cache or websocket."""
+    if not isinstance(payload, dict):
+        raise ValueError("task_route must be an object")
+    if any(not isinstance(payload.get(key), str) or not payload[key] for key in ("task_id", "run_id")):
+        raise ValueError("task_route requires task_id and run_id")
+    if payload.get("frame_id") != "map" or payload.get("status") not in {
+        "planning", "ready", "running", "completed", "failed", "canceled"
+    }:
+        raise ValueError("invalid task_route frame or status")
+    segments = payload.get("segments")
+    index = payload.get("current_index")
+    if not isinstance(segments, list) or type(index) is not int or not 0 <= index <= len(segments):
+        raise ValueError("invalid task_route segments or current_index")
+    for segment in segments:
+        if not isinstance(segment, dict) or not isinstance(segment.get("points"), list) or not segment["points"]:
+            raise ValueError("invalid task_route segment")
+        waypoint = segment.get("waypoint")
+        if not isinstance(waypoint, dict) or not isinstance(waypoint.get("name"), str):
+            raise ValueError("invalid task_route waypoint")
+        for point, keys in [(point, ("x", "y", "z")) for point in segment["points"]] + [(waypoint, ("x", "y", "z", "yaw"))]:
+            if not isinstance(point, dict) or any(
+                type(point.get(key)) not in (int, float) or not math.isfinite(point[key]) for key in keys
+            ):
+                raise ValueError("task_route coordinates must be finite numbers")
+    return {key: payload[key] for key in ("task_id", "run_id", "frame_id", "status", "current_index", "segments")}

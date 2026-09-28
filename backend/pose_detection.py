@@ -3,7 +3,7 @@
 第一阶段只使用 COCO 17 点人体骨架，不在单帧上直接宣称发生了复杂行为。
 攀爬、蹲伏、倒地和徘徊事件均在全画面判断；蹲伏和徘徊按连续时长触发，
 人员缺失后清零，蹲伏姿态中断后重新计时。重点区信息仅供观察结果展示。
-胸前双手往复为全画面的疑似破坏动作候选规则，不证明围栏接触或损坏。
+胸口及以上双手活动为全画面的疑似破坏动作候选规则，不证明围栏接触或损坏。
 """
 
 from __future__ import annotations
@@ -101,10 +101,12 @@ class _TrackState:
     motion_history: deque[tuple[float, float, float, bool]] = field(
         default_factory=deque
     )
-    # 时间、左右手在躯干坐标系内的位置；双手必须同时处于胸前。
+    # 时间、左右手在躯干坐标系内的位置；双手必须同时处于胸口及以上。
     chest_motion: deque[tuple[float, float, float, float, float]] = field(default_factory=deque)
     # 时间、左右膝/踝相对高度、辅助动作、髋部y、躯干长度。
     vault_history: deque[tuple[float, float, float, float, float, bool, float, float]] = field(default_factory=deque)
+    # 时间、左右脚相对髋部坐标及撑越候选；有界短窗，不新增模型推理。
+    supported_vault_history: deque = field(default_factory=lambda: deque(maxlen=32))
     last_events: dict[str, float] = field(default_factory=dict)
 
 
@@ -402,6 +404,7 @@ class PoseEventEngine:
         self._tracks: dict[int, _TrackState] = {}
         self._next_track_id = 1
         self._events_enabled = True
+        self.active_actions: set[str] = set()  # 本帧满足条件的动作，仅供显示，不受告警冷却限制。
 
     def update(
         self,
@@ -412,6 +415,7 @@ class PoseEventEngine:
         now: float | None = None,
     ) -> tuple[list[PoseObservation], list[PoseEvent]]:
         timestamp = time.monotonic() if now is None else now
+        self.active_actions.clear()
         # 保留骨架与跟踪编号供人员检测使用，关闭期间不累计行为时间。
         if not events_enabled or not self._events_enabled:
             for state in self._tracks.values():
@@ -420,16 +424,18 @@ class PoseEventEngine:
                 state.posture_window.clear()
                 state.posture_present_since.clear()
                 state.motion_history.clear()
-                state.chest_motion.clear()
+                # 双手活动允许短暂漏检，恢复后由采样间隔判定是否清零。
                 state.vault_history.clear()
+                state.supported_vault_history.clear()
                 state.last_events.clear()
         self._events_enabled = events_enabled
         self._drop_stale_tracks(timestamp)
         assignments = self._assign_tracks(poses)
         for track_id, state in self._tracks.items():
             if track_id not in assignments.values():
-                state.chest_motion.clear()
+                # 双手活动允许短暂漏检，恢复后由采样间隔判定是否清零。
                 state.vault_history.clear()
+                # 撑栏候选允许短暂漏检；恢复时按有效采样间隔检查超时。
                 state.visible_since = None
                 state.posture = Posture.UNKNOWN
                 state.posture_window.clear()
@@ -591,6 +597,9 @@ class PoseEventEngine:
         )
         climb_motion, climb_motion_confidence = self._detect_climb_motion(state)
         vault_duration = self._detect_vault_motion(observation, state, now)
+        supported_duration = self._detect_supported_vault(observation, state, now)
+        if supported_duration is not None:
+            vault_duration = supported_duration
         if climbing_pose_confirmed or climb_motion or vault_duration is not None:
             confidence = max(
                 observation.posture_confidence if climbing_pose_confirmed else 0.0,
@@ -636,6 +645,8 @@ class PoseEventEngine:
 
         events: list[PoseEvent] = []
         for event_type, confidence, duration in event_specs:
+            if event_type in {"POSE_DAMAGE_SUSPECTED", "POSE_CLIMBING_SUSPECTED"}:
+                self.active_actions.add(event_type)
             last_event_at = state.last_events.get(event_type)
             if (
                 last_event_at is not None
@@ -657,6 +668,68 @@ class PoseEventEngine:
                 )
             )
         return events
+
+    def _detect_supported_vault(
+        self, observation: PoseObservation, state: _TrackState, now: float,
+    ) -> float | None:
+        """高抬腿进入撑栏候选，持续抬膝横移确认；最多容忍0.3秒采样间隔。"""
+        history = state.supported_vault_history
+        if history and not 0 < now - history[-1][0] <= 0.3 + 1e-9:
+            history.clear()
+        def point(index: int) -> PoseKeypoint | None:
+            p = _point(observation.keypoints, index, self._keypoint_confidence)
+            return p if p is not None and all(math.isfinite(v) for v in
+                                             (p.x, p.y, p.confidence)) else None
+
+        ls, rs, lh, rh = [point(i) for i in (5, 6, 11, 12)]
+        if any(p is None for p in (ls, rs, lh, rh)):
+            return None
+        sx, sy = (ls.x + rs.x) / 2, (ls.y + rs.y) / 2
+        hx, hy = (lh.x + rh.x) / 2, (lh.y + rh.y) / 2
+        length = math.hypot(hx - sx, hy - sy)
+        if length < 5:
+            history.clear()
+            return None
+        supported = any(w is not None and -0.3 <= (w.y - hy) / length <= 1.0
+                        for w in (point(9), point(10)))
+        legs = []
+        for hip, knee_index, ankle_index in ((lh, 13, 15), (rh, 14, 16)):
+            knee, ankle = point(knee_index), point(ankle_index)
+            if knee is None or ankle is None:
+                legs.append(None)
+                continue
+            dx, dy = (ankle.x - hip.x) / length, (ankle.y - hip.y) / length
+            candidate = (supported and dy <= 0.4 and abs(dx) >= 0.5
+                         and (knee.y - hip.y) / length <= 0.35)
+            continuing = (dy <= 1.0 and abs(dx) >= 0.5
+                          and (knee.y - hip.y) / length <= 0.35)
+            legs.append((dx, dy, candidate, continuing))
+        history.append((now, *legs))
+        while history and now - history[0][0] > 1.0:
+            history.popleft()
+        # 同一条腿至少两帧有效；只比较身体相对坐标，整体平移不构成动作。
+        for side in (1, 2):
+            current = legs[side - 1]
+            if current is None or not current[3]:
+                continue
+            # 必须先有严格高抬腿证据，后续帧才允许脚下降。
+            seeds = [t for t, *pair in history
+                     if (leg := pair[side - 1]) is not None and leg[2]
+                     and now - t <= 0.5]
+            if not seeds:
+                continue
+            hits = [(t, leg) for t, *pair in history
+                    if t >= seeds[0] and (leg := pair[side - 1]) is not None and leg[3]]
+            if len(hits) < 2 or now - hits[0][0] < 0.1 - 1e-9:
+                continue
+            if any(sample[side] is not None and
+                   math.hypot(current[0] - sample[side][0],
+                              current[1] - sample[side][1]) >= 0.2
+                   for sample in history if sample[0] < now):
+                duration = now - hits[0][0]
+                history.clear()
+                return duration
+        return None
 
     def _detect_vault_motion(
         self, observation: PoseObservation, state: _TrackState, now: float,
@@ -740,28 +813,31 @@ class PoseEventEngine:
     def _detect_chest_motion(
         self, observation: PoseObservation, state: _TrackState, now: float,
     ) -> float | None:
-        """候选规则：胸前双手持续往复；不判断围栏、工具或实际损坏。"""
+        """胸口及以上双手活动候选；不要求往复，不证明实际损坏。"""
         history = state.chest_motion
         points = [_point(observation.keypoints, i, self._keypoint_confidence)
-                  for i in (LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_HIP, RIGHT_HIP,
-                            LEFT_WRIST, RIGHT_WRIST)]
+                  for i in (LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_WRIST, RIGHT_WRIST)]
         if any(p is None or not all(math.isfinite(v) for v in (p.x, p.y, p.confidence))
                for p in points):
-            history.clear()
-            return None
-        ls, rs, lh, rh, lw, rw = points
+            return None  # 短暂漏点不清零；再次可见时仍检查 0.5 秒间隔。
+        ls, rs, lw, rw = points
         sx, sy = (ls.x + rs.x) / 2, (ls.y + rs.y) / 2
-        dx, dy = (lh.x + rh.x) / 2 - sx, (lh.y + rh.y) / 2 - sy
-        length2 = dx * dx + dy * dy
-        if length2 < 1.0:
+        dx, dy = rs.x - ls.x, rs.y - ls.y
+        if dx < 0:
+            dx, dy = -dx, -dy
+        width = math.hypot(dx, dy)
+        if width < 1.0:
             history.clear()
             return None
+        # 肩宽的 1.5 倍作为躯干尺度，半身画面不再依赖双髋可见。
+        scale = width * 1.5
         coordinates = []
         for wrist in (lw, rw):
             wx, wy = wrist.x - sx, wrist.y - sy
-            x, y = (wx * dy - wy * dx) / length2, (wx * dx + wy * dy) / length2
-            # 胸前范围按肩到髋的长度归一化，避免整体平移和缩放造成假动作。
-            if not (-1.2 <= x <= 1.2 and -0.15 <= y <= 0.65):
+            x = (wx * dx + wy * dy) / (width * scale)
+            y = (-wx * dy + wy * dx) / (width * scale)
+            # 胸口线以下不计；允许抬到头顶或向两侧伸展。
+            if y > 0.65:
                 history.clear()
                 return None
             coordinates.extend((x, y))
@@ -778,21 +854,17 @@ class PoseEventEngine:
         if len(history) < 5 or now - history[0][0] + 1e-9 < self._chest_motion_seconds:
             return None
         for offset in (1, 3):
-            axes = [[sample[offset + axis] for sample in history] for axis in (0, 1)]
-            values = max(axes, key=lambda v: sum(abs(b - a) for a, b in zip(v, v[1:])))
-            # 相对上一个有效拐点累计位移，避免高帧率下每帧位移过小被全部丢弃。
-            anchor = values[0]
-            movements = []
-            for value in values[1:]:
-                delta = value - anchor
-                if abs(delta) >= 0.04:
-                    movements.append(delta)
-                    anchor = value
-            reversals = sum(a * b < 0 for a, b in zip(movements, movements[1:]))
-            if (reversals < 2 or max(values) - min(values) < self._chest_motion_span
-                    or sum(abs(delta) for delta in movements) < self._chest_motion_span * 3):
-                return None
-        return now - history[0][0]
+            # 任一手有足够活动即可；累计小位移，避免高帧率丢掉慢动作。
+            for axis in (0, 1):
+                values = [sample[offset + axis] for sample in history]
+                anchor, moves = values[0], 0
+                for value in values[1:]:
+                    if abs(value - anchor) >= 0.02:
+                        moves += 1
+                        anchor = value
+                if moves >= 3 and max(values) - min(values) >= self._chest_motion_span:
+                    return now - history[0][0]
+        return None
 
     def _detect_climb_motion(self, state: _TrackState) -> tuple[bool, float]:
         """攀升轨迹判定：脚部在短时间内相对身高持续升高且期间有手高于肩。

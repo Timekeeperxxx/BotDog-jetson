@@ -86,7 +86,7 @@ async def nav_select_pcd_scene(
     user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ):
-    from ...services_nav_localization import save_current_scene
+    from ...services_nav_localization import load_current_scene, save_current_scene
     from ...services_nav_state import reset_localization_tracking
     from ...services_nav_task_runtime import clear_nav_task_runtime
     from ...services_pcd_maps import PcdMapError, find_scene_pcd_files, resolve_scene_path
@@ -98,10 +98,15 @@ async def nav_select_pcd_scene(
             raise HTTPException(status_code=400, detail="场景缺少 map.pcd")
         if files["ground"] is None:
             raise HTTPException(status_code=400, detail="场景缺少 ground.pcd")
+        try:
+            previous_scene = load_current_scene(strict=False)
+        except (FileNotFoundError, ValueError):
+            previous_scene = {}
         result = save_current_scene(scene_id)
-        cancel_pending_auto_track_resume("nav_scene_select")
-        clear_nav_task_runtime()
-        reset_localization_tracking(f"已切换场景 {scene_id}，等待重新定位")
+        if previous_scene.get("scene_id") != scene_id:
+            cancel_pending_auto_track_resume("nav_scene_select")
+            clear_nav_task_runtime()
+            reset_localization_tracking(f"已切换场景 {scene_id}，等待重新定位")
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except PcdMapError as exc:

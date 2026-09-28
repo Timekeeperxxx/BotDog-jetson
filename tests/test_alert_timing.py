@@ -47,6 +47,7 @@ def test_timing_persisted_logged_and_display_receipt_is_idempotent(monkeypatch):
             saved = await record_display(alert.evidence_id, receipt, user=None, db=db)
             assert 500 <= saved['display_delay_ms'] < 2000
             assert saved['clock_uncertainty_ms'] == 5
+            assert 0 <= saved['generation_to_display_ms'] < 1500
             same = await record_display(alert.evidence_id, receipt, user=None, db=db)
             assert same == saved
             with pytest.raises(HTTPException):
@@ -78,5 +79,36 @@ def test_existing_database_adds_timing_without_losing_records(monkeypatch):
             assert 'timing' in columns
             assert (await c.execute(text('SELECT count(*) FROM anomaly_evidence'))).scalar() == 1
             assert (await c.execute(text('SELECT timing FROM anomaly_evidence'))).scalar() is None
+        await engine.dispose()
+    asyncio.run(check())
+
+
+def test_all_alerts_get_delivery_timing_except_blocked_and_cleared():
+    from backend.models import AnomalyEvidence
+    async def check():
+        engine = create_async_engine('sqlite+aiosqlite:///:memory:')
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        async with async_sessionmaker(engine, expire_on_commit=False)() as db:
+            for code in ('E_AI_KNIFE', 'E_AI_GUNS', 'E_POSE_LYING', 'E_FENCE_CONTACT',
+                         'E_AUTO_TRACK_LOCKED', 'E_THERMAL_HIGH', 'NEW_ALERT',
+                         'NAV_PATH_BLOCKED', 'NAV_BLOCK_CLEARED'):
+                broadcaster = AsyncMock()
+                alert = await AlertService(broadcaster).handle_ai_event(
+                    event_type='TEST', event_code=code, severity='WARNING', message='test',
+                    confidence=None, file_path=None, image_url=None, gps_lat=None,
+                    gps_lon=None, task_id=None, session=db)
+                saved = await record_display(alert.evidence_id, DisplayReceipt(
+                    displayed_at=datetime.now(timezone.utc), clock_uncertainty_ms=5), user=None, db=db)
+                row = await db.get(AnomalyEvidence, alert.evidence_id)
+                payload = broadcaster.broadcast_alert.call_args.kwargs
+                if code in ('NAV_PATH_BLOCKED', 'NAV_BLOCK_CLEARED'):
+                    assert saved == row.timing == {}
+                    assert payload['timing'] is None
+                    assert row.created_at
+                else:
+                    assert saved['generation_to_display_ms'] >= 0
+                    assert 'display_delay_ms' not in saved  # No invented event start.
+                    assert payload['timing']['generated_at']
         await engine.dispose()
     asyncio.run(check())

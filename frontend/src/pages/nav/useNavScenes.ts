@@ -10,7 +10,7 @@ import {
   listWaypoints,
   selectPcdScene,
 } from '../../api/pcdMapApi'
-import type { GlobalPath, LocalizationStatus, NavigationStatus, RobotPose } from '../../types/navState'
+import type { TaskRoute, GlobalPath, LocalizationStatus, NavigationStatus, RobotPose } from '../../types/navState'
 import type { NavFence, NavWaypoint, PcdSceneItem, PcdSceneMetadata, PcdScenePreview, PcdSceneLayerRole, PcdSceneRootTile, PcdSceneTileManifest, PointCloudPoints } from '../../types/pcdMap'
 import { getPointCount } from '../../utils/pointCloudPoints'
 
@@ -38,6 +38,7 @@ export function decodeTopDownOverviewTile(tile: PcdSceneRootTile, buffer: ArrayB
 
 type InitialStatePayload = {
   robotPose?: RobotPose | null
+  taskRoute?: TaskRoute | null
   globalPath?: GlobalPath | null
   executionPath?: GlobalPath | null
   localizationStatus?: LocalizationStatus | null
@@ -234,6 +235,7 @@ export function useNavScenes({
         setInitialState({
           robotPose: navState.robot_pose,
           globalPath: navState.global_path,
+          taskRoute: navState.task_route ?? null,
           executionPath: navState.execution_path,
           localizationStatus: navState.localization_status,
           navigationStatus: navState.navigation_status,

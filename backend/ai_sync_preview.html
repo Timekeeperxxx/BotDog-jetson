@@ -1,0 +1,38 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI 同帧预览</title>
+<style>body{margin:0;background:#eef2f6;color:#182d42;font:16px/1.6 system-ui}main{max-width:960px;margin:auto;padding:24px}h1{font-size:26px;margin:0}header{display:flex;justify-content:space-between;align-items:center;gap:16px}canvas{display:block;width:100%;background:#182d42;margin-top:18px;aspect-ratio:16/9}button{min-height:44px;padding:8px 24px;border:1px solid #405e78;border-radius:6px;background:white;color:#182d42;cursor:pointer}button:focus-visible{outline:3px solid #b05800}p{margin:10px 0}#metrics{font-variant-numeric:tabular-nums}</style>
+<main><header><h1>AI 同帧预览</h1><button id="pause">暂停</button></header><p>画面与检测框来自同一帧。慢时跳过旧帧，不补播。</p><canvas width="640" height="360" aria-label="摄像头画面及同帧检测结果"></canvas><p id="status" role="status">等待检测画面…</p><p id="metrics"></p><p>接收后耗时不包含摄像头编码和上游网络延迟。未执行姿态或刀枪检测的帧，不显示该支路旧结果。</p></main>
+<script>
+const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d'),status=document.querySelector('#status'),metrics=document.querySelector('#metrics'),button=document.querySelector('#pause');
+let paused=false,seq=0,lastShown=0,controller=null;
+const clear=()=>ctx.clearRect(0,0,canvas.width,canvas.height);
+button.onclick=()=>{paused=!paused;button.textContent=paused?'继续':'暂停';if(paused){controller?.abort();clear();status.textContent='已暂停';}};
+document.addEventListener('visibilitychange',()=>{if(document.hidden){controller?.abort();clear();}});
+window.addEventListener('pagehide',()=>{paused=true;controller?.abort();});
+setInterval(()=>{if(lastShown&&performance.now()-lastShown>2000){clear();metrics.textContent='';if(!paused)status.textContent='画面已过期，等待新检测帧';}},250);
+async function loop(){
+ let delay=120;
+ if(!paused&&!document.hidden){
+  let timer;
+  try{
+   controller=new AbortController();timer=setTimeout(()=>controller.abort(),1800);
+   const started=performance.now();let token=null;try{token=JSON.parse(localStorage.getItem('botdog-auth')||'{}').accessToken;}catch{}
+   const response=await fetch('/api/v1/ai-preview/frame?after='+seq,{cache:'no-store',signal:controller.signal,headers:token?{Authorization:'Bearer '+token}:{}});
+   if(response.status===401||response.status===403){paused=true;button.textContent='继续';clear();status.textContent='请先在同一地址的主页面登录，再点继续';throw Error(status.textContent);}
+   if(response.status===503)throw Error('等待新检测帧');
+   if(response.status!==204&&response.status!==429){
+    if(!response.ok)throw Error('预览请求失败：'+response.status);
+    const data=await response.json(),img=new Image();img.src='data:image/jpeg;base64,'+data.image;await img.decode();
+    if(!paused&&!document.hidden&&data.age_ms+performance.now()-started<2000){
+     canvas.width=data.width;canvas.height=data.height;ctx.drawImage(img,0,0);ctx.lineWidth=2;ctx.font='16px sans-serif';
+     for(const d of data.detections){const [x,y,x2,y2]=d.bbox;ctx.strokeStyle='#ffd23f';ctx.strokeRect(x,y,x2-x,y2-y);ctx.fillStyle='#ffd23f';ctx.fillText(d.label+' '+Math.round(d.confidence*100)+'%',x,Math.max(18,y-5));}
+     for(const p of data.poses){for(const [a,b] of [[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16]]){const ka=p.keypoints[a],kb=p.keypoints[b];if(Math.min(ka[2],kb[2])<.35)continue;ctx.strokeStyle='#65e7ff';ctx.beginPath();ctx.moveTo(ka[0],ka[1]);ctx.lineTo(kb[0],kb[1]);ctx.stroke();}}
+     seq=data.seq;lastShown=performance.now();status.textContent='正在显示同帧检测结果';metrics.textContent=`帧 ${seq} ｜ 接收至处理完成 ${data.processing_ms} ms ｜ 服务端帧龄 ${data.age_ms} ms ｜ 本次请求 ${Math.round(performance.now()-started)} ms ｜ 姿态 ${data.pose_due?'本帧已检测':'本帧跳过'} ｜ 刀枪 ${data.weapon_due?'本帧已检测':'本帧跳过'}`;
+    }
+   }
+  }catch(e){delay=1000;if(!paused&&!document.hidden){clear();status.textContent=e.name==='AbortError'?'请求超时，正在获取最新帧':e.message;}}
+  finally{clearTimeout(timer);controller=null;}
+ }
+ setTimeout(loop,delay);
+}
+loop();
+</script></html>

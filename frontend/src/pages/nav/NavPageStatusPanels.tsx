@@ -16,6 +16,7 @@ type SceneInfoDrawerProps = {
   open: boolean
   metadata: PcdSceneMetadata | null
   sceneDisplayPointCount: number | null
+  viewCenterPosition: { x: number; y: number } | null
   mouseMapPosition: { x: number; y: number } | null
   robotPose: RobotPose | null
   selectedSceneReady: boolean
@@ -29,6 +30,7 @@ export function SceneInfoDrawer({
   open,
   metadata,
   sceneDisplayPointCount,
+  viewCenterPosition,
   mouseMapPosition,
   robotPose,
   selectedSceneReady,
@@ -53,6 +55,14 @@ export function SceneInfoDrawer({
         </button>
         {open ? (
           <div className="pcd-info-drawer-body">
+            <div className="pcd-metadata-grid" title="橙色旋转中心，map 坐标系">
+              <span>视图中心 X/Y（m）</span>
+              <strong>
+                {viewCenterPosition
+                  ? `${viewCenterPosition.x.toFixed(3)}, ${viewCenterPosition.y.toFixed(3)}`
+                  : '-'}
+              </strong>
+            </div>
             {metadata ? (
               <div className="pcd-metadata-grid">
                 <span>坐标系</span>
@@ -132,6 +142,7 @@ type Notice = {
 type NavMessageCenterProps = {
   notice: Notice
   noticeKind: string
+  onDismissNotice?: () => void
   logs: LogItem[]
   expanded: boolean
   onToggleExpanded: () => void
@@ -140,6 +151,7 @@ type NavMessageCenterProps = {
 export function NavMessageCenter({
   notice,
   noticeKind,
+  onDismissNotice,
   logs,
   expanded,
   onToggleExpanded,
@@ -180,6 +192,11 @@ export function NavMessageCenter({
           <span className="pcd-message-detail">{notice?.message || '当前没有新的操作提醒。'}</span>
         </div>
       </div>
+      {onDismissNotice ? (
+        <button type="button" className="pcd-tool-button" onClick={onDismissNotice} aria-label="关闭建图结果提示">
+          知道了
+        </button>
+      ) : null}
       <div className="pcd-message-log">
         <button
           type="button"

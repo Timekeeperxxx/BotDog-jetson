@@ -1,14 +1,15 @@
 import { useMemo } from 'react'
-import type { GlobalPath, RobotPose } from '../../types/navState'
+import type { GlobalPath, RobotPose, TaskRoute } from '../../types/navState'
 import type { NavWaypoint, PcdBounds, PcdSceneMetadata, PcdScenePreview, PcdSceneTileManifest } from '../../types/pcdMap'
 import type { PointCloudLayer } from './NavPageShell'
 import type { PcdLayerVisibility } from './NavToolStrip'
 import type { MappingSessionInfo } from './navPageUtils'
-import { trimGlobalPathByRobotPose } from './navPageUtils'
+import { getDisplayedGlobalPath } from './navPageUtils'
 
 type UseNavPointCloudViewModelOptions = {
   executionPath: GlobalPath | null
   globalPath: GlobalPath | null
+  taskRoute?: TaskRoute | null
   liveMappingCloudPoints: [number, number, number][]
   mappingActive: boolean
   mappingCloudPoints: [number, number, number][]
@@ -27,6 +28,7 @@ type UseNavPointCloudViewModelOptions = {
 export function useNavPointCloudViewModel({
   executionPath,
   globalPath,
+  taskRoute = null,
   liveMappingCloudPoints,
   mappingActive,
   mappingCloudPoints,
@@ -120,8 +122,8 @@ export function useNavPointCloudViewModel({
   }, [metadata?.files.ground?.bounds, preview?.layers.ground?.bounds, tileManifest?.layer_bounds.ground])
 
   const displayedGlobalPath = useMemo(
-    () => trimGlobalPathByRobotPose(globalPath, robotPose),
-    [globalPath, robotPose],
+    () => getDisplayedGlobalPath(globalPath, robotPose, taskRoute),
+    [globalPath, robotPose, taskRoute],
   )
 
   const selectedSceneWaypoints = useMemo(

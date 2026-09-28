@@ -1,5 +1,5 @@
 import type { LocalizationRestartResponse } from '../../api/pcdMapApi'
-import type { GlobalPath, NavigationStatus, RobotPose } from '../../types/navState'
+import type { GlobalPath, NavigationStatus, RobotPose, TaskRoute } from '../../types/navState'
 import type { PcdSceneItem } from '../../types/pcdMap'
 export {
   DEFAULT_LINEAR_SPEED,
@@ -662,4 +662,13 @@ export function taskContainsPostureControl(task: Pick<TaskDefinition, 'steps'>) 
 
 export function countNavigateSteps(task: Pick<TaskDefinition, 'steps'>) {
   return task.steps.filter((step) => step.type === 'navigate_waypoint').length
+}
+
+export function getDisplayedGlobalPath(globalPath: GlobalPath | null, robotPose: RobotPose | null, taskRoute: TaskRoute | null): GlobalPath | null {
+  if (!taskRoute) return trimGlobalPathByRobotPose(globalPath, robotPose)
+  return {
+    frame_id: taskRoute.frame_id,
+    timestamp: taskRoute.timestamp ?? 0,
+    points: taskRoute.segments.flatMap(segment => segment.points),
+  }
 }

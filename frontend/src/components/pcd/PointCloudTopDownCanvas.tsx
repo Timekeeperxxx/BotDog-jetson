@@ -335,7 +335,6 @@ export function PointCloudTopDownCanvas({
         color: string,
         lineWidth: number,
         lineDash: number[],
-        pointRadius: number,
       ) => {
         if (!path || path.frame_id !== 'map' || path.points.length < 2) return
 
@@ -345,7 +344,7 @@ export function PointCloudTopDownCanvas({
         ctx.lineWidth = lineWidth
         ctx.setLineDash(lineDash)
         ctx.lineJoin = 'round'
-        ctx.lineCap = 'round'
+        ctx.lineCap = 'butt'
         ctx.beginPath()
 
         path.points.forEach((point, index) => {
@@ -361,18 +360,11 @@ export function PointCloudTopDownCanvas({
         ctx.stroke()
         ctx.setLineDash([])
 
-        path.points.forEach((point) => {
-          const basePos = mapToCanvas(point.x, point.y, bounds, width, height, PADDING)
-          const pos = applyView(basePos.x, basePos.y, width, height)
-          ctx.beginPath()
-          ctx.arc(pos.x, pos.y, pointRadius, 0, Math.PI * 2)
-          ctx.fill()
-        })
         ctx.restore()
       }
 
-      drawPath(globalPath, '#facc15', 2, [8, 5], 1.5)
-      drawPath(executionPath, '#22d3ee', 3, [], 2.1)
+      drawPath(globalPath, '#facc15', 3, [])
+      drawPath(executionPath, '#22d3ee', 3, [])
 
       if (fencesVisible) {
         fences.forEach((fence, index) => {

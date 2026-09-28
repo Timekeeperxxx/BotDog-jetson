@@ -143,7 +143,7 @@ export function ConsoleRightPanel({
                 <span className="text-white/50">天气</span>
                 <span>
                   {aiStatus?.weather?.state === 'ready'
-                    ? `${aiStatus.weather.label_zh} ${Math.round(aiStatus.weather.confidence * 100)}%`
+                    ? aiStatus.weather.label === 'normal' ? '正常' : `${aiStatus.weather.label_zh} ${Math.round(aiStatus.weather.confidence * 100)}%`
                     : aiStatus?.weather?.state === 'warming_up' ? '识别中' : '--'}
                 </span>
               </div>

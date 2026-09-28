@@ -23,6 +23,7 @@ async def test_connect_replays_current_navigation_snapshot() -> None:
         "robot_pose": {"x": 1.0, "y": 2.0},
         "global_path": {"frame_id": "map", "points": [{"x": 1.0}]},
         "execution_path": {"frame_id": "map", "points": [{"x": 2.0}]},
+        "task_route": {"task_id": "task", "run_id": "run", "segments": [{"points": [{"x": 1.0}]}]},
         "localization_status": {"status": "ok"},
         "navigation_status": {"status": "navigating"},
     }
@@ -38,11 +39,13 @@ async def test_connect_replays_current_navigation_snapshot() -> None:
         "nav.robot_pose",
         "nav.global_path",
         "nav.execution_path",
+        "nav.task_route",
         "nav.localization_status",
         "nav.navigation_status",
     ]
     assert all(message["snapshot"] is True for message in snapshot_messages)
     assert snapshot_messages[2]["data"] == state["execution_path"]
+    assert snapshot_messages[3]["data"] == state["task_route"]
     assert broadcaster.connection_count == 1
 
 
@@ -53,6 +56,7 @@ async def test_connect_replays_null_paths_to_clear_stale_frontend_state() -> Non
             "robot_pose": None,
             "global_path": None,
             "execution_path": None,
+            "task_route": None,
             "localization_status": {"status": "initializing"},
             "navigation_status": {"status": "idle"},
         }
@@ -65,3 +69,4 @@ async def test_connect_replays_null_paths_to_clear_stale_frontend_state() -> Non
     assert events["nav.robot_pose"]["data"] is None
     assert events["nav.global_path"]["data"] is None
     assert events["nav.execution_path"]["data"] is None
+    assert events["nav.task_route"]["data"] is None

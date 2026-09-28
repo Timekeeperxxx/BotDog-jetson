@@ -17,7 +17,7 @@ from .temperature_monitor import TemperatureAlert
 from .logging_config import logger
 from .config import settings
 from .schemas import utc_now_iso
-from .alert_timing import log_alert_timing
+from .alert_timing import log_alert_timing, UNTIMED_EVENT_CODES
 from datetime import datetime
 
 
@@ -170,6 +170,9 @@ class AlertService:
             evidence: 证据记录
             session: 数据库会话
         """
+        if evidence.event_code in UNTIMED_EVENT_CODES:
+            evidence.timing = {}
+
         if session is None:
             from .database import get_session_factory
 
@@ -191,7 +194,7 @@ class AlertService:
             gps_lat=evidence.gps_lat,
             gps_lon=evidence.gps_lon,
             timing=evidence.timing,
-            created_at=evidence.timing["generated_at"],
+            created_at=evidence.timing.get("generated_at") or utc_now_iso(),
         )
 
         session.add(db_evidence)
@@ -243,7 +246,7 @@ class AlertService:
             logger.debug(f"使用回退的全局 broadcaster: {id(self._event_broadcaster)}")
 
         payload: Dict[str, Any] = dict(extra)
-        payload["timing"] = evidence.timing
+        payload["timing"] = evidence.timing or None
         if temperature is not None:
             payload["temperature"] = temperature
         if threshold is not None:

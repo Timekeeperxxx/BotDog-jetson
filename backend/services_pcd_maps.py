@@ -167,6 +167,9 @@ def find_scene_pcd_files(scene_path: Path) -> dict[str, Path | None]:
     if not scene_path.is_dir():
         raise PcdMapError("scene_path 不是目录")
 
+    if (scene_path / ".mapping_incomplete").exists():
+        raise PcdMapError("场景建图启动未完成，保留的数据仅用于排查")
+
     ground_candidates: list[Path] = []
     wall_candidates: list[Path] = []
     footprint_fill_candidates: list[Path] = []
@@ -220,6 +223,9 @@ def list_pcd_scenes() -> dict[str, Any]:
 
     for path in root.iterdir():
         if not path.is_dir() or not SCENE_ID_PATTERN.match(path.name):
+            continue
+
+        if (path / ".mapping_incomplete").exists():
             continue
 
         scene_stat = path.stat()

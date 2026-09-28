@@ -629,7 +629,7 @@ export function setNavAutoTrackMode(enabled: boolean): Promise<NavAutoTrackModeR
   )
 }
 
-export function triggerNavEmergencyStop(): Promise<{ success: boolean; topic: string | null; message: string }> {
+export function triggerNavSoftStop(): Promise<{ success: boolean; topic: string | null; message: string }> {
   return requestJson(
     getApiUrl('/api/v1/nav/e-stop'),
     { method: 'POST' },
@@ -648,4 +648,21 @@ export type LocalizationDiagnostics = {
 
 export function getLocalizationDiagnostics(): Promise<LocalizationDiagnostics> {
   return requestJson(getApiUrl('/api/v1/nav/localization/diagnostics'), { signal: AbortSignal.timeout(8000) })
+}
+
+export type LocalizationStopResponse = {
+  success: boolean
+  running: boolean
+  processes: { pids?: number[]; message?: string }
+  cmd_vel_stop: { success?: boolean; running?: boolean; message?: string }
+  cmd_vel_estop: { active?: boolean; reason?: string }
+  nav_stop: { success?: boolean; topic?: string; data?: boolean; message?: string } | null
+  message: string
+}
+
+export function stopNavigationLocalization(): Promise<LocalizationStopResponse> {
+  return requestJson<LocalizationStopResponse>(
+    getApiUrl('/api/v1/nav/localization/stop'),
+    { method: 'POST' },
+  )
 }

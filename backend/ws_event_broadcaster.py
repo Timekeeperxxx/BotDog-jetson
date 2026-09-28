@@ -38,9 +38,52 @@ class EventBroadcaster:
         self._lock = asyncio.Lock()
         self._nav_state_provider = nav_state_provider
 
+    def publish_latest_overlay(self, message: dict, timeout: float) -> None:
+        """Never block inference or queue old overlay frames behind slow clients."""
+        self._pending_overlay = (asyncio.get_running_loop().time(), message, timeout)
+        task = getattr(self, '_overlay_task', None)
+        if task is None or task.done():
+            self._overlay_task = asyncio.create_task(self._send_latest_overlays())
+
+    async def _send_latest_overlays(self) -> None:
+        try:
+            while self._pending_overlay is not None:
+                async with self._lock:
+                    # Select AFTER acquiring the lock: an older waiting frame may be replaced.
+                    created, message, timeout = self._pending_overlay
+                    self._pending_overlay = None
+                    if asyncio.get_running_loop().time() - created > 0.5:
+                        continue
+                    connections = tuple(self._connections)
+                    results = await asyncio.gather(*(
+                        asyncio.wait_for(connection.send_json(message), timeout=timeout)
+                        for connection in connections
+                    ), return_exceptions=True)
+                    for connection, result in zip(connections, results):
+                        if isinstance(result, BaseException):
+                            self._connections.discard(connection)
+        except asyncio.CancelledError:
+            self._pending_overlay = None
+            raise
+        except Exception as exc:
+            self._pending_overlay = None
+            get_logger("WebSocket事件").warning("叠层发送失败：{}", exc)
+
     def has_connections(self) -> bool:
         """Return whether any client is currently subscribed."""
         return bool(self._connections)
+
+    async def _broadcast_bounded(self, message: dict, timeout: float = 0.5) -> int:
+        async with self._lock:
+            connections = tuple(self._connections)
+            results = await asyncio.gather(*(
+                asyncio.wait_for(connection.send_json(message), timeout)
+                for connection in connections
+            ), return_exceptions=True)
+            for connection, result in zip(connections, results):
+                if isinstance(result, BaseException):
+                    self._connections.discard(connection)
+            return sum(not isinstance(result, BaseException) for result in results)
 
     async def connect(self, websocket: WebSocket) -> None:
         """
@@ -97,6 +140,7 @@ class EventBroadcaster:
             ("nav.robot_pose", "robot_pose"),
             ("nav.global_path", "global_path"),
             ("nav.execution_path", "execution_path"),
+            ("nav.task_route", "task_route"),
             ("nav.localization_status", "localization_status"),
             ("nav.navigation_status", "navigation_status"),
         )
@@ -183,22 +227,7 @@ class EventBroadcaster:
             },
         }
 
-        # 广播到所有连接
-        success_count = 0
-        failed_connections = []
-
-        async with self._lock:
-            for connection in self._connections:
-                try:
-                    await connection.send_json(alert_message)
-                    success_count += 1
-                except Exception as e:
-                    get_logger("WebSocket事件").warning("发送告警消息失败：{}", e)
-                    failed_connections.append(connection)
-
-            # 移除失败的连接
-            for failed_conn in failed_connections:
-                self._connections.discard(failed_conn)
+        success_count = await self._broadcast_bounded(alert_message)
 
         get_logger("WebSocket事件").info(
             "告警事件已广播：event_code={}，成功连接数={}",
@@ -223,22 +252,7 @@ class EventBroadcaster:
             "timestamp": utc_now_iso(),
         }
 
-        success_count = 0
-        failed_connections = []
-
-        async with self._lock:
-            for connection in self._connections:
-                try:
-                    await connection.send_json(message)
-                    success_count += 1
-                except Exception as exc:
-                    get_logger("WebSocket事件").warning("发送事件消息失败：event_type={}，原因={}", event_type, exc)
-                    failed_connections.append(connection)
-
-            for failed_conn in failed_connections:
-                self._connections.discard(failed_conn)
-
-        return success_count
+        return await self._broadcast_bounded(message)
 
     async def handle_connection(self, websocket: WebSocket) -> None:
         """
@@ -261,6 +275,13 @@ class EventBroadcaster:
                             "msg_type": "pong",
                             "timestamp": utc_now_iso(),
                         })
+
+                    elif data.get("msg_type") == "WEATHER_REFRESH":
+                        from .weather_detection import get_weather_detection_service
+
+                        service = get_weather_detection_service()
+                        if service is not None:
+                            service.request_refresh()
 
                 except WebSocketDisconnect:
                     get_logger("WebSocket事件").info("客户端主动断开连接")

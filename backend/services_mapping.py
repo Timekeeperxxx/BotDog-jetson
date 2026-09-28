@@ -37,7 +37,9 @@ VIDEO_PIPELINE_PID_FILES = (
 )
 SCENE_DIR_PATTERN = re.compile(r"^Scene(\d+)_")
 MAPPING_READY_FLAG_NAME = ".ground_generation_started"
-MAPPING_START_READY_TIMEOUT_SECONDS = 60
+# 必须明显长于 start_mapping.sh 内层的启动等待（120s），
+# 给 DDS 冷启动、错误状态落盘和脚本清理留出余量。
+MAPPING_START_READY_TIMEOUT_SECONDS = float(os.environ.get("MAPPING_READY_TIMEOUT_SECONDS", "120")) + 60
 MAPPING_START_READY_POLL_INTERVAL_SECONDS = 0.5
 # 必须长于 terrain 保存 30 分钟上限及后续 SuperLIO/launch 清理时间，
 # 否则后端会提前终止脚本，ground 和 footprint 仍然来不及落盘。
@@ -470,6 +472,8 @@ class MappingService:
 
             map_dir = resolve_map_dir(normalized_scene_name)
             map_dir.mkdir(parents=True, exist_ok=True)
+            incomplete_flag = map_dir / ".mapping_incomplete"
+            incomplete_flag.write_text("建图启动尚未完成，保留数据用于排查\n", encoding="utf-8")
             ready_flag = mapping_ready_flag_path(map_dir)
             ready_flag.unlink(missing_ok=True)
             runtime_pause_state = {
@@ -522,6 +526,7 @@ class MappingService:
             start_wait_deadline = time.monotonic() + MAPPING_START_READY_TIMEOUT_SECONDS
             while time.monotonic() < start_wait_deadline:
                 if ready_flag.exists():
+                    incomplete_flag.unlink(missing_ok=True)
                     bridge = get_ros_nav_bridge()
                     if bridge is not None:
                         reset_cloud_subscription = getattr(bridge, "reset_mapping_cloud_subscription", None)

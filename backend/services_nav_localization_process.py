@@ -5,6 +5,7 @@ import os
 import signal
 import subprocess
 import time
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from .logging_config import get_logger
 from .repositories.json_store import atomic_write_json
 
 nav_logger = get_logger("导航定位服务")
+_estop_lock = threading.RLock()
 
 
 def _runtime_dir() -> Path:
@@ -53,20 +55,25 @@ def get_relocation_process_status() -> dict[str, object]:
 
 
 def set_cmd_vel_estop(active: bool, reason: str = "") -> dict[str, object]:
-    path = _cmd_vel_estop_path()
-    payload = {
-        "active": bool(active),
-        "reason": reason,
-        "updated_at": _utc_now_iso(),
-    }
-    atomic_write_json(path, payload)
-    nav_logger.warning("cmd_vel 急停钳制状态更新：active={} reason={} path={}", active, reason, path)
-    return {
-        "success": True,
-        "active": bool(active),
-        "reason": reason,
-        "path": str(path),
-    }
+    with _estop_lock:
+        if active and reason == "nav_e_stop":
+            current = get_cmd_vel_estop_status()
+            if current["active"] and current["reason"] != "nav_e_stop":
+                return {"success": True, **current}
+        path = _cmd_vel_estop_path()
+        payload = {
+            "active": bool(active),
+            "reason": reason,
+            "updated_at": _utc_now_iso(),
+        }
+        atomic_write_json(path, payload)
+        nav_logger.warning("cmd_vel 急停钳制状态更新：active={} reason={} path={}", active, reason, path)
+        return {
+            "success": True,
+            "active": bool(active),
+            "reason": reason,
+            "path": str(path),
+        }
 
 
 def get_cmd_vel_estop_status() -> dict[str, object]:
@@ -91,6 +98,24 @@ def get_cmd_vel_estop_status() -> dict[str, object]:
             "reason": "cmd_vel 急停状态文件损坏",
             "path": str(path),
         }
+
+
+def resume_navigation_soft_stop() -> bool:
+    """Only an explicit navigation request may release the navigation soft stop."""
+    with _estop_lock:
+        status = get_cmd_vel_estop_status()
+        if not status["active"] or status["reason"] != "nav_e_stop":
+            return False
+        from .control_service import get_control_service
+        from .control_arbiter import get_control_arbiter
+        from .tracking_types import ControlOwner
+        service = get_control_service()
+        arbiter = get_control_arbiter()
+        if ((service is not None and service.is_e_stop_active()) or
+                (arbiter is not None and arbiter.owner == ControlOwner.E_STOP)):
+            raise RuntimeError("系统急停尚未复位，不能恢复导航")
+        set_cmd_vel_estop(False, "nav_soft_stop_resume")
+        return True
 
 
 def _read_cmd_vel_pid() -> int | None:

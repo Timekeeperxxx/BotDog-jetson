@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { getWsUrl } from '../config/api'
 import type {
   GlobalPath,
+  TaskRoute,
   LocalizationStatus,
   NavigationStatus,
   NavWebSocketEvent,
@@ -13,6 +14,7 @@ const ROBOT_POSE_UI_INTERVAL_MS = 80
 type NavWebSocketState = {
   connected: boolean
   robotPose: RobotPose | null
+  taskRoute: TaskRoute | null
   globalPath: GlobalPath | null
   executionPath: GlobalPath | null
   localizationStatus: LocalizationStatus | null
@@ -24,6 +26,7 @@ export function useNavWebSocket() {
   const [state, setState] = useState<NavWebSocketState>({
     connected: false,
     robotPose: null,
+    taskRoute: null,
     globalPath: null,
     executionPath: null,
     localizationStatus: null,
@@ -119,6 +122,8 @@ export function useNavWebSocket() {
 
         setState((prev) => {
           switch (navEvent.type) {
+            case 'nav.task_route':
+              return { ...prev, taskRoute: navEvent.data, lastMessageAt: Date.now() }
             case 'nav.global_path':
               return { ...prev, globalPath: navEvent.data, lastMessageAt: Date.now() }
             case 'nav.execution_path':
@@ -181,6 +186,7 @@ export function useNavWebSocket() {
 
   const setInitialState = useCallback((next: {
     robotPose?: RobotPose | null
+    taskRoute?: TaskRoute | null
     globalPath?: GlobalPath | null
     executionPath?: GlobalPath | null
     localizationStatus?: LocalizationStatus | null
@@ -189,6 +195,7 @@ export function useNavWebSocket() {
     setState((prev) => ({
       ...prev,
       robotPose: Object.prototype.hasOwnProperty.call(next, 'robotPose') ? next.robotPose ?? null : prev.robotPose,
+      taskRoute: Object.prototype.hasOwnProperty.call(next, 'taskRoute') ? next.taskRoute ?? null : next.globalPath === null ? null : prev.taskRoute,
       globalPath: Object.prototype.hasOwnProperty.call(next, 'globalPath') ? next.globalPath ?? null : prev.globalPath,
       executionPath: Object.prototype.hasOwnProperty.call(next, 'executionPath') ? next.executionPath ?? null : prev.executionPath,
       localizationStatus: Object.prototype.hasOwnProperty.call(next, 'localizationStatus') ? next.localizationStatus ?? null : prev.localizationStatus,

@@ -40,6 +40,7 @@ export function useEventWebSocket(): EventHookState {
   const reconnectAttemptsRef = useRef(0);
   const connectionIdRef = useRef(0);
   const connectRef = useRef<() => void>(() => {});
+  const weatherRefreshSentRef = useRef(false);
 
   const connect = useCallback(() => {
     const rs = wsRef.current?.readyState;
@@ -71,6 +72,10 @@ export function useEventWebSocket(): EventHookState {
         }
         setStatus({ status: 'connected', error: null });
         reconnectAttemptsRef.current = 0;
+        if (!weatherRefreshSentRef.current && window.location.pathname === '/') {
+          ws.send(JSON.stringify({ msg_type: 'WEATHER_REFRESH' }));
+          weatherRefreshSentRef.current = true;
+        }
       };
 
       ws.onmessage = (event) => {
@@ -100,7 +105,11 @@ export function useEventWebSocket(): EventHookState {
             setTrackOverlay((previous) => ({
               ...payload,
               poses: previous?.poses,
+              active_actions: previous?.active_actions,
               keypoint_confidence: previous?.keypoint_confidence,
+              pose_received_at_ms: previous?.pose_received_at_ms,
+              received_at_ms: performance.now(),
+              tracking_received_at_ms: performance.now(),
             }));
             return;
           }
@@ -108,7 +117,7 @@ export function useEventWebSocket(): EventHookState {
           if (message.msg_type === 'POSE_OVERLAY' && message.payload) {
             const payload = message.payload as unknown as Pick<
               TrackOverlayData,
-              'frame_w' | 'frame_h' | 'detections' | 'poses' | 'keypoint_confidence'
+              'frame_w' | 'frame_h' | 'detections' | 'poses' | 'keypoint_confidence' | 'active_actions'
             >;
             setTrackOverlay((previous) => ({
               persons: previous?.persons ?? [],
@@ -121,6 +130,8 @@ export function useEventWebSocket(): EventHookState {
               forward_area_ratio: previous?.forward_area_ratio ?? 1,
               ...previous,
               ...payload,
+              received_at_ms: performance.now(),
+              pose_received_at_ms: performance.now(),
             }));
             return;
           }
@@ -147,6 +158,7 @@ export function useEventWebSocket(): EventHookState {
           return;
         }
         setStatus({ status: 'disconnected', error: event.reason || null });
+        setTrackOverlay(null);
 
         if (event.code === 1000) {
           return;

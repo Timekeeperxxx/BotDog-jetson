@@ -183,8 +183,22 @@ class AIWorkerProcessingMixin:
         persons: list[DetectionResult],
     ) -> list[DetectionResult]:
         """过滤与人员无关的低置信度武器框，抑制椅子扶手等静态误报。"""
+        max_frame_area_ratio = max(
+            0.0,
+            min(1.0, float(settings.WEAPON_MAX_FRAME_AREA_RATIO)),
+        )
+        frame_area = max(1, int(self._frame_width) * int(self._frame_height))
+        size_eligible: list[DetectionResult] = []
+        for detection in detections:
+            if detection.bbox is not None:
+                x1, y1, x2, y2 = detection.bbox
+                detection_area = max(0, x2 - x1) * max(0, y2 - y1)
+                if detection_area / frame_area > max_frame_area_ratio:
+                    continue
+            size_eligible.append(detection)
+
         if not bool(settings.WEAPON_REQUIRE_PERSON_ASSOCIATION):
-            return list(detections)
+            return size_eligible
 
         expand_ratio = max(
             0.0,
@@ -196,7 +210,7 @@ class AIWorkerProcessingMixin:
         )
         person_bboxes = [person.bbox for person in persons if person.bbox is not None]
         eligible: list[DetectionResult] = []
-        for detection in detections:
+        for detection in size_eligible:
             if detection.confidence >= unattended_threshold:
                 eligible.append(detection)
                 continue
@@ -445,7 +459,7 @@ class AIWorkerProcessingMixin:
             "POSE_DAMAGE_SUSPECTED": (
                 "E_POSE_DAMAGE_SUSPECTED",
                 "WARNING",
-                "检测到疑似破坏动作（双手胸前持续往复）",
+                "检测到疑似破坏动作（双手在胸口及以上活动）",
             ),
             "POSE_CLIMBING_SUSPECTED": (
                 "E_POSE_CLIMBING_SUSPECTED",
@@ -533,6 +547,18 @@ class AIWorkerProcessingMixin:
                 "CRITICAL",
                 "检测到人员疑似攀爬围栏",
             ),
+            FenceBehavior.TAMPERING_SUSPECTED: (
+                "FENCE_TAMPERING_SUSPECTED",
+                "E_FENCE_TAMPERING_SUSPECTED",
+                "WARNING",
+                "检测到人员疑似破坏围栏",
+            ),
+            FenceBehavior.TAMPERING_CONFIRMED: (
+                "FENCE_TAMPERING_CONFIRMED",
+                "E_FENCE_TAMPERING_CONFIRMED",
+                "CRITICAL",
+                "检测到人员破坏围栏（动作与结构变化已确认）",
+            ),
         }
         gps = self._get_latest_gps()
         alert_service = get_alert_service()
@@ -546,6 +572,14 @@ class AIWorkerProcessingMixin:
                 f"{label}：fence_id={event.fence_id}，track_id={event.track_id}，"
                 f"持续={event.duration_seconds:.1f}s"
             )
+            if event.behavior in {
+                FenceBehavior.TAMPERING_SUSPECTED,
+                FenceBehavior.TAMPERING_CONFIRMED,
+            }:
+                message += (
+                    f"，动作分={event.action_score:.2f}，"
+                    f"结构变化={event.structure_change_ratio:.2%}"
+                )
             async with self._session_factory() as session:
                 await alert_service.handle_ai_event(
                     timing=observation_timing(
@@ -569,16 +603,43 @@ class AIWorkerProcessingMixin:
         self,
         observations: list[PoseObservation],
         detections: list[DetectionResult],
+        *,
+        stage: str = "complete",
+        force: bool = False,
     ) -> None:
         now = asyncio.get_event_loop().time()
         interval = max(0.05, float(settings.POSE_OVERLAY_INTERVAL_SECONDS))
-        if now - self._last_pose_overlay_broadcast < interval:
+        if not force and now - self._last_pose_overlay_broadcast < interval:
             return
         self._last_pose_overlay_broadcast = now
 
         broadcaster = get_event_broadcaster()
         if broadcaster.connection_count == 0:
             return
+
+        from .fence_detection_service import get_fence_detection_service
+
+        fence_service = get_fence_detection_service()
+        fence_status = fence_service.get_status() if fence_service is not None else {}
+        fence_by_track = {
+            int(item["track_id"]): item
+            for item in fence_status.get("persons", [])
+            if item.get("track_id") is not None
+        }
+        fence_structure_ratio = float(
+            (fence_status.get("tamper") or {}).get("structure_change_ratio", 0.0)
+        )
+
+        def fence_overlay_fields(detection: DetectionResult) -> dict[str, object]:
+            track_id = int(getattr(detection, "track_id", -1))
+            item = fence_by_track.get(track_id)
+            return {
+                "fence_behavior": item.get("behavior") if item is not None else None,
+                "fence_action_score": (
+                    item.get("tamper_action_score") if item is not None else 0.0
+                ),
+                "fence_structure_change_ratio": fence_structure_ratio,
+            }
 
         message = {
             "msg_type": "POSE_OVERLAY",
@@ -587,6 +648,9 @@ class AIWorkerProcessingMixin:
                 "frame_w": self._frame_width,
                 "frame_h": self._frame_height,
                 "keypoint_confidence": settings.POSE_KEYPOINT_CONFIDENCE,
+                "stage": stage,
+                "frame_received_at_monotonic": getattr(self, "_current_frame_received_at", None),
+                "frame_age_ms": round(max(0.0, now - (getattr(self, "_current_frame_received_at", None) or now)) * 1000, 1),
                 "detections": [
                     {
                         "bbox": list(detection.bbox)
@@ -595,30 +659,21 @@ class AIWorkerProcessingMixin:
                         "conf": round(detection.confidence, 4),
                         "class_name": detection.label,
                         "track_id": getattr(detection, "track_id", -1),
-                        "identity_id": getattr(detection, "identity_id", None),
-                        "display_name": getattr(detection, "display_name", None),
-                        "face_status": getattr(detection, "face_status", None),
-                        "face_score": getattr(detection, "face_score", None),
+                        "identity_id": getattr(detection, "identity_id", None) if stage == "complete" else None,
+                        "display_name": getattr(detection, "display_name", None) if stage == "complete" else None,
+                        "face_status": getattr(detection, "face_status", None) if stage == "complete" else ("pending" if detection.label == "person" else None),
+                        "face_score": getattr(detection, "face_score", None) if stage == "complete" else None,
+                        **(fence_overlay_fields(detection) if stage == "complete" else {}),
                     }
                     for detection in detections
                     if detection.bbox is not None
                 ],
                 "poses": [observation.as_overlay() for observation in observations],
+                "active_actions": sorted(getattr(getattr(self, "_pose_event_engine", None), "active_actions", ())),
             },
         }
 
-        async with broadcaster._lock:
-            failed = []
-            for connection in broadcaster._connections:
-                try:
-                    await asyncio.wait_for(
-                        connection.send_json(message),
-                        timeout=self._event_send_timeout_s,
-                    )
-                except Exception:
-                    failed.append(connection)
-            for connection in failed:
-                broadcaster._connections.discard(connection)
+        broadcaster.publish_latest_overlay(message, self._event_send_timeout_s)
 
     async def _save_snapshot(self, frame: bytes) -> tuple[Path, str]:
         return await asyncio.to_thread(self._save_snapshot_sync, frame)
@@ -669,6 +724,18 @@ class AIWorkerProcessingMixin:
         if now - self._last_status_broadcast < self._status_interval:
             return
         self._last_status_broadcast = now
+
+        # 只覆盖解码后到结果的耗时，不冒充摄像头端到端延迟；无人连接也保留诊断。
+        ai_logger.info(
+            "AI 性能：frames={}，queue_age={}ms，processing={}ms，detect={}ms，"
+            "pose={}ms，weapon={}ms，weather={}ms，postprocess={}ms，dropped={}，face={}ms，overlay={}ms，events={}ms",
+            self._frames_processed, self._last_frame_age_ms, self._last_processing_ms,
+            self._last_detect_ms, self._last_pose_ms, self._last_weapon_ms,
+            self._last_weather_ms, self._last_postprocess_ms, self._queued_frames_dropped,
+            getattr(self, '_last_face_stage_ms', 0.0),
+            getattr(self, '_last_overlay_stage_ms', 0.0),
+            getattr(self, '_last_events_stage_ms', 0.0),
+        )
 
         try:
             broadcaster = get_event_broadcaster()
@@ -726,7 +793,14 @@ class AIWorkerProcessingMixin:
                 },
             }
 
-            async with broadcaster._lock:
+            # 状态仅用于诊断；慢连接占用广播锁时直接跳过本次上报。
+            try:
+                await asyncio.wait_for(
+                    broadcaster._lock.acquire(), timeout=self._event_send_timeout_s,
+                )
+            except asyncio.TimeoutError:
+                return
+            try:
                 failed = []
                 for conn in broadcaster._connections:
                     try:
@@ -738,6 +812,8 @@ class AIWorkerProcessingMixin:
                         failed.append(conn)
                 for conn in failed:
                     broadcaster._connections.discard(conn)
+            finally:
+                broadcaster._lock.release()
         except Exception as exc:
             ai_logger.debug("AI 状态广播失败：{}", exc)
 

@@ -20,6 +20,7 @@ async def list_evidence(
     *,
     task_id: Optional[int] = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> List[AnomalyEvidence]:
     """
     根据可选 task_id 查询最近的异常证据记录。
@@ -29,7 +30,7 @@ async def list_evidence(
     if task_id is not None:
         stmt = stmt.where(AnomalyEvidence.task_id == task_id)
 
-    stmt = stmt.order_by(AnomalyEvidence.created_at.desc()).limit(limit)
+    stmt = stmt.order_by(AnomalyEvidence.created_at.desc(), AnomalyEvidence.evidence_id.desc()).limit(limit).offset(offset)
 
     result = await session.execute(stmt)
     rows = result.scalars().all()
@@ -76,4 +77,3 @@ async def delete_evidence_by_ids(
         "missing_files": missing_files,
         "not_found_ids": not_found_ids,
     }
-

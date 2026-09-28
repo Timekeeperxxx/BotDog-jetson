@@ -12,6 +12,7 @@ from .logging_config import get_logger
 from .ros_nav_cloud_bridge import RosNavCloudBridgeMixin
 from .ros_nav_messages import (
     extract_global_path,
+    validate_task_route,
     extract_pose,
     global_path_signature,
     header_frame_id,
@@ -37,6 +38,8 @@ from .ros_nav_lifecycle import RosNavLifecycleMixin
 from .services_nav_state import (
     clear_execution_path,
     clear_global_path,
+    begin_task_route,
+    update_task_route,
     clear_robot_pose,
     update_execution_path,
     update_global_path,
@@ -68,6 +71,12 @@ GOAL_PUBLISH_COUNT = 1
 # planner failure) can arrive after the new goal and must not release the
 # freshly acquired NAVIGATION owner.
 NAV_START_TERMINAL_RELEASE_GRACE_S = 2.0
+# The stock tf2 listener retains 100 dynamic messages.  That is useful for a
+# lightly loaded executor, but on the application bridge it turned callback
+# backlog into about seven seconds of visible pose latency.  A dedicated TF
+# executor only needs a small latest-value window.
+TF_DYNAMIC_QUEUE_DEPTH = 5
+TF_STATIC_QUEUE_DEPTH = 100
 
 
 class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
@@ -89,12 +98,17 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._node: Any | None = None
         self._rclpy: Any | None = None
         self._tf_buffer: Any | None = None
-        self._tf_listener: Any | None = None
+        self._tf_node: Any | None = None
+        self._tf_executor: Any | None = None
+        self._tf_thread: threading.Thread | None = None
+        self._tf_subscription: Any | None = None
+        self._tf_static_subscription: Any | None = None
         self._nav_start_publisher: Any | None = None
         self._nav_task_start_publisher: Any | None = None
         self._cmd_vel_publisher: Any | None = None
         self._goal_xyz_publisher: Any | None = None
         self._goal_yaw_publisher: Any | None = None
+        self._task_route_subscription: Any | None = None
         self._global_path_subscription: Any | None = None
         self._execution_path_subscription: Any | None = None
         self._nav_status_subscription: Any | None = None
@@ -200,6 +214,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             self._node = self._rclpy.create_node("botdog_nav_state_bridge")
             self._setup_publishers()
             self._setup_global_path_subscription(Path)
+            self._setup_task_route_subscription()
             self._setup_execution_path_subscription(Path)
             self._setup_nav_status_subscription()
             self._setup_planning_status_subscription()
@@ -444,6 +459,8 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         # first waypoint very quickly on the ROS executor thread.
         if enabled:
             self._navigation_task_active = True
+            begin_task_route()
+            self._submit_broadcast("nav.task_route", None)
         try:
             result = publish_bool_message(
                 node=self._node,
@@ -559,6 +576,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         """Atomically expose the newest single goal to reconnecting/web clients."""
 
         clear_global_path()
+        self._submit_broadcast("nav.task_route", None)
         self._last_global_path_signature = None
         self._last_global_path_broadcast_at = 0.0
         self._last_execution_path_signature = None
@@ -707,8 +725,12 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
                 )
             time.sleep(interval)
 
+    def arm_soft_stop_resume(self) -> None:
+        self._resume_after_soft_stop = True
+
     def publish_navigation_stop(self) -> dict[str, Any]:
         """Latch the ROS navigation execution chain off via /nav_stop=true."""
+        self._resume_after_soft_stop = False
         result = publish_bool_message(
             node=self._node,
             publisher=self._estop_publisher,
@@ -818,6 +840,28 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             subscription_counts=self.get_initial_pose_subscription_counts,
             backend_publisher_count=self.get_backend_initial_pose_publisher_count,
         )
+
+    def _setup_task_route_subscription(self) -> None:
+        if self._node is None:
+            return
+        from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+        from std_msgs.msg import String
+
+        self._task_route_subscription = self._node.create_subscription(
+            String, "/nav/task_route", self._handle_task_route_message,
+            QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                       durability=DurabilityPolicy.TRANSIENT_LOCAL),
+        )
+
+    def _handle_task_route_message(self, msg: Any) -> None:
+        try:
+            route = validate_task_route(json.loads(msg.data))
+        except (ValueError, TypeError, AttributeError) as exc:
+            nav_logger.warning("task_route 消息解析失败：{}", exc)
+            return
+        accepted = update_task_route(route)
+        if accepted is not None:
+            self._submit_broadcast("nav.task_route", accepted)
 
     def _setup_global_path_subscription(self, path_cls: Any) -> None:
         if self._node is None:
@@ -1515,6 +1559,14 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         ):
             return
 
+        if getattr(self, "_resume_after_soft_stop", False):
+            # A failed plan keeps execution stopped; the next explicit goal may retry.
+            if planner_status == "path_ready" and self._navigation_control_expected:
+                from .services_nav_localization_process import get_cmd_vel_estop_status
+                if not get_cmd_vel_estop_status()["active"]:
+                    self._resume_after_soft_stop = False
+                    self.publish_navigation_start(True)
+
         current_status = get_nav_state().get("navigation_status") or {}
         current = str(current_status.get("status") or "").strip().lower()
         if current == "blocked" and planner_status in {
@@ -1894,12 +1946,74 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
 
     def _setup_tf_listener(self) -> None:
         try:
-            from tf2_ros import Buffer, TransformListener
+            from rclpy.executors import SingleThreadedExecutor
+            from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
+            from tf2_msgs.msg import TFMessage
+            from tf2_ros import Buffer
         except Exception as exc:
             raise RuntimeError(f"tf2_ros 不可用: {exc}") from exc
 
-        self._tf_buffer = Buffer()
-        self._tf_listener = TransformListener(self._tf_buffer, self._node)
+        if self._rclpy is None:
+            raise RuntimeError("rclpy 未初始化，无法创建独立 TF 节点")
+
+        tf_buffer = Buffer()
+        tf_node = self._rclpy.create_node("botdog_nav_tf_bridge")
+        dynamic_qos = QoSProfile(
+            depth=TF_DYNAMIC_QUEUE_DEPTH,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+        static_qos = QoSProfile(
+            depth=TF_STATIC_QUEUE_DEPTH,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+
+        dynamic_subscription = tf_node.create_subscription(
+            TFMessage,
+            "/tf",
+            lambda msg: self._store_tf_message(tf_buffer, msg, is_static=False),
+            dynamic_qos,
+        )
+        static_subscription = tf_node.create_subscription(
+            TFMessage,
+            "/tf_static",
+            lambda msg: self._store_tf_message(tf_buffer, msg, is_static=True),
+            static_qos,
+        )
+        executor = SingleThreadedExecutor()
+        executor.add_node(tf_node)
+        tf_thread = threading.Thread(
+            target=self._spin_tf_executor,
+            args=(executor,),
+            name="botdog-nav-tf-listener",
+            daemon=True,
+        )
+
+        self._tf_buffer = tf_buffer
+        self._tf_node = tf_node
+        self._tf_executor = executor
+        self._tf_thread = tf_thread
+        self._tf_subscription = dynamic_subscription
+        self._tf_static_subscription = static_subscription
+        tf_thread.start()
+        nav_logger.info(
+            "ROS2 TF 独立执行线程已启动：dynamic_queue_depth={}",
+            TF_DYNAMIC_QUEUE_DEPTH,
+        )
+
+    @staticmethod
+    def _store_tf_message(tf_buffer: Any, msg: Any, *, is_static: bool) -> None:
+        setter = tf_buffer.set_transform_static if is_static else tf_buffer.set_transform
+        for transform in getattr(msg, "transforms", ()):
+            setter(transform, "botdog_nav_tf_bridge")
+
+    def _spin_tf_executor(self, executor: Any) -> None:
+        try:
+            executor.spin()
+        except Exception as exc:
+            if not self._stop_event.is_set() and not self._pause_event.is_set():
+                nav_logger.warning("ROS2 TF 独立执行线程异常退出：{}", exc)
 
     def _update_pose_from_tf_if_needed(self) -> None:
         now = time.monotonic()
@@ -2056,7 +2170,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             localization_status = get_nav_state()["localization_status"]
             self._submit_broadcast("nav.localization_status", localization_status)
 
-    def _submit_broadcast(self, event_type: str, data: dict[str, Any]) -> None:
+    def _submit_broadcast(self, event_type: str, data: dict[str, Any] | None) -> None:
         if self._loop.is_closed():
             return
 

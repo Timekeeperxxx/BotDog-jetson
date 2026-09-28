@@ -700,3 +700,18 @@ def test_delete_incomplete_scene_without_ground_pcd(monkeypatch, tmp_path):
     assert result["cleanup"]["waypoints"]["removed_items"] == 0
     assert result["cleanup"]["localization"]["deleted_files"] == []
     assert result["cleanup"]["tasks"]["removed_count"] == 0
+
+
+def test_incomplete_mapping_is_hidden_and_cannot_be_selected(monkeypatch, tmp_path):
+    monkeypatch.setattr(pcd_services.settings, "SCENE_MAP_ROOT", str(tmp_path))
+    scene = tmp_path / "Scene1_failed"
+    scene.mkdir()
+    for name in ("map.pcd", "ground.pcd"):
+        write_ascii_pcd(scene / name, [(0, 0, 0)])
+    marker = scene / ".mapping_incomplete"
+    marker.write_text("startup incomplete\n")
+    assert pcd_services.list_pcd_scenes()["items"] == []
+    with pytest.raises(pcd_services.PcdMapError, match="启动未完成"):
+        pcd_services.resolve_scene_ground_path(scene.name)
+    marker.unlink()
+    assert pcd_services.list_pcd_scenes()["items"][0]["ready"] is True

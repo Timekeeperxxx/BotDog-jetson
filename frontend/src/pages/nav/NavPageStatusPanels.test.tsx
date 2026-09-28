@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import { NavMessageCenter } from './NavPageStatusPanels'
+import { NavMessageCenter, SceneInfoDrawer } from './NavPageStatusPanels'
 
 describe('NavMessageCenter', () => {
   it('promotes errors and renders structured readable log rows', () => {
@@ -37,4 +37,22 @@ describe('NavMessageCenter', () => {
     expect(screen.getAllByText('错误').length).toBeGreaterThan(0)
     expect(screen.getByText('最多保留 30 条', { exact: false })).toBeInTheDocument()
   })
+})
+
+
+it('shows the orbit centre in map metres and updates or clears its readout', () => {
+  const props = {
+    open: true, metadata: null, sceneDisplayPointCount: null,
+    mouseMapPosition: { x: 99, y: 88 }, robotPose: null,
+    selectedSceneReady: false, selectedSceneNavigable: false,
+    selectedSceneMessage: null, localizationStatus: null, onToggle: vi.fn(),
+  }
+  const { rerender } = render(
+    <SceneInfoDrawer {...props} viewCenterPosition={{ x: 12.3456, y: -4.5678 }} />,
+  )
+  expect(screen.getByText('视图中心 X/Y（m）').nextElementSibling).toHaveTextContent('12.346, -4.568')
+  rerender(<SceneInfoDrawer {...props} viewCenterPosition={{ x: 3, y: 2 }} />)
+  expect(screen.getByText('视图中心 X/Y（m）').nextElementSibling).toHaveTextContent('3.000, 2.000')
+  rerender(<SceneInfoDrawer {...props} viewCenterPosition={null} />)
+  expect(screen.getByText('视图中心 X/Y（m）').nextElementSibling).toHaveTextContent('-')
 })

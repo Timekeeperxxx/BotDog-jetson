@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     AI_FRAME_WIDTH: int = 640
     AI_FRAME_HEIGHT: int = 360
     AI_FPS: int = 5
+    AI_STREAM_READER: Literal["ffmpeg", "gstreamer"] = "ffmpeg"
     AI_INFERENCE_IMGSZ: int = 640
     AI_FFMPEG_RETRY_MIN_SECONDS: float = 1.0
     AI_FFMPEG_RETRY_MAX_SECONDS: float = 3.0
@@ -79,10 +80,11 @@ class Settings(BaseSettings):
     # 解码/滤镜输出发生异常积压，主动重拉流，避免挤占导航所需内存。
     AI_FFMPEG_MAX_RSS_MB: int = 512
     AI_FFMPEG_MEMORY_CHECK_INTERVAL_SECONDS: float = 1.0
-    # 单帧 AI 处理超时保护。YOLO/TensorRT/CUDA 偶发卡死时，线程无法被 Python 安全杀掉；
-    # 默认让后端失败退出，交给 systemd Restart=on-failure 自动重启，避免 AI 帧永久停住。
+    AI_FFMPEG_FRAME_TIMEOUT_SECONDS: float = 5.0  # 连续收不到完整帧时重连
+    # 单帧超时丢弃旧帧，等待在途推理结束后自动恢复；不退出后端、不叠加推理线程。
     AI_FRAME_PROCESS_TIMEOUT_SECONDS: float = 15.0
-    AI_EXIT_ON_FRAME_TIMEOUT: bool = True
+    AI_MODEL_WARMUP_TIMEOUT_SECONDS: float = 60.0  # 冷启动独立预算，不占实时帧处理预算
+    AI_EXIT_ON_FRAME_TIMEOUT: bool = False  # 仅兼容旧配置；无论取值均不得退出后端
     AI_EVENT_SEND_TIMEOUT_SECONDS: float = 0.03
     AI_MAX_FRAME_AGE_SECONDS: float = 0.35
     AI_PATROL_SKIP: int = 1  # 巡逻态不跳帧；5fps 相机每帧检测以降低框延迟
@@ -110,33 +112,42 @@ class Settings(BaseSettings):
     # 巡逻时按 WEAPON_FRAME_SKIP 低频推理；一旦命中，在短暂活跃窗口内逐帧复核。
     WEAPON_ENABLED: bool = False
     WEAPON_MODEL_PATH: str = (
-        '/home/jetson/Projects/Models/weapon_guns_knife_yolov8n_fp16.engine'
+        '/home/jetson/Projects/Models/weapon-domain-v13-yolo26x-800-best.engine'
     )
     WEAPON_DEVICE: str = 'auto'
     WEAPON_INFERENCE_IMGSZ: int = 640
-    WEAPON_CONFIDENCE_THRESHOLD: float = 0.65
+    WEAPON_CONFIDENCE_THRESHOLD: float = 0.25
     WEAPON_TARGET_CLASSES: list[str] = ['guns', 'knife']
     WEAPON_FRAME_SKIP: int = 3
     WEAPON_ACTIVE_SECONDS: float = 3.0
-    WEAPON_STABLE_HITS: int = 5
+    WEAPON_STABLE_HITS: int = 1
     WEAPON_CONFIRM_IOU_THRESHOLD: float = 0.4
     WEAPON_REQUIRE_PERSON_ASSOCIATION: bool = True
     WEAPON_PERSON_EXPAND_RATIO: float = 0.35
-    WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD: float = 0.85
+    # 可选两阶段模式：先用主模型获得人员框，再在人员区域内放大检测刀枪。
+    WEAPON_PERSON_CROP_ENABLED: bool = True
+    WEAPON_PERSON_CROP_EXPAND_RATIO: float = 0.35
+    WEAPON_PERSON_CROP_MAX_REGIONS: int = 2
+    WEAPON_PERSON_CROP_NMS_IOU: float = 0.5
+    # 携带刀枪场景默认不接受无人关联候选；设为 <1.0 可显式开启高置信度例外。
+    WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD: float = 1.0
+    # 过滤覆盖画面过大的异常框（键盘、桌面等常见全幅误报）。
+    WEAPON_MAX_FRAME_AREA_RATIO: float = 0.35
     WEAPON_ALERT_COOLDOWN_SECONDS: float = 60.0
 
     # 天气分类支路：复用 AI Worker 已解码的可见光帧，不创建第二条 RTSP。
     # 当前产品类别为 normal/rain/snow/sandstorm；雷达融合状态会在接口中明确标记。
     WEATHER_ENABLED: bool = False
     WEATHER_MODEL_PATH: str = (
-        '/home/jetson/Projects/Models/weather_types_image_detection/checkpoint-3000'
+        '/home/jetson/Projects/Models/weather_types_image_detection/'
+        'weather_types_vit_4class_wedge_bdd_v2_fp16.engine'
     )
     WEATHER_DEVICE: str = 'auto'
     WEATHER_USE_FP16: bool = True
-    WEATHER_INTERVAL_SECONDS: float = 3.0
+    WEATHER_INTERVAL_SECONDS: float = 300.0
     WEATHER_CONFIDENCE_THRESHOLD: float = 0.55
-    WEATHER_SMOOTHING_WINDOW: int = 5
-    WEATHER_STABLE_VOTES: int = 3
+    WEATHER_SMOOTHING_WINDOW: int = 3
+    WEATHER_STABLE_VOTES: int = 2
 
     # 姿态检测支路：COCO 17 点骨架 + 轻量时序状态机。
     POSE_ENABLED: bool = False
@@ -147,8 +158,8 @@ class Settings(BaseSettings):
     POSE_KEYPOINT_CONFIDENCE: float = 0.35
     POSE_MIN_VISIBLE_KEYPOINTS: int = 5
     POSE_FRAME_SKIP: int = 1
-    POSE_CHEST_MOTION_SECONDS: float = 0.8  # 双手胸前往复的最短观察时长，待现场预试
-    POSE_CHEST_MOTION_SPAN: float = 0.15  # 每只手最小运动幅度 / 肩髋长度
+    POSE_CHEST_MOTION_SECONDS: float = 0.8  # 双手胸口及以上活动的最短观察时长
+    POSE_CHEST_MOTION_SPAN: float = 0.15  # 任一手最小活动幅度 / 估计躯干长度（1.5倍肩宽）
     POSE_STABLE_HITS: int = 3
     POSE_CROUCH_SECONDS: float = 3.0
     POSE_LOITER_SECONDS: float = 5.0
@@ -156,13 +167,16 @@ class Settings(BaseSettings):
     POSE_TRACK_TTL_SECONDS: float = 3.0
     POSE_OVERLAY_INTERVAL_SECONDS: float = 0.2
 
-    # 人脸身份显示：OpenCV YuNet + SFace，仅影响视频叠层，不参与控制策略。
+    # 人脸身份：SCRFD/YuNet 检测 + OpenCV SFace 特征；未匹配默认未授权。
     FACE_RECOGNITION_ENABLED: bool = True
-    FACE_DETECT_MODEL_PATH: str = '/home/jetson/Projects/Models/face_detection_yunet_2023mar.onnx'
+    FACE_DETECT_BACKEND: Literal['yunet', 'scrfd_tensorrt'] = 'scrfd_tensorrt'
+    FACE_DETECT_MODEL_PATH: str = '/home/jetson/Projects/Models/face_detection_scrfd_10g_640_fp16.engine'
     FACE_RECOGNITION_MODEL_PATH: str = '/home/jetson/Projects/Models/face_recognition_sface_2021dec.onnx'
-    FACE_DETECT_THRESHOLD: float = 0.80
+    FACE_DETECT_INPUT_SIZE: int = 640
+    FACE_DETECT_NMS_THRESHOLD: float = 0.40
+    FACE_DETECT_THRESHOLD: float = 0.50
     # 后台注册照片允许稍低阈值；只用于人工上传，不影响实时视频检测。
-    FACE_ENROLL_DETECT_THRESHOLD: float = 0.70
+    FACE_ENROLL_DETECT_THRESHOLD: float = 0.40
     FACE_MATCH_THRESHOLD: float = 0.45
     FACE_FRAME_SKIP: int = 2
     FACE_CONFIRM_HITS: int = 3
@@ -195,6 +209,25 @@ class Settings(BaseSettings):
     FENCE_CONTACT_STABLE_FRAMES: int = 3
     FENCE_CROSS_STABLE_FRAMES: int = 3  # 保留旧配置名：现用于靠近围栏时攀爬姿态的连续确认
     FENCE_KEYPOINT_CONFIDENCE: float = 0.35
+    # 破坏围栏不由单帧接触触发：先在滑动窗口内检测手腕往复运动，
+    # 再对人工绘制的地图围栏投影区进行结构变化复核。
+    # 破坏告警走全画面姿态动作通道，不依赖围栏接触或结构变化。
+    FENCE_TAMPER_ENABLED: bool = False
+    FENCE_TAMPER_WINDOW_SECONDS: float = 2.4
+    FENCE_TAMPER_MIN_DURATION_SECONDS: float = 1.0
+    FENCE_TAMPER_MIN_TRAVEL_RATIO: float = 0.30
+    FENCE_TAMPER_MIN_REVERSALS: int = 2
+    FENCE_TAMPER_ACTION_SCORE_THRESHOLD: float = 0.75
+    FENCE_TAMPER_STABLE_FRAMES: int = 2
+    FENCE_TAMPER_STRUCTURE_ENABLED: bool = True
+    FENCE_TAMPER_STRUCTURE_HEIGHT_M: float = 2.0
+    FENCE_TAMPER_STRUCTURE_PATCH_RATIO: float = 0.45
+    FENCE_TAMPER_STRUCTURE_CHANGE_THRESHOLD: float = 0.18
+    FENCE_TAMPER_STRUCTURE_STABLE_FRAMES: int = 2
+    FENCE_TAMPER_STRUCTURE_MIN_EDGE_PIXELS: int = 80
+    FENCE_TAMPER_REFERENCE_CLEAR_FRAMES: int = 3
+    FENCE_TAMPER_CONFIRM_GRACE_SECONDS: float = 5.0
+    FENCE_TAMPER_ALIGN_MAX_SHIFT_PX: float = 16.0
     FENCE_TRACK_TTL_SECONDS: float = 2.0
     FENCE_ALERT_COOLDOWN_SECONDS: float = 15.0
     FENCE_CONTROL_HZ: float = 5.0
@@ -208,7 +241,7 @@ class Settings(BaseSettings):
     FENCE_FRAME_SAMPLE_TOLERANCE_SECONDS: float = 0.6
     FENCE_GIMBAL_MIN_YAW_DEG: float = -170.0
     FENCE_GIMBAL_MAX_YAW_DEG: float = 170.0
-    # 平移为空时 X/Y 复用 NAV_LIDAR_MOUNT_X/Y，云台轴 Z 比雷达低 0.20 米；用户确认云台和相机
+    # 平移为空时复用现场 NAV_LIDAR_MOUNT_X/Y/Z；用户确认云台和相机
     # 安装姿态均朝向 base_footprint 正前方，因此安装角和相机偏移默认 0。
     FENCE_GIMBAL_MOUNT_X_M: float | None = None
     FENCE_GIMBAL_MOUNT_Y_M: float | None = None

@@ -17,6 +17,9 @@ export function AdminEvidencePage({
   search,
   onSearchChange,
   onRefresh,
+  onLoadMore,
+  hasMore,
+  loadingMore,
   onDelete,
 }: {
   evidence: EvidenceItem[]
@@ -24,6 +27,9 @@ export function AdminEvidencePage({
   search: string
   onSearchChange: (value: string) => void
   onRefresh: () => void
+  onLoadMore: () => void
+  hasMore: boolean
+  loadingMore: boolean
   onDelete: (item: EvidenceItem) => Promise<void>
 }) {
   useAuthState()
@@ -123,6 +129,14 @@ export function AdminEvidencePage({
           </div>
         )}
       </AdminCard>
+
+      {hasMore && (
+        <div className="flex justify-center">
+          <ToolbarButton onClick={onLoadMore} disabled={loadingMore}>
+            {loadingMore ? '加载中…' : '加载更多抓拍'}
+          </ToolbarButton>
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmItem !== null}

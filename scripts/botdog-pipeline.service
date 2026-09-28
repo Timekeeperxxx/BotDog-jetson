@@ -2,8 +2,7 @@
 Description=BotDog Video Pipeline (MediaMTX + FFmpeg)
 Documentation=https://github.com/Timekeeperxxx/BotDog
 After=network-online.target botdog-backend.service
-Wants=network-online.target
-Requires=botdog-backend.service
+Wants=network-online.target botdog-backend.service
 
 [Service]
 Type=simple

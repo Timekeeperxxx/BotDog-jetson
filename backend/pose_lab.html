@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>动作试验台 · BotDog</title>
+<style>
+:root{font-family:"Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif;color:#183347;background:#edf2f6;font-synthesis:none}*{box-sizing:border-box}body{margin:0}header{padding:28px 4vw 22px;display:flex;justify-content:space-between;align-items:center;gap:20px;background:#fff;border-bottom:1px solid #ccd9e2}h1{font-size:27px;letter-spacing:-1px;margin:0 0 6px}p{line-height:1.65;margin:0;color:#506778}.brand{font-size:14px;font-weight:700;color:#265d84;white-space:nowrap}main{max-width:1500px;margin:auto;padding:26px 4vw}.workspace{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px}.viewer{position:relative;aspect-ratio:4/3;background:#193447;border-radius:14px;overflow:hidden}canvas{display:block;width:100%;height:100%;object-fit:contain}.mirror{transform:scaleX(-1)}.placeholder{position:absolute;inset:0;display:grid;place-content:center;text-align:center;color:#d6e5ee;padding:35px;pointer-events:none}.placeholder svg{margin:0 auto 20px;color:#98b7cb}.placeholder strong{font-size:22px;margin-bottom:12px}.placeholder p{color:#b9d0df;max-width:32em}.status{display:flex;align-items:center;gap:9px;font-size:14px;margin-bottom:14px;min-height:24px}.dot{width:9px;height:9px;border-radius:50%;background:#788f9f}.dot.live{background:#188467}.controls{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:18px}button,select{font:inherit;border:1px solid #9baebc;border-radius:8px;min-height:44px;padding:10px 18px;background:white;color:#183347;cursor:pointer}button:hover:not(:disabled){background:#e4edf4}button.primary{background:#235f88;border-color:#235f88;color:#fff;font-weight:700}button.primary:hover:not(:disabled){background:#194665}button:disabled{opacity:.5;cursor:default}:focus-visible{outline:3px solid #c27a17;outline-offset:3px}label{display:flex;align-items:center;gap:8px;font-size:14px}input{width:18px;height:18px;accent-color:#235f88}.metrics{display:flex;gap:28px;margin-top:22px;padding:18px 0;border-top:1px solid #cad8e2}.metric{font-size:12px;color:#506778}.metric strong{display:block;font-size:23px;color:#183347;font-weight:600;margin-top:6px;font-variant-numeric:tabular-nums}.side{background:#fff;padding:24px;border-radius:14px;align-self:start}h2{font-size:18px;margin:0 0 16px}h3{font-size:14px;margin:20px 0 5px}.guide{font-size:14px}.guide p{font-size:13px}.results{margin-top:24px;border-top:1px solid #d9e2e8;padding-top:20px}ul{padding:0;list-style:none;margin:0}li{padding:12px 0;border-bottom:1px solid #e4ebef;font-size:14px}li small{display:block;color:#526878;font-size:12px;margin-top:5px}.notice{color:#933c27;margin-top:14px;white-space:pre-line}.footer{margin-top:20px;font-size:12px;color:#526878}.empty{font-size:13px;color:#647b8b}.badge{font-size:12px;background:#e6eff6;color:#235f88;padding:6px 10px;border-radius:5px;display:inline-block;margin-bottom:18px}#people{font-size:14px;margin:14px 0 0;color:#235f88}video{display:none}[hidden]{display:none!important}@media(max-width:850px){.workspace{grid-template-columns:1fr}.side{padding:20px}header{padding:20px 5vw}.brand{display:none}main{padding:20px 5vw}.metrics{gap:20px}.metric strong{font-size:20px}h1{font-size:24px}.controls button{flex:1}.placeholder strong{font-size:18px}}
+</style>
+<header><div><h1>动作试验台</h1><p>用自己的摄像头，观察姿态如何被识别。</p></div><span class="brand">BotDog / 视觉实验</span></header>
+<main><div class="workspace"><section aria-label="摄像头测试">
+<div class="status" role="status"><span class="dot" id="dot"></span><span id="status">准备就绪，开启摄像头开始测试</span></div>
+<p id="latest-action" role="status" style="padding:12px 16px;margin-bottom:14px;border-left:4px solid #235f88;background:#fff;font-weight:600">动作警告：尚未触发</p>
+<div class="viewer"><canvas id="view" width="640" height="480" class="mirror" aria-label="带人体骨架的识别画面"></canvas><div class="placeholder" id="placeholder"><svg width="62" height="52" viewBox="0 0 62 52" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="10" width="42" height="32" rx="8"/><path d="m44 20 15-8v28l-15-8"/><circle cx="23" cy="26" r="8"/></svg><strong>让全身进入画面</strong><p>固定摄像头，留出手臂与脚部活动空间。点击下方按钮后，浏览器会请求摄像头权限。</p></div></div>
+<video id="video" autoplay muted playsinline></video>
+<div class="controls"><button id="start" class="primary">开启摄像头</button><button id="stop" disabled>停止测试</button><label><input id="mirror" type="checkbox" checked>镜像预览</label></div>
+<p id="error" class="notice" role="alert"></p>
+<div class="metrics"><div class="metric">处理帧率<strong id="fps">—</strong></div><div class="metric">推理耗时<strong id="inference">—</strong></div><div class="metric">传输＋处理<strong id="latency">—</strong></div></div>
+<p id="people">尚未开始识别</p><p class="footer">视频帧仅用于本次识别，不保存。画面显示的是完成识别的帧，骨架与图像对应。</p>
+</section><aside class="side"><span class="badge">复用板子姿态规则</span><h2>试试这些动作</h2><div class="guide">
+<h3>攀爬 / 翻越</h3><p>在安全平地模拟抬腿、撑越与抬手动作，保持髋部、膝盖和脚踝可见。单次举手不一定触发。</p>
+<h3>疑似破坏动作</h3><p>双手保持在胸口及以上，任一只手上下或左右活动约 0.8 秒即可；不要求固定往复次数。双肩和手腕要可见。整理衣服、搓手也可能触发。</p>
+<h3>蹲伏 / 倒地 / 停留</h3><p id="thresholds">开始后显示板子当前持续时长阈值。倒地测试请使用安全垫面。</p></div>
+<div class="results"><h2>本次识别事件</h2><p id="empty" class="empty">动作满足规则后会出现在这里。</p><ul id="events" aria-live="polite" aria-label="识别事件"></ul><button id="clear" style="margin-top:16px">清空列表</button></div>
+</aside></div></main>
+<script>
+const $=id=>document.getElementById(id),video=$('video'),view=$('view'),ctx=view.getContext('2d');
+const frame=document.createElement('canvas');frame.width=640;frame.height=480;const capture=frame.getContext('2d');
+const names={POSE_CLIMBING_SUSPECTED:'疑似攀爬 / 翻越',POSE_DAMAGE_SUSPECTED:'疑似破坏动作',POSE_CROUCHING:'持续蹲伏',POSE_LYING:'疑似倒地',POSE_LOITERING:'持续停留'};
+const posture={standing:'站立',crouching:'蹲伏',lying:'倒地',climbing_suspected:'疑似攀爬',unknown:'姿态不确定'};
+const edges=[[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16]];
+let stream,ws,timer,watchdog,run=0,sentAt=0,lastResult=0,cooldown=15;
+const actionHolds=new Map();let actionTimer;
+function renderActionWarnings(){
+ clearTimeout(actionTimer);const now=performance.now();
+ for(const [code,until] of actionHolds)if(until!==null&&until<=now)actionHolds.delete(code);
+ const labels=[...actionHolds].map(([code,until])=>`${names[code]}${until===null?'':'（结束后保留）'}`);
+ $('latest-action').textContent=labels.length?`动作警告：${labels.join('、')}`:'当前无破坏或攀爬警告；已触发事件保留在下方列表。';
+ $('latest-action').style.background=labels.length?'#fff1da':'#fff';
+ const expiries=[...actionHolds.values()].filter(value=>value!==null);
+ if(expiries.length)actionTimer=setTimeout(renderActionWarnings,Math.max(0,Math.min(...expiries)-now));
+}
+function updateActionWarnings(actions){
+ const active=new Set(actions);const now=performance.now();
+ for(const code of ['POSE_DAMAGE_SUSPECTED','POSE_CLIMBING_SUSPECTED']){
+  if(active.has(code))actionHolds.set(code,null);
+  else if(actionHolds.has(code)&&actionHolds.get(code)===null)actionHolds.set(code,now+1000);
+ }
+ renderActionWarnings();
+}
+function status(text,live=false){$('status').textContent=text;$('dot').classList.toggle('live',live)}
+function stop(message='测试已停止，摄像头已关闭'){
+ actionHolds.clear();clearTimeout(actionTimer);renderActionWarnings();
+ run++;clearTimeout(timer);clearTimeout(watchdog);if(ws){ws.onclose=null;ws.close();ws=null}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null;$('start').disabled=false;$('stop').disabled=true;status(message);
+}
+function fail(message){stop('测试未运行');$('error').textContent=message}
+async function sendFrame(id){
+ if(id!==run||!ws||ws.readyState!==1)return;
+ if(!video.videoWidth){timer=setTimeout(()=>sendFrame(id),100);return}
+ capture.fillStyle='#193447';capture.fillRect(0,0,640,480);
+ const scale=Math.min(640/video.videoWidth,480/video.videoHeight),w=video.videoWidth*scale,h=video.videoHeight*scale;
+ capture.drawImage(video,(640-w)/2,(480-h)/2,w,h);
+ const blob=await new Promise(resolve=>frame.toBlob(resolve,'image/jpeg',.85));
+ if(id!==run||!ws||ws.readyState!==1)return;
+ if(!blob){fail('无法读取摄像头画面，请重新开始。');return}
+ sentAt=performance.now();ws.send(blob);watchdog=setTimeout(()=>fail('识别响应超时，请确认板子连接后重新开始。'),60000);
+}
+function draw(data){
+ ctx.drawImage(frame,0,0);ctx.lineWidth=2.5;
+ for(const p of data.poses){
+  const [x1,y1,x2,y2]=p.bbox;ctx.strokeStyle='#70d7fb';ctx.strokeRect(x1,y1,x2-x1,y2-y1);
+  for(const [a,b] of edges){const x=p.keypoints[a],y=p.keypoints[b];if(x?.[2]>=.35&&y?.[2]>=.35){ctx.beginPath();ctx.moveTo(x[0],x[1]);ctx.lineTo(y[0],y[1]);ctx.stroke()}}
+  ctx.fillStyle='#fff';for(const [x,y,c] of p.keypoints){if(c>=.35){ctx.beginPath();ctx.arc(x,y,3,0,Math.PI*2);ctx.fill()}}
+ }
+ $('people').textContent=data.poses.length?data.poses.map(p=>`人员 ${p.track_id} · 基础姿态：${posture[p.posture]||p.posture} · 已停留 ${p.dwell_seconds.toFixed(1)} 秒`).join('　 /　 '):'未检测到人体，请调整距离与光线，让全身入镜。';
+ updateActionWarnings(data.active_actions||[]);
+ for(const event of data.events){
+  const li=document.createElement('li');li.textContent=names[event.event_type]||event.event_type;
+  const detail=document.createElement('small');detail.textContent=`${new Date().toLocaleTimeString()} · 人员 ${event.track_id} · 持续 ${event.duration_seconds.toFixed(1)} 秒 · 规则分 ${Math.round(event.confidence*100)}%`;
+  li.append(detail);$('events').prepend(li);while($('events').children.length>30)$('events').lastChild.remove();$('empty').hidden=true;
+ }
+}
+$('start').onclick=async()=>{
+ stop();const id=run;$('start').disabled=true;$('stop').disabled=false;$('error').textContent='';$('events').replaceChildren();$('empty').hidden=false;$('latest-action').textContent='动作事件：等待动作满足条件（结束后延长显示 1 秒）';lastResult=0;
+ if(!navigator.mediaDevices?.getUserMedia){fail('摄像头需要安全连接。请使用本机 http://localhost:8011 打开此页，或配置可信 HTTPS。');return}
+ status('正在请求前置摄像头权限…');
+ try{
+  const media=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
+  if(id!==run){media.getTracks().forEach(t=>t.stop());return}stream=media;video.srcObject=stream;await video.play();if(id!==run)return;
+  status('正在连接姿态识别服务…');ws=new WebSocket(`${location.protocol==='https:'?'wss':'ws'}://${location.host}/ws`);
+  watchdog=setTimeout(()=>fail('服务连接超时，请检查板子与 SSH 转发。'),15000);
+  ws.onmessage=e=>{if(id!==run)return;const data=JSON.parse(e.data);clearTimeout(watchdog);
+   if(data.type==='error'){fail(data.message);return}
+   if(data.type==='ready'){cooldown=data.cooldown_seconds;$('thresholds').textContent=`蹲伏 ${data.crouch_seconds} 秒、停留 ${data.loiter_seconds} 秒触发。同类动作冷却 ${data.cooldown_seconds} 秒；停止后重新开始可重置。`;status('正在加载模型并识别首帧…',true);sendFrame(id);return}
+   const now=performance.now();$('inference').textContent=`${Math.round(data.inference_ms)} ms`;$('latency').textContent=`${Math.round(now-sentAt)} ms`;$('fps').textContent=lastResult?`${(1000/(now-lastResult)).toFixed(1)} fps`:'—';lastResult=now;
+   draw(data);$('placeholder').hidden=true;status('识别中 · 仅测试，不控制机器狗',true);timer=setTimeout(()=>sendFrame(id),Math.max(0,100-(now-sentAt)));
+  };
+  ws.onerror=()=>{if(id===run)fail('无法连接识别服务，请检查板子与 SSH 转发。')};
+  ws.onclose=e=>{if(id===run)fail(e.reason||'识别连接已断开，请重新开始。')};
+ }catch(e){if(id===run)fail(({NotAllowedError:'摄像头权限被拒绝，请在浏览器地址栏允许摄像头后重试。',NotFoundError:'没有找到摄像头，请连接设备后重试。',NotReadableError:'摄像头正被其他应用占用，请关闭占用它的应用。'})[e.name]||`无法开启摄像头：${e.message}`)}
+};
+$('stop').onclick=()=>stop();$('mirror').onchange=e=>view.classList.toggle('mirror',e.target.checked);$('clear').onclick=()=>{$('events').replaceChildren();$('empty').hidden=false};
+window.addEventListener('pagehide',()=>stop());document.addEventListener('visibilitychange',()=>{if(document.hidden&&(stream||$('start').disabled))stop('页面已切到后台，测试和摄像头已停止')});
+</script></html>

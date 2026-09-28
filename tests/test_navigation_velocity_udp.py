@@ -79,7 +79,12 @@ def packet(vx: float, vy: float, vyaw: float) -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_udp_run_loop_stays_alive_and_receives_on_python310():
+@pytest.mark.parametrize("queued", [
+    [(0.2, 0.0, -0.1)],
+    [(0.4, 0.0, 0.0)] * 20 + [(0.0, 0.0, 0.0)],
+    [(0.4, 0.0, 0.0)] * 20 + [(0.0, 0.0, -0.45)],
+])
+async def test_udp_run_loop_receives_latest_velocity_without_replaying_backlog(queued):
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     probe.bind(("127.0.0.1", 0))
     port = probe.getsockname()[1]
@@ -100,14 +105,16 @@ async def test_udp_run_loop_stays_alive_and_receives_on_python310():
     task = asyncio.create_task(service.run(stop_event))
     sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        sender.sendto(packet(0.2, 0.0, -0.1), ("127.0.0.1", port))
+        # Queue samples before the consumer runs, as with a delayed SDK call.
+        for velocity in queued:
+            sender.sendto(packet(*velocity), ("127.0.0.1", port))
         for _ in range(20):
             if adapter.velocities:
                 break
             await asyncio.sleep(0.01)
 
         assert task.done() is False
-        assert adapter.velocities == [(0.2, 0.0, -0.1)]
+        assert adapter.velocities == [queued[-1]]
     finally:
         sender.close()
         stop_event.set()

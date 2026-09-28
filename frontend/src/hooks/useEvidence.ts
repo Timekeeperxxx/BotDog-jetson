@@ -2,9 +2,14 @@ import { useCallback, useMemo, useRef, useState, type Dispatch, type SetStateAct
 import { getApiUrl } from '../config/api';
 import type { EvidenceItem } from '../types/evidence';
 
+const EVIDENCE_PAGE_SIZE = 50;
+
 export interface UseEvidenceState {
   evidenceItems: EvidenceItem[];
   evidenceLoading: boolean;
+  evidenceLoadingMore: boolean;
+  evidenceHasMore: boolean;
+  evidenceLoadMoreError: string | null;
   evidenceError: string | null;
   detailLoading: boolean;
   detailError: string | null;
@@ -15,6 +20,7 @@ export interface UseEvidenceState {
   searchQuery: string;
   setSearchQuery: Dispatch<SetStateAction<string>>;
   fetchEvidence: () => Promise<void>;
+  loadMoreEvidence: () => Promise<void>;
   openEvidence: (id: number) => Promise<void>;
   deleteEvidenceByIds: (ids: number[]) => Promise<void>;
   deleteEvidenceSingle: (id: number) => void;
@@ -28,20 +34,27 @@ export function useEvidence(): UseEvidenceState {
   const [searchQuery, setSearchQuery] = useState('');
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
+  const [evidenceLoadingMore, setEvidenceLoadingMore] = useState(false);
+  const [evidenceHasMore, setEvidenceHasMore] = useState(false);
+  const [evidenceLoadMoreError, setEvidenceLoadMoreError] = useState<string | null>(null);
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const listRequestRef = useRef(0);
+  const loadingMoreRef = useRef(false);
   const [selectedEvidence, setSelectedEvidence] = useState<Set<number>>(new Set());
   const [evidenceDeleting, setEvidenceDeleting] = useState(false);
   const [lightboxItem, setLightboxItem] = useState<EvidenceItem | null>(null);
 
   const fetchEvidence = useCallback(async () => {
     const request = ++listRequestRef.current;
+    loadingMoreRef.current = false;
+    setEvidenceLoadingMore(false);
+    setEvidenceLoadMoreError(null);
     setEvidenceLoading(true);
     setEvidenceError(null);
     try {
-      const res = await fetch(getApiUrl('/api/v1/evidence'));
+      const res = await fetch(getApiUrl(`/api/v1/evidence?offset=0&limit=${EVIDENCE_PAGE_SIZE}`));
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -49,6 +62,7 @@ export function useEvidence(): UseEvidenceState {
       if (request !== listRequestRef.current) return;
       const items: EvidenceItem[] = data.items || [];
       setEvidenceItems(items);
+      setEvidenceHasMore(data.has_more ?? items.length === EVIDENCE_PAGE_SIZE);
       setSelectedEvidence((selected) => new Set(items.filter((item) => selected.has(item.evidence_id)).map((item) => item.evidence_id)));
     } catch (err) {
       if (request === listRequestRef.current) setEvidenceError(err instanceof Error ? err.message : '加载失败');
@@ -56,6 +70,32 @@ export function useEvidence(): UseEvidenceState {
       if (request === listRequestRef.current) setEvidenceLoading(false);
     }
   }, []);
+
+  const loadMoreEvidence = useCallback(async () => {
+    if (!evidenceHasMore || loadingMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setEvidenceLoadingMore(true);
+    setEvidenceLoadMoreError(null);
+    const offset = evidenceItems.length;
+    const request = listRequestRef.current;
+    try {
+      const res = await fetch(getApiUrl(`/api/v1/evidence?offset=${offset}&limit=${EVIDENCE_PAGE_SIZE}`));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (request !== listRequestRef.current) return;
+      const items: EvidenceItem[] = data.items || [];
+      setEvidenceItems((current) => {
+        const known = new Set(current.map((item) => item.evidence_id));
+        return [...current, ...items.filter((item) => !known.has(item.evidence_id))];
+      });
+      setEvidenceHasMore(data.has_more ?? items.length === EVIDENCE_PAGE_SIZE);
+    } catch (err) {
+      if (request === listRequestRef.current) setEvidenceLoadMoreError(err instanceof Error ? err.message : '加载失败');
+    } finally {
+      loadingMoreRef.current = false;
+      setEvidenceLoadingMore(false);
+    }
+  }, [evidenceHasMore, evidenceItems.length]);
 
   const openEvidence = useCallback(async (id: number) => {
     setLightboxItem(null);
@@ -141,6 +181,9 @@ export function useEvidence(): UseEvidenceState {
   return {
     evidenceItems,
     evidenceLoading,
+    evidenceLoadingMore,
+    evidenceHasMore,
+    evidenceLoadMoreError,
     evidenceError,
     detailLoading,
     detailError,
@@ -151,6 +194,7 @@ export function useEvidence(): UseEvidenceState {
     searchQuery,
     setSearchQuery,
     fetchEvidence,
+    loadMoreEvidence,
     openEvidence,
     deleteEvidenceByIds,
     deleteEvidenceSingle,

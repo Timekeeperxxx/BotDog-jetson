@@ -11,6 +11,9 @@ from .config import settings
 _lock = threading.RLock()
 _latest_robot_pose: dict[str, Any] | None = None
 _latest_global_path: dict[str, Any] | None = None
+_latest_task_route: dict[str, Any] | None = None
+_task_route_acceptance = "retained"
+_task_route_run_id: str | None = None
 _latest_execution_path: dict[str, Any] | None = None
 _latest_navigation_status: dict[str, Any] = {
     "status": "idle",
@@ -91,11 +94,13 @@ def update_global_path(path: dict[str, Any]) -> dict[str, Any]:
 
 
 def clear_global_path() -> None:
-    global _latest_execution_path, _latest_global_path
+    global _latest_execution_path, _latest_global_path, _latest_task_route, _task_route_acceptance
 
     with _lock:
         _latest_global_path = None
         _latest_execution_path = None
+        _latest_task_route = None
+        _task_route_acceptance = "blocked"
 
 
 def update_execution_path(path: dict[str, Any]) -> dict[str, Any]:
@@ -210,5 +215,30 @@ def get_nav_state() -> dict[str, Any]:
             "navigation_status": copy.deepcopy(_latest_navigation_status),
             "localization_status": localization_status,
             "global_path": copy.deepcopy(_latest_global_path),
+            "task_route": copy.deepcopy(_latest_task_route),
             "execution_path": copy.deepcopy(_latest_execution_path),
         }
+
+
+def begin_task_route() -> None:
+    global _task_route_acceptance
+    with _lock:
+        clear_global_path()
+        _task_route_acceptance = "planning"
+
+
+def update_task_route(route: dict[str, Any]) -> dict[str, Any] | None:
+    global _latest_task_route, _task_route_acceptance, _task_route_run_id
+    with _lock:
+        if _task_route_acceptance == "blocked":
+            return None
+        if _task_route_acceptance == "planning":
+            if route["status"] != "planning" or route["segments"] or route["run_id"] == _task_route_run_id:
+                return None
+        elif _task_route_acceptance == "active" and route["run_id"] != _task_route_run_id:
+            return None
+        _task_route_acceptance = "active"
+        _task_route_run_id = route["run_id"]
+        _latest_task_route = copy.deepcopy(route)
+        _latest_task_route["timestamp"] = time.time()
+        return copy.deepcopy(_latest_task_route)

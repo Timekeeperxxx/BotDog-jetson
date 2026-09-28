@@ -149,6 +149,9 @@ class EvidenceItem(BaseModel):
 
 class EvidenceListResponse(BaseModel):
     items: list[EvidenceItem]
+    offset: int = 0
+    limit: int = 100
+    has_more: bool = False
 
 
 class EvidenceBulkDeleteRequest(BaseModel):
@@ -456,6 +459,16 @@ class LocalizationRestartResponse(BaseModel):
     )
 
 
+class LocalizationStopResponse(BaseModel):
+    success: bool = Field(..., description="导航与 TF 定位是否已停止")
+    running: bool = Field(default=False, description="导航定位进程是否仍在运行")
+    processes: dict[str, Any] = Field(default_factory=dict, description="导航定位进程停止结果")
+    cmd_vel_stop: dict[str, Any] = Field(default_factory=dict, description="速度桥停止结果")
+    cmd_vel_estop: dict[str, Any] = Field(default_factory=dict, description="导航速度软停钳制状态")
+    nav_stop: dict[str, Any] | None = Field(default=None, description="ROS 导航停止信号结果")
+    message: str = Field(..., description="响应消息")
+
+
 class MappingControlRequest(BaseModel):
     enabled: bool
     scene_name: str | None = Field(default=None, max_length=100, description="建图场景名称")
@@ -639,9 +652,30 @@ class GlobalPathDTO(BaseModel):
     timestamp: float | None = None
 
 
+class TaskRouteWaypointDTO(GlobalPathPointDTO):
+    name: str
+    yaw: float
+
+
+class TaskRouteSegmentDTO(BaseModel):
+    points: list[GlobalPathPointDTO]
+    waypoint: TaskRouteWaypointDTO
+
+
+class TaskRouteDTO(BaseModel):
+    task_id: str
+    run_id: str
+    frame_id: str
+    status: str
+    current_index: int
+    segments: list[TaskRouteSegmentDTO]
+    timestamp: float | None = None
+
+
 class NavStateResponse(BaseModel):
     robot_pose: RobotPoseDTO | None = None
     navigation_status: NavigationStatusDTO
     localization_status: LocalizationStatusDTO
     global_path: GlobalPathDTO | None = None
     execution_path: GlobalPathDTO | None = None
+    task_route: TaskRouteDTO | None = None

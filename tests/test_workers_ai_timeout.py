@@ -4,13 +4,21 @@ import asyncio
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 
 from backend import workers_ai
 from backend.pose_detection import PoseObservation, Posture
-from backend.workers_ai import AIWorker, AIWorkerFrameTimeout, DetectionResult, _AIFrame
+from backend.workers_ai import (
+    AIWorker,
+    AIWorkerFrameTimeout,
+    DetectionResult,
+    _AIFrame,
+    _YoloDetector,
+)
 
 
 class _SessionFactory:
@@ -118,6 +126,10 @@ class _FakeProcess:
             await asyncio.Future()
         return self.returncode or 0
 
+    async def communicate(self) -> tuple[bytes, bytes]:
+        await self.wait()
+        return b"", b""
+
 
 def _worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AIWorker:
     monkeypatch.setattr(workers_ai.settings, "AI_SIMULATE_DETECTION", True)
@@ -132,7 +144,10 @@ def _worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AIWorker:
     monkeypatch.setattr(workers_ai.settings, "AI_SUSPECT_SKIP", 1)
     monkeypatch.setattr(workers_ai.settings, "AI_PARALLEL_INFERENCE_ENABLED", True)
     monkeypatch.setattr(workers_ai.settings, "AI_CONTINUOUS_DETECTION_ENABLED", False)
+    monkeypatch.setattr(workers_ai.settings, "FACE_RECOGNITION_ENABLED", False)
     monkeypatch.setattr(workers_ai.settings, "POSE_ENABLED", False)
+    monkeypatch.setattr(workers_ai.settings, "WEATHER_ENABLED", False)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_ENABLED", False)
     worker = AIWorker(
         session_factory=_SessionFactory(),
         state_machine=object(),
@@ -141,6 +156,39 @@ def _worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AIWorker:
     )
     worker._frame_process_timeout_s = 0.01
     return worker
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_exit_enabled", [True, False])
+async def test_ai_timeout_recovers_without_exiting_or_overlapping(
+    tmp_path, monkeypatch, legacy_exit_enabled,
+):
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "AI_EXIT_ON_FRAME_TIMEOUT", legacy_exit_enabled)
+    calls = []
+    exits = []
+
+    async def noop():
+        pass
+
+    async def timeout(stop_event):
+        calls.append(1)
+        if len(calls) == 1:
+            raise AIWorkerFrameTimeout("test stalled inference")
+        stop_event.set()
+
+    monkeypatch.setattr(worker, "_warmup_models", noop, raising=False)
+    monkeypatch.setattr(worker, "_update_current_task_id", noop)
+    monkeypatch.setattr(worker, "_is_mission_active", lambda: True)
+    monkeypatch.setattr(worker, "_run_ffmpeg_loop", timeout)
+    monkeypatch.setattr(workers_ai.os, "_exit", exits.append)
+    try:
+        await asyncio.wait_for(worker.start(asyncio.Event()), 4.0)
+    except asyncio.TimeoutError:
+        pytest.fail("AI must recover after pending work completes")
+    assert exits == []
+    assert calls == [1, 1]
+    assert worker._startup_status == "ready"
 
 
 @pytest.mark.asyncio
@@ -158,6 +206,8 @@ async def test_ai_frame_processing_timeout_detects_stuck_detector(
 
     with pytest.raises(AIWorkerFrameTimeout):
         await worker._process_frame_with_timeout(b"\0", frame_index=542)
+
+    await worker._wait_for_pending_inferences(asyncio.Event())
 
     assert worker._frames_processed == 0
     assert worker._last_frame_timeout_reason is not None
@@ -184,6 +234,8 @@ async def test_ai_frame_processing_timeout_detects_stuck_post_processing(
 
     with pytest.raises(AIWorkerFrameTimeout):
         await worker._process_frame_with_timeout(b"\0", frame_index=543)
+
+    await worker._wait_for_pending_inferences(asyncio.Event())
 
     assert worker._frames_processed == 0
     assert worker._last_frame_timeout_reason is not None
@@ -386,7 +438,7 @@ async def test_ai_pose_skip_keeps_detector_running_every_frame(
 
     class _UnexpectedPoseDetector:
         def detect(self, frame: bytes) -> list[object]:
-            raise AssertionError("odd source frame must skip pose inference")
+            raise AssertionError("first processed AI frame must skip pose inference")
 
     worker._pose_detector = _UnexpectedPoseDetector()  # type: ignore[assignment]
     worker._pose_event_engine = _FakePoseEventEngine()  # type: ignore[assignment]
@@ -396,7 +448,8 @@ async def test_ai_pose_skip_keeps_detector_running_every_frame(
 
     monkeypatch.setattr(worker, "_process_detection", noop)
 
-    await worker._detect_and_process_frame(b"\0", frame_index=547)
+    # 原始帧号即使是偶数，第一次实际处理的 AI 帧也必须按 cycle=1 跳过。
+    await worker._detect_and_process_frame(b"\0", frame_index=546)
 
     assert worker._frames_processed == 1
     assert worker._pose_frames_processed == 0
@@ -417,6 +470,152 @@ def test_weapon_detector_runs_low_frequency_then_every_frame_when_active(
     worker._weapon_active_until = 20.0
     assert worker._is_weapon_due(4, now=19.0) is True
     assert worker._is_weapon_due(4, now=21.0) is False
+
+
+def test_yolo_weapon_region_detection_maps_coordinates_and_suppresses_duplicates() -> None:
+    detector = object.__new__(_YoloDetector)
+    detector._np = np
+    detector._frame_width = 4
+    detector._frame_height = 4
+    detector._inference_imgsz = 640
+    detector._confidence = 0.25
+    detector._target_classes = {"knife"}
+    detector._class_names = {1: "knife"}
+    fake_box = SimpleNamespace(
+        cls=np.asarray([1]),
+        conf=np.asarray([0.82]),
+        xyxy=np.asarray([[1.0, 1.0, 3.0, 3.0]]),
+        id=None,
+    )
+
+    class _FakeModel:
+        def predict(self, *args: object, **kwargs: object) -> list[object]:
+            del args, kwargs
+            return [SimpleNamespace(boxes=[fake_box])]
+
+    detector._model = _FakeModel()
+
+    detections = detector.detect_many_regions(
+        bytes(4 * 4 * 3),
+        [(0, 0, 4, 4), (0, 0, 4, 4)],
+        expand_ratio=0.0,
+        max_regions=3,
+        nms_iou=0.5,
+    )
+
+    assert detections == [
+        DetectionResult(label="knife", confidence=0.82, bbox=(1, 1, 3, 3))
+    ]
+
+
+def test_yolo_weapon_class_aliases_keep_canonical_alert_labels(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ultralytics
+
+    fake_model = SimpleNamespace(
+        names={
+            0: "Blunt_Weapon",
+            3: "Firearm",
+            4: "Melee_Weapon",
+        }
+    )
+    monkeypatch.setattr(
+        ultralytics,
+        "YOLO",
+        lambda *args, **kwargs: fake_model,
+    )
+
+    detector = _YoloDetector(
+        model_path="weapon-v13.engine",
+        device="cpu",
+        confidence=0.4,
+        target_classes=["guns", "knife"],
+        frame_width=1280,
+        frame_height=720,
+        inference_imgsz=640,
+        use_bytetrack=False,
+        class_aliases={"Firearm": "guns", "Melee_Weapon": "knife"},
+    )
+
+    assert detector._class_names == {
+        0: "Blunt_Weapon",
+        3: "guns",
+        4: "knife",
+    }
+
+
+@pytest.mark.asyncio
+async def test_weapon_person_crop_inference_uses_primary_person_regions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    calls: list[dict[str, object]] = []
+    expected = DetectionResult(
+        label="knife",
+        confidence=0.82,
+        bbox=(150, 120, 185, 210),
+    )
+
+    class _RegionDetector:
+        def detect_many(self, frame: bytes) -> list[DetectionResult]:
+            del frame
+            raise AssertionError("person-crop mode must not run full-frame weapon inference")
+
+        def detect_many_regions(
+            self,
+            frame: bytes,
+            regions: list[tuple[int, int, int, int]],
+            **kwargs: object,
+        ) -> list[DetectionResult]:
+            calls.append({"frame": frame, "regions": regions, **kwargs})
+            return [expected]
+
+    worker._weapon_detector = _RegionDetector()  # type: ignore[assignment]
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_ENABLED", True)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_EXPAND_RATIO", 0.35)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_MAX_REGIONS", 3)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_NMS_IOU", 0.5)
+    person = DetectionResult(
+        label="person",
+        confidence=0.91,
+        bbox=(100, 50, 300, 350),
+    )
+
+    detections, elapsed_ms = await worker._infer_weapon(b"frame", [person])
+
+    assert detections == [expected]
+    assert elapsed_ms >= 0.0
+    assert calls == [
+        {
+            "frame": b"frame",
+            "regions": [(100, 50, 300, 350)],
+            "expand_ratio": 0.35,
+            "max_regions": 3,
+            "nms_iou": 0.5,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_weapon_person_crop_inference_skips_when_no_person_is_detected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+
+    class _UnexpectedDetector:
+        def detect_many_regions(self, *args: object, **kwargs: object) -> list[object]:
+            raise AssertionError("no person means no weapon crop inference")
+
+    worker._weapon_detector = _UnexpectedDetector()  # type: ignore[assignment]
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_ENABLED", True)
+
+    detections, elapsed_ms = await worker._infer_weapon(b"frame", [])
+
+    assert detections == []
+    assert elapsed_ms >= 0.0
 
 
 def test_weapon_filter_rejects_unassociated_chair_false_positive(
@@ -484,6 +683,65 @@ def test_weapon_filter_keeps_person_associated_or_high_confidence_candidate(
     )
 
     assert result == [held_weapon, unattended_high_confidence]
+
+
+def test_weapon_filter_rejects_oversized_full_frame_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_REQUIRE_PERSON_ASSOCIATION", True)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_EXPAND_RATIO", 0.35)
+    monkeypatch.setattr(
+        workers_ai.settings,
+        "WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD",
+        0.85,
+    )
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_MAX_FRAME_AREA_RATIO", 0.35)
+    full_frame_false_positive = DetectionResult(
+        label="guns",
+        confidence=0.99,
+        bbox=(0, 0, worker._frame_width, worker._frame_height),
+    )
+    centered_person = DetectionResult(
+        label="person",
+        confidence=0.91,
+        bbox=(
+            worker._frame_width // 3,
+            0,
+            worker._frame_width * 2 // 3,
+            worker._frame_height,
+        ),
+    )
+
+    result = worker._filter_weapon_detections(
+        [full_frame_false_positive],
+        [centered_person],
+    )
+
+    assert result == []
+
+
+def test_weapon_filter_strict_carrying_mode_rejects_unattended_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_REQUIRE_PERSON_ASSOCIATION", True)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_EXPAND_RATIO", 0.35)
+    monkeypatch.setattr(
+        workers_ai.settings,
+        "WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD",
+        1.0,
+    )
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_MAX_FRAME_AREA_RATIO", 1.0)
+    unattended_candidate = DetectionResult(
+        label="knife",
+        confidence=0.99,
+        bbox=(100, 100, 160, 220),
+    )
+
+    assert worker._filter_weapon_detections([unattended_candidate], []) == []
 
 
 def test_weapon_filter_can_be_disabled(
@@ -814,6 +1072,45 @@ async def test_ai_ffmpeg_output_backlog_forces_stream_restart(
 
 
 @pytest.mark.asyncio
+async def test_ai_stream_with_partial_frame_reconnects(tmp_path, monkeypatch):
+    worker = _worker(tmp_path, monkeypatch)
+    worker._ffmpeg_frame_timeout_s = 0.01
+    process = _FakeProcess()
+    process.stdout = asyncio.StreamReader()
+    process.stdout.feed_data(b"partial frame")
+
+    async def start():
+        return process
+
+    async def noop(*args):
+        pass
+
+    monkeypatch.setattr(worker, "_start_ffmpeg", start)
+    monkeypatch.setattr(worker, "_update_current_task_id", noop)
+    monkeypatch.setattr(worker, "_notify_auto_track_video_lost", noop)
+    monkeypatch.setattr(worker, "_is_mission_active", lambda: True)
+    await asyncio.wait_for(worker._run_ffmpeg_loop(asyncio.Event()), timeout=0.5)
+    assert process.terminated
+    assert worker._ffmpeg_last_exit_reason == "frame_read_timeout"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message,terminated", [
+    (b"[rtsp] CSeq 8 expected, 0 received.\n", True),
+    (b"[h264] time_scale/num_units_in_tick invalid or unsupported (0/0)\n", False),
+])
+async def test_ai_protocol_desync_reconnects_without_restarting_on_vui_warning(
+    tmp_path, monkeypatch, message, terminated,
+):
+    worker = _worker(tmp_path, monkeypatch)
+    process = _FakeProcess(stderr=_FakeStderr(message))
+    await worker._drain_stderr(process)
+    assert process.terminated is terminated
+    if terminated:
+        assert worker._ffmpeg_last_exit_reason == "RTSP_Protocol_Error"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("tracking_override", [False, True])
 async def test_fence_worker_only_passes_frames_to_tracking_when_linked(tmp_path, monkeypatch, tracking_override):
     from types import SimpleNamespace
@@ -856,7 +1153,7 @@ async def test_chest_damage_event_creates_formal_alert_with_snapshot(tmp_path, m
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('enabled', [False, True])
-async def test_patrol_gates_behavior_and_weapon_detection(tmp_path, monkeypatch, enabled):
+async def test_patrol_gates_behavior_and_keeps_weapon_detection(tmp_path, monkeypatch, enabled):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock, Mock
     worker = _worker(tmp_path, monkeypatch)
@@ -866,7 +1163,7 @@ async def test_patrol_gates_behavior_and_weapon_detection(tmp_path, monkeypatch,
     worker._pose_event_engine.update.return_value = ([], [])
     monkeypatch.setattr(workers_ai.settings, 'POSE_FRAME_SKIP', 1)
     monkeypatch.setattr(worker, '_infer_pose', AsyncMock(return_value=([], 1.0, 0.1)))
-    monkeypatch.setattr(worker, '_is_weapon_due', lambda _: True)
+    monkeypatch.setattr(worker, '_is_weapon_due', lambda _, **kwargs: True)
     monkeypatch.setattr(worker, '_infer_weapon', AsyncMock(return_value=([], 0.1)))
     monkeypatch.setattr(worker, '_process_weapon_detections', AsyncMock())
     monkeypatch.setattr(worker, '_process_detection', AsyncMock())
@@ -874,7 +1171,90 @@ async def test_patrol_gates_behavior_and_weapon_detection(tmp_path, monkeypatch,
     monkeypatch.setattr(worker, '_report_face_service_fault', AsyncMock())
     fence = SimpleNamespace(enabled=enabled, tracking_override=False, process_frame=Mock(return_value=[]))
     monkeypatch.setattr('backend.fence_detection_service.get_fence_detection_service', lambda: fence)
+    worker._weapon_active_until = time.monotonic() + 10
     await worker._detect_and_process_frame(b'frame', frame_index=1)
+    # 围栏只决定姿态事件是否对外生效；刀枪是独立告警，不再受围栏开关影响。
     assert worker._pose_event_engine.update.call_args.kwargs['events_enabled'] is enabled
-    assert worker._process_weapon_detections.await_count == int(enabled)
+    assert worker._process_weapon_detections.await_count == 1
     worker._process_detection.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_inference_is_retained_until_thread_finishes(tmp_path, monkeypatch):
+    worker = _worker(tmp_path, monkeypatch)
+    release = threading.Event()
+    def slow():
+        release.wait(1)
+        return "old-frame-result"
+    try:
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(worker._run_inference("test", slow), 0.02)
+        assert len(worker._pending_inferences) == 1
+        recovery = asyncio.create_task(worker._wait_for_pending_inferences(asyncio.Event()))
+        await asyncio.sleep(0.02)
+        assert not recovery.done()
+        release.set()
+        await asyncio.wait_for(recovery, 0.5)
+        assert not worker._pending_inferences
+        assert await worker._run_inference("new", lambda: "new-frame-result") == "new-frame-result"
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_warmup_runs_models_once_without_alert_processing(tmp_path, monkeypatch):
+    worker = _worker(tmp_path, monkeypatch)
+    calls = []
+    class Detector:
+        def detect_many(self, frame):
+            assert len(frame) == worker._frame_size
+            calls.append("detector")
+            return []
+    class Pose:
+        def detect(self, frame):
+            calls.append("pose")
+            return []
+    worker._detector = Detector()
+    worker._weapon_detector = Detector()
+    worker._pose_detector = Pose()
+    await worker._warmup_models()
+    await worker._warmup_models()
+    assert calls == ["detector", "pose", "detector"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("main_person,pose_person", [(False, True), (False, False), (True, False)])
+@pytest.mark.parametrize("cycle", [3, 6])
+async def test_weapon_crops_use_current_pose_person_before_inference(tmp_path, monkeypatch, main_person, pose_person, cycle):
+    from unittest.mock import AsyncMock, Mock
+    worker = _worker(tmp_path, monkeypatch)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_PERSON_CROP_ENABLED", True)
+    monkeypatch.setattr(workers_ai.settings, "POSE_FRAME_SKIP", 2)
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_REQUIRE_PERSON_ASSOCIATION", True)
+    worker._frames_processed = cycle - 1
+    worker._detector = Mock()
+    person = DetectionResult(label="person", confidence=.9, bbox=(100, 40, 220, 340))
+    worker._detector.detect_many.return_value = [person] if main_person else []
+    observation = PoseObservation(track_id=9, bbox=person.bbox, confidence=.8, keypoints=(),
+        posture=Posture.UNKNOWN, posture_confidence=0., inside_zone=False, dwell_seconds=0.)
+    worker._latest_pose_observations = [observation]  # stale display box must not trigger a crop
+    worker._pose_detector = object()
+    worker._pose_event_engine = Mock()
+    worker._pose_event_engine.update.return_value = ([observation] if pose_person else [], [])
+    monkeypatch.setattr(worker, "_infer_pose", AsyncMock(return_value=([], 1., .1)))
+    monkeypatch.setattr(worker, "_is_weapon_due", lambda *args, **kwargs: True)
+    knife = DetectionResult(label="knife", confidence=.8, bbox=(130, 100, 150, 170))
+    monkeypatch.setattr(worker, "_infer_weapon", AsyncMock(return_value=([knife], .1)))
+    monkeypatch.setattr(worker, "_process_weapon_detections", AsyncMock())
+    for name in ["_process_detection", "_broadcast_pose_overlay", "_report_face_service_fault"]:
+        monkeypatch.setattr(worker, name, AsyncMock())
+    fence = SimpleNamespace(enabled=True, tracking_override=False, process_frame=Mock(return_value=[]))
+    monkeypatch.setattr("backend.fence_detection_service.get_fence_detection_service", lambda: fence)
+    await worker._detect_and_process_frame(b"frame", frame_index=1)
+    crops = worker._infer_weapon.call_args.args[1]
+    assert len(crops) == int(main_person or pose_person)
+    assert worker._infer_pose.await_count == int(not main_person)
+    accepted = worker._process_weapon_detections.call_args.args[0]
+    assert accepted == ([knife] if main_person or pose_person else [])
+    if crops:
+        assert crops[0].bbox == person.bbox

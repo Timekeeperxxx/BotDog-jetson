@@ -14,13 +14,13 @@ vi.mock('../../stores/authStore', () => ({
 
 function props() {
   return {
-    bounds: null, canOperate: true, estopSending: false, executionPath: null,
+    bounds: null, canOperate: true, localizationStopSending: false, softStopSending: false, executionPath: null,
     globalPath: null, layers: [], goToSending: false, navigatingWaypointId: null,
     robotPose: null, sceneNavigable: true, viewKey: 'scene', fencesVisible: true,
     waypoints: [{ id: 'wp1', map_id: 'scene', name: '巡检点1', x: 1, y: 2, z: 0,
       yaw: 0, frame_id: 'map', created_at: '', updated_at: '' }],
     fences: [{ id: 'f1', scene_id: 'scene', start: { x: 0, y: 0 }, end: { x: 2, y: 0 }, enabled: true }],
-    onAddWaypoint: vi.fn(), onDeleteWaypoint: vi.fn(), onEmergencyStop: vi.fn(),
+    onAddWaypoint: vi.fn(), onDeleteWaypoint: vi.fn(), onSoftStop: vi.fn(), onStopLocalization: vi.fn(),
     onGoToWaypoint: vi.fn(), onMouseMapPositionChange: vi.fn(), onSetPose: vi.fn(),
     onToggleFencesVisible: vi.fn(), onToggleFenceEnabled: vi.fn(), onDeleteFence: vi.fn(),
   }
@@ -47,8 +47,10 @@ describe('NavRightRail', () => {
     expect(callbacks.onToggleFenceEnabled).toHaveBeenCalledWith('f1', false)
     await user.click(screen.getByTitle('隐藏围栏'))
     expect(callbacks.onToggleFencesVisible).toHaveBeenCalledOnce()
-    await user.click(screen.getByRole('button', { name: '导航急停' }))
-    expect(callbacks.onEmergencyStop).toHaveBeenCalledOnce()
+    await user.click(screen.getByRole('button', { name: '导航软停' }))
+    expect(callbacks.onSoftStop).toHaveBeenCalledOnce()
+    await user.click(screen.getByRole('button', { name: '停止导航和TF定位' }))
+    expect(callbacks.onStopLocalization).toHaveBeenCalledOnce()
 
     fencesTab.focus()
     await user.keyboard('{Home}')
@@ -62,6 +64,12 @@ describe('NavRightRail', () => {
     await user.click(screen.getByRole('tab', { name: '围栏 0' }))
     expect(screen.getByText('点击“添加围栏”，在地面依次选择起点和终点')).toBeInTheDocument()
     expect(screen.queryByText('巡检点1')).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '导航急停' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '导航软停' })).toBeDisabled()
   })
+})
+
+it('locks both stop controls during localization shutdown', () => {
+  render(<NavRightRail {...props()} localizationStopSending />)
+  expect(screen.getByRole('button', { name: '导航软停' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '正在停止...' })).toBeDisabled()
 })
