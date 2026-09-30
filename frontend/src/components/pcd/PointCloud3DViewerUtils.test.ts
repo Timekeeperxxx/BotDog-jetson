@@ -14,7 +14,7 @@ import {
   getAdaptiveCameraNear,
   getLayerPreset,
   getWallHeightGradientBounds,
-  setPointCloudViewportHeight,
+  setPointCloudViewport,
   setPointCloudWallColorMode,
   shouldShowOrbitPivotMarker,
 } from './PointCloud3DViewerUtils'
@@ -100,24 +100,27 @@ describe('wall point-cloud coloring', () => {
     material.dispose()
   })
 
-  it('writes depth for static scene layers but not live mapping overlays', () => {
+  it('keeps footprints opaque above ground while preserving wall occlusion', () => {
     const ground = createPointCloudMaterial(getLayerPreset('ground'), 1)
     const wall = createPointCloudMaterial(getLayerPreset('wall'), 1)
     const footprint = createPointCloudMaterial(getLayerPreset('footprint_fill'), 1)
     const mapping = createPointCloudMaterial(getLayerPreset('mapping'), 1)
     const live = createPointCloudMaterial(getLayerPreset('live'), 1)
 
-    expect(ground.depthWrite).toBe(true)
+    expect(ground.depthWrite).toBe(false)
     expect(wall.depthWrite).toBe(true)
     expect(footprint.depthWrite).toBe(true)
     expect(mapping.depthWrite).toBe(false)
     expect(live.depthWrite).toBe(false)
     expect(ground.transparent).toBe(false)
     expect(wall.transparent).toBe(false)
-    expect(footprint.transparent).toBe(true)
+    expect(footprint.transparent).toBe(false)
     expect(mapping.transparent).toBe(true)
     expect(wall.defines.OPAQUE_DEPTH_POINT).toBe(1)
-    expect(footprint.defines.OPAQUE_DEPTH_POINT).toBe(0)
+    expect(footprint.defines.OPAQUE_DEPTH_POINT).toBe(1)
+    expect(footprint.depthTest).toBe(true)
+    expect(getLayerPreset('wall').renderOrder).toBeLessThan(getLayerPreset('ground').renderOrder)
+    expect(getLayerPreset('ground').renderOrder).toBeLessThan(getLayerPreset('footprint_fill').renderOrder)
 
     ground.dispose()
     wall.dispose()
@@ -133,12 +136,13 @@ describe('wall point-cloud coloring', () => {
 
     expect(material.uniforms.uWorldPointSize.value).toBe(0.018)
     expect(material.uniforms.uViewportHeight.value).toBe(1080)
-    expect(material.uniforms.uMaxPointSize.value).toBe(7.5)
+    expect(material.uniforms.uMaxPointSize.value).toBe(5)
     expect(material.vertexShader).toContain('projectedWorldSize')
-    expect(material.vertexShader).toContain('min(max(fixedPointSize, projectedWorldSize), uMaxPointSize)')
+    expect(material.vertexShader).toContain('min(max(fixedPointSize, projectedWorldSize), uMaxPointSize * uPixelRatio)')
 
-    setPointCloudViewportHeight(material, 720)
+    setPointCloudViewport(material, 720, 1)
     expect(material.uniforms.uViewportHeight.value).toBe(720)
+    expect(material.uniforms.uPixelRatio.value).toBe(1)
     material.dispose()
   })
 })

@@ -13,6 +13,7 @@ import {
 import type { TaskRoute, GlobalPath, LocalizationStatus, NavigationStatus, RobotPose } from '../../types/navState'
 import type { NavFence, NavWaypoint, PcdSceneItem, PcdSceneMetadata, PcdScenePreview, PcdSceneLayerRole, PcdSceneRootTile, PcdSceneTileManifest, PointCloudPoints } from '../../types/pcdMap'
 import { getPointCount } from '../../utils/pointCloudPoints'
+import { apiFetchArrayBuffer } from '../../api/apiFetch'
 
 const SELECTED_SCENE_STORAGE_KEY = 'botdog-nav-selected-scene'
 
@@ -71,6 +72,9 @@ export function useNavScenes({
   const [tileManifest, setTileManifest] = useState<PcdSceneTileManifest | null>(null)
   const [tileOverviewLayers, setTileOverviewLayers] = useState<PointCloudLayer[]>([])
   const [loading, setLoading] = useState(false)
+  const [cloudPreparation, setCloudPreparation] = useState('')
+  const selectionAbortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => selectionAbortRef.current?.abort(), [])
   const selectRequestRef = useRef(0)
   const noAvailableSceneLoggedRef = useRef(false)
 
@@ -114,7 +118,7 @@ export function useNavScenes({
     setTileOverviewLayers([])
     void Promise.all(
       tileManifest.root_tiles.map(async (tile) => {
-        const buffer = await getPcdSceneTile(
+        const buffer = tile.url ? await apiFetchArrayBuffer(tile.url, { signal: controller.signal }) : await getPcdSceneTile(
           tileManifest.scene_id,
           tile.file,
           tileManifest.cache_key,
@@ -165,6 +169,10 @@ export function useNavScenes({
 
   const selectScene = useCallback(async (sceneId: string): Promise<boolean> => {
     const requestId = ++selectRequestRef.current
+    selectionAbortRef.current?.abort()
+    const controller = new AbortController()
+    selectionAbortRef.current = controller
+    setCloudPreparation('')
     let selectionApplied = false
     setLoading(true)
     noAvailableSceneLoggedRef.current = false
@@ -190,7 +198,9 @@ export function useNavScenes({
       onLog(`已读取场景 metadata: ${sceneId}`)
 
       const [pointCloudData, nextWaypoints, nextFences] = await Promise.all([
-        getPcdSceneTileManifest(sceneId)
+        getPcdSceneTileManifest(sceneId, controller.signal, (message) => {
+          if (requestId === selectRequestRef.current) setCloudPreparation(message)
+        })
           .then((manifest) => ({ manifest, preview: null as PcdScenePreview | null }))
           .catch(async (error: unknown) => {
             // 兼容前端先于后端发布的窗口；新后端构建失败时不再退回超大单体文件。
@@ -254,6 +264,7 @@ export function useNavScenes({
     } finally {
       if (requestId === selectRequestRef.current) {
         setLoading(false)
+        setCloudPreparation('')
       }
     }
   }, [onSceneChanging, onWaypointsLoaded, onFencesLoaded, onLog, setInitialState])
@@ -315,6 +326,7 @@ export function useNavScenes({
     preview,
     tileManifest,
     loading,
+    cloudPreparation,
     refreshScenes,
     selectScene,
     previewLayers,

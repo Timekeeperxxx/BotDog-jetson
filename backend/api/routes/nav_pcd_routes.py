@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Response, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from ...auth.dependencies import require_admin, require_operator
 from ...auth.schemas import AuthUserInternal
@@ -197,6 +197,59 @@ async def nav_get_pcd_scene_preview_binary(scene_id: str, max_points: int | None
         raise HTTPException(status_code=404, detail=f"场景目录不存在: {scene_id}")
     except PcdMapError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/pcd-scenes/{scene_id}/potree/manifest")
+async def nav_get_potree_manifest(scene_id: str):
+    from ...pcd_potree import request_scene
+    from ...pcd_errors import PcdMapError
+    try:
+        result = await asyncio.to_thread(request_scene, scene_id)
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=result["message"])
+        return JSONResponse(result, status_code=202 if "status" in result else 200,
+                            headers={"Cache-Control": "no-store"})
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except PcdMapError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/pcd-scenes/{scene_id}/potree/{cache_key}/{role}/{filename}")
+async def nav_get_potree_asset(scene_id: str, cache_key: str, role: str, filename: str, request: Request):
+    from ...pcd_potree import resolve_asset
+    from ...pcd_errors import PcdMapError
+    import re
+    try:
+        path = await asyncio.to_thread(resolve_asset, scene_id, cache_key, role, filename)
+    except (FileNotFoundError, PcdMapError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    size = path.stat().st_size
+    headers = {"Accept-Ranges": "bytes", "Content-Encoding": "identity",
+               "Cache-Control": "public, max-age=31536000, immutable"}
+    media_type = "application/json" if filename.endswith(".json") else "application/octet-stream"
+    range_header = request.headers.get("range")
+    if not range_header:
+        return FileResponse(path, media_type=media_type, headers=headers)
+    match = re.fullmatch(r"bytes=(\d+)-(\d*)", range_header)
+    if not match:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    start = int(match[1])
+    end = min(int(match[2]) if match[2] else size - 1, size - 1)
+    if start > end or start >= size:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+    headers.update({"Content-Range": f"bytes {start}-{end}/{size}", "Content-Length": str(end - start + 1)})
+    def content():
+        with path.open("rb") as stream:
+            stream.seek(start)
+            remaining = end - start + 1
+            while remaining:
+                data = stream.read(min(remaining, 1024 * 1024))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+    return StreamingResponse(content(), status_code=206, headers=headers, media_type=media_type)
 
 
 @router.get("/pcd-scenes/{scene_id}/tiles/manifest")

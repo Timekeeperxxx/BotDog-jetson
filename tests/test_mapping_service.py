@@ -494,6 +494,7 @@ def test_mapping_status_stays_saving_and_rejects_new_start_until_save_finishes(m
         mapping_service_module.mapping_ready_flag_path(map_dir).write_text("ready\n", encoding="utf-8")
         write_test_pcd(map_dir / "map.pcd")
         write_test_pcd(map_dir / "terrain_map_test_ground.pcd")
+        write_test_pcd(map_dir / "ground.pcd")
         return process
 
     monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
@@ -524,7 +525,45 @@ def test_mapping_status_stays_saving_and_rejects_new_start_until_save_finishes(m
     assert completed["saving"] is False
     assert completed["saved"] is True
     assert completed["map_pcd_candidates"] == ["map.pcd"]
-    assert completed["ground_pcd_candidates"] == ["terrain_map_test_ground.pcd"]
+    assert completed["ground_pcd_candidates"] == ["ground.pcd", "terrain_map_test_ground.pcd"]
+
+
+@pytest.mark.parametrize(
+    ("canonical_ground", "script_exit_code"),
+    [(False, 0), (True, 1)],
+)
+def test_stop_mapping_requires_canonical_ground_and_successful_script(
+    monkeypatch, tmp_path, canonical_ground, script_exit_code
+):
+    script = tmp_path / "start_mapping.sh"
+    script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    monkeypatch.setattr(mapping_service_module, "MAPS_ROOT", tmp_path / "MAPS")
+    monkeypatch.setattr(mapping_service_module, "START_MAPPING_SCRIPT", script)
+    monkeypatch.setattr(mapping_service_module, "stop_navigation_processes", lambda: {"pids": []})
+    monkeypatch.setattr(mapping_service_module, "stop_cmd_vel_script", lambda: {"pid": None})
+    monkeypatch.setattr(mapping_service_module.os, "kill", lambda pid, sig: None)
+
+    class EndingProcess(DummyProcess):
+        def wait(self, timeout=None):
+            self.returncode = script_exit_code
+            return script_exit_code
+
+    def fake_popen(command, *args, **kwargs):
+        map_dir = Path(command[2])
+        mapping_service_module.mapping_ready_flag_path(map_dir).write_text("ready\n", encoding="utf-8")
+        write_test_pcd(map_dir / "map.pcd")
+        write_test_pcd(map_dir / "terrain_map_test_ground.pcd")
+        if canonical_ground:
+            write_test_pcd(map_dir / "ground.pcd")
+        return EndingProcess()
+
+    monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
+    service = mapping_service_module.MappingService()
+    service.start("保存契约测试")
+    result = service.stop()
+    assert result["saved"] is False
+    assert result["origin_waypoint"] is None
+    assert "保存" in result["message"]
 
 
 def test_stop_mapping_rejects_empty_or_invalid_pcd_files(monkeypatch, tmp_path):
@@ -914,6 +953,7 @@ case "${1:-} ${2:-}" in
   "service call")
     if [ "${3:-}" = "/save_terrain_map" ]; then
       printf 'FAKE_GROUND_PCD\n' > "$FAKE_MAP_DIR/terrain_map_test_ground.pcd"
+      printf 'FAKE_GROUND_PCD\n' > "$FAKE_MAP_DIR/ground.pcd"
     fi
     printf 'response: success=True\n'
     ;;

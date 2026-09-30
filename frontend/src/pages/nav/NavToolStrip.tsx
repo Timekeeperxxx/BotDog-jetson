@@ -1,3 +1,5 @@
+import { PointCloudLayerSettings } from '../../components/pcd/PointCloudLayerSettings'
+import { NO_HEIGHT_CLIP, type HeightClip } from '../../components/pcd/PointCloudHeightClip'
 import {
   Boxes,
   CircleStop,
@@ -57,6 +59,12 @@ type NavToolStripProps = {
   toolMode: 'none' | 'obstacle' | 'pose'
   turnSpeed: number
   webglSupported: boolean
+  heightClip?: HeightClip
+  onHeightClip?: (value: HeightClip) => void
+  pointSize?: number
+  onPointSize?: (value: number) => void
+  intensityPreference?: number
+  onIntensityPreference?: (value: number) => void
   wallColorMode: WallColorMode
   onCheckRadar: () => void
   onToggleFenceMode: () => void
@@ -96,7 +104,6 @@ export function NavToolStrip({
   navAutoTrackLoading,
   pcdLayerPanelOpen,
   pcdLayerVisibility,
-  pointCloudQualityMode,
   radarChecking,
   rosbagLoading,
   rosbagRunning,
@@ -108,6 +115,12 @@ export function NavToolStrip({
   toolMode,
   turnSpeed,
   webglSupported,
+  heightClip = NO_HEIGHT_CLIP,
+  onHeightClip,
+  pointSize = 1,
+  onPointSize,
+  intensityPreference = 0,
+  onIntensityPreference,
   wallColorMode,
   onCheckRadar,
   onToggleFenceMode,
@@ -119,7 +132,6 @@ export function NavToolStrip({
   onToggleLayer,
   onToggleLayerPanel,
   onSelectWallColorMode,
-  onSelectPointCloudQualityMode,
   onToggleMapping,
   onToggleNavAutoTrack,
   onToolMode,
@@ -171,79 +183,18 @@ export function NavToolStrip({
           </button>
           {pcdLayerPanelOpen && !mappingActive ? (
             <div id="pcd-layer-popover" className="pcd-layer-popover" role="group" aria-label="PCD 图层显示开关">
-              <button
-                type="button"
-                className={`pcd-layer-toggle ${pcdLayerVisibility.map ? 'is-active' : ''}`}
-                onClick={() => onToggleLayer('map')}
-              >
-                <span className="pcd-layer-swatch is-map" />
-                <span>map</span>
-              </button>
-              <button
-                type="button"
-                className={`pcd-layer-toggle ${pcdLayerVisibility.ground ? 'is-active' : ''}`}
-                onClick={() => onToggleLayer('ground')}
-              >
-                <span className="pcd-layer-swatch is-ground" />
-                <span>ground</span>
-              </button>
-              <button
-                type="button"
-                className={`pcd-layer-toggle ${pcdLayerVisibility.footprint ? 'is-active' : ''}`}
-                onClick={() => onToggleLayer('footprint')}
-              >
-                <span className="pcd-layer-swatch is-footprint" />
-                <span>footprint</span>
-              </button>
-              <div className="pcd-layer-setting-group">
-                <span>wall 显示颜色</span>
-                <div className="pcd-layer-segments" role="group" aria-label="wall 点云显示颜色">
-                  {([
-                    ['solid', '纯色'],
-                    ['intensity', '强度'],
-                    ['height', '高度'],
-                  ] as const).map(([mode, label]) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      className={wallColorMode === mode ? 'is-active' : ''}
-                      onClick={() => onSelectWallColorMode(mode)}
-                      aria-pressed={wallColorMode === mode}
-                    >
-                      <i className={`pcd-layer-swatch is-wall-color is-${mode}`} />
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="pcd-layer-setting-group">
-                <span>点云密度</span>
-                <div className="pcd-layer-segments" role="group" aria-label="点云显示密度">
-                  {([
-                    ['performance', '流畅', '10cm 体素，每个空间区域最多保留 1 点'],
-                    ['auto', '均衡', '7cm 体素，每个空间区域最多保留 1 点'],
-                    ['quality', '原始', '不做空间降采样，加载源 PCD 的全部有效点'],
-                  ] as const).map(([mode, label, title]) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      className={pointCloudQualityMode === mode ? 'is-active' : ''}
-                      onClick={() => onSelectPointCloudQualityMode(mode)}
-                      aria-pressed={pointCloudQualityMode === mode}
-                      title={title}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <small className={pointCloudQualityMode === 'quality' ? 'is-warning' : ''}>
-                  {pointCloudQualityMode === 'quality'
-                    ? '原始档不降采样，超大场景会显著增加内存占用和加载时间。'
-                    : pointCloudQualityMode === 'performance'
-                      ? '流畅档优先降低 Jetson 或低性能客户端的渲染压力。'
-                      : '均衡档兼顾物体轮廓、加载速度和运行性能。'}
-                </small>
-              </div>
+              <PointCloudLayerSettings
+                pcdLayerVisibility={pcdLayerVisibility}
+                onToggleLayer={onToggleLayer}
+                wallColorMode={wallColorMode}
+                onSelectWallColorMode={onSelectWallColorMode}
+                heightClip={heightClip}
+                onHeightClip={onHeightClip}
+                pointSize={pointSize}
+                onPointSize={onPointSize}
+                intensityPreference={intensityPreference}
+                onIntensityPreference={onIntensityPreference}
+              />
             </div>
           ) : null}
         </div>

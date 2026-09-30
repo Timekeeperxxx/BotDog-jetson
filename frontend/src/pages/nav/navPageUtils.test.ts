@@ -64,7 +64,10 @@ describe('navPageUtils', () => {
     expect(compactRuntimeMessage('relocation 进程未运行')).toBe('Super-LIO 已退出，请重新重启导航定位。')
     expect(compactRuntimeMessage('/initialpose 暂无订阅者')).toBe('还没有接收端，请稍后或重新重启导航定位。')
     expect(compactRuntimeMessage('map TF target_frame does not exist')).toBe(
-      '未获取到 TF 位姿数据，请点击右上角“重启导航定位”开始标记位姿。',
+      '导航定位未就绪，暂时无法导航。请点击顶部“重启导航定位”，再按提示标记当前位置。',
+    )
+    expect(summarizeLocalizationStatus('initializing', 'TF 暂未就绪：target=map，source=base_link，原因="map" passed to lookupTransform argument target_frame does not exist.')).toBe(
+      '导航定位未就绪，暂时无法导航。请点击顶部“重启导航定位”，再按提示标记当前位置。',
     )
     expect(summarizeLocalizationStatus('ok', '定位正常')).toBe('定位正常')
     expect(summarizeLocalizationStatus('waiting', '等待 TF 超时')).toBe('等待超时，请查看日志后重试。')

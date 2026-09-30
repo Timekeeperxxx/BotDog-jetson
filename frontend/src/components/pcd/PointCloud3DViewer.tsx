@@ -1,3 +1,6 @@
+import { NO_HEIGHT_CLIP, type HeightClip, setMaterialHeightClip } from './PointCloudHeightClip'
+import { setPointCloudPointSize, setPointCloudIntensityPreference } from './PointCloud3DViewerUtils'
+import type { PotreeSceneManager } from './PotreeSceneManager'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent } from 'react'
 import * as THREE from 'three'
@@ -14,6 +17,7 @@ import type {
 import type { GlobalPath, RobotPose } from '../../types/navState'
 import { mapToThree, threeToMap } from '../../utils/pointCloudTransform'
 import { getPointCount } from '../../utils/pointCloudPoints'
+import { getCanvasPixelRatio, observeCanvasViewport } from '../../utils/canvasViewport'
 import { advanceFenceDraft } from '../../utils/fenceDraft'
 import { detectWebGLSupport } from './webglSupport'
 import {
@@ -25,30 +29,21 @@ import {
   createFlatPathGeometry,
   PENDING_TARGET_SCREEN_DIAMETER_PX,
   POINT_CLOUD_MIN_ORBIT_DISTANCE,
-  POINT_CLOUD_PIXEL_RATIO_LIMIT,
-  ROBOT_ARROW_COLOR,
-  ROBOT_ARROW_HEAD_LENGTH,
-  ROBOT_ARROW_HEAD_WIDTH,
-  ROBOT_ARROW_LENGTH,
   ROBOT_BODY_COLOR,
-  ROBOT_HEIGHT,
   ROBOT_RADIUS,
   ROBOT_SCREEN_DIAMETER_PX,
   SCAN_BODY_CYLINDER_CENTER_Z_OFFSET,
   SCAN_BODY_CYLINDER_HEIGHT,
   SCAN_BODY_CYLINDER_OFFSETS,
   SCAN_BODY_CYLINDER_RADIUS,
-  WAYPOINT_ARROW_HEAD_LENGTH,
-  WAYPOINT_ARROW_HEAD_WIDTH,
-  WAYPOINT_ARROW_LENGTH,
   WAYPOINT_COLOR,
   WAYPOINT_LABEL_SCREEN_WIDTH_PX,
   WAYPOINT_RADIUS,
   WAYPOINT_SCREEN_DIAMETER_PX,
   applyAdaptiveOverlayScale,
   clamp,
-  createMapYawDirection,
   createOrbitPivotMarker,
+  createCursorArrow,
   createPointCloudMaterial,
   createWaypointLabelSprite,
   disposeObject3D,
@@ -56,8 +51,7 @@ import {
   getAdaptiveCameraNear,
   getWallHeightGradientBounds,
   shouldShowOrbitPivotMarker,
-  setMaterialDepth,
-  setPointCloudViewportHeight,
+  setPointCloudViewport,
   setPointCloudWallColorMode,
   softenGrid,
   type PointCloudLayer,
@@ -67,19 +61,33 @@ const GROUND_PICK_THRESHOLD_PX = 44
 const GROUND_FALLBACK_BOUNDS_MARGIN_M = 1.0
 const WALL_HEIGHT_SAMPLE_LIMIT = 4096
 
+const EMPTY_EXTRA_PATHS: { path: GlobalPath; color: string }[] = []
+
 type Props = {
   layers?: PointCloudLayer[]
   points?: PointCloudPoints
   viewKey?: string
+  highlightedWaypointId?: string | null
   waypoints: NavWaypoint[]
   fences: NavFence[]
   fencesVisible?: boolean
   robotPose: RobotPose | null
+  markerPose?: RobotPose | null
+  diagnosticMarkers?: { x: number; y: number; z: number; groundZ: number; label: string }[]
+  diagnosticFocusRequest?: number
+  obstacleMarkers?: { x: number; y: number; z: number; width: number; depth: number; height: number }[]
   globalPath: GlobalPath | null
   executionPath: GlobalPath | null
+  extraPaths?: { path: GlobalPath; color: string }[]
+  executionPathLabel?: string
+  fitOnLayerChange?: boolean
   mode?: 'none' | 'waypoint' | 'pose' | 'fence'
   followRobot?: boolean
+  robotFocusRequest?: number
   centerHeight?: number | null
+  heightClip?: HeightClip
+  pointSize?: number
+  intensityPreference?: number
   wallColorMode?: WallColorMode
   tiledScene?: PcdSceneTileManifest | null
   qualityMode?: PointCloudQualityMode
@@ -106,16 +114,28 @@ export function PointCloud3DViewer({
   layers,
   points,
   viewKey = 'default',
+  highlightedWaypointId = null,
   waypoints,
   fences,
   fencesVisible = true,
   robotPose,
+  markerPose,
+  obstacleMarkers,
+  diagnosticMarkers,
+  diagnosticFocusRequest = 0,
   globalPath,
   executionPath,
+  extraPaths = EMPTY_EXTRA_PATHS,
+  executionPathLabel = '实际轨迹',
+  fitOnLayerChange = true,
   mode = 'none',
   followRobot = false,
+  robotFocusRequest = 0,
   centerHeight = null,
-  wallColorMode = 'height',
+  heightClip = NO_HEIGHT_CLIP,
+  pointSize = 1,
+  intensityPreference = 0,
+  wallColorMode = 'intensity',
   tiledScene = null,
   qualityMode = 'auto',
   tileVisibility = { ground: true, wall: true, footprint_fill: true },
@@ -135,12 +155,17 @@ export function PointCloud3DViewer({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const controlsRef = useRef<OrbitControls | null>(null)
+  const followingRef = useRef(followRobot)
+  useEffect(() => { followingRef.current = followRobot }, [followRobot])
   const followOffsetRef = useRef<THREE.Vector3 | null>(null)
   const gridRef = useRef<THREE.GridHelper | null>(null)
   const cloudGroupRef = useRef<THREE.Group | null>(null)
   const renderedCloudLayersRef = useRef<Map<PcdSceneLayerRole, RenderedCloudLayer>>(new Map())
-  const tileManagerRef = useRef<PointCloudTileManager | null>(null)
+  const tileManagerRef = useRef<PointCloudTileManager | PotreeSceneManager | null>(null)
   const invalidateRenderRef = useRef<() => void>(() => undefined)
+  const heightClipRef = useRef(heightClip)
+  const pointSizeRef = useRef(pointSize)
+  const preferenceRef = useRef(intensityPreference)
   const wallColorModeRef = useRef(wallColorMode)
   const qualityModeRef = useRef(qualityMode)
   const tileVisibilityRef = useRef(tileVisibility)
@@ -176,6 +201,11 @@ export function PointCloud3DViewer({
     setPendingFenceStart(null)
     setFenceCursor(null)
   }
+
+  useEffect(() => {
+    pendingTargetRef.current = null
+    setPendingTarget(null)
+  }, [mode])
 
   useEffect(() => {
     pendingFenceStartRef.current = pendingFenceStart
@@ -269,7 +299,6 @@ export function PointCloud3DViewer({
     cameraRef.current = camera
 
     const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, POINT_CLOUD_PIXEL_RATIO_LIMIT))
     host.appendChild(renderer.domElement)
     rendererRef.current = renderer
     const controls = new OrbitControls(camera, renderer.domElement)
@@ -335,48 +364,7 @@ export function PointCloud3DViewer({
     const robotGroup = new THREE.Group()
     robotGroup.visible = false
     robotGroup.renderOrder = 90
-    const halo = new THREE.Mesh(
-      new THREE.RingGeometry(ROBOT_RADIUS * 1.15, ROBOT_RADIUS * 1.75, 32),
-      new THREE.MeshBasicMaterial({
-        color: ROBOT_BODY_COLOR,
-        transparent: true,
-        opacity: 0.32,
-        side: THREE.DoubleSide,
-        depthTest: false,
-        depthWrite: false,
-      }),
-    )
-    halo.rotation.x = -Math.PI / 2
-    halo.position.y = 0.012
-    halo.renderOrder = 79
-    robotGroup.add(halo)
-
-    const body = new THREE.Mesh(
-      new THREE.CylinderGeometry(ROBOT_RADIUS, ROBOT_RADIUS, ROBOT_HEIGHT, 24),
-      new THREE.MeshBasicMaterial({
-        color: ROBOT_BODY_COLOR,
-        transparent: true,
-        opacity: 1,
-        depthTest: false,
-        depthWrite: false,
-      }),
-    )
-    body.position.y = ROBOT_HEIGHT / 2
-    body.renderOrder = 90
-    robotGroup.add(body)
-
-    const direction = new THREE.ArrowHelper(
-      new THREE.Vector3(1, 0, 0),
-      new THREE.Vector3(0, ROBOT_HEIGHT + 0.06, 0),
-      ROBOT_ARROW_LENGTH,
-      ROBOT_ARROW_COLOR,
-      ROBOT_ARROW_HEAD_LENGTH,
-      ROBOT_ARROW_HEAD_WIDTH,
-    )
-    setMaterialDepth(direction.line.material, false, false, true)
-    setMaterialDepth(direction.cone.material, false, false, true)
-    direction.renderOrder = 91
-    robotGroup.add(direction)
+    robotGroup.add(createCursorArrow(ROBOT_BODY_COLOR, ROBOT_RADIUS, 90))
     robotGroup.userData.adaptiveScale = {
       pixels: ROBOT_SCREEN_DIAMETER_PX,
       baseSize: ROBOT_RADIUS * 2,
@@ -435,32 +423,51 @@ export function PointCloud3DViewer({
     scanBodyGroupRef.current = scanBodyGroup
     scene.add(scanBodyGroup)
 
+    const viewportSize = new THREE.Vector2()
+    const drawingBufferSize = new THREE.Vector2()
     const resize = () => {
       const rect = host.getBoundingClientRect()
       const width = Math.max(1, rect.width)
       const height = Math.max(1, rect.height)
+      const pixelRatio = getCanvasPixelRatio(width, height, window.devicePixelRatio)
+      renderer.getSize(viewportSize)
+      if (viewportSize.x === width && viewportSize.y === height && renderer.getPixelRatio() === pixelRatio) return
       camera.aspect = width / height
       camera.updateProjectionMatrix()
-      renderer.setSize(width, height, false)
-      const drawingBufferSize = renderer.getDrawingBufferSize(new THREE.Vector2())
+      renderer.setDrawingBufferSize(width, height, pixelRatio)
+      renderer.getDrawingBufferSize(drawingBufferSize)
       renderedCloudLayers.forEach((rendered) => {
-        setPointCloudViewportHeight(rendered.cloud.material, drawingBufferSize.y)
+        setPointCloudViewport(rendered.cloud.material, drawingBufferSize.y, pixelRatio)
       })
-      tileManagerRef.current?.setViewportHeight(drawingBufferSize.y)
+      tileManagerRef.current?.setViewport(drawingBufferSize.y, pixelRatio)
       renderRequested = true
     }
 
-    const resizeObserver = new ResizeObserver(resize)
-    resizeObserver.observe(host)
-    resize()
+    const stopObservingViewport = observeCanvasViewport(host, resize)
 
     let animationId = 0
     let lastRenderAt = 0
     let lastViewCenter: { x: number; y: number } | null | undefined
+    let lastAnimationAt = 0
     const animate = (now: number) => {
+      const delta = lastAnimationAt ? Math.min((now - lastAnimationAt) / 1000, 0.1) : 1 / 60
+      lastAnimationAt = now
+      let followingMoved = false
+      if (followingRef.current && scanBodyGroup.visible && !orbitInteractionActive) {
+        const distance = controls.target.distanceTo(scanBodyGroup.position)
+        if (distance > 0.001) {
+          const offset = camera.position.clone().sub(controls.target)
+          controls.target.lerp(scanBodyGroup.position, distance > 30 ? 1 : 1 - Math.exp(-12 * delta))
+          camera.position.copy(controls.target).add(offset)
+          followingMoved = true
+          renderRequested = true
+        }
+      }
       const controlsChanged = controls.update()
-      const moving = orbitInteractionActive || controlsChanged
-      tileManagerRef.current?.update(moving, now)
+      const moving = orbitInteractionActive || controlsChanged || followingMoved
+      const manager = tileManagerRef.current
+      if (manager && 'afterRender' in manager) manager.update(orbitInteractionActive, now, followingRef.current)
+      else manager?.update(moving, now)
       waypointGroup.traverse((object) => applyAdaptiveOverlayScale(object, camera, renderer))
       pendingGroup.traverse((object) => applyAdaptiveOverlayScale(object, camera, renderer))
       applyAdaptiveOverlayScale(robotGroup, camera, renderer)
@@ -473,11 +480,13 @@ export function PointCloud3DViewer({
       )
       const orbitDistance = camera.position.distanceTo(controls.target)
       const adaptiveNear = getAdaptiveCameraNear(orbitDistance)
-      if (Math.abs(camera.near - adaptiveNear) > Math.max(0.0005, camera.near * 0.05)) {
+      const requiredFar = Math.max(1000, orbitDistance * 4)
+      if (camera.far < requiredFar || Math.abs(camera.near - adaptiveNear) > Math.max(0.0005, camera.near * 0.05)) {
+        camera.far = Math.max(camera.far, requiredFar)
         camera.near = adaptiveNear
         camera.updateProjectionMatrix()
       }
-      const targetInterval = moving ? 1000 / 30 : 1000 / 10
+      const targetInterval = moving ? (manager && 'afterRender' in manager ? 0 : 1000 / 30) : 1000 / 10
       if (renderRequested || now - lastRenderAt >= targetInterval) {
         const centre = orbitPivotAvailableRef.current
           ? threeToMap(controls.target.x, controls.target.y, controls.target.z)
@@ -488,7 +497,9 @@ export function PointCloud3DViewer({
           viewCenterCallbackRef.current?.(next)
         }
         renderer.setRenderTarget(null)
+        if (manager && 'afterRender' in manager) manager.beforeRender()
         renderer.render(scene, camera)
+        if (manager && 'afterRender' in manager) manager.afterRender(now)
         lastRenderAt = now
         renderRequested = false
       }
@@ -498,7 +509,7 @@ export function PointCloud3DViewer({
 
     return () => {
       cancelAnimationFrame(animationId)
-      resizeObserver.disconnect()
+      stopObservingViewport()
       controls.removeEventListener('start', handleOrbitStart)
       controls.removeEventListener('change', handleOrbitChange)
       controls.removeEventListener('end', handleOrbitEnd)
@@ -542,7 +553,9 @@ export function PointCloud3DViewer({
     if (currentVisibility.ground) visibleRoles.add('ground')
     if (currentVisibility.wall) visibleRoles.add('wall')
     if (currentVisibility.footprint_fill) visibleRoles.add('footprint_fill')
-    const manager = new PointCloudTileManager({
+    let cancelled = false
+    let manager: PointCloudTileManager | PotreeSceneManager | null = null
+    const options = {
       manifest: tiledScene,
       camera,
       renderer,
@@ -550,16 +563,50 @@ export function PointCloud3DViewer({
       wallColorMode: wallColorModeRef.current,
       qualityMode: qualityModeRef.current,
       visibleRoles,
-      onStats: (stats) => queueMicrotask(() => setTileStats(stats)),
+      onStats: (stats: PointCloudTileStats) => queueMicrotask(() => { if (!cancelled) setTileStats(stats) }),
       onInvalidate: () => invalidateRenderRef.current(),
+    }
+    void (async () => {
+      if (tiledScene.potree) {
+        const { PotreeSceneManager } = await import('./PotreeSceneManager')
+        if (cancelled) return
+        manager = new PotreeSceneManager(options)
+      } else manager = new PointCloudTileManager(options)
+      manager.setHeightClip(heightClipRef.current)
+      manager.setPointSize(pointSizeRef.current)
+      manager.setIntensityPreference(preferenceRef.current)
+      tileManagerRef.current = manager
+      invalidateRenderRef.current()
+    })().catch((error) => {
+      if (!cancelled) setTileStats({ phase: 'ready', visiblePoints: 0, loadedPoints: 0, totalPoints: 0, loadedBytes: 0, loadingCount: 0, error: String(error) })
     })
-    tileManagerRef.current = manager
-    invalidateRenderRef.current()
     return () => {
-      manager.dispose()
+      cancelled = true
+      manager?.dispose()
       if (tileManagerRef.current === manager) tileManagerRef.current = null
     }
   }, [tiledScene, webglSupported])
+
+  useEffect(() => {
+    heightClipRef.current = heightClip
+    tileManagerRef.current?.setHeightClip(heightClip)
+    renderedCloudLayersRef.current.forEach(layer => setMaterialHeightClip(layer.cloud.material, heightClip))
+    invalidateRenderRef.current()
+  }, [heightClip])
+
+  useEffect(() => {
+    pointSizeRef.current = pointSize
+    tileManagerRef.current?.setPointSize(pointSize)
+    renderedCloudLayersRef.current.forEach(layer => setPointCloudPointSize(layer.cloud.material, pointSize))
+    invalidateRenderRef.current()
+  }, [pointSize])
+
+  useEffect(() => {
+    preferenceRef.current = intensityPreference
+    tileManagerRef.current?.setIntensityPreference(intensityPreference)
+    renderedCloudLayersRef.current.forEach(layer => setPointCloudIntensityPreference(layer.cloud.material, intensityPreference))
+    invalidateRenderRef.current()
+  }, [intensityPreference])
 
   useEffect(() => {
     tileManagerRef.current?.setWallColorMode(wallColorMode)
@@ -605,7 +652,7 @@ export function PointCloud3DViewer({
       controls.target.copy(center)
       controls.target.y = targetHeight
       camera.position.copy(controls.target.clone().add(direction.multiplyScalar(distance)))
-      controls.maxDistance = Math.max(10, distance * 8)
+      controls.maxDistance = Infinity
       camera.near = getAdaptiveCameraNear(distance)
       camera.far = Math.max(camera.far, 1000, distance * 30)
       camera.updateProjectionMatrix()
@@ -717,16 +764,19 @@ export function PointCloud3DViewer({
           : { min: layerBox.min.y, max: layerBox.max.y }
         const material = createPointCloudMaterial(
           preset,
-          Math.min(window.devicePixelRatio || 1, POINT_CLOUD_PIXEL_RATIO_LIMIT),
+          renderer.getPixelRatio(),
           {
             minHeight: heightGradientBounds.min,
             maxHeight: heightGradientBounds.max,
             wallColorMode,
+            intensityPreference: preferenceRef.current,
+            pointSizeScale: pointSizeRef.current,
             viewportHeight: renderer.domElement.height,
             hasIntensity,
           },
         )
 
+        setMaterialHeightClip(material, heightClipRef.current)
         const cloud = new THREE.Points(geometry, material)
         cloud.renderOrder = preset.renderOrder
         cloud.userData.role = layer.role
@@ -758,6 +808,12 @@ export function PointCloud3DViewer({
       return
     }
 
+    // With tiled maps these layers are live overlays (e.g. added obstacles).
+    // Their tiny bounds must never replace the map's camera target or zoom.
+    if (tiledScene) {
+      invalidateRenderRef.current()
+      return
+    }
     orbitPivotAvailableRef.current = true
 
     const size = unionBox.getSize(new THREE.Vector3())
@@ -770,7 +826,7 @@ export function PointCloud3DViewer({
     const distance = Math.max(fitHeightDistance, fitWidthDistance) * 1.22
     const direction = new THREE.Vector3(1, 0.75, 1).normalize()
 
-    const autoFitKey = viewKey.startsWith('mapping:')
+    const autoFitKey = !fitOnLayerChange || viewKey.startsWith('mapping:')
       ? viewKey
       : [
           viewKey,
@@ -788,10 +844,10 @@ export function PointCloud3DViewer({
       controls.target.copy(center)
       controls.target.y = targetHeight
       camera.position.copy(controls.target.clone().add(direction.multiplyScalar(distance)))
-      controls.maxDistance = Math.max(10, distance * 8)
+      controls.maxDistance = Infinity
       lastAutoFitViewKeyRef.current = autoFitKey
     } else {
-      controls.maxDistance = Math.max(controls.maxDistance, distance * 8, 10)
+      controls.maxDistance = Infinity
     }
 
     camera.near = getAdaptiveCameraNear(distance)
@@ -809,7 +865,82 @@ export function PointCloud3DViewer({
       grid.position.set(center.x, targetHeight, center.z)
       softenGrid(grid)
     }
-  }, [centerHeight, normalizedLayers, tiledScene, totalPointCount, viewKey, wallColorMode, webglSupported])
+  }, [centerHeight, fitOnLayerChange, normalizedLayers, tiledScene, totalPointCount, viewKey, wallColorMode, webglSupported])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!webglSupported || !scene) return
+    const pathGroup = new THREE.Group()
+    const zLift = 0.03
+    for (const { path, color } of extraPaths) {
+      if (path.frame_id !== 'map' || path.points.length < 2) continue
+      const points = path.points.map(point => {
+        const p = mapToThree(point.x, point.y, point.z)
+        return new THREE.Vector3(p.x, p.y + zLift, p.z)
+      })
+      const line = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints(points),
+        new THREE.LineBasicMaterial({ color, depthTest: false, depthWrite: false }),
+      )
+      line.renderOrder = 11
+      pathGroup.add(line)
+    }
+
+    scene.add(pathGroup)
+    return () => { scene.remove(pathGroup); disposeObject3D(pathGroup) }
+  }, [extraPaths, webglSupported])
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!webglSupported || !scene || !diagnosticMarkers?.length) return
+    const group = new THREE.Group()
+    for (const point of diagnosticMarkers) {
+      const p = mapToThree(point.x, point.y, point.z)
+      const g = mapToThree(point.x, point.y, point.groundZ)
+      const ring = new THREE.Mesh(new THREE.SphereGeometry(.10, 20, 12), new THREE.MeshBasicMaterial({color: 0xff3864, wireframe: true, depthTest: false, depthWrite: false}))
+      ring.position.set(p.x, p.y, p.z)
+      const stem = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(g.x,g.y,g.z),new THREE.Vector3(p.x,p.y,p.z)]), new THREE.LineBasicMaterial({color: 0x00e5ff, depthTest: false, depthWrite: false}))
+      const ground = new THREE.Mesh(new THREE.SphereGeometry(.045,12,8),new THREE.MeshBasicMaterial({color:0x00e5ff,depthTest:false,depthWrite:false}))
+      ground.position.set(g.x,g.y,g.z)
+      group.add(ring,stem,ground)
+      const label = createWaypointLabelSprite(point.label)
+      if (label) {
+        label.position.set(p.x,p.y+.28,p.z)
+        label.userData.adaptiveSprite = {pixels: 170, baseWidth: label.scale.x, baseScale: label.scale.clone(),minScale:.05,maxScale:120}
+        group.add(label)
+      }
+    }
+    group.traverse(object => {object.renderOrder=95})
+    scene.add(group); invalidateRenderRef.current()
+    return () => {scene.remove(group);disposeObject3D(group);invalidateRenderRef.current()}
+  }, [diagnosticMarkers,webglSupported])
+
+  useEffect(() => {
+    if (!diagnosticFocusRequest || !diagnosticMarkers?.length || !webglSupported) return
+    const camera=cameraRef.current, controls=controlsRef.current
+    if (!camera || !controls) return
+    const point=diagnosticMarkers[0], p=mapToThree(point.x,point.y,point.groundZ)
+    controls.target.set(p.x,p.y,p.z)
+    camera.position.set(p.x+3,p.y+3,p.z+3)
+    controls.update();invalidateRenderRef.current()
+  }, [diagnosticFocusRequest,webglSupported]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!webglSupported || !scene || !obstacleMarkers?.length) return
+    const group = new THREE.Group()
+    for (const box of obstacleMarkers) {
+      const geometry = new THREE.BoxGeometry(box.width, box.height, box.depth)
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({color: 0xff3344, transparent: true, opacity: .35, depthTest: false, depthWrite: false}))
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({color: 0xff3344, depthTest: false, depthWrite: false}))
+      const pos = mapToThree(box.x, box.y, box.z)
+      mesh.position.set(pos.x,pos.y,pos.z); edges.position.copy(mesh.position)
+      mesh.renderOrder=80; edges.renderOrder=81
+      group.add(mesh,edges)
+    }
+    scene.add(group); invalidateRenderRef.current()
+    return () => {scene.remove(group);disposeObject3D(group);invalidateRenderRef.current()}
+  }, [obstacleMarkers,webglSupported])
 
   useEffect(() => {
     if (!webglSupported) return
@@ -860,38 +991,24 @@ export function PointCloud3DViewer({
     group.clear()
 
     waypoints.forEach((waypoint) => {
+      const highlighted = waypoint.id === highlightedWaypointId
+      const waypointColor = highlighted ? 0x58a6ff : WAYPOINT_COLOR
       const pos = mapToThree(waypoint.x, waypoint.y, waypoint.z)
       const marker = new THREE.Group()
       marker.position.set(pos.x, pos.y, pos.z)
       marker.renderOrder = 42
       marker.userData.adaptiveScale = {
-        pixels: WAYPOINT_SCREEN_DIAMETER_PX,
+        pixels: highlighted ? WAYPOINT_SCREEN_DIAMETER_PX * 1.5 : WAYPOINT_SCREEN_DIAMETER_PX,
         baseSize: WAYPOINT_RADIUS * 2,
         minScale: 0.05,
         maxScale: 120,
       }
 
-      const sphere = new THREE.Mesh(
-        new THREE.SphereGeometry(WAYPOINT_RADIUS, 24, 16),
-        new THREE.MeshBasicMaterial({ color: WAYPOINT_COLOR }),
-      )
-      sphere.position.set(0, WAYPOINT_RADIUS, 0)
-      sphere.renderOrder = 42
-      marker.add(sphere)
-
-      const arrow = new THREE.ArrowHelper(
-        createMapYawDirection(waypoint.yaw),
-        new THREE.Vector3(0, WAYPOINT_RADIUS, 0),
-        WAYPOINT_ARROW_LENGTH,
-        WAYPOINT_COLOR,
-        WAYPOINT_ARROW_HEAD_LENGTH,
-        WAYPOINT_ARROW_HEAD_WIDTH,
-      )
-      arrow.renderOrder = 43
-      marker.add(arrow)
+      marker.rotation.y = waypoint.yaw
+      marker.add(createCursorArrow(waypointColor, WAYPOINT_RADIUS, 42))
       group.add(marker)
 
-      const label = createWaypointLabelSprite(waypoint.name)
+      const label = createWaypointLabelSprite(highlighted ? `● ${waypoint.name}` : waypoint.name)
       if (label) {
         label.position.set(pos.x, pos.y + WAYPOINT_RADIUS * 2.15, pos.z)
         label.renderOrder = 38
@@ -905,7 +1022,7 @@ export function PointCloud3DViewer({
         group.add(label)
       }
     })
-  }, [waypoints, webglSupported])
+  }, [highlightedWaypointId, waypoints, webglSupported])
 
   useEffect(() => {
     if (!webglSupported) return
@@ -991,24 +1108,8 @@ export function PointCloud3DViewer({
       maxScale: 120,
     }
 
-    const sphere = new THREE.Mesh(
-      new THREE.SphereGeometry(0.24, 22, 14),
-      new THREE.MeshBasicMaterial({ color: 0x22c55e }),
-    )
-    sphere.position.set(0, 0.24, 0)
-    sphere.renderOrder = 60
-    marker.add(sphere)
-
-    const arrow = new THREE.ArrowHelper(
-      createMapYawDirection(pendingTarget.yaw),
-      new THREE.Vector3(0, 0.24, 0),
-      1.0,
-      0x86efac,
-      0.32,
-      0.2,
-    )
-    arrow.renderOrder = 61
-    marker.add(arrow)
+    marker.rotation.y = pendingTarget.yaw
+    marker.add(createCursorArrow(0x22c55e, 0.24, 60))
     group.add(marker)
   }, [fenceCursor, mode, pendingFenceStart, pendingTarget, webglSupported])
 
@@ -1042,24 +1143,40 @@ export function PointCloud3DViewer({
     }
 
     const pos = mapToThree(robotPose.x, robotPose.y, robotPose.z)
-    robotGroup.visible = true
-    robotGroup.position.set(pos.x, pos.y, pos.z)
-    robotGroup.rotation.y = robotPose.yaw
+    const arrowPose = markerPose === undefined ? robotPose : markerPose
+    robotGroup.visible = !!arrowPose && arrowPose.frame_id === 'map'
+    if (arrowPose) {
+      const arrowPosition = mapToThree(arrowPose.x, arrowPose.y, arrowPose.z)
+      robotGroup.position.set(arrowPosition.x, arrowPosition.y, arrowPosition.z)
+      robotGroup.rotation.y = arrowPose.yaw
+    }
     scanBodyGroup.visible = robotPose.frame_id === 'map'
     scanBodyGroup.position.set(pos.x, pos.y, pos.z)
     scanBodyGroup.rotation.y = robotPose.yaw
 
+    invalidateRenderRef.current()
     if (followRobot) {
-      const currentTarget = controls.target.clone()
-      const currentOffset = camera.position.clone().sub(currentTarget)
-      followOffsetRef.current = currentOffset
-      controls.target.set(pos.x, pos.y, pos.z)
-      camera.position.copy(new THREE.Vector3(pos.x, pos.y, pos.z).add(followOffsetRef.current))
-      controls.update()
+      // Follow the body origin, never the offset LiDAR arrow: following the
+      // arrow would cancel its visible arc during an in-place body turn.
+      // The animation loop follows this target between telemetry messages,
+      // preserving the user's orbit and zoom instead of snapping per message.
+      followOffsetRef.current = camera.position.clone().sub(controls.target)
+      invalidateRenderRef.current()
     } else {
       followOffsetRef.current = null
     }
-  }, [followRobot, robotPose, webglSupported])
+  }, [followRobot, robotPose, markerPose, webglSupported])
+
+  useEffect(() => {
+    if (!robotFocusRequest || !robotPose || !webglSupported) return
+    const camera = cameraRef.current, controls = controlsRef.current
+    if (!camera || !controls) return
+    const pos = mapToThree(robotPose.x, robotPose.y, robotPose.z)
+    controls.target.set(pos.x, pos.y, pos.z)
+    camera.position.set(pos.x + 8, pos.y + 8, pos.z + 8)
+    controls.update()
+    // Focus once per explicit request; subsequent telemetry preserves orbit/zoom.
+  }, [robotFocusRequest, webglSupported]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const readGroundPlanePoint = (event: PointerEvent<HTMLDivElement>) => {
     const host = hostRef.current
@@ -1101,6 +1218,14 @@ export function PointCloud3DViewer({
     const camera = cameraRef.current
     const cloudGroup = cloudGroupRef.current
     if (!host || !camera || !cloudGroup) return null
+
+    const manager = tileManagerRef.current
+    if (manager && 'pickGround' in manager) {
+      const rect = host.getBoundingClientRect()
+      const point = manager.pickGround(event.clientX - rect.left, event.clientY - rect.top,
+        rect.width, rect.height, GROUND_PICK_THRESHOLD_PX)
+      return point ? threeToMap(point.x, point.y, point.z) : readGroundPlanePoint(event)
+    }
 
     const groundObjects = cloudGroup.children.filter((child) => child.userData.role === 'ground')
     if (groundObjects.length === 0) return null
@@ -1238,39 +1363,14 @@ export function PointCloud3DViewer({
 
   const wallBounds = tiledScene?.layer_bounds.wall
   const intensityRange = tiledScene?.stats.wall?.intensity_percentile_2_98
-  const tilePhaseLabel = tileStats?.phase === 'loading'
-    ? '正在加载完整点云'
-    : '完整点云已加载'
+  const tilePhaseLabel = tileStats?.error || (tileStats?.phase === 'loading'
+    ? tileStats.motion === 'following' ? '跟随中 · 持续补充细节'
+      : tileStats.motion === 'manual' ? '移动中 · 加载细节' : '正在补充原始点云'
+    : '当前视野已加载')
 
   return (
     <div className="pcd-viewer-shell">
       <div className="pcd-viewer-label">3D 点云</div>
-      <div className="pcd-path-legend" aria-label="导航路径图例">
-        <span><i className="is-global" />全局路径</span>
-        <span><i className="is-execution" />SCAN 实际轨迹</span>
-        <span><i className="is-scan-body" />B2 双圆柱 r={SCAN_BODY_CYLINDER_RADIUS.toFixed(3)}m</span>
-      </div>
-      {tiledScene && tileStats ? (
-        <div className="pcd-tile-status" aria-live="polite">
-          <strong>{tilePhaseLabel}</strong>
-          <span>{tileStats.loadedPoints.toLocaleString()} / {tileStats.totalPoints.toLocaleString()} 点</span>
-          <span>{(tileStats.loadedBytes / 1024 / 1024).toFixed(1)} MB已加载</span>
-          <span>{qualityMode === 'auto' ? '均衡密度' : qualityMode === 'performance' ? '流畅密度' : '原始点'}</span>
-        </div>
-      ) : null}
-      {wallColorMode !== 'solid' ? (
-        <div className="pcd-color-legend" aria-label={wallColorMode === 'height' ? '高度颜色图例' : '雷达强度颜色图例'}>
-          <span>{wallColorMode === 'height' ? '高度' : '雷达强度'}</span>
-          <i className={wallColorMode === 'height' ? 'is-height' : 'is-intensity'} />
-          <small>
-            {wallColorMode === 'height'
-              ? `${(wallBounds?.min_z ?? 0).toFixed(2)}m — ${(wallBounds?.max_z ?? 0).toFixed(2)}m`
-              : intensityRange
-                ? `${intensityRange[0].toFixed(1)} — ${intensityRange[1].toFixed(1)}`
-                : '低 — 高'}
-          </small>
-        </div>
-      ) : null}
       <div
         className={`pcd-three-host ${mode !== 'none' ? 'is-adding' : ''}`}
         ref={hostRef}
@@ -1279,8 +1379,44 @@ export function PointCloud3DViewer({
         onPointerLeave={() => {
           onGroundPointerChange?.(null)
         }}
+        onPointerCancel={() => {
+          pendingTargetRef.current = null
+          setPendingTarget(null)
+        }}
         onPointerUp={handlePointerUp}
       />
+      <div className="pcd-map-info" aria-label="地图信息">
+      <div className="pcd-path-legend" aria-label="导航路径图例">
+        <span><i className="is-global" />全局路径</span>
+        <span><i className="is-execution" />{executionPathLabel}</span>
+        {markerPose !== undefined && <span>橙色箭头：雷达贴地投影 / 朝向</span>}
+        {!!obstacleMarkers?.length && <span>红色框：障碍位置标记</span>}
+        <span title={`碰撞轮廓：双圆柱，半径 ${SCAN_BODY_CYLINDER_RADIUS.toFixed(3)} 米`}><i className="is-scan-body" />机身轮廓</span>
+      </div>
+      {tiledScene && tileStats ? (
+        <div className="pcd-tile-status" aria-live="polite">
+          <strong>{tilePhaseLabel}</strong>
+          <span>当前显示 {tileStats.visiblePoints.toLocaleString()} 点</span>
+          <span className="pcd-tile-extra">{(tileStats.loadedBytes / 1024 / 1024).toFixed(1)} 兆字节已加载</span>
+          <span>原始</span>
+        </div>
+      ) : null}
+      {wallColorMode !== 'solid' ? (
+        <div className="pcd-color-legend" aria-label={wallColorMode === 'height' ? '高度颜色图例' : '雷达强度颜色图例'}>
+          <span>{wallColorMode === 'height' ? '高度' : tiledScene?.stats.wall?.intensity_quantiles ? '强度排名' : '雷达强度'}</span>
+          <i className={wallColorMode === 'height' ? 'is-height' : 'is-intensity'} style={wallColorMode === 'intensity' ? {
+            background: `linear-gradient(90deg, ${['#0814ff', '#00e6ff', '#0dff2e', '#ffeb00', '#ff0800'].map((color, i) => `${color} ${Math.pow(.1 + i * .2, Math.pow(2, 2 * intensityPreference)) * 100}%`).join(', ')})`,
+          } : undefined} />
+          <small>
+            {wallColorMode === 'height'
+              ? `${(wallBounds?.min_z ?? 0).toFixed(2)}m — ${(wallBounds?.max_z ?? 0).toFixed(2)}m`
+              : tiledScene?.stats.wall?.intensity_quantiles ? '低 0% — 高 100%' : intensityRange
+                ? `${intensityRange[0].toFixed(1)} — ${intensityRange[1].toFixed(1)}`
+                : '低 — 高'}
+          </small>
+        </div>
+      ) : null}
+      </div>
       {totalPointCount === 0 && !tiledScene ? <div className="pcd-viewer-empty">等待点云预览数据</div> : null}
     </div>
   )

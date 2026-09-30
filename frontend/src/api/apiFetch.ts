@@ -1,7 +1,7 @@
 import { getApiUrl } from '../config/api'
 import { getAuthState, clearAuthStateForToken } from '../stores/authStore'
 
-async function fetchWithAuth(path: string, init?: RequestInit): Promise<Response> {
+export async function fetchWithAuth(path: string, init?: RequestInit): Promise<Response> {
   const url = getApiUrl(path)
   
   const headers = new Headers(init?.headers)

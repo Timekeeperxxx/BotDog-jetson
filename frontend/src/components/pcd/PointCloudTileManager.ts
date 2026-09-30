@@ -1,3 +1,5 @@
+import { NO_HEIGHT_CLIP, setMaterialHeightClip, type HeightClip } from './PointCloudHeightClip'
+import { setPointCloudPointSize, setPointCloudIntensityPreference } from './PointCloud3DViewerUtils'
 import * as THREE from 'three'
 import { getPcdSceneTile } from '../../api/pcdMapApi'
 import type {
@@ -13,13 +15,15 @@ import {
   createPointCloudMaterial,
   disposeObject3D,
   getLayerPreset,
-  setPointCloudViewportHeight,
+  setPointCloudViewport,
   setPointCloudWallColorMode,
 } from './PointCloud3DViewerUtils'
 
 type StaticLayerRole = Extract<PcdSceneLayerRole, 'ground' | 'wall' | 'footprint_fill'>
 
 export type PointCloudTileStats = {
+  motion?: 'stationary' | 'manual' | 'following'
+  error?: string
   phase: 'loading' | 'ready'
   visiblePoints: number
   loadedPoints: number
@@ -131,6 +135,28 @@ export class PointCloudTileManager {
     this.refreshPriorities(true)
   }
 
+  private heightClip: HeightClip = NO_HEIGHT_CLIP
+  setHeightClip(clip: HeightClip) {
+    this.heightClip = clip
+    this.loaded.forEach(tile => setMaterialHeightClip(tile.cloud.material, clip))
+    this.onInvalidate()
+  }
+
+  private pointSizeScale = 1
+  setPointSize(value: number) {
+    this.pointSizeScale = value
+    this.loaded.forEach(tile => setPointCloudPointSize(tile.cloud.material, value))
+    this.onInvalidate()
+  }
+
+  private intensityPreference = 0
+
+  setIntensityPreference(value: number) {
+    this.intensityPreference = value
+    this.loaded.forEach(tile => setPointCloudIntensityPreference(tile.cloud.material, value))
+    this.onInvalidate()
+  }
+
   setWallColorMode(mode: WallColorMode) {
     this.wallColorMode = mode
     this.loaded.forEach((tile) => {
@@ -157,8 +183,8 @@ export class PointCloudTileManager {
     this.onInvalidate()
   }
 
-  setViewportHeight(height: number) {
-    this.loaded.forEach((tile) => setPointCloudViewportHeight(tile.cloud.material, height))
+  setViewport(height: number, pixelRatio: number) {
+    this.loaded.forEach((tile) => setPointCloudViewport(tile.cloud.material, height, pixelRatio))
   }
 
   update(moving: boolean, now = performance.now()) {
@@ -268,6 +294,8 @@ export class PointCloudTileManager {
       }, delay)
       this.retryTimers.set(descriptor.key, retryTimer)
     }).finally(() => {
+      // A quick A → B → A switch may already have a new request for this key.
+      if (this.pending.get(descriptor.key)?.controller !== controller) return
       this.pending.delete(descriptor.key)
       if (!this.disposed) {
         this.pumpQueue()
@@ -293,13 +321,15 @@ export class PointCloudTileManager {
 
     const preset = getLayerPreset(descriptor.role)
     const wallBounds = this.manifest.layer_bounds.wall
-    const material = createPointCloudMaterial(preset, 1, {
+    const material = createPointCloudMaterial(preset, this.renderer.getPixelRatio(), {
       minHeight: wallBounds?.min_z ?? descriptor.bounds.min_z,
       maxHeight: wallBounds?.max_z ?? descriptor.bounds.max_z,
       wallColorMode: this.wallColorMode,
+      intensityPreference: this.intensityPreference, pointSizeScale: this.pointSizeScale,
       viewportHeight: this.renderer.domElement.height,
       hasIntensity: descriptor.payload.has_intensity,
     })
+    setMaterialHeightClip(material, this.heightClip)
     const cloud = new THREE.Points(geometry, material)
     cloud.renderOrder = preset.renderOrder
     cloud.userData.role = descriptor.role
@@ -329,6 +359,7 @@ export class PointCloudTileManager {
   private configureDescriptors() {
     this.manifest.nodes.forEach((node) => {
       const descriptor = descriptorForNode(node, this.qualityMode)
+      if (descriptor.payload.point_count === 0) return
       this.descriptors.set(descriptor.key, descriptor)
     })
     this.totalPoints = Array.from(this.descriptors.values()).reduce(

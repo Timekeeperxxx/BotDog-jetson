@@ -21,6 +21,7 @@ vi.mock('../../api/pcdMapApi', () => ({
 }))
 
 import { PointCloudTileManager } from './PointCloudTileManager'
+import { getLayerPreset } from './PointCloud3DViewerUtils'
 
 const bounds = {
   min_x: -1,
@@ -72,10 +73,8 @@ const manifest: PcdSceneTileManifest = {
   stats: {},
   settings: {
     tile_size_m: 16,
-    balanced_voxel_size_m: 0.07,
-    balanced_points_per_voxel: 1,
-    performance_voxel_size_m: 0.1,
-    performance_points_per_voxel: 1,
+    balanced_ratio: 0.5,
+    performance_max_points: 180000,
     max_points_per_tile: 65_536,
   },
 }
@@ -83,6 +82,31 @@ const manifest: PcdSceneTileManifest = {
 describe('PointCloudTileManager', () => {
   afterEach(() => {
     getPcdSceneTile.mockClear()
+  })
+
+  it('keeps the new requests intact after a rapid A to B to A density switch', async () => {
+    const originalImplementation = getPcdSceneTile.getMockImplementation()!
+    const replies: ((buffer: ArrayBuffer) => void)[] = []
+    getPcdSceneTile.mockImplementation(() => new Promise(resolve => replies.push(resolve)))
+    const manager = new PointCloudTileManager({
+      manifest, camera: new THREE.PerspectiveCamera(), group: new THREE.Group(),
+      renderer: { getPixelRatio: () => 1, domElement: { clientHeight: 600, height: 600 } } as THREE.WebGLRenderer,
+      wallColorMode: 'solid', qualityMode: 'auto',
+      visibleRoles: new Set(['ground', 'wall']), onStats: vi.fn(), onInvalidate: vi.fn(),
+    })
+    try {
+      manager.setQualityMode('performance')
+      manager.setQualityMode('auto')
+      expect(getPcdSceneTile).toHaveBeenCalledTimes(6)
+      replies[0](new ArrayBuffer(0))
+      replies[1](new ArrayBuffer(0))
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(getPcdSceneTile).toHaveBeenCalledTimes(6)
+    } finally {
+      manager.dispose()
+      for (const resolve of replies) resolve(new ArrayBuffer(0))
+      getPcdSceneTile.mockImplementation(originalImplementation)
+    }
   })
 
   it('loads one fixed density tier and keeps it visible while the camera moves', async () => {
@@ -96,7 +120,7 @@ describe('PointCloudTileManager', () => {
     const manager = new PointCloudTileManager({
       manifest,
       camera,
-      renderer: { domElement: { clientHeight: 600, height: 600 } } as THREE.WebGLRenderer,
+      renderer: { getPixelRatio: () => 1, domElement: { clientHeight: 600, height: 600 } } as THREE.WebGLRenderer,
       group,
       wallColorMode: 'solid',
       qualityMode: 'auto',
@@ -140,7 +164,7 @@ describe('PointCloudTileManager', () => {
     const manager = new PointCloudTileManager({
       manifest,
       camera,
-      renderer: { domElement: { clientHeight: 600, height: 600 } } as THREE.WebGLRenderer,
+      renderer: { getPixelRatio: () => 1, domElement: { clientHeight: 600, height: 600 } } as THREE.WebGLRenderer,
       group,
       wallColorMode: 'solid',
       qualityMode: 'auto',
@@ -165,4 +189,45 @@ describe('PointCloudTileManager', () => {
 
     manager.dispose()
   })
+  it('updates loaded tiles and uses the current density for subsequently loaded tiles', async () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100)
+    camera.position.set(0, 0, 5)
+    camera.lookAt(0, 0, 0)
+    camera.updateMatrixWorld()
+    let pixelRatio = 1.25
+    const renderer = {
+      getPixelRatio: () => pixelRatio,
+      domElement: { clientHeight: 600, height: 750 },
+    } as THREE.WebGLRenderer
+    const group = new THREE.Group()
+    const manager = new PointCloudTileManager({
+      manifest, camera, renderer, group,
+      wallColorMode: 'solid', qualityMode: 'auto',
+      visibleRoles: new Set(['ground', 'wall']),
+      onStats: vi.fn(), onInvalidate: vi.fn(),
+    })
+    const checkMaterials = () => {
+      for (const object of group.children) {
+        const cloud = object as THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>
+        expect(cloud.material.uniforms.uPixelRatio.value).toBe(pixelRatio)
+        expect(cloud.material.uniforms.uViewportHeight.value).toBe(renderer.domElement.height)
+        expect(cloud.material.uniforms.uNearSize.value).toBe(getLayerPreset(cloud.userData.role).nearSize)
+      }
+    }
+    await vi.waitFor(() => expect(group.children).toHaveLength(2))
+    checkMaterials()
+    const originalTiles = [...group.children]
+    pixelRatio = 2
+    renderer.domElement.height = 1200
+    manager.setViewport(1200, pixelRatio)
+    checkMaterials()
+    expect(group.children).toEqual(originalTiles)
+    expect(getPcdSceneTile).toHaveBeenCalledTimes(2)
+
+    manager.setQualityMode('quality')
+    await vi.waitFor(() => expect(group.children).toHaveLength(2))
+    checkMaterials()
+    manager.dispose()
+  })
+
 })

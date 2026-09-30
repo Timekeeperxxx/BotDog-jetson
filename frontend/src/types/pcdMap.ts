@@ -108,6 +108,7 @@ export type PcdSceneTilePayload = {
 }
 
 export type PcdSceneRootTile = PcdSceneTilePayload & {
+  url?: string
   id: string
   role: Extract<PcdSceneLayerRole, 'ground' | 'wall' | 'footprint_fill'>
   bounds: PcdBounds
@@ -125,6 +126,9 @@ export type PcdSceneTileNode = {
 }
 
 export type PcdSceneTileManifest = {
+  potree?: {
+    layers: { role: 'ground' | 'wall' | 'footprint_fill'; url: string; point_count: number; coordinate_scale: number }[]
+  }
   version: number
   cache_key: string
   scene_id: string
@@ -141,13 +145,12 @@ export type PcdSceneTileManifest = {
     performance_points: number
     tile_count: number
     intensity_percentile_2_98?: [number, number]
+    intensity_quantiles?: number[]
   } | null>
   settings: {
     tile_size_m: number
-    balanced_voxel_size_m: number
-    balanced_points_per_voxel: number
-    performance_voxel_size_m: number
-    performance_points_per_voxel: number
+    balanced_ratio?: number
+    performance_max_points?: number
     max_points_per_tile: number
   }
 }

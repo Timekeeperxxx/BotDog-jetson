@@ -29,9 +29,8 @@ export const SCAN_BODY_CYLINDER_OFFSETS = [0.205, -0.205] as const
 export const GLOBAL_PATH_WIDTH = 0.12
 export const WAYPOINT_SCREEN_DIAMETER_PX = 13
 export const WAYPOINT_LABEL_SCREEN_WIDTH_PX = 112
-export const ROBOT_SCREEN_DIAMETER_PX = 18
-export const PENDING_TARGET_SCREEN_DIAMETER_PX = 13
-export const POINT_CLOUD_PIXEL_RATIO_LIMIT = 1
+export const ROBOT_SCREEN_DIAMETER_PX = 28
+export const PENDING_TARGET_SCREEN_DIAMETER_PX = 22
 export const POINT_CLOUD_MIN_ORBIT_DISTANCE = 0.05
 
 type PointCloudMaterialPreset = {
@@ -52,6 +51,7 @@ type PointCloudMaterialPreset = {
   maxPointSize: number
   opacity: number
   depthWrite: boolean
+  opaqueSurface?: boolean
   renderOrder: number
 }
 
@@ -242,10 +242,32 @@ export function createWaypointLabelSprite(text: string) {
   return sprite
 }
 
+// Local +X is map yaw zero. The notch sits behind the coordinate origin.
+export function createCursorArrow(color: number, radius: number, renderOrder: number) {
+  const group = new THREE.Group()
+  for (const [scale, tint] of [[1.16, 0x0f172a], [1.07, 0xffffff], [0.88, color]]) {
+    const shape = new THREE.Shape()
+    shape.moveTo(radius, 0)
+    shape.lineTo(-radius, radius * 0.72)
+    shape.lineTo(-radius * 0.45, 0)
+    shape.lineTo(-radius, -radius * 0.72)
+    shape.closePath()
+    const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), new THREE.MeshBasicMaterial({
+      color: tint, side: THREE.DoubleSide, depthTest: false, depthWrite: false,
+    }))
+    mesh.rotation.x = -Math.PI / 2
+    mesh.scale.setScalar(scale)
+    mesh.position.y = 0.08 + group.children.length * 0.002
+    mesh.renderOrder = renderOrder + group.children.length
+    group.add(mesh)
+  }
+  return group
+}
+
 export function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPreset {
   if (role === 'ground') {
     return {
-      color: 0x0ea5e9,
+      color: 0x3b82f6,
       nearSize: 2,
       farSize: 3.2,
       nearDistance: 1.5,
@@ -253,7 +275,8 @@ export function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPrese
       worldPointSize: 0.025,
       maxPointSize: 6,
       opacity: 1,
-      depthWrite: true,
+      opaqueSurface: true,
+      depthWrite: false,
       renderOrder: 1,
     }
   }
@@ -282,7 +305,7 @@ export function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPrese
       farDistance: 42,
       worldPointSize: 0.02,
       maxPointSize: 5,
-      opacity: 0.72,
+      opacity: 1,
       depthWrite: true,
       renderOrder: 2,
     }
@@ -304,7 +327,7 @@ export function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPrese
   }
 
   return {
-    color: 0x22c55e,
+    color: 0xd8b874,
     heightGradient: {
       lowColor: 0x2563eb,
       middleColor: 0x22c55e,
@@ -321,7 +344,7 @@ export function getLayerPreset(role: PcdSceneLayerRole): PointCloudMaterialPrese
     maxPointSize: 5,
     opacity: 1,
     depthWrite: true,
-    renderOrder: 2,
+    renderOrder: 0,
   }
 }
 
@@ -330,6 +353,8 @@ type PointCloudMaterialOptions = {
   maxHeight?: number
   wallColorMode?: WallColorMode
   viewportHeight?: number
+  pointSizeScale?: number
+  intensityPreference?: number
   hasIntensity?: boolean
 }
 
@@ -344,7 +369,9 @@ export function createPointCloudMaterial(
   const maxHeight = Number.isFinite(options.maxHeight) ? options.maxHeight! : minHeight + 1
   const gradientEnabled = gradient && options.wallColorMode !== 'solid' ? 1 : 0
   const intensityEnabled = gradient && options.wallColorMode === 'intensity' && options.hasIntensity ? 1 : 0
-  const opaqueDepthPoint = preset.depthWrite && preset.opacity >= 0.9
+  // Ground stays opaque but does not occlude the footprint annotation.
+  // Walls write depth first, so both layers still respect obstacles.
+  const opaqueDepthPoint = (preset.depthWrite || preset.opaqueSurface) && preset.opacity >= 0.9
 
   return new THREE.ShaderMaterial({
     defines: {
@@ -360,19 +387,25 @@ export function createPointCloudMaterial(
       uMaxHeight: { value: Math.max(maxHeight, minHeight + 0.001) },
       uGradientEnabled: { value: gradientEnabled },
       uIntensityEnabled: { value: intensityEnabled },
+      uIntensityPreference: { value: options.intensityPreference ?? 0 },
+      uHeightClip: { value: new THREE.Vector2(-1e30, 1e30) },
+      uPointSizeScale: { value: options.pointSizeScale ?? 1 },
       uContourSpacing: { value: gradient?.contourSpacing ?? 1 },
       uContourStrength: { value: gradient?.contourStrength ?? 0 },
       uFarBrightness: { value: gradient?.farBrightness ?? 1 },
-      uNearSize: { value: preset.nearSize * pixelRatio },
-      uFarSize: { value: preset.farSize * pixelRatio },
+      uPixelRatio: { value: pixelRatio },
+      uNearSize: { value: preset.nearSize },
+      uFarSize: { value: preset.farSize },
       uNearDistance: { value: preset.nearDistance },
       uFarDistance: { value: preset.farDistance },
       uWorldPointSize: { value: preset.worldPointSize },
       uViewportHeight: { value: Math.max(1, options.viewportHeight ?? 1) },
-      uMaxPointSize: { value: preset.maxPointSize * pixelRatio },
+      uMaxPointSize: { value: preset.maxPointSize },
       uOpacity: { value: preset.opacity },
     },
     vertexShader: `
+      uniform float uPointSizeScale;
+      uniform float uPixelRatio;
       uniform float uNearSize;
       uniform float uFarSize;
       uniform float uNearDistance;
@@ -388,9 +421,11 @@ export function createPointCloudMaterial(
       uniform float uMaxHeight;
       uniform float uGradientEnabled;
       uniform float uIntensityEnabled;
+      uniform float uIntensityPreference;
       uniform float uContourSpacing;
       uniform float uContourStrength;
       uniform float uFarBrightness;
+      varying float vWorldHeight;
       varying float vDistanceMix;
       varying vec3 vPointColor;
       #if USE_POINT_INTENSITY == 1
@@ -398,19 +433,16 @@ export function createPointCloudMaterial(
       #endif
 
       vec3 intensityColor(float value) {
-        if (value < 0.25) {
-          return mix(vec3(0.03, 0.08, 1.0), vec3(0.0, 0.9, 1.0), value * 4.0);
-        }
-        if (value < 0.5) {
-          return mix(vec3(0.0, 0.9, 1.0), vec3(0.05, 1.0, 0.18), (value - 0.25) * 4.0);
-        }
-        if (value < 0.75) {
-          return mix(vec3(0.05, 1.0, 0.18), vec3(1.0, 0.92, 0.0), (value - 0.5) * 4.0);
-        }
+        value = pow(clamp(value, 0.0, 1.0), exp2(-2.0 * uIntensityPreference));
+        value = clamp((value - 0.1) / 0.8, 0.0, 1.0);
+        if (value < 0.25) return mix(vec3(0.03, 0.08, 1.0), vec3(0.0, 0.9, 1.0), value * 4.0);
+        if (value < 0.5) return mix(vec3(0.0, 0.9, 1.0), vec3(0.05, 1.0, 0.18), (value - 0.25) * 4.0);
+        if (value < 0.75) return mix(vec3(0.05, 1.0, 0.18), vec3(1.0, 0.92, 0.0), (value - 0.5) * 4.0);
         return mix(vec3(1.0, 0.92, 0.0), vec3(1.0, 0.03, 0.0), (value - 0.75) * 4.0);
       }
 
       void main() {
+        vWorldHeight = (modelMatrix * vec4(position, 1.0)).y;
         vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
         float cameraDistance = length(mvPosition.xyz);
         vDistanceMix = smoothstep(uNearDistance, uFarDistance, cameraDistance);
@@ -418,7 +450,7 @@ export function createPointCloudMaterial(
         vPointColor = uColor;
         if (uGradientEnabled > 0.5) {
           float heightMix = clamp(
-            (position.y - uMinHeight) / max(uMaxHeight - uMinHeight, 0.001),
+            ((modelMatrix * vec4(position, 1.0)).y - uMinHeight) / max(uMaxHeight - uMinHeight, 0.001),
             0.0,
             1.0
           );
@@ -429,7 +461,7 @@ export function createPointCloudMaterial(
             gradientColor = mix(uMiddleColor, uHighColor, smoothstep(0.5, 1.0, heightMix));
           }
 
-          float contourCycle = fract(position.y / max(uContourSpacing, 0.001));
+          float contourCycle = fract((modelMatrix * vec4(position, 1.0)).y / max(uContourSpacing, 0.001));
           float contourDistance = min(contourCycle, 1.0 - contourCycle);
           float contourLine = 1.0 - smoothstep(0.0, 0.12, contourDistance);
           float distanceBrightness = mix(1.0, uFarBrightness, vDistanceMix);
@@ -442,19 +474,22 @@ export function createPointCloudMaterial(
           }
         #endif
 
-        float fixedPointSize = mix(uNearSize, uFarSize, vDistanceMix);
+        float fixedPointSize = mix(uNearSize, uFarSize, vDistanceMix) * uPixelRatio;
         float projectedWorldSize = uWorldPointSize * uViewportHeight * projectionMatrix[1][1]
           / max(-2.0 * mvPosition.z, 0.01);
-        gl_PointSize = min(max(fixedPointSize, projectedWorldSize), uMaxPointSize);
+        gl_PointSize = min(max(fixedPointSize, projectedWorldSize), uMaxPointSize * uPixelRatio) * uPointSizeScale;
         gl_Position = projectionMatrix * mvPosition;
       }
     `,
     fragmentShader: `
+      uniform vec2 uHeightClip;
       uniform float uOpacity;
+      varying float vWorldHeight;
       varying float vDistanceMix;
       varying vec3 vPointColor;
 
       void main() {
+        if (vWorldHeight < uHeightClip.x || vWorldHeight > uHeightClip.y) discard;
         vec2 pointCoord = gl_PointCoord - vec2(0.5);
         float radius = length(pointCoord);
         if (radius > 0.5) {
@@ -495,15 +530,18 @@ export function setPointCloudWallColorMode(
   })
 }
 
-export function setPointCloudViewportHeight(
+export function setPointCloudViewport(
   material: THREE.Material | THREE.Material[],
   viewportHeight: number,
+  pixelRatio: number,
 ) {
   const materials = Array.isArray(material) ? material : [material]
   materials.forEach((item) => {
     if (!(item instanceof THREE.ShaderMaterial)) return
     const uniform = item.uniforms.uViewportHeight
     if (uniform) uniform.value = Math.max(1, viewportHeight)
+    const ratioUniform = item.uniforms.uPixelRatio
+    if (ratioUniform) ratioUniform.value = pixelRatio
   })
 }
 
@@ -588,4 +626,20 @@ export function createFlatPathGeometry(points: THREE.Vector3[], width: number) {
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
   return geometry
+}
+
+export function setPointCloudIntensityPreference(material: THREE.Material | THREE.Material[], value: number) {
+  for (const item of Array.isArray(material) ? material : [material]) {
+    if (item instanceof THREE.ShaderMaterial && item.uniforms.uIntensityPreference) {
+      item.uniforms.uIntensityPreference.value = THREE.MathUtils.clamp(value, -1, 1)
+    }
+  }
+}
+
+export function setPointCloudPointSize(material: THREE.Material | THREE.Material[], value: number) {
+  for (const item of Array.isArray(material) ? material : [material]) {
+    if (item instanceof THREE.ShaderMaterial && item.uniforms.uPointSizeScale) {
+      item.uniforms.uPointSizeScale.value = THREE.MathUtils.clamp(value, .1, 3)
+    }
+  }
 }

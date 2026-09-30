@@ -14,6 +14,7 @@ vi.mock('../../stores/authStore', () => ({
 
 function props() {
   return {
+    open: true,
     bounds: null, canOperate: true, localizationStopSending: false, softStopSending: false, executionPath: null,
     globalPath: null, layers: [], goToSending: false, navigatingWaypointId: null,
     robotPose: null, sceneNavigable: true, viewKey: 'scene', fencesVisible: true,
@@ -23,10 +24,21 @@ function props() {
     onAddWaypoint: vi.fn(), onDeleteWaypoint: vi.fn(), onSoftStop: vi.fn(), onStopLocalization: vi.fn(),
     onGoToWaypoint: vi.fn(), onMouseMapPositionChange: vi.fn(), onSetPose: vi.fn(),
     onToggleFencesVisible: vi.fn(), onToggleFenceEnabled: vi.fn(), onDeleteFence: vi.fn(),
+    onToggle: vi.fn(),
   }
 }
 
 describe('NavRightRail', () => {
+  it('exposes an accessible drawer toggle', async () => {
+    const user = userEvent.setup()
+    const callbacks = props()
+    render(<NavRightRail {...callbacks} />)
+    const toggle = screen.getByRole('button', { name: '收起右侧面板' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    await user.click(toggle)
+    expect(callbacks.onToggle).toHaveBeenCalledOnce()
+  })
+
   it('shares one list area and preserves actions and emergency stop across keyboard tab changes', async () => {
     const user = userEvent.setup()
     const callbacks = props()

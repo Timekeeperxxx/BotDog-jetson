@@ -54,6 +54,27 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertIsNone(d.match)
             self.assertEqual(d.phase, 'starting')
 
+    def test_first_read_skips_old_errors_but_keeps_new_attempts(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / 'nav.log'
+            path.write_text('[old-1] process has died [pid 1, exit code 1]\n')
+            d = LocalizationDiagnostics()
+            d.read(path)
+            d.read(path)
+            self.assertEqual(d.snapshot()['phase'], 'idle')
+            self.assertEqual(d.events, [])
+            with path.open('a') as stream:
+                stream.write('[Navigation][run:new] launch\n')
+            d.read(path)
+            self.assertEqual(d.snapshot()['phase'], 'starting')
+
+            fresh = Path(root) / 'new.log'
+            current = LocalizationDiagnostics()
+            current.begin(fresh, 'scene-1')
+            fresh.write_text('[Navigation][run:current] launch\n')
+            current.read(fresh)
+            self.assertEqual(current.snapshot()['phase'], 'starting')
+
     def test_tf_failure_and_process_failure_are_not_matching_failures(self):
         d = LocalizationDiagnostics()
         d.consume('Global ICP Converged Succeed! FitnessScore: 0.1')

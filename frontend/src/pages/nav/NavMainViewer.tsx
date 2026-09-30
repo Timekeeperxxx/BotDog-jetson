@@ -1,3 +1,4 @@
+import { NO_HEIGHT_CLIP, type HeightClip } from '../../components/pcd/PointCloudHeightClip'
 import { PointCloud3DViewer } from '../../components/pcd/PointCloud3DViewer'
 import type { GlobalPath, RobotPose } from '../../types/navState'
 import type { NavFence, NavWaypoint, PcdSceneTileManifest, PointCloudQualityMode, WallColorMode } from '../../types/pcdMap'
@@ -13,6 +14,9 @@ type NavMainViewerProps = {
   pointCloudQualityMode: PointCloudQualityMode
   robotPose: RobotPose | null
   viewKey: string
+  heightClip?: HeightClip
+  pointSize?: number
+  intensityPreference?: number
   wallColorMode: WallColorMode
   tiledScene: PcdSceneTileManifest | null
   tileVisibility: {
@@ -41,6 +45,9 @@ export function NavMainViewer({
   pointCloudQualityMode,
   robotPose,
   viewKey,
+  heightClip = NO_HEIGHT_CLIP,
+  pointSize = 1,
+  intensityPreference = 0,
   wallColorMode,
   tiledScene,
   tileVisibility,
@@ -75,6 +82,9 @@ export function NavMainViewer({
     <PointCloud3DViewer
       layers={layers}
       qualityMode={pointCloudQualityMode}
+      heightClip={heightClip}
+      pointSize={pointSize}
+      intensityPreference={intensityPreference}
       tiledScene={tiledScene}
       tileVisibility={tileVisibility}
       viewKey={viewKey}

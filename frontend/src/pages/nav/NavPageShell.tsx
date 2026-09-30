@@ -1,4 +1,4 @@
-import { Battery, Crosshair, Loader2 } from 'lucide-react'
+import { Battery, ChevronLeft, ChevronRight, Crosshair, Loader2 } from 'lucide-react'
 import { useId, useState } from 'react'
 import { NavWaypointPanel } from '../../components/pcd/NavWaypointPanel'
 import { NavFencePanel } from '../../components/pcd/NavFencePanel'
@@ -11,6 +11,7 @@ type NavPageHeaderProps = {
   batteryPct: number | null | undefined
   canOperate: boolean
   loading: boolean
+  loadingMessage?: string
   restartLocalizationSending: boolean
   selectedSceneNavigable: boolean
   webglSupported: boolean
@@ -24,6 +25,7 @@ export function NavPageHeader({
   batteryPct,
   canOperate,
   loading,
+  loadingMessage,
   restartLocalizationSending,
   selectedSceneNavigable,
   webglSupported,
@@ -52,8 +54,8 @@ export function NavPageHeader({
           <strong>{batteryPct != null ? `${batteryPct.toFixed(0)}%` : '--'}</strong>
         </div>
         {loading ? (
-          <span className="pcd-loading">
-            <Loader2 size={16} /> 加载中
+          <span className="pcd-loading" role="status">
+            <Loader2 size={16} /> {loadingMessage || '加载中'}
           </span>
         ) : null}
         <button
@@ -86,6 +88,7 @@ export type PointCloudLayer = {
 }
 
 type NavRightRailProps = {
+  open: boolean
   bounds: PcdBounds | null
   canOperate: boolean
   localizationStopSending: boolean
@@ -111,9 +114,11 @@ type NavRightRailProps = {
   onToggleFencesVisible: () => void
   onToggleFenceEnabled: (fenceId: string, enabled: boolean) => void
   onDeleteFence: (fenceId: string) => void
+  onToggle: () => void
 }
 
 export function NavRightRail({
+  open,
   bounds,
   canOperate,
   localizationStopSending,
@@ -139,6 +144,7 @@ export function NavRightRail({
   onToggleFencesVisible,
   onToggleFenceEnabled,
   onDeleteFence,
+  onToggle,
 }: NavRightRailProps) {
   const [activeTab, setActiveTab] = useState<'waypoints' | 'fences'>('waypoints')
   const tabId = useId()
@@ -148,7 +154,21 @@ export function NavRightRail({
   ] as const
 
   return (
-    <aside className="pcd-right-rail">
+    <aside className={`pcd-right-rail ${open ? 'is-open' : 'is-collapsed'}`}>
+      <button
+        type="button"
+        className="pcd-right-rail-toggle"
+        aria-expanded={open}
+        aria-label={open ? '收起右侧面板' : '展开右侧面板'}
+        title={open ? '收起右侧面板' : '展开右侧面板'}
+        onClick={onToggle}
+      >
+        {open ? (
+          <ChevronRight aria-hidden="true" />
+        ) : (
+          <ChevronLeft aria-hidden="true" />
+        )}
+      </button>
       <PointCloudTopDownCanvas
         layers={layers}
         viewKey={viewKey}

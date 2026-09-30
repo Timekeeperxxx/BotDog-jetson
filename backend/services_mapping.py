@@ -800,7 +800,13 @@ class MappingService:
         # ── 检查 PCD 文件 ──────────────────────────────────────────────────
         map_pcd_candidates, ground_pcd_candidates, pcd_files = self._collect_pcd_files(map_dir_path)
 
-        saved = len(map_pcd_candidates) > 0 and len(ground_pcd_candidates) > 0
+        map_valid, _ = self._validate_pcd_file(map_dir_path / "map.pcd")
+        ground_valid, _ = self._validate_pcd_file(map_dir_path / "ground.pcd")
+        script_error = _mapping_startup_error(map_dir_path)
+        saved = (
+            map_valid and ground_valid and not forced
+            and process.returncode == 0 and script_error is None
+        )
         origin_waypoint: dict[str, Any] | None = None
         origin_waypoint_error: str | None = None
         if saved:
@@ -828,12 +834,18 @@ class MappingService:
                 origin_waypoint_error = str(exc)
                 message += "，但原点导航点添加失败"
                 mapping_logger.warning("建图完成后自动添加原点导航点失败：scene_name={}，原因={}", scene_name, exc)
-        elif len(map_pcd_candidates) == 0 and len(ground_pcd_candidates) == 0:
-            message = "地图保存失败：未找到 map.pcd 和 ground.pcd，请查看 start_mapping_debug.log"
-        elif len(map_pcd_candidates) == 0:
-            message = "地图保存不完整：缺少 map.pcd，请查看 start_mapping_debug.log"
+        elif script_error:
+            message = f"地图保存失败：{script_error}；请查看 start_mapping_debug.log"
+        elif process.returncode != 0:
+            message = f"地图保存失败：建图脚本退出码 {process.returncode}；请查看 start_mapping_debug.log"
+        elif not map_valid and not ground_valid:
+            message = "地图保存失败：未找到有效的 map.pcd 和 ground.pcd，请查看 start_mapping_debug.log"
+        elif not map_valid:
+            message = "地图保存不完整：缺少有效的 map.pcd，请查看 start_mapping_debug.log"
+        elif not ground_valid:
+            message = "地图保存不完整：缺少有效的 ground.pcd，请查看 start_mapping_debug.log"
         else:
-            message = "地图保存不完整：缺少 ground.pcd，请查看 start_mapping_debug.log"
+            message = "地图保存失败：建图脚本被强制终止，请查看 start_mapping_debug.log"
 
         if forced:
             message += "（脚本被强制终止，文件可能不完整）"

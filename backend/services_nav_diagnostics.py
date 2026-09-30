@@ -14,6 +14,7 @@ class LocalizationDiagnostics:
         self.offset = 0
         self.identity = None
         self.scene_id = None
+        self.following_current_attempt = False
         self.reset()
 
     def reset(self):
@@ -34,6 +35,7 @@ class LocalizationDiagnostics:
         with self.lock:
             self.reset()
             self.scene_id = scene_id
+            self.following_current_attempt = True
             try:
                 stat = path.stat()
                 self.offset = stat.st_size
@@ -95,6 +97,11 @@ class LocalizationDiagnostics:
             with path.open("rb") as stream:
                 stat = path.stat()
                 identity = (stat.st_dev, stat.st_ino)
+                if self.identity is None and not self.following_current_attempt:
+                    # An old launch log is history, not a new incident after backend startup.
+                    self.identity = identity
+                    self.offset = stat.st_size
+                    return
                 if identity != self.identity or stat.st_size < self.offset:
                     self.reset()
                     self.offset = 0

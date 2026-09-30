@@ -1,3 +1,4 @@
+import { getCanvasPixelRatio, observeCanvasViewport } from '../../utils/canvasViewport'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import { LocateFixed, ZoomIn, ZoomOut } from 'lucide-react'
@@ -5,6 +6,7 @@ import type { NavFence, NavWaypoint, PcdBounds, PcdSceneLayerRole, PointCloudPoi
 import type { GlobalPath, RobotPose } from '../../types/navState'
 import { getPointCount, getPointXYZ } from '../../utils/pointCloudPoints'
 import { canvasToMap, getTopDownScale, mapToCanvas } from '../../utils/topDownCoordinate'
+import { getMapExtents, getTopDownRulers } from '../../utils/topDownRulers'
 import {
   SCAN_BODY_CYLINDER_OFFSETS,
   SCAN_BODY_CYLINDER_RADIUS,
@@ -34,7 +36,7 @@ type Props = {
   onSetPose: (pos: { x: number; y: number; z: number; yaw: number }) => void
 }
 
-const PADDING = 34
+const PADDING = 48
 const MIN_ZOOM = 0.6
 const MAX_ZOOM = 14
 const BUTTON_ZOOM_STEP = 1.28
@@ -155,6 +157,7 @@ export function PointCloudTopDownCanvas({
   } | null>(null)
   const [view, setView] = useState({ zoom: 1, panX: 0, panY: 0 })
   const [isPanning, setIsPanning] = useState(false)
+  const extents = getMapExtents(bounds)
 
   const normalizedLayers: PointCloudLayer[] = useMemo(
     () => (
@@ -259,16 +262,18 @@ export function PointCloudTopDownCanvas({
     ) => {
       ctx.fillStyle = '#071013'
       ctx.fillRect(0, 0, width, height)
+      if (!bounds) return
+      const rulers = getTopDownRulers(bounds, width, height, PADDING, view)
 
       ctx.strokeStyle = 'rgba(148, 163, 184, 0.18)'
       ctx.lineWidth = 1
-      for (let x = PADDING; x < width - PADDING; x += 40) {
+      for (const { position: x } of rulers.y) {
         ctx.beginPath()
         ctx.moveTo(x, PADDING)
         ctx.lineTo(x, height - PADDING)
         ctx.stroke()
       }
-      for (let y = PADDING; y < height - PADDING; y += 40) {
+      for (const { position: y } of rulers.x) {
         ctx.beginPath()
         ctx.moveTo(PADDING, y)
         ctx.lineTo(width - PADDING, y)
@@ -467,9 +472,9 @@ export function PointCloudTopDownCanvas({
 
     const draw = () => {
       const rect = host.getBoundingClientRect()
-      const ratio = Math.min(window.devicePixelRatio || 1, 2)
-      const width = rect.width
-      const height = rect.height
+      const width = Math.max(1, rect.width)
+      const height = Math.max(1, rect.height)
+      const ratio = getCanvasPixelRatio(width, height, window.devicePixelRatio)
       const physicalWidth = Math.max(1, Math.floor(width * ratio))
       const physicalHeight = Math.max(1, Math.floor(height * ratio))
 
@@ -532,19 +537,53 @@ export function PointCloudTopDownCanvas({
       }
 
       ctx.save()
+      ctx.beginPath()
+      ctx.rect(PADDING, PADDING, Math.max(0, width - PADDING * 2), Math.max(0, height - PADDING * 2))
+      ctx.clip()
+      ctx.save()
       ctx.translate(width / 2 + view.panX, height / 2 + view.panY)
       ctx.scale(view.zoom, view.zoom)
       ctx.translate(-width / 2, -height / 2)
       ctx.drawImage(staticCanvas, 0, 0, width, height)
       ctx.restore()
       drawDynamicLayer(ctx, width, height)
+      ctx.restore()
+
+      // Draw rulers after the map so labels stay readable at every zoom level.
+      const rulers = getTopDownRulers(bounds, width, height, PADDING, view)
+      ctx.fillStyle = '#101820'
+      ctx.fillRect(0, 0, PADDING, height)
+      ctx.fillRect(0, height - PADDING, width, PADDING)
+      ctx.font = '11px system-ui'
+      ctx.strokeStyle = '#718496'
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(PADDING, PADDING)
+      ctx.lineTo(PADDING, height - PADDING)
+      ctx.lineTo(width - PADDING, height - PADDING)
+      ctx.stroke()
+      ctx.fillStyle = '#fca5a5'
+      ctx.textAlign = 'right'
+      ctx.textBaseline = 'middle'
+      for (const tick of rulers.x) {
+        ctx.fillText(tick.label, PADDING - 8, tick.position)
+        ctx.beginPath(); ctx.moveTo(PADDING - 4, tick.position); ctx.lineTo(PADDING, tick.position); ctx.stroke()
+      }
+      ctx.fillStyle = '#86efac'
+      ctx.textAlign = 'center'
+      for (const tick of rulers.y) {
+        ctx.fillText(tick.label, tick.position, height - PADDING + 15)
+        ctx.beginPath(); ctx.moveTo(tick.position, height - PADDING); ctx.lineTo(tick.position, height - PADDING + 4); ctx.stroke()
+      }
+      ctx.fillStyle = '#fca5a5'
+      ctx.textAlign = 'left'
+      ctx.fillText('X ↑ (m)', 8, 18)
+      ctx.fillStyle = '#86efac'
+      ctx.textAlign = 'center'
+      ctx.fillText('← Y (m)', width / 2, height - 10)
     }
 
-    const resizeObserver = new ResizeObserver(draw)
-    resizeObserver.observe(host)
-    draw()
-
-    return () => resizeObserver.disconnect()
+    return observeCanvasViewport(host, draw)
   }, [
     bounds,
     executionPath,
@@ -601,6 +640,8 @@ export function PointCloudTopDownCanvas({
       <div className="pcd-canvas-host" ref={hostRef}>
         <canvas
           ref={canvasRef}
+          role="img"
+          aria-label="二维地图，X 轴向上、Y 轴向左，刻度单位为米"
           className={mode !== 'none' ? 'is-adding' : isPanning ? 'is-panning' : 'is-draggable'}
           onWheel={(event) => {
             if (!bounds) return
@@ -698,6 +739,13 @@ export function PointCloudTopDownCanvas({
             setPendingWaypoint(null)
           }}
         />
+      </div>
+      <div className="pcd-topdown-measurements" aria-label="地图范围尺寸">
+        {extents ? <>
+          <div className="pcd-topdown-spans"><span>X 跨度 <strong>{extents.x.toFixed(2)} m</strong></span><span>Y 跨度 <strong>{extents.y.toFixed(2)} m</strong></span></div>
+          <div>矩形范围面积 <strong>{extents.area.toFixed(2)} m²</strong></div>
+          <small>X × Y，按点云外接矩形估算，非可通行面积。</small>
+        </> : <span>等待地图范围数据</span>}
       </div>
     </div>
   )

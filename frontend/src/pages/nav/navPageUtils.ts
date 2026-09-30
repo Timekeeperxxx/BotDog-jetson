@@ -196,7 +196,7 @@ export function compactRuntimeMessage(message: string) {
     return '还没有接收端，请稍后或重新重启导航定位。'
   }
   if (message.includes('target_frame does not exist') || message.includes('map') && message.includes('TF')) {
-    return '未获取到 TF 位姿数据，请点击右上角“重启导航定位”开始标记位姿。'
+    return '导航定位未就绪，暂时无法导航。请点击顶部“重启导航定位”，再按提示标记当前位置。'
   }
   if (message.includes('超时')) {
     return '等待超时，请查看日志后重试。'

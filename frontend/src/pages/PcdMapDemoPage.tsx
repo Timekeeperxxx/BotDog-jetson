@@ -21,6 +21,7 @@ import {
   waitInitialposeReady,
 } from '../api/pcdMapApi'
 import { detectWebGLSupport } from '../components/pcd/webglSupport'
+import { NO_HEIGHT_CLIP, type HeightClip } from '../components/pcd/PointCloudHeightClip'
 import { useRobotControl } from '../hooks/useRobotControl'
 import { useKeyboardRobotControl } from '../hooks/useKeyboardRobotControl'
 import { useFenceDetection } from '../hooks/useFenceDetection'
@@ -33,15 +34,14 @@ import type {
   NavWaypoint,
   NavFence,
   PcdSceneItem,
-  PointCloudQualityMode,
   RosbagRecordingResponse,
-  WallColorMode,
 } from '../types/pcdMap'
 import { validateWaypointName } from '../utils/navWaypointValidation'
 import { MIN_MAPPING_RUNTIME_SECONDS, useNavMappingControls } from './nav/useNavMappingControls'
 import { useNavPointCloudViewModel } from './nav/useNavPointCloudViewModel'
 import { useLocalizationDiagnostics } from './nav/useLocalizationDiagnostics'
 import { useNavScenes } from './nav/useNavScenes'
+import { loadPointCloudPreferences, loadSceneHeightClip, savePointCloudPreferences, saveSceneHeightClip } from './nav/pointCloudPreferences'
 import { useNavTasks } from './nav/useNavTasks'
 import {
   GoToWaypointConfirmDialog,
@@ -58,6 +58,7 @@ import {
   formatRestartHealthLog,
   getNavigationStatusNotice,
   getRelocationNotice,
+  summarizeLocalizationStatus,
 } from './nav/navPageUtils'
 import type { LogItem, RelocationPromptState } from './nav/navPageUtils'
 
@@ -72,13 +73,10 @@ export function PcdMapDemoPage() {
   const canOperate = hasAuthSession() && hasRole('operator')
   const fenceDetection = useFenceDetection()
   const [pcdLayerPanelOpen, setPcdLayerPanelOpen] = useState(false)
-  const [pcdLayerVisibility, setPcdLayerVisibility] = useState<PcdLayerVisibility>({
-    map: true,
-    ground: true,
-    footprint: true,
-  })
-  const [wallColorMode, setWallColorMode] = useState<WallColorMode>('intensity')
-  const [pointCloudQualityMode, setPointCloudQualityMode] = useState<PointCloudQualityMode>('auto')
+  const [pointCloudPreferences, setPointCloudPreferences] = useState(loadPointCloudPreferences)
+  const { pcdLayerVisibility, wallColorMode, pointCloudQualityMode, pointSize, intensityPreference } = pointCloudPreferences
+  const [heightClip, setHeightClip] = useState<HeightClip>(NO_HEIGHT_CLIP)
+  useEffect(() => savePointCloudPreferences(pointCloudPreferences), [pointCloudPreferences])
   const [waypoints, setWaypoints] = useState<NavWaypoint[]>([])
   const [fences, setFences] = useState<NavFence[]>([])
   const [fencesVisible, setFencesVisible] = useState(true)
@@ -86,6 +84,7 @@ export function PcdMapDemoPage() {
   const [fenceMode, setFenceMode] = useState(false)
   const [activeDrawer, setActiveDrawer] = useState<'task' | 'map' | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
+  const [rightRailOpen, setRightRailOpen] = useState(true)
   const [followRobot, setFollowRobot] = useState(false)
   const [toolMode, setToolMode] = useState<'none' | 'obstacle' | 'pose'>('none')
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
@@ -249,6 +248,7 @@ export function PcdMapDemoPage() {
     preview,
     tileManifest,
     loading,
+    cloudPreparation,
     refreshScenes,
     selectScene,
     previewLayers,
@@ -261,8 +261,18 @@ export function PcdMapDemoPage() {
     onSceneChanging: handleSceneChanging,
   })
 
+  useEffect(() => {
+    setHeightClip(loadSceneHeightClip(selectedSceneId))
+  }, [selectedSceneId])
+
+  const handleHeightClip = useCallback((value: HeightClip) => {
+    setHeightClip(value)
+    if (selectedSceneId) saveSceneHeightClip(selectedSceneId, value)
+  }, [selectedSceneId])
+
   const sceneDisplayPointCount = useMemo(() => {
     if (!tileManifest) return null
+    if (tileManifest.potree) return tileManifest.potree.layers.reduce((sum, layer) => sum + layer.point_count, 0)
     const tier = pointCloudQualityMode === 'performance'
       ? 'performance'
       : pointCloudQualityMode === 'quality'
@@ -361,7 +371,7 @@ export function PcdMapDemoPage() {
     ? { title: '重定位模式', message: '在 3D 蓝色 ground.pcd 上按住当前位置，拖动确定朝向。' }
     : null
   const localizationNotice = displayLocalizationStatus && displayLocalizationStatus.status !== 'ok'
-    ? { title: '定位状态', message: displayLocalizationStatus.message }
+    ? { title: '定位尚未就绪', message: summarizeLocalizationStatus(displayLocalizationStatus.status, displayLocalizationStatus.message) }
     : null
   const navigationNotice = getNavigationStatusNotice(navigationStatus)
   const stateNotice = (diagnostic?.phase === 'ready' ? navigationNotice : null) ?? diagnosticNotice ?? relocationNotice ?? fenceModeNotice ?? waypointModeNotice ?? poseModeNotice ?? localizationNotice ?? navigationNotice
@@ -758,7 +768,13 @@ export function PcdMapDemoPage() {
   }, [addLog])
 
   const handleTogglePcdLayer = useCallback((layer: keyof PcdLayerVisibility) => {
-    setPcdLayerVisibility((value) => ({ ...value, [layer]: !value[layer] }))
+    setPointCloudPreferences((value) => ({
+      ...value,
+      pcdLayerVisibility: {
+        ...value.pcdLayerVisibility,
+        [layer]: !value.pcdLayerVisibility[layer],
+      },
+    }))
   }, [])
 
   const handleToggleKeyboardControl = useCallback(() => {
@@ -925,6 +941,7 @@ export function PcdMapDemoPage() {
         batteryPct={telemetry?.battery_pct}
         canOperate={canOperate}
         loading={loading}
+        loadingMessage={cloudPreparation}
         previewAvailable={Boolean(preview || tileManifest)}
         restartLocalizationSending={restartLocalizationSending}
         selectedSceneNavigable={selectedSceneNavigable}
@@ -933,7 +950,7 @@ export function PcdMapDemoPage() {
         onToggleWaypointMode={handleToggleWaypointMode}
       />
 
-      <div className="pcd-workspace">
+      <div className={`pcd-workspace ${rightRailOpen ? '' : 'is-right-rail-collapsed'}`}>
         <section className="pcd-main-stage">
           <div className="pcd-main-viewer">
             <NavMainViewer
@@ -944,6 +961,9 @@ export function PcdMapDemoPage() {
               layers={allLayers}
               mode={pointCloudMode}
               pointCloudQualityMode={pointCloudQualityMode}
+              heightClip={heightClip}
+              pointSize={pointSize}
+              intensityPreference={intensityPreference}
               robotPose={robotPose}
               viewKey={pointCloudViewKey}
               wallColorMode={wallColorMode}
@@ -1041,6 +1061,12 @@ export function PcdMapDemoPage() {
             pcdLayerPanelOpen={pcdLayerPanelOpen}
             pcdLayerVisibility={pcdLayerVisibility}
             pointCloudQualityMode={pointCloudQualityMode}
+            heightClip={heightClip}
+            onHeightClip={handleHeightClip}
+            pointSize={pointSize}
+            onPointSize={(value) => setPointCloudPreferences((current) => ({ ...current, pointSize: value }))}
+            intensityPreference={intensityPreference}
+            onIntensityPreference={(value) => setPointCloudPreferences((current) => ({ ...current, intensityPreference: value }))}
             radarChecking={radarChecking}
             rosbagLoading={rosbagLoading}
             rosbagRunning={Boolean(rosbagStatus?.running)}
@@ -1061,8 +1087,8 @@ export function PcdMapDemoPage() {
             onToggleKeyboardControl={handleToggleKeyboardControl}
             onToggleLayer={handleTogglePcdLayer}
             onToggleLayerPanel={() => setPcdLayerPanelOpen((value) => !value)}
-            onSelectWallColorMode={setWallColorMode}
-            onSelectPointCloudQualityMode={setPointCloudQualityMode}
+            onSelectWallColorMode={(value) => setPointCloudPreferences((current) => ({ ...current, wallColorMode: value }))}
+            onSelectPointCloudQualityMode={(value) => setPointCloudPreferences((current) => ({ ...current, pointCloudQualityMode: value }))}
             onToggleMapping={handleToggleMapping}
             onToggleNavAutoTrack={() => void handleToggleNavAutoTrack()}
             onToolMode={handleToolMode}
@@ -1070,6 +1096,7 @@ export function PcdMapDemoPage() {
         </section>
 
         <NavRightRail
+          open={rightRailOpen}
           bounds={rightRailBounds}
           canOperate={canOperate}
           localizationStopSending={localizationStopSending}
@@ -1095,6 +1122,7 @@ export function PcdMapDemoPage() {
           onToggleFencesVisible={() => setFencesVisible((value) => !value)}
           onToggleFenceEnabled={(fenceId, enabled) => void handleToggleFenceEnabled(fenceId, enabled)}
           onDeleteFence={(fenceId) => void handleDeleteFence(fenceId)}
+          onToggle={() => setRightRailOpen((value) => !value)}
         />
 
         <NavMessageCenter

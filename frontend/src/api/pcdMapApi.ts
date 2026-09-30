@@ -283,14 +283,25 @@ export function getPcdScenePreview(sceneId: string, maxPoints?: number): Promise
   })
 }
 
-export function getPcdSceneTileManifest(
+export async function getPcdSceneTileManifest(
   sceneId: string,
   signal?: AbortSignal,
+  onProgress?: (message: string) => void,
 ): Promise<PcdSceneTileManifest> {
-  return apiFetch<PcdSceneTileManifest>(
-    `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/tiles/manifest`,
-    { signal },
-  )
+  for (;;) {
+    signal?.throwIfAborted()
+    const result = await apiFetch<PcdSceneTileManifest | { status: string; message?: string }>(
+      `/api/v1/nav/pcd-scenes/${encodeURIComponent(sceneId)}/potree/manifest`, { signal },
+    )
+    if (!('status' in result)) return result
+    if (result.status === 'error') throw new Error(result.message || '原始点云准备失败')
+    onProgress?.(result.message || '正在准备原始点云')
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { window.clearTimeout(timer); reject(signal?.reason) }
+      const timer = window.setTimeout(() => { signal?.removeEventListener('abort', abort); resolve() }, 800)
+      signal?.addEventListener('abort', abort, { once: true })
+    })
+  }
 }
 
 export function getPcdSceneTile(
