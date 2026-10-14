@@ -16,7 +16,8 @@
 <div class="metrics"><div class="metric">处理帧率<strong id="fps">—</strong></div><div class="metric">推理耗时<strong id="inference">—</strong></div><div class="metric">传输＋处理<strong id="latency">—</strong></div></div>
 <p id="people">尚未开始识别</p><p class="footer">视频帧仅用于本次识别，不保存。画面显示的是完成识别的帧，骨架与图像对应。</p>
 </section><aside class="side"><span class="badge">复用板子姿态规则</span><h2>试试这些动作</h2><div class="guide">
-<h3>攀爬 / 翻越</h3><p>在安全平地模拟抬腿、撑越与抬手动作，保持髋部、膝盖和脚踝可见。单次举手不一定触发。</p>
+<h3>翻越</h3><p>观察撑扶高跨、撑跳或双腿依次高跨的过程，保持髋部、膝盖和脚踝可见。</p>
+<h3>攀爬</h3><p>观察抬手配合抬腿、双手过顶或抬手向上攀升的动作。单次举手不一定触发。</p>
 <h3>疑似破坏动作</h3><p>双手保持在胸口及以上，任一只手上下或左右活动约 0.8 秒即可；不要求固定往复次数。双肩和手腕要可见。整理衣服、搓手也可能触发。</p>
 <h3>蹲伏 / 倒地 / 停留</h3><p id="thresholds">开始后显示板子当前持续时长阈值。倒地测试请使用安全垫面。</p></div>
 <div class="results"><h2>本次识别事件</h2><p id="empty" class="empty">动作满足规则后会出现在这里。</p><ul id="events" aria-live="polite" aria-label="识别事件"></ul><button id="clear" style="margin-top:16px">清空列表</button></div>
@@ -24,23 +25,23 @@
 <script>
 const $=id=>document.getElementById(id),video=$('video'),view=$('view'),ctx=view.getContext('2d');
 const frame=document.createElement('canvas');frame.width=640;frame.height=480;const capture=frame.getContext('2d');
-const names={POSE_CLIMBING_SUSPECTED:'疑似攀爬 / 翻越',POSE_DAMAGE_SUSPECTED:'疑似破坏动作',POSE_CROUCHING:'持续蹲伏',POSE_LYING:'疑似倒地',POSE_LOITERING:'持续停留'};
+const names={POSE_CLIMBING_SUSPECTED:'疑似攀爬',POSE_VAULTING_SUSPECTED:'疑似翻越',POSE_DAMAGE_SUSPECTED:'疑似破坏动作',POSE_CROUCHING:'持续蹲伏',POSE_LYING:'疑似倒地',POSE_LOITERING:'持续停留'};
 const posture={standing:'站立',crouching:'蹲伏',lying:'倒地',climbing_suspected:'疑似攀爬',unknown:'姿态不确定'};
 const edges=[[5,6],[5,7],[7,9],[6,8],[8,10],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16]];
-let stream,ws,timer,watchdog,run=0,sentAt=0,lastResult=0,cooldown=15;
+let stream,ws,timer,watchdog,run=0,sentAt=0,lastResult=0,cooldown=2;
 const actionHolds=new Map();let actionTimer;
 function renderActionWarnings(){
  clearTimeout(actionTimer);const now=performance.now();
  for(const [code,until] of actionHolds)if(until!==null&&until<=now)actionHolds.delete(code);
  const labels=[...actionHolds].map(([code,until])=>`${names[code]}${until===null?'':'（结束后保留）'}`);
- $('latest-action').textContent=labels.length?`动作警告：${labels.join('、')}`:'当前无破坏或攀爬警告；已触发事件保留在下方列表。';
+ $('latest-action').textContent=labels.length?`动作警告：${labels.join('、')}`:'当前无破坏、攀爬或翻越警告；已触发事件保留在下方列表。';
  $('latest-action').style.background=labels.length?'#fff1da':'#fff';
  const expiries=[...actionHolds.values()].filter(value=>value!==null);
  if(expiries.length)actionTimer=setTimeout(renderActionWarnings,Math.max(0,Math.min(...expiries)-now));
 }
 function updateActionWarnings(actions){
  const active=new Set(actions);const now=performance.now();
- for(const code of ['POSE_DAMAGE_SUSPECTED','POSE_CLIMBING_SUSPECTED']){
+ for(const code of ['POSE_DAMAGE_SUSPECTED','POSE_CLIMBING_SUSPECTED','POSE_VAULTING_SUSPECTED']){
   if(active.has(code))actionHolds.set(code,null);
   else if(actionHolds.has(code)&&actionHolds.get(code)===null)actionHolds.set(code,now+1000);
  }

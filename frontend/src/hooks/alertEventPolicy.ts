@@ -1,6 +1,8 @@
 import type { AlertEvent } from '../types/event';
 
-export const ALERT_MERGE_WINDOW_MS = 60_000;
+// 当前告警列表中，同一类别持续合并；原始抓拍记录各自保留。
+export const ALERT_MERGE_WINDOW_MS = Number.POSITIVE_INFINITY;
+export const ALERT_LATEST_DISPLAY_MS = 60_000;
 export const ALERT_HISTORY_LIMIT = 10;
 
 function alertMergeKey(alert: AlertEvent): string | null {
@@ -22,6 +24,7 @@ export function mergeAlertEvent(
   const incomingAt = timestampMs(incoming);
   const matchingIndex = previous.findIndex((item) => {
     if (!key || alertMergeKey(item) !== key) return false;
+    if (!Number.isFinite(mergeWindowMs)) return true;
     const itemAt = timestampMs(item);
     return (
       incomingAt !== null
@@ -35,11 +38,17 @@ export function mergeAlertEvent(
   }
 
   const matching = previous[matchingIndex];
+  const matchingAt = timestampMs(matching);
+  const isLatest = incomingAt === null || matchingAt === null || incomingAt >= matchingAt;
+  const firstTimes = [matching.first_timestamp ?? matching.timestamp, incoming.first_timestamp ?? incoming.timestamp];
+  const firstTimestamp = firstTimes.reduce((first, next) => (
+    Number.isFinite(Date.parse(next)) && (!Number.isFinite(Date.parse(first)) || Date.parse(next) < Date.parse(first)) ? next : first
+  ));
+  const sameEvidence = incoming.evidence_id !== undefined && incoming.evidence_id === matching.evidence_id;
   const merged: AlertEvent = {
-    ...matching,
-    ...incoming,
-    first_timestamp: matching.first_timestamp ?? matching.timestamp,
-    repeat_count: Math.max(1, Number(matching.repeat_count) || 1) + 1,
+    ...(isLatest ? { ...matching, ...incoming } : { ...incoming, ...matching }),
+    first_timestamp: firstTimestamp,
+    repeat_count: Math.max(1, Number(matching.repeat_count) || 1) + (sameEvidence ? 0 : 1),
   };
 
   return [
@@ -77,7 +86,8 @@ const alertTitles: Record<string, string> = {
   E_AI_GUNS: '发现疑似枪械',
   E_AI_KNIFE: '发现疑似刀具',
   E_POSE_DAMAGE_SUSPECTED: '疑似破坏动作',
-  E_POSE_CLIMBING_SUSPECTED: '人员疑似攀爬或翻越',
+  E_POSE_CLIMBING_SUSPECTED: '人员疑似攀爬',
+  E_POSE_VAULTING_SUSPECTED: '人员疑似翻越',
   E_POSE_LYING: '人员疑似倒地',
   E_POSE_CROUCHING: '人员持续蹲伏',
   E_POSE_LOITERING: '人员在画面中持续停留',

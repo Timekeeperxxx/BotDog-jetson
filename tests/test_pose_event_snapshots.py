@@ -42,14 +42,19 @@ class _Worker(AIWorkerProcessingMixin):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('event_type,event_code,label', [
+    ('POSE_CLIMBING_SUSPECTED', 'E_POSE_CLIMBING_SUSPECTED', '检测到人员疑似攀爬'),
+    ('POSE_VAULTING_SUSPECTED', 'E_POSE_VAULTING_SUSPECTED', '检测到人员疑似翻越'),
+])
 async def test_climbing_event_immediately_saves_snapshot_and_evidence(
     monkeypatch: pytest.MonkeyPatch,
+    event_type: str, event_code: str, label: str,
 ) -> None:
     alert_service = _AlertService()
     monkeypatch.setattr(processing, "get_alert_service", lambda: alert_service)
     worker = _Worker()
     event = PoseEvent(
-        event_type="POSE_CLIMBING_SUSPECTED",
+        event_type=event_type,
         track_id=7,
         confidence=0.91,
         bbox=(10, 20, 100, 200),
@@ -61,7 +66,8 @@ async def test_climbing_event_immediately_saves_snapshot_and_evidence(
 
     assert worker.saved_frames == [b"current-frame"]
     assert len(alert_service.calls) == 1
-    assert alert_service.calls[0]["event_type"] == "POSE_CLIMBING_SUSPECTED"
-    assert alert_service.calls[0]["event_code"] == "E_POSE_CLIMBING_SUSPECTED"
+    assert alert_service.calls[0]["event_type"] == event_type
+    assert alert_service.calls[0]["event_code"] == event_code
+    assert alert_service.calls[0]["message"].startswith(label + '：')
     assert alert_service.calls[0]["file_path"] == "/snapshots/climbing.jpg"
     assert alert_service.calls[0]["image_url"] == "/api/v1/static/climbing.jpg"

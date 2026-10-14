@@ -7,7 +7,9 @@ import { getWsUrl } from '../config/api';
 import type { AlertEvent, AIStatus, EventWebSocketStatus, AutoTrackStatus } from '../types/event';
 import type { TrackDecision } from './useAutoTrack';
 import type { TrackOverlayData } from '../components/TrackOverlay1';
-import { ALERT_MERGE_WINDOW_MS, mergeAlertEvent, parseAlertEvent } from './alertEventPolicy';
+import { ALERT_LATEST_DISPLAY_MS, mergeAlertEvent, parseAlertEvent } from './alertEventPolicy';
+import { mergePoseOverlay, type PoseOverlayPayload } from './poseOverlayPolicy';
+import { recordAlertReceived } from './alertReceipt';
 
 export interface EventHookState {
   status: EventWebSocketStatus;
@@ -79,6 +81,8 @@ export function useEventWebSocket(): EventHookState {
       };
 
       ws.onmessage = (event) => {
+        const receivedAt = performance.now();
+        const pageVisible = document.visibilityState === 'visible';
         if (currentConnectionId !== connectionIdRef.current) {
           return;
         }
@@ -115,29 +119,16 @@ export function useEventWebSocket(): EventHookState {
           }
 
           if (message.msg_type === 'POSE_OVERLAY' && message.payload) {
-            const payload = message.payload as unknown as Pick<
-              TrackOverlayData,
-              'frame_w' | 'frame_h' | 'detections' | 'poses' | 'keypoint_confidence' | 'active_actions'
-            >;
-            setTrackOverlay((previous) => ({
-              persons: previous?.persons ?? [],
-              active_bbox: previous?.active_bbox ?? null,
-              command: previous?.command ?? null,
-              reason: previous?.reason ?? '',
-              state: previous?.state ?? 'POSE',
-              deadband_px: previous?.deadband_px ?? 0,
-              anchor_y_stop_ratio: previous?.anchor_y_stop_ratio ?? 1,
-              forward_area_ratio: previous?.forward_area_ratio ?? 1,
-              ...previous,
-              ...payload,
-              received_at_ms: performance.now(),
-              pose_received_at_ms: performance.now(),
-            }));
+            const payload = message.payload as unknown as PoseOverlayPayload;
+            setTrackOverlay((previous) => mergePoseOverlay(previous, payload, performance.now()));
             return;
           }
 
           const alert = parseAlertEvent(message);
           if (!alert) return;
+          if (alert.evidence_id && alert.timing) {
+            alert.receipt_observation = recordAlertReceived(alert.evidence_id, receivedAt, pageVisible);
+          }
 
           setLatestAlert(alert);
           setAlerts((prev) => mergeAlertEvent(prev, alert));
@@ -187,7 +178,7 @@ export function useEventWebSocket(): EventHookState {
     const currentAlert = latestAlert;
     const timer = window.setTimeout(() => {
       setLatestAlert((value) => value === currentAlert ? null : value);
-    }, ALERT_MERGE_WINDOW_MS);
+    }, ALERT_LATEST_DISPLAY_MS);
     return () => window.clearTimeout(timer);
   }, [latestAlert]);
 

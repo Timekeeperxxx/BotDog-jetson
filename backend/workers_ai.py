@@ -349,10 +349,14 @@ class AIWorker(AIWorkerProcessingMixin):
         self._current_task_id: Optional[int | str] = None
         self._last_task_check_time: float = 0.0
 
-        # 按轨迹去重；身份恢复不删除历史报警，避免同一人员反复告警。
+        # 按轨迹记录最近告警时间；持续出现的未授权人员按冷却间隔复报。
         self._person_alert_last_seen: dict[int, int] = {}
+        self._person_last_alert_at: dict[int, float] = {}
+        self._person_alert_boxes: dict[int, tuple[int, int, int, int]] = {}
         self._person_pose_hits: dict[int, int] = {}
         self._person_alert_frame = 0
+        from .person_alert_confirmation import PersonAlertConfirmation
+        self._person_confirmation = PersonAlertConfirmation(max_missing_frames=self._reset_misses)
         self._face_fault_reported = False
 
         # 兼容状态（状态接口保留）
@@ -408,6 +412,7 @@ class AIWorker(AIWorkerProcessingMixin):
         self._pose_detector: UltralyticsPoseDetector | None = None
         self._pose_event_engine: PoseEventEngine | None = None
         self._weapon_status = "disabled"
+        self._weapon_generation = 0
         self._weapon_detector: _YoloDetector | None = None
         self._weapon_frame_skip = max(1, int(settings.WEAPON_FRAME_SKIP))
         self._weapon_active_until = 0.0
@@ -483,20 +488,7 @@ class AIWorker(AIWorkerProcessingMixin):
 
         if settings.WEAPON_ENABLED and not settings.AI_SIMULATE_DETECTION:
             try:
-                self._weapon_detector = _YoloDetector(
-                    model_path=settings.WEAPON_MODEL_PATH,
-                    device=settings.WEAPON_DEVICE,
-                    confidence=settings.WEAPON_CONFIDENCE_THRESHOLD,
-                    target_classes=settings.WEAPON_TARGET_CLASSES,
-                    frame_width=self._frame_width,
-                    frame_height=self._frame_height,
-                    inference_imgsz=settings.WEAPON_INFERENCE_IMGSZ,
-                    use_bytetrack=False,
-                    class_aliases={
-                        "Firearm": "guns",
-                        "Melee_Weapon": "knife",
-                    },
-                )
+                self._weapon_detector = self._create_weapon_detector()
                 self._weapon_status = "ready"
                 weapon_logger.info(
                     "武器模型已就绪：path={}，device={}，imgsz={}，classes={}，frame_skip={}",
@@ -549,6 +541,55 @@ class AIWorker(AIWorkerProcessingMixin):
                 self._pose_status = "failed"
                 pose_logger.error("姿态模型加载失败，姿态支路已降级：{}", exc)
                 pose_logger.debug("姿态模型加载堆栈：\n{}", traceback.format_exc())
+
+    def _create_weapon_detector(self) -> _YoloDetector:
+        return _YoloDetector(
+            model_path=settings.WEAPON_MODEL_PATH,
+            device=settings.WEAPON_DEVICE,
+            confidence=settings.WEAPON_CONFIDENCE_THRESHOLD,
+            target_classes=settings.WEAPON_TARGET_CLASSES,
+            frame_width=self._frame_width,
+            frame_height=self._frame_height,
+            inference_imgsz=settings.WEAPON_INFERENCE_IMGSZ,
+            use_bytetrack=False,
+            class_aliases={"Firearm": "guns", "Melee_Weapon": "knife"},
+        )
+
+    def _clear_weapon_confirmation(self) -> None:
+        self._weapon_active_until = 0.0
+        self._weapon_first_seen.clear()
+        for class_name in self._weapon_hits:
+            self._weapon_hits[class_name] = 0
+            self._weapon_last_bbox[class_name] = None
+        self._last_weapon_ms = 0.0
+
+    async def set_weapon_detection_enabled(self, enabled: bool) -> None:
+        # A generation also invalidates old results when off/on happens during inference.
+        self._weapon_generation += 1
+        generation = self._weapon_generation
+        settings.WEAPON_ENABLED = False
+        self._clear_weapon_confirmation()
+        self._weapon_status = "disabled"
+        if not enabled:
+            return
+        if settings.AI_SIMULATE_DETECTION:
+            raise ValueError("模拟模式不支持刀枪模型检测")
+        if self._weapon_detector is None:
+            self._weapon_status = "loading"
+            try:
+                detector = await self._run_inference("刀枪模型加载", self._create_weapon_detector)
+            except Exception as exc:
+                if generation == self._weapon_generation:
+                    self._weapon_status = "failed"
+                raise ValueError(f"刀枪模型加载失败：{exc}") from exc
+            if generation != self._weapon_generation:
+                raise ValueError("刀枪检测设置已被后续操作更新")
+            self._weapon_detector = detector
+            self._weapon_warmed_up = False
+        if generation != self._weapon_generation:
+            raise ValueError("刀枪检测设置已被后续操作更新")
+        settings.WEAPON_ENABLED = True
+        self._weapon_status = "ready"
 
     def get_startup_status(self) -> dict[str, str]:
         weather_status = self._weather_service.get_status()
@@ -700,7 +741,7 @@ class AIWorker(AIWorkerProcessingMixin):
             if process.stdout is None:
                 raise AIWorkerError("天气刷新拉流失败")
             stderr_task = asyncio.create_task(self._drain_stderr(process))
-            while time.monotonic() >= self._weather_service.next_sample_at:
+            while time.monotonic() >= self._weather_service.next_sample_at or self._weather_service.round_in_progress:
                 frame = await asyncio.wait_for(
                     process.stdout.readexactly(self._frame_size),
                     timeout=self._ffmpeg_frame_timeout_s,
@@ -1028,13 +1069,12 @@ class AIWorker(AIWorkerProcessingMixin):
 
         fence_detection = get_fence_detection_service()
         fence_enabled = fence_detection is not None and fence_detection.enabled
-        # 刀枪支路不再跟随围栏开关：围栏是区域判定，刀枪是独立告警。
+        # 围栏开关启用全画面动作告警；刀枪保持独立告警。
         # 这里以前会在围栏关闭时清空刀枪的命中计数与冷却状态，等于让整条
         # 支路停摆，现已移除；刀枪状态由 _process_weapon_detections 自行维护。
         pose_observations_for_overlay: list[PoseObservation] | None = None
         fresh_pose_observations: list[PoseObservation] = []
         pose_events = []
-        fence_events = []
         # 摄像头通常以 20~25 FPS 输入，而 Worker 只消费最新帧。原始 frame_index
         # 会一次跳过数帧，拿它做取模可能导致 skip=2 仍然帧帧命中。各 AI 支路
         # 必须按实际进入推理的帧计数调度，才能得到稳定的 1/N 采样频率。
@@ -1048,7 +1088,8 @@ class AIWorker(AIWorkerProcessingMixin):
             )
         )
         now = time.monotonic()
-        weapon_active = now < self._weapon_active_until
+        weapon_generation = self._weapon_generation
+        weapon_active = settings.WEAPON_ENABLED and now < self._weapon_active_until
         weapon_due = self._is_weapon_due(inference_cycle_index, now=now)
         # 巡逻态下避免主检测、姿态、武器三个 TensorRT engine 同时争抢 GPU：
         # 与刀枪同轮冲突的姿态帧，本轮直接跳过，等下一个姿态周期再来。
@@ -1122,6 +1163,7 @@ class AIWorker(AIWorkerProcessingMixin):
                 observations, pose_events = self._pose_event_engine.update(
                     raw_poses,
                     zone_gate=get_zone_service(),
+                    # 只由功能开关控制，不读取围栏线、人员距离或观察就绪状态。
                     events_enabled=fence_enabled,
                     now=frame_read_at if frame_read_at is not None else pose_started_at,
                 )
@@ -1158,6 +1200,9 @@ class AIWorker(AIWorkerProcessingMixin):
                 else:
                     weapon_detections, weapon_ms = await weapon_task
                     weapon_task_consumed = True
+                if (not settings.WEAPON_ENABLED
+                        or weapon_generation != self._weapon_generation):
+                    weapon_detections = []
                 self._weapon_warmed_up = True
                 self._last_weapon_ms = weapon_ms
                 self._weapon_frames_processed += 1
@@ -1239,16 +1284,6 @@ class AIWorker(AIWorkerProcessingMixin):
             except Exception as exc:  # noqa: BLE001
                 ai_logger.warning("多源融合采样失败，本帧已跳过：{}", exc)
 
-            if fence_detection is not None and fence_enabled:
-                fence_events = fence_detection.process_frame(
-                    detections=detections,
-                    poses=fresh_pose_observations,
-                    frame_bgr=frame,
-                    frame_monotonic=(
-                        frame_read_at if frame_read_at is not None else time.monotonic()
-                    ),
-                )
-
             from .services_face_identities import get_face_identity_service
 
             face_stage_started = time.monotonic()
@@ -1275,6 +1310,9 @@ class AIWorker(AIWorkerProcessingMixin):
                     detection.display_name = None
             await self._report_face_service_fault(face_error)
             self._last_face_stage_ms = round((time.monotonic() - face_stage_started) * 1000, 1)
+            if not settings.WEAPON_ENABLED or weapon_generation != self._weapon_generation:
+                detections = [d for d in detections if d.label not in {"guns", "knife"}]
+                preview_detections = [d for d in preview_detections if d.label not in {"guns", "knife"}]
             overlay_stage_started = time.monotonic()
             await self._broadcast_pose_overlay(
                 pose_observations_for_overlay
@@ -1294,14 +1332,13 @@ class AIWorker(AIWorkerProcessingMixin):
 
             events_stage_started = time.monotonic()
             # 先发布画框，再保存证据和广播告警；这些 I/O 不应拖住当前画面。
-            if weapon_due:
+            if (weapon_due and settings.WEAPON_ENABLED
+                    and weapon_generation == self._weapon_generation):
                 await self._process_weapon_detections(eligible_weapon_detections, frame)
             if pose_due:
                 await self._process_pose_events(pose_events, frame)
-            if fence_enabled:
-                await self._process_fence_events(fence_events, frame)
             # 围栏保留开启状态；显式跟踪联动接管时只放行 AutoTrack，
-            # Guard 仍不可争抢控制，围栏几何判定等待恢复观察后继续。
+            # Guard 仍不可争抢控制；动作告警不依赖云台观察状态或人员距离。
             await self._process_detection(
                 detections,
                 frame,
@@ -1371,7 +1408,7 @@ class AIWorker(AIWorkerProcessingMixin):
         return raw_poses, pose_started_at, pose_ms
 
     def _is_weapon_due(self, cycle_index: int, *, now: float | None = None) -> bool:
-        if self._weapon_detector is None:
+        if not settings.WEAPON_ENABLED or self._weapon_detector is None:
             return False
         current_time = time.monotonic() if now is None else now
         if current_time < self._weapon_active_until:
@@ -1383,8 +1420,9 @@ class AIWorker(AIWorkerProcessingMixin):
         frame: bytes,
         persons: list[DetectionResult] | None = None,
     ) -> tuple[list[DetectionResult], float]:
-        if self._weapon_detector is None:
+        if not settings.WEAPON_ENABLED or self._weapon_detector is None:
             return [], 0.0
+        generation = self._weapon_generation
         weapon_started_at = time.monotonic()
         if bool(settings.WEAPON_PERSON_CROP_ENABLED):
             regions = [
@@ -1411,6 +1449,8 @@ class AIWorker(AIWorkerProcessingMixin):
         else:
             detections = await self._run_inference("刀枪", self._weapon_detector.detect_many, frame)
         weapon_ms = round((time.monotonic() - weapon_started_at) * 1000, 1)
+        if not settings.WEAPON_ENABLED or generation != self._weapon_generation:
+            return [], weapon_ms
         return detections, weapon_ms
 
     async def _maybe_process_weather(self, frame: bytes, *, defer: bool = False) -> None:
@@ -1418,7 +1458,7 @@ class AIWorker(AIWorkerProcessingMixin):
             self._last_weather_ms = 0.0
             return
         now = time.monotonic()
-        # 轮间由天气服务安排 300/10 秒；轮内连续取三张新帧。
+        # 轮内间隔取新帧并观察至少10秒；采样期限由天气服务管理。
         if now < self._weather_service.next_sample_at or now - self._last_weather_inference_at < 0.5:
             self._last_weather_ms = 0.0
             return

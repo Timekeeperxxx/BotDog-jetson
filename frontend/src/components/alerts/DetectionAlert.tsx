@@ -19,7 +19,7 @@ export interface DetectionAlertProps {
 
 export function DetectionAlert({ data, onOpenEvidence }: DetectionAlertProps) {
   const alertRef = useRef<HTMLButtonElement>(null);
-  useAlertDisplayReceipt(alertRef, data.evidence_id, Boolean(data.timing));
+  useAlertDisplayReceipt(alertRef, data.evidence_id, Boolean(data.timing), data.receipt_observation);
   const severity = String(data.severity || 'INFO').toUpperCase();
   const imageSrc = getImageUrl(data.image_url);
   const summary = alertSummary(data);

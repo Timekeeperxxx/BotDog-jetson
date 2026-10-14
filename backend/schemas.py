@@ -132,6 +132,7 @@ class LogFileTailPage(BaseModel):
 
 
 class EvidenceItem(BaseModel):
+    alert_label: Optional[str] = None
     timing: dict | None = None
     evidence_id: int
     task_id: Optional[int] = None    # 可为 NULL：AI/温度告警可在无巡检任务时触发
@@ -147,8 +148,15 @@ class EvidenceItem(BaseModel):
     created_at: str
 
 
+class EvidenceLabel(BaseModel):
+    value: str
+    label: str
+    count: int
+
+
 class EvidenceListResponse(BaseModel):
     items: list[EvidenceItem]
+    labels: list[EvidenceLabel] = Field(default_factory=list)
     offset: int = 0
     limit: int = 100
     has_more: bool = False
@@ -474,6 +482,20 @@ class MappingControlRequest(BaseModel):
     scene_name: str | None = Field(default=None, max_length=100, description="建图场景名称")
 
 
+class MappingSaveProgress(BaseModel):
+    stage: str
+    label: str
+    detail: str = ""
+    stage_started_at: float | None = None
+    stage_elapsed_seconds: float | None = None
+    updated_at: float | None = None
+    update_age_seconds: float | None = None
+    completed: int | None = None
+    total: int | None = None
+    unit: str | None = None
+    baseline_saved: bool = False
+
+
 class MappingControlResponse(BaseModel):
     success: bool
     enabled: bool
@@ -484,6 +506,12 @@ class MappingControlResponse(BaseModel):
     map_dir: str | None = None
     pid: int | None = None
     started_at: float | None = None
+    save_started_at: float | None = None
+    save_elapsed_seconds: float | None = None
+    save_worker_alive: bool | None = None
+    save_progress: MappingSaveProgress | None = None
+    height_refinement_state: str | None = None
+    height_refinement_reason: str | None = None
     map_pcd_candidates: list[str] | None = None
     ground_pcd_candidates: list[str] | None = None
     pcd_files: list[dict[str, Any]] | None = None

@@ -298,9 +298,9 @@ export function NavToolStrip({
           </div>
         )}
       </section>
-      {mappingSessionInfo ? (
+      {mappingSessionInfo && !mappingSaving ? (
         <section className="pcd-mapping-session">
-          <strong>{mappingSaving ? '正在保存场景' : '当前建图场景'}：{mappingSessionInfo.sceneName}</strong>
+          <strong>当前建图场景：{mappingSessionInfo.sceneName}</strong>
           <span>场景保存路径：{mappingSessionInfo.mapDir}</span>
         </section>
       ) : null}

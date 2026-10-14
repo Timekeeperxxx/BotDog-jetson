@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -12,6 +13,7 @@ from .alert_service import get_alert_service
 from .alert_timing import observation_timing
 from .config import settings
 from .lightweight_tracker import calc_iou
+from .person_alert_confirmation import PersonAlertConfirmation
 from .logging_config import get_logger
 from .models import InspectionTask
 from .pose_detection import PoseEvent, PoseObservation
@@ -167,7 +169,13 @@ class AIWorkerProcessingMixin:
 
     def _reset_detection_state(self) -> None:
         self._person_alert_last_seen.clear()
+        if hasattr(self, '_person_last_alert_at'):
+            self._person_last_alert_at.clear()
+        if hasattr(self, '_person_alert_boxes'):
+            self._person_alert_boxes.clear()
         self._person_pose_hits.clear()
+        if hasattr(self, '_person_confirmation'):
+            self._person_confirmation.clear()
         self._hits = 0
         self._misses = 0
         self._in_alert = False
@@ -233,6 +241,9 @@ class AIWorkerProcessingMixin:
         frame: bytes,
     ) -> None:
         """独立处理枪械/刀具命中，不受自动跟踪或驱离状态机短路影响。"""
+        if not settings.WEAPON_ENABLED:
+            self._clear_weapon_confirmation()
+            return
         now = asyncio.get_running_loop().time()
         detections_by_class: dict[str, list[DetectionResult]] = {}
         for detection in detections:
@@ -293,7 +304,9 @@ class AIWorkerProcessingMixin:
             if now - self._weapon_last_alert_at[class_name] < cooldown_seconds:
                 continue
 
-            await self._raise_alert(detection, frame)
+            emitted = await self._raise_alert(detection, frame)
+            if emitted is False:
+                continue
             self._weapon_last_alert_at[class_name] = now
             self._weapon_hits[class_name] = 0
             self._weapon_alerts_count += 1
@@ -377,34 +390,152 @@ class AIWorkerProcessingMixin:
             ai_logger.error("记录人脸服务故障失败：{}", exc)
 
     async def _process_person_alerts(self, detections, frame: bytes) -> None:
+        if not hasattr(self, '_person_last_alert_at'):
+            self._person_last_alert_at = {}
+        if not hasattr(self, '_person_alert_boxes'):
+            self._person_alert_boxes = {}
+        now = time.monotonic()
+        cooldown = max(0.0, float(settings.AI_COOLDOWN_SECONDS))
         self._person_alert_frame += 1
         tick = self._person_alert_frame
         persons = [
             d for d in detections
             if d.label == "person"
         ]
+        if not hasattr(self, '_person_confirmation'):
+            self._person_confirmation = PersonAlertConfirmation(max_missing_frames=self._reset_misses)
+        confirmed_ids = self._person_confirmation.update(
+            persons, frame=tick, required_hits=settings.PERSON_ALERT_STABLE_HITS,
+            pose_batch=getattr(self, '_pose_frames_processed', 0),
+            fresh_pose_ids=set(self._person_pose_hits),
+        )
+        await self._process_recognized_person_snapshots(persons, frame, tick)
         present_ids = {d.track_id for d in persons}
-        for track_id, last_seen in list(self._person_alert_last_seen.items()):
-            if track_id in present_ids:
-                self._person_alert_last_seen[track_id] = tick
-            elif tick - last_seen >= self._reset_misses:
-                del self._person_alert_last_seen[track_id]
         for detection in persons:
+            track_id = detection.track_id
+            bbox = getattr(detection, "bbox", None)
+            # 主检测和姿态兜底的轨迹编号可能不同。旧编号已不在本帧且人体框
+            # 仍重叠时，继承它的告警计时，避免换编号绕过重复提醒间隔。
+            if track_id not in self._person_last_alert_at and bbox is not None:
+                candidates = [
+                    (calc_iou(bbox, previous_bbox), previous_id)
+                    for previous_id, previous_bbox in self._person_alert_boxes.items()
+                    if previous_id not in present_ids
+                    and previous_id in self._person_last_alert_at
+                ]
+                if candidates:
+                    overlap, previous_id = max(candidates)
+                    if overlap >= 0.3:
+                        self._person_last_alert_at[track_id] = (
+                            self._person_last_alert_at.pop(previous_id)
+                        )
+                        self._person_alert_last_seen.pop(previous_id, None)
+                        self._person_alert_boxes.pop(previous_id, None)
+            self._person_alert_last_seen[track_id] = tick
+            if bbox is not None:
+                self._person_alert_boxes[track_id] = bbox
             if is_authorized_person(detection):
                 continue
-            if detection.track_id in self._person_alert_last_seen:
+            last_alert = self._person_last_alert_at.get(detection.track_id)
+            if last_alert is not None and now - last_alert < cooldown:
                 continue
-            if (
-                getattr(detection, "is_pose_fallback", False)
-                and self._person_pose_hits.get(detection.track_id, 0)
-                < max(1, settings.POSE_STABLE_HITS)
-            ):
+            if track_id not in confirmed_ids:
                 continue
-            await self._raise_alert(detection, frame)
+            category_last = getattr(self, '_person_category_last_alert_at', None)
+            if category_last is not None and now - category_last < cooldown:
+                continue
+            emitted = await self._raise_alert(detection, frame)
+            if emitted is False:
+                continue
+            self._person_category_last_alert_at = now
             self._person_alert_last_seen[detection.track_id] = tick
+            self._person_last_alert_at[detection.track_id] = now
+        # 先关联本帧的新编号，再确认旧轨迹离开，避免把重新出现的人体框
+        # 本身计成一次丢失。只有连续未匹配满阈值才清除重复提醒计时。
+        for track_id, last_seen in list(self._person_alert_last_seen.items()):
+            if tick - last_seen >= self._reset_misses:
+                del self._person_alert_last_seen[track_id]
+                self._person_last_alert_at.pop(track_id, None)
+                self._person_alert_boxes.pop(track_id, None)
 
-    async def _raise_alert(self, detection: DetectionResult, frame: bytes) -> None:
+    async def _process_recognized_person_snapshots(self, persons, frame: bytes, tick: int) -> None:
+        """档案库身份在本次连续出现期间保存一次，短时无脸不重拍。"""
+        if not hasattr(self, "_recognized_person_saved"):
+            self._recognized_person_saved = set()
+            self._recognized_person_seen = {}
+            self._recognized_person_tracks = {}
+        present = {d.track_id for d in persons}
+        for detection in persons:
+            track_id = detection.track_id
+            identity_id = self._recognized_person_tracks.get(track_id)
+            if identity_id is None and detection.bbox is not None:
+                # 检测源换编号时沿用仍重叠的人体，避免连续出现被当作新一次。
+                candidates = [
+                    (calc_iou(detection.bbox, box), previous_id)
+                    for previous_id, box in self._person_alert_boxes.items()
+                    if previous_id not in present and previous_id in self._recognized_person_tracks
+                ]
+                if candidates:
+                    overlap, previous_id = max(candidates)
+                    if overlap >= 0.3:
+                        identity_id = self._recognized_person_tracks.pop(previous_id)
+                        self._recognized_person_tracks[track_id] = identity_id
+            if is_authorized_person(detection):
+                identity_id = detection.identity_id
+                self._recognized_person_tracks[track_id] = identity_id
+            if identity_id is not None:
+                self._recognized_person_seen[identity_id] = tick
+            if not is_authorized_person(detection) or identity_id in self._recognized_person_saved:
+                continue
+            try:
+                if await self._record_recognized_person(detection, frame):
+                    self._recognized_person_saved.add(identity_id)
+            except Exception as exc:
+                ai_logger.error("保存档案库人员抓拍失败，下次确认后重试：{}", exc)
+        for identity_id, seen in list(self._recognized_person_seen.items()):
+            if tick - seen >= self._reset_misses:
+                self._recognized_person_seen.pop(identity_id, None)
+                self._recognized_person_saved.discard(identity_id)
+                self._recognized_person_tracks = {
+                    track_id: value for track_id, value in self._recognized_person_tracks.items()
+                    if value != identity_id
+                }
+
+    async def _record_recognized_person(self, detection, frame: bytes) -> bool:
         image_path, image_url = await self._save_snapshot(frame)
+        gps = self._get_latest_gps()
+        try:
+            async with self._session_factory() as session:
+                evidence = await get_alert_service().record_identity_snapshot(
+                    identity_id=detection.identity_id,
+                    display_name=getattr(detection, "display_name", None),
+                    confidence=getattr(detection, "face_score", None),
+                    file_path=str(image_path), image_url=image_url,
+                    gps_lat=gps[0], gps_lon=gps[1],
+                    task_id=self._current_task_id if isinstance(self._current_task_id, int) else None,
+                    session=session,
+                )
+        except Exception:
+            image_path.unlink(missing_ok=True)
+            raise
+        return evidence.evidence_id is not None
+
+    async def _raise_alert(self, detection: DetectionResult, frame: bytes) -> bool:
+        weapon_generation = getattr(self, "_weapon_generation", 0)
+        if detection.label in {"guns", "knife"} and not settings.WEAPON_ENABLED:
+            return False
+        alert_service = get_alert_service()
+        due_check = getattr(alert_service, 'automatic_event_due', None)
+        if callable(due_check):
+            async with self._session_factory() as session:
+                if not await due_check(f'E_AI_{detection.label.upper()}', session):
+                    return False
+        image_path, image_url = await self._save_snapshot(frame)
+        if detection.label in {"guns", "knife"} and (
+            not settings.WEAPON_ENABLED
+            or weapon_generation != getattr(self, "_weapon_generation", 0)
+        ):
+            return False
         gps = self._get_latest_gps()
 
         label_zh: dict[str, str] = {
@@ -430,7 +561,9 @@ class AIWorkerProcessingMixin:
         alert_service = get_alert_service()
 
         async with self._session_factory() as session:
-            await alert_service.handle_ai_event(
+            evidence = await alert_service.handle_ai_event(
+                event_guard=(lambda: settings.WEAPON_ENABLED and weapon_generation == getattr(self, "_weapon_generation", 0))
+                if detection.label in {"guns", "knife"} else None,
                 event_type="AI_DETECTION",
                 event_code=f"E_AI_{detection.label.upper()}",
                 timing=observation_timing(
@@ -446,6 +579,7 @@ class AIWorkerProcessingMixin:
                 task_id=self._current_task_id if isinstance(self._current_task_id, int) else None,
                 session=session,
             )
+        return evidence is not None
 
     async def _process_pose_events(
         self,
@@ -464,7 +598,12 @@ class AIWorkerProcessingMixin:
             "POSE_CLIMBING_SUSPECTED": (
                 "E_POSE_CLIMBING_SUSPECTED",
                 "CRITICAL",
-                "检测到人员疑似攀爬或翻越",
+                "检测到人员疑似攀爬",
+            ),
+            "POSE_VAULTING_SUSPECTED": (
+                "E_POSE_VAULTING_SUSPECTED",
+                "CRITICAL",
+                "检测到人员疑似翻越",
             ),
             "POSE_LYING": (
                 "E_POSE_LYING",
@@ -490,6 +629,11 @@ class AIWorkerProcessingMixin:
                 event.event_type,
                 (f"E_{event.event_type}", "WARNING", "检测到异常人体姿态"),
             )
+            due_check = getattr(alert_service, 'automatic_event_due', None)
+            if callable(due_check):
+                async with self._session_factory() as session:
+                    if not await due_check(code, session):
+                        continue
             image_path, image_url = await self._save_snapshot(frame)
             pose_logger.info(
                 "异常姿态已自动抓拍：event={}，track_id={}，path={}",
@@ -522,83 +666,6 @@ class AIWorkerProcessingMixin:
                     session=session,
                 )
 
-    async def _process_fence_events(self, events, frame: bytes) -> None:
-        if not events:
-            return
-
-        from .fence_detection_service import FenceBehavior
-
-        event_meta = {
-            FenceBehavior.DWELLING: (
-                "FENCE_DWELL",
-                "E_FENCE_DWELL",
-                "WARNING",
-                "检测到人员在围栏附近停留",
-            ),
-            FenceBehavior.CONTACT: (
-                "FENCE_CONTACT",
-                "E_FENCE_CONTACT",
-                "WARNING",
-                "检测到人员接触围栏",
-            ),
-            FenceBehavior.CLIMBING_SUSPECTED: (
-                "FENCE_CLIMBING_SUSPECTED",
-                "E_FENCE_CLIMBING_SUSPECTED",
-                "CRITICAL",
-                "检测到人员疑似攀爬围栏",
-            ),
-            FenceBehavior.TAMPERING_SUSPECTED: (
-                "FENCE_TAMPERING_SUSPECTED",
-                "E_FENCE_TAMPERING_SUSPECTED",
-                "WARNING",
-                "检测到人员疑似破坏围栏",
-            ),
-            FenceBehavior.TAMPERING_CONFIRMED: (
-                "FENCE_TAMPERING_CONFIRMED",
-                "E_FENCE_TAMPERING_CONFIRMED",
-                "CRITICAL",
-                "检测到人员破坏围栏（动作与结构变化已确认）",
-            ),
-        }
-        gps = self._get_latest_gps()
-        alert_service = get_alert_service()
-        for event in events:
-            meta = event_meta.get(event.behavior)
-            if meta is None:
-                continue
-            event_type, event_code, severity, label = meta
-            image_path, image_url = await self._save_snapshot(frame)
-            message = (
-                f"{label}：fence_id={event.fence_id}，track_id={event.track_id}，"
-                f"持续={event.duration_seconds:.1f}s"
-            )
-            if event.behavior in {
-                FenceBehavior.TAMPERING_SUSPECTED,
-                FenceBehavior.TAMPERING_CONFIRMED,
-            }:
-                message += (
-                    f"，动作分={event.action_score:.2f}，"
-                    f"结构变化={event.structure_change_ratio:.2%}"
-                )
-            async with self._session_factory() as session:
-                await alert_service.handle_ai_event(
-                    timing=observation_timing(
-                        getattr(self, '_current_frame_received_at', None),
-                        duration=event.duration_seconds if event.behavior is FenceBehavior.DWELLING else 0.0,
-                        threshold=settings.FENCE_DWELL_SECONDS if event.behavior is FenceBehavior.DWELLING else 0.0),
-                    event_type=event_type,
-                    event_code=event_code,
-                    severity=severity,
-                    message=message,
-                    confidence=event.confidence,
-                    file_path=str(image_path),
-                    image_url=image_url,
-                    gps_lat=gps[0],
-                    gps_lon=gps[1],
-                    task_id=self._current_task_id if isinstance(self._current_task_id, int) else None,
-                    session=session,
-                )
-
     async def _broadcast_pose_overlay(
         self,
         observations: list[PoseObservation],
@@ -616,30 +683,6 @@ class AIWorkerProcessingMixin:
         broadcaster = get_event_broadcaster()
         if broadcaster.connection_count == 0:
             return
-
-        from .fence_detection_service import get_fence_detection_service
-
-        fence_service = get_fence_detection_service()
-        fence_status = fence_service.get_status() if fence_service is not None else {}
-        fence_by_track = {
-            int(item["track_id"]): item
-            for item in fence_status.get("persons", [])
-            if item.get("track_id") is not None
-        }
-        fence_structure_ratio = float(
-            (fence_status.get("tamper") or {}).get("structure_change_ratio", 0.0)
-        )
-
-        def fence_overlay_fields(detection: DetectionResult) -> dict[str, object]:
-            track_id = int(getattr(detection, "track_id", -1))
-            item = fence_by_track.get(track_id)
-            return {
-                "fence_behavior": item.get("behavior") if item is not None else None,
-                "fence_action_score": (
-                    item.get("tamper_action_score") if item is not None else 0.0
-                ),
-                "fence_structure_change_ratio": fence_structure_ratio,
-            }
 
         message = {
             "msg_type": "POSE_OVERLAY",
@@ -663,7 +706,6 @@ class AIWorkerProcessingMixin:
                         "display_name": getattr(detection, "display_name", None) if stage == "complete" else None,
                         "face_status": getattr(detection, "face_status", None) if stage == "complete" else ("pending" if detection.label == "person" else None),
                         "face_score": getattr(detection, "face_score", None) if stage == "complete" else None,
-                        **(fence_overlay_fields(detection) if stage == "complete" else {}),
                     }
                     for detection in detections
                     if detection.bbox is not None
@@ -767,7 +809,8 @@ class AIWorkerProcessingMixin:
                     "pose_status": self._pose_status,
                     "pose_frames_processed": self._pose_frames_processed,
                     "pose_events_count": self._pose_events_count,
-                    "weapon_status": self._weapon_status,
+                    "weapon_status": self._weapon_status if settings.WEAPON_ENABLED else "disabled",
+                    "weapon_enabled": bool(settings.WEAPON_ENABLED),
                     "weapon_active": (
                         asyncio.get_running_loop().time()
                         < self._weapon_active_until

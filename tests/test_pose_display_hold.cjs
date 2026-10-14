@@ -5,7 +5,7 @@ const assert=require('node:assert/strict');
 const html=readFileSync(`${__dirname}/../backend/pose_lab.html`,'utf8');
 const code=html.slice(html.indexOf('const actionHolds='),html.indexOf('function status('));
 let now=0,pending;const banner={textContent:'',style:{}};
-const ctx={performance:{now:()=>now},names:{POSE_DAMAGE_SUSPECTED:'破坏',POSE_CLIMBING_SUSPECTED:'攀爬'},$:()=>banner,
+const ctx={performance:{now:()=>now},names:{POSE_DAMAGE_SUSPECTED:'破坏',POSE_CLIMBING_SUSPECTED:'攀爬',POSE_VAULTING_SUSPECTED:'翻越'},$:()=>banner,
  setTimeout:(fn,ms)=>{pending={fn,at:now+ms};return 1},clearTimeout:()=>{pending=null}};
 vm.createContext(ctx);vm.runInContext(code,ctx);
 const damage='POSE_DAMAGE_SUSPECTED',climb='POSE_CLIMBING_SUSPECTED';
@@ -20,4 +20,7 @@ now=8000;ctx.updateActionWarnings([]);assert.equal(pending.at,9000);
 now=8500;ctx.updateActionWarnings([climb]);assert.equal(pending,null);
 now=10000;ctx.updateActionWarnings([]);assert.equal(pending.at,11000);
 now=11000;pending.fn();assert.match(banner.textContent,/当前无/);
+now=12000;ctx.updateActionWarnings(['POSE_VAULTING_SUSPECTED']);assert.match(banner.textContent,/翻越/);assert.doesNotMatch(banner.textContent,/攀爬警告/);
+now=13000;ctx.updateActionWarnings([]);assert.equal(pending.at,14000);
+now=14000;pending.fn();assert.match(banner.textContent,/当前无/);
 console.log('Display holds: active duration, exact 1s tail, independent actions, resumption passed');

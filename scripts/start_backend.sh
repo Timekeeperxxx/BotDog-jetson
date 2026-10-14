@@ -6,6 +6,17 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 VENV="$ROOT_DIR/.venv"
 
+# 后端的 initialpose/TF 节点与 Navigation 使用同一 DDS 传输配置。
+# 否则网口在开机后恢复时，两边可能只能单向发现 ROS 节点。
+NAVIGATION_ROOT="${BOTDOG_NAV_WS:-$(cd "$ROOT_DIR/.." && pwd)/Navigation}"
+NAV_FASTDDS_PROFILE="${NAV_FASTDDS_PROFILE:-$NAVIGATION_ROOT/adapters/legacy_scripts/fastdds_navigation.xml}"
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-0}"
+export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
+if [ -f "$NAV_FASTDDS_PROFILE" ]; then
+  export FASTRTPS_DEFAULT_PROFILES_FILE="$NAV_FASTDDS_PROFILE"
+  unset FASTDDS_DEFAULT_PROFILES_FILE
+fi
+
 if [ ! -f "$VENV/bin/activate" ]; then
   echo "ERROR: Virtual environment not found at $VENV"
   echo "Run: ~/.pyenv/versions/3.12.9/bin/python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt"

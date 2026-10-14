@@ -1,11 +1,14 @@
 import { useCallback, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { getApiUrl } from '../config/api';
-import type { EvidenceItem } from '../types/evidence';
+import type { EvidenceItem, EvidenceLabel } from '../types/evidence';
 
 const EVIDENCE_PAGE_SIZE = 50;
 
 export interface UseEvidenceState {
   evidenceItems: EvidenceItem[];
+  evidenceLabel: string;
+  evidenceLabels: EvidenceLabel[];
+  setEvidenceLabel: (label: string) => void;
   evidenceLoading: boolean;
   evidenceLoadingMore: boolean;
   evidenceHasMore: boolean;
@@ -33,6 +36,8 @@ export interface UseEvidenceState {
 export function useEvidence(): UseEvidenceState {
   const [searchQuery, setSearchQuery] = useState('');
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
+  const [evidenceLabel, setLabel] = useState('');
+  const [evidenceLabels, setEvidenceLabels] = useState<EvidenceLabel[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(false);
   const [evidenceLoadingMore, setEvidenceLoadingMore] = useState(false);
   const [evidenceHasMore, setEvidenceHasMore] = useState(false);
@@ -46,6 +51,26 @@ export function useEvidence(): UseEvidenceState {
   const [evidenceDeleting, setEvidenceDeleting] = useState(false);
   const [lightboxItem, setLightboxItem] = useState<EvidenceItem | null>(null);
 
+  const setEvidenceLabel = useCallback((label: string) => {
+    if (label === evidenceLabel) return;
+    ++listRequestRef.current;
+    loadingMoreRef.current = false;
+    setEvidenceLoadingMore(false);
+    setEvidenceLoadMoreError(null);
+    setEvidenceLoading(true);
+    setEvidenceHasMore(false);
+    setEvidenceItems([]);
+    setSelectedEvidence(new Set());
+    setLabel(label);
+  }, [evidenceLabel]);
+
+  const evidenceUrl = useCallback((offset: number) => {
+    const params = new URLSearchParams({ offset: String(offset), limit: String(EVIDENCE_PAGE_SIZE) });
+    if (evidenceLabel) params.set('label', evidenceLabel);
+    if (searchQuery.trim()) params.set('q', searchQuery.trim());
+    return getApiUrl(`/api/v1/evidence?${params}`);
+  }, [evidenceLabel, searchQuery]);
+
   const fetchEvidence = useCallback(async () => {
     const request = ++listRequestRef.current;
     loadingMoreRef.current = false;
@@ -54,7 +79,7 @@ export function useEvidence(): UseEvidenceState {
     setEvidenceLoading(true);
     setEvidenceError(null);
     try {
-      const res = await fetch(getApiUrl(`/api/v1/evidence?offset=0&limit=${EVIDENCE_PAGE_SIZE}`));
+      const res = await fetch(evidenceUrl(0));
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -62,6 +87,7 @@ export function useEvidence(): UseEvidenceState {
       if (request !== listRequestRef.current) return;
       const items: EvidenceItem[] = data.items || [];
       setEvidenceItems(items);
+      setEvidenceLabels(data.labels || []);
       setEvidenceHasMore(data.has_more ?? items.length === EVIDENCE_PAGE_SIZE);
       setSelectedEvidence((selected) => new Set(items.filter((item) => selected.has(item.evidence_id)).map((item) => item.evidence_id)));
     } catch (err) {
@@ -69,7 +95,7 @@ export function useEvidence(): UseEvidenceState {
     } finally {
       if (request === listRequestRef.current) setEvidenceLoading(false);
     }
-  }, []);
+  }, [evidenceUrl]);
 
   const loadMoreEvidence = useCallback(async () => {
     if (!evidenceHasMore || loadingMoreRef.current) return;
@@ -79,7 +105,7 @@ export function useEvidence(): UseEvidenceState {
     const offset = evidenceItems.length;
     const request = listRequestRef.current;
     try {
-      const res = await fetch(getApiUrl(`/api/v1/evidence?offset=${offset}&limit=${EVIDENCE_PAGE_SIZE}`));
+      const res = await fetch(evidenceUrl(offset));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (request !== listRequestRef.current) return;
@@ -92,10 +118,12 @@ export function useEvidence(): UseEvidenceState {
     } catch (err) {
       if (request === listRequestRef.current) setEvidenceLoadMoreError(err instanceof Error ? err.message : '加载失败');
     } finally {
-      loadingMoreRef.current = false;
-      setEvidenceLoadingMore(false);
+      if (request === listRequestRef.current) {
+        loadingMoreRef.current = false;
+        setEvidenceLoadingMore(false);
+      }
     }
-  }, [evidenceHasMore, evidenceItems.length]);
+  }, [evidenceHasMore, evidenceItems.length, evidenceUrl]);
 
   const openEvidence = useCallback(async (id: number) => {
     setLightboxItem(null);
@@ -159,12 +187,9 @@ export function useEvidence(): UseEvidenceState {
   }, []);
 
   const filteredEvidence = useMemo(() => {
-    if (!searchQuery) return evidenceItems;
-    return evidenceItems.filter((item) => (
-      (item.message || '').includes(searchQuery) ||
-      item.severity.includes(searchQuery)
-    ));
-  }, [evidenceItems, searchQuery]);
+    // 标签及关键词在后端分页前过滤，避免只筛选当前已加载的抓拍。
+    return evidenceItems;
+  }, [evidenceItems]);
 
   const toggleAllEvidence = useCallback(() => {
     if (filteredEvidence.length === 0) return;
@@ -180,6 +205,9 @@ export function useEvidence(): UseEvidenceState {
 
   return {
     evidenceItems,
+    evidenceLabel,
+    evidenceLabels,
+    setEvidenceLabel,
     evidenceLoading,
     evidenceLoadingMore,
     evidenceHasMore,

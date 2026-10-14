@@ -56,3 +56,37 @@ it('shows the orbit centre in map metres and updates or clears its readout', () 
   rerender(<SceneInfoDrawer {...props} viewCenterPosition={null} />)
   expect(screen.getByText('视图中心 X/Y（m）').nextElementSibling).toHaveTextContent('-')
 })
+
+it('uses the compact save row in the existing message bar and keeps the log control', () => {
+  render(
+    <NavMessageCenter
+      notice={{ title: '后台正在保存', message: '重复说明不应另外占一块' }}
+      noticeKind="waiting"
+      mappingSaving
+      mappingSaveStatus={{
+        success: true, enabled: false, running: false, saving: true, saved: false,
+        scene_name: 'Scene1', map_dir: '/maps/Scene1', pid: 1,
+        map_pcd_candidates: [], ground_pcd_candidates: [], pcd_files: [], message: null,
+        save_elapsed_seconds: 100, save_progress: {
+          stage: 'loop_optimize', label: '回环与轨迹优化', detail: '',
+          completed: null, total: null, baseline_saved: false,
+        },
+      }}
+      logs={[]}
+      expanded={false}
+      onToggleExpanded={vi.fn()}
+    />,
+  )
+  expect(screen.getByRole('region', { name: '地图保存进度' })).toBeInTheDocument()
+  expect(screen.queryByText('重复说明不应另外占一块')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /历史日志/ })).toBeInTheDocument()
+})
+
+it('removes the save row and returns to the normal completion notice after saving', () => {
+  const props = { logs: [], expanded: false, onToggleExpanded: vi.fn() }
+  const { rerender } = render(<NavMessageCenter {...props} notice={null} noticeKind="waiting" mappingSaving />)
+  expect(screen.getByRole('region', { name: '地图保存进度' })).toBeInTheDocument()
+  rerender(<NavMessageCenter {...props} notice={{ title: '地图保存完成', message: '可查看场景' }} noticeKind="ready" mappingSaving={false} />)
+  expect(screen.queryByRole('region', { name: '地图保存进度' })).not.toBeInTheDocument()
+  expect(screen.getByText('地图保存完成')).toBeInTheDocument()
+})

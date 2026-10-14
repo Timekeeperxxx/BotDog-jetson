@@ -76,7 +76,8 @@ def test_registry_contains_weapon_inference_controls() -> None:
 
     assert expected.issubset(configs)
     assert all(configs[key]["category"] == "ai" for key in expected)
-    assert all(configs[key]["is_hot_reloadable"] is False for key in expected)
+    assert configs["weapon_enabled"]["is_hot_reloadable"] is True
+    assert all(configs[key]["is_hot_reloadable"] is False for key in expected - {"weapon_enabled"})
 
 
 def test_registry_contains_weather_inference_controls() -> None:

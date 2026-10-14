@@ -39,6 +39,9 @@ async def trigger_test_alert(
         session=db,
     )
 
+    if evidence is None:
+        return {"success": False, "message": "同类告警仍在重复提醒间隔内，本次未重复生成记录"}
+
     return {
         "success": True,
         "message": "测试告警已触发",

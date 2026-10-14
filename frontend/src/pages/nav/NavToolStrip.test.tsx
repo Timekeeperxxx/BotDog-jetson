@@ -59,7 +59,8 @@ describe('NavToolStrip task controls', () => {
       },
     })
     const { rerender } = render(<NavToolStrip {...props} />)
-    expect(screen.getByText('已开启 · 跟踪联动中')).toBeInTheDocument()
+    expect(screen.getByText('动作检测已开启')).toBeInTheDocument()
+    expect(screen.getByText('观察状态 已开启 · 跟踪联动中')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '关闭围栏检测' }))
     expect(onSetFenceDetectionEnabled).toHaveBeenCalledWith(false)
     rerender(<NavToolStrip {...props} fenceDetectionLoading />)

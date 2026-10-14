@@ -132,6 +132,7 @@ class _FakeProcess:
 
 
 def _worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AIWorker:
+    monkeypatch.setattr(workers_ai.settings, "WEAPON_ENABLED", True)
     monkeypatch.setattr(workers_ai.settings, "AI_SIMULATE_DETECTION", True)
     monkeypatch.setattr(workers_ai.settings, "AI_FRAME_PROCESS_TIMEOUT_SECONDS", 1.0)
     monkeypatch.setattr(workers_ai.settings, "AI_EXIT_ON_FRAME_TIMEOUT", False)
@@ -822,8 +823,12 @@ async def test_pose_person_fallback_requires_stability_and_deduplicates(
     await worker._process_detection([fallback], b"known-person")
     assert alerts == []
     fallback.face_status, fallback.identity_id = "unknown", None
-    await worker._process_detection([fallback], b"confirmed-person")
-    await worker._process_detection([fallback], b"same-person")
+    for hits in range(1, 6):
+        worker._pose_frames_processed += 1
+        worker._person_pose_hits[9] = hits
+        await worker._process_detection([fallback], b"fresh-person")
+        assert alerts == ([] if hits < 5 else [fallback])
+    await worker._process_detection([fallback], b"cached-person")
     assert alerts == [fallback]
 
     primary = DetectionResult(
@@ -835,10 +840,12 @@ async def test_pose_person_fallback_requires_stability_and_deduplicates(
     for _ in range(worker._stable_hits):
         await worker._process_detection([primary], b"real-person")
 
-    assert alerts == [fallback, primary]
+    assert alerts == [fallback]
     worker._reset_detection_state()
     assert worker._person_pose_hits == {}
     assert worker._person_alert_last_seen == {}
+    assert worker._person_alert_boxes == {}
+    assert not worker._person_confirmation._tracks
 
 
 @pytest.mark.asyncio

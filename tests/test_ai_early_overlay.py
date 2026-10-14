@@ -56,7 +56,7 @@ async def test_location_precedes_slow_models_but_decisions_wait_for_current_iden
     monkeypatch.setattr(worker, '_infer_weapon', weapon)
     monkeypatch.setattr(worker, '_broadcast_pose_overlay', overlay)
     monkeypatch.setattr(worker, '_process_detection', decision)
-    for name in ('_maybe_process_weather', '_process_pose_events', '_process_weapon_detections', '_process_fence_events', '_report_face_service_fault'):
+    for name in ('_maybe_process_weather', '_process_pose_events', '_process_weapon_detections', '_report_face_service_fault'):
         monkeypatch.setattr(worker, name, AsyncMock())
     await worker._detect_and_process_frame(b'frame', 2, frame_read_at=time.monotonic())
     assert calls[-3:] == ['face', 'complete', 'decision']

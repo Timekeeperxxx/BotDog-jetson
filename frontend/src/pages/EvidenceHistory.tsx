@@ -6,16 +6,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertEvent } from '../types/event';
 import { getApiUrl } from '../config/api';
+import type { EvidenceLabel } from '../types/evidence';
 
 interface EvidenceRecord extends AlertEvent {
   evidence_id?: number;
   task_id?: number;
   created_at: string;
+  alert_label?: string;
 }
 
 interface EvidenceListResponse {
   items: EvidenceRecord[];
   total?: number;
+  labels?: EvidenceLabel[];
 }
 
 interface EvidenceDeleteResponse {
@@ -31,6 +34,8 @@ export function EvidenceHistory() {
   const [error, setError] = useState<string | null>(null);
   const [filterTaskId, setFilterTaskId] = useState<string>('');
   const [filterSeverity, setFilterSeverity] = useState<string>('all');
+  const [filterLabel, setFilterLabel] = useState('');
+  const [labels, setLabels] = useState<EvidenceLabel[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -45,6 +50,8 @@ export function EvidenceHistory() {
       if (filterTaskId) {
         params.append('task_id', filterTaskId);
       }
+      if (filterLabel) params.set('label', filterLabel);
+      if (filterSeverity !== 'all') params.set('severity', filterSeverity);
 
       const response = await fetch(
         getApiUrl(`/api/v1/evidence?${params.toString()}`)
@@ -56,6 +63,7 @@ export function EvidenceHistory() {
 
       const data: EvidenceListResponse = await response.json();
       setEvidenceList(data.items || []);
+      setLabels(data.labels || []);
       setSelectedIds(new Set());
     } catch (err) {
       console.error('获取证据列表失败:', err);
@@ -63,7 +71,7 @@ export function EvidenceHistory() {
     } finally {
       setLoading(false);
     }
-  }, [filterTaskId]);
+  }, [filterTaskId, filterLabel, filterSeverity]);
 
   const filteredList = useMemo(() => {
     return evidenceList.filter((item) => {
@@ -239,6 +247,14 @@ export function EvidenceHistory() {
         </div>
 
         {/* 严重程度筛选 */}
+        <div style={{ width: '200px' }}>
+          <label htmlFor="history-alert-label" style={{ display: 'block', fontSize: '10px', color: '#94a3b8', marginBottom: '4px' }}>告警标签</label>
+          <select id="history-alert-label" value={filterLabel} onChange={(event) => setFilterLabel(event.target.value)}
+            style={{ width: '100%', padding: '8px 12px', background: '#171a21', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: '#e2e8f0', fontSize: '14px' }}>
+            <option value="">全部标签</option>
+            {labels.map((option) => <option key={option.value} value={option.value}>{option.label}（{option.count}）</option>)}
+          </select>
+        </div>
         <div style={{ width: '200px' }}>
           <label
             style={{
@@ -476,7 +492,7 @@ export function EvidenceHistory() {
                   fontSize: '10px',
                 }}
               >
-                {item.event_code}
+                {item.alert_label || item.event_code}
               </div>
 
               {/* 时间 */}

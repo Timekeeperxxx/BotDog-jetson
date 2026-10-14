@@ -96,10 +96,14 @@
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
+  flex: 0 0 auto;
   gap: 10px;
 }
 
 .pcd-battery-status {
+  flex: 0 0 auto;
+  min-width: 104px;
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -137,9 +141,15 @@
 }
 
 .pcd-loading {
-  color: #facc15;
-  font-size: 13px;
+  flex: 0 0 76px;
+  width: 76px;
+  color: #8ea3ad;
+  font-size: 12px;
+  white-space: nowrap;
 }
+
+.pcd-loading.is-idle { visibility: hidden; }
+.pcd-loading svg { color: #5eead4; }
 
 .pcd-loading svg {
   animation: videoSpin 0.9s linear infinite;
@@ -2657,3 +2667,20 @@
 .pcd-height-clip label { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .pcd-height-clip input { width: 100px; min-height: 32px; padding: 4px 8px; color: #f1f5f9; background: #101923; border: 1px solid #64748b; border-radius: 5px; }
 .pcd-height-clip button { padding: 6px 10px; color: #e2e8f0; background: transparent; border: 1px solid #64748b; border-radius: 5px; cursor: pointer; }
+
+@media (max-width: 760px) {
+  .pcd-title-row > .pcd-loading { margin-left: auto; }
+}
+
+@media (max-width: 480px) {
+  .pcd-header-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+  .pcd-header-actions > .pcd-battery-status {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .pcd-header-actions > button { padding-inline: 10px; white-space: nowrap; }
+}

@@ -1,4 +1,4 @@
-import { act, cleanup, render, renderHook, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EvidencePanel } from './EvidencePanel';
 import { useEvidence } from '../../hooks/useEvidence';
@@ -20,7 +20,7 @@ it('进入档案库即加载列表，新告警到达后刷新，无需点击告�
   view.rerender(<Archive latestEvidenceId={3} />);
   expect(await screen.findByText('现场告警 3')).toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledTimes(2);
-  expect(fetchMock.mock.calls.every(([url]) => String(url).endsWith('/api/v1/evidence'))).toBe(true);
+  expect(fetchMock.mock.calls.every(([url]) => String(url).includes('/api/v1/evidence?offset=0&limit=50'))).toBe(true);
 });
 
 it('列表刷新不覆盖详情错误，也不提前结束列表加载', async () => {
@@ -57,4 +57,50 @@ it('较旧的列表响应不能覆盖新告警刷新后的结果', async () => {
     await old;
   });
   expect(result.current.evidenceItems.map((item) => item.evidence_id)).toEqual([3]);
+});
+
+it('选择告警标签后重新查询，清除旧选择，后续分页继续保留标签', async () => {
+  const labels=[{ value: 'E_POSE_VAULTING_SUSPECTED', label: '翻越', count: 60 },
+    { value: 'E_POSE_CLIMBING_SUSPECTED', label: '攀爬', count: 2 }];
+  const vault=(id: number) => ({ ...record(id), event_code: 'E_POSE_VAULTING_SUSPECTED', alert_label: '翻越', message: `翻越记录 ${id}` });
+  const fetchMock=vi.fn(async (url: string) => {
+    const params=new URL(String(url), 'http://localhost').searchParams;
+    const selected=params.get('label') === 'E_POSE_VAULTING_SUSPECTED';
+    const more=params.get('offset') === '50';
+    const items=selected ? Array.from({ length: more ? 10 : 50 }, (_, i) => vault((more ? 1050 : 1000) + i)) : [record(1),record(2)];
+    return { ok: true, json: async () => ({ items, labels, has_more: selected && !more }) };
+  });
+  vi.stubGlobal('fetch',fetchMock);
+  function Archive() { return <EvidencePanel evidence={useEvidence()} />; }
+  render(<Archive />);
+  expect(await screen.findByText('现场告警 1')).toBeInTheDocument();
+  fireEvent.click(screen.getByLabelText('选择记录 1'));
+  expect(screen.getByText('删除选中(1)')).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('告警标签'), { target: { value: 'E_POSE_VAULTING_SUSPECTED' } });
+  expect(await screen.findByText('翻越记录 1000')).toBeInTheDocument();
+  expect(screen.queryByText('现场告警 1')).not.toBeInTheDocument();
+  expect(screen.getByText('删除选中(0)')).toBeDisabled();
+  fireEvent.click(screen.getByText('加载更多抓拍'));
+  expect(await screen.findByText('翻越记录 1059')).toBeInTheDocument();
+  expect(new URL(fetchMock.mock.calls.at(-1)![0], 'http://localhost').searchParams.get('label')).toBe('E_POSE_VAULTING_SUSPECTED');
+  expect(screen.queryByText('加载更多抓拍')).not.toBeInTheDocument();
+});
+
+it('标签切换后的迟到列表不能覆盖新标签结果，关键词也发送给后端', async () => {
+  let resolveOld!: (response: unknown) => void;
+  const fetchMock=vi.fn()
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveOld=resolve; }))
+    .mockResolvedValue({ ok: true, json: async () => ({ items: [record(7)], has_more: false }) });
+  vi.stubGlobal('fetch',fetchMock);
+  const { result }=renderHook(() => useEvidence());
+  let old!: Promise<void>;
+  act(() => { old=result.current.fetchEvidence(); });
+  act(() => { result.current.setEvidenceLabel('E_POSE_VAULTING_SUSPECTED'); result.current.setSearchQuery('演示'); });
+  await act(() => result.current.fetchEvidence());
+  const params=new URL(fetchMock.mock.calls.at(-1)![0], 'http://localhost').searchParams;
+  expect(params.get('label')).toBe('E_POSE_VAULTING_SUSPECTED');
+  expect(params.get('q')).toBe('演示');
+  await act(async () => { resolveOld({ ok:true,json:async () => ({items:[record(99)]}) }); await old; });
+  expect(result.current.evidenceItems.map((item) => item.evidence_id)).toEqual([7]);
+  expect(result.current.evidenceLoading).toBe(false);
 });

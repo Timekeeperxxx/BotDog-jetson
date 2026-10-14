@@ -517,7 +517,13 @@ class PoseStatusTensorRTRunner:
             )
 
         observations, events = self.event_engine.update(raw_poses, now=self.frame_time)
-        event_by_track = {event.track_id: event.event_type for event in events}
+        event_by_track = {}
+        priority = {"POSE_VAULTING_SUSPECTED": 3, "POSE_CLIMBING_SUSPECTED": 2,
+                    "POSE_DAMAGE_SUSPECTED": 1}
+        for event in events:
+            current = event_by_track.get(event.track_id)
+            if current is None or priority.get(event.event_type, 0) > priority.get(current, 0):
+                event_by_track[event.track_id] = event.event_type
         labels: list[tuple[tuple[int, int, int, int], str, tuple[int, int, int]]] = []
         for raw_pose, observation in zip(raw_poses, observations):
             label, color = self._status_for_pose(
@@ -540,13 +546,15 @@ class PoseStatusTensorRTRunner:
         from .pose_detection import Posture
 
         if event_type == "POSE_CLIMBING_SUSPECTED":
-            return "疑似攀爬/翻越", COLORS[3]
+            return "疑似攀爬", COLORS[3]
+        if event_type == "POSE_VAULTING_SUSPECTED":
+            return "疑似翻越", COLORS[3]
         if event_type == "POSE_LYING":
             return "倒地/躺卧", COLORS[3]
         if event_type == "POSE_DAMAGE_SUSPECTED":
             return "疑似破坏动作", COLORS[3]
         if observation.posture is Posture.CLIMBING:
-            return "疑似攀爬/翻越", COLORS[2]
+            return "疑似攀爬", COLORS[2]
         if observation.posture is Posture.LYING:
             return "倒地/躺卧", COLORS[3]
         if observation.posture is Posture.CROUCHING:

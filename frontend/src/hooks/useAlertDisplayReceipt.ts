@@ -1,45 +1,64 @@
-import { useEffect, type RefObject } from 'react';
-import { apiFetch } from '../api/apiFetch';
+import { useEffect, useRef, type RefObject } from 'react';
+import { recordAlertDisplayed, recordLegacyAlertDisplayed, type AlertReceiptObservation } from './alertReceipt';
 
-let clock: { offset: number; uncertainty: number; sampled: number } | undefined;
-let pendingClock: Promise<NonNullable<typeof clock>> | undefined;
-async function calibratedClock() {
-  if (clock && performance.now() - clock.sampled < 30000) return clock;
-  if (!pendingClock) pendingClock = (async () => {
-    const before = performance.now();
-    const sample = await apiFetch<{ server_time: string }>('/api/v1/evidence/clock', { cache: 'no-store' });
-    const after = performance.now();
-    const server = Date.parse(sample.server_time);
-    if (!Number.isFinite(server) || after - before > 20000) throw new Error('告警校时失败');
-    clock = { offset: server - (before + after) / 2, uncertainty: (after - before) / 2 + 1, sampled: after };
-    return clock;
-  })().finally(() => { pendingClock = undefined; });
-  return pendingClock;
-}
-
-// DOM 可见且经过两次动画帧后采样；是浏览器呈现近似值，并非显示器曝光测量。
-export function useAlertDisplayReceipt(ref: RefObject<HTMLElement | null>, evidenceId?: number, enabled = false) {
+export function useAlertDisplayReceipt(ref: RefObject<HTMLElement | null>, evidenceId?: number,
+  enabled = false, received?: AlertReceiptObservation) {
+  const measurement = useRef<{ evidenceId: number; received?: AlertReceiptObservation; observation: AlertReceiptObservation } | undefined>(undefined);
   useEffect(() => {
     if (!enabled || !evidenceId || !ref.current) return;
-    let first = 0, second = 0, sent = false;
-    const visible = () => {
+    const mounted = performance.now();
+    if (measurement.current?.evidenceId !== evidenceId || measurement.current.received !== received) {
+      measurement.current = { evidenceId, received, observation: received ? { ...received } : {
+        clientId: '', receivedAt: mounted, pageVisibleOnReceive: document.visibilityState === 'visible', visibilityWaitMs: 0,
+      } };
+    }
+    const observation = measurement.current.observation;
+    if (observation.displayedAt !== undefined) return;
+    let first = 0, second = 0;
+    const cardVisible = () => {
       const element = ref.current;
-      if (!element || document.visibilityState !== 'visible') return false;
+      if (!element) return false;
       const rect = element.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 && rect.top < innerHeight && rect.left < innerWidth;
+      let left = Math.max(0, rect.left), top = Math.max(0, rect.top);
+      let right = Math.min(innerWidth, rect.right), bottom = Math.min(innerHeight, rect.bottom);
+      // Include clipping by the scrolling alert list, not only the window.
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        const style = getComputedStyle(parent), bounds = parent.getBoundingClientRect();
+        if (bounds.width && /(auto|scroll|hidden|clip)/.test(style.overflowX)) { left = Math.max(left, bounds.left); right = Math.min(right, bounds.right); }
+        if (bounds.height && /(auto|scroll|hidden|clip)/.test(style.overflowY)) { top = Math.max(top, bounds.top); bottom = Math.min(bottom, bounds.bottom); }
+      }
+      return right > left && bottom > top;
+    };
+    const visible = () => document.visibilityState === 'visible' && cardVisible();
+    if (observation.mountedAt === undefined) {
+      observation.mountedAt = mounted;
+      observation.pageVisibleOnMount = document.visibilityState === 'visible';
+      observation.cardVisibleOnMount = cardVisible();
+      observation.waitingSince = mounted;
+    }
+    const pause = (now: number) => {
+      observation.waitingSince ??= now;
+      cancelAnimationFrame(first); cancelAnimationFrame(second);
+      first = 0; second = 0;
     };
     const observe = () => {
-      if (sent || first || !visible()) return;
+      if (observation.displayedAt !== undefined) return;
+      const now = performance.now();
+      if (!visible()) { pause(now); return; }
+      if (observation.waitingSince !== undefined) {
+        observation.visibilityWaitMs += now - observation.waitingSince;
+        observation.waitingSince = undefined;
+      }
+      observation.firstVisibleAt ??= now;
+      if (first) return;
       first = requestAnimationFrame(() => {
         second = requestAnimationFrame(() => {
-          first = 0;
-          if (!visible()) return;
-          sent = true;
-          const displayed = performance.now();
-          void calibratedClock().then((sample) => apiFetch(`/api/v1/evidence/${evidenceId}/displayed`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ displayed_at: new Date(displayed + sample.offset).toISOString(), clock_uncertainty_ms: sample.uncertainty }),
-          })).catch((error) => { console.error('告警呈现回执未保存', evidenceId, error); });
+          first = 0; second = 0;
+          if (observation.displayedAt !== undefined) return;
+          if (!visible()) { pause(performance.now()); return; }
+          observation.displayedAt = performance.now();
+          if (received) recordAlertDisplayed(evidenceId, observation);
+          else recordLegacyAlertDisplayed(evidenceId, observation.displayedAt);
         });
       });
     };
@@ -48,8 +67,9 @@ export function useAlertDisplayReceipt(ref: RefObject<HTMLElement | null>, evide
     document.addEventListener('visibilitychange', observe);
     observe();
     return () => {
+      if (observation.displayedAt === undefined) pause(performance.now());
       cancelAnimationFrame(first); cancelAnimationFrame(second);
       observer?.disconnect(); document.removeEventListener('visibilitychange', observe);
     };
-  }, [ref, evidenceId, enabled]);
+  }, [ref, evidenceId, enabled, received]);
 }

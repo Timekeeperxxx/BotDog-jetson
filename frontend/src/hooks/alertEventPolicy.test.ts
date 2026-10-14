@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AlertEvent } from '../types/event';
-import { ALERT_HISTORY_LIMIT, mergeAlertEvent } from './alertEventPolicy';
+import { ALERT_HISTORY_LIMIT, mergeAlertEvent, alertSummary } from './alertEventPolicy';
 
 function alert(
   eventCode: string,
@@ -18,7 +18,15 @@ function alert(
 }
 
 describe('mergeAlertEvent', () => {
-  it('merges the same alert class inside the 60 second window', () => {
+  it('keeps vaulting and climbing as separate alert classes and titles', () => {
+    const climb=alert('E_POSE_CLIMBING_SUSPECTED', '2026-10-06T05:00:00.000Z');
+    const vault=alert('E_POSE_VAULTING_SUSPECTED', '2026-10-06T05:00:00.100Z');
+    const merged=mergeAlertEvent([climb], vault);
+    expect(merged).toHaveLength(2);
+    expect(alertSummary(climb)).toBe('人员疑似攀爬');
+    expect(alertSummary(vault)).toBe('人员疑似翻越');
+  });
+  it('merges the same alert class and retains the latest evidence', () => {
     const first = alert('E_AI_GUNS', '2026-08-06T15:48:12.000Z', 0.68);
     const second = alert('E_AI_GUNS', '2026-08-06T15:48:33.000Z', 0.71);
 
@@ -34,7 +42,7 @@ describe('mergeAlertEvent', () => {
     });
   });
 
-  it('keeps different classes and alerts outside the merge window separate', () => {
+  it('keeps different classes separate and merges the same class even after 60 seconds', () => {
     const guns = alert('E_AI_GUNS', '2026-08-06T15:00:00.000Z');
     const knife = alert('E_AI_KNIFE', '2026-08-06T15:00:20.000Z');
     const laterGuns = alert('E_AI_GUNS', '2026-08-06T15:01:01.000Z');
@@ -45,9 +53,29 @@ describe('mergeAlertEvent', () => {
     expect(result.map((item) => item.event_code)).toEqual([
       'E_AI_GUNS',
       'E_AI_KNIFE',
-      'E_AI_GUNS',
     ]);
-    expect(result.every((item) => item.repeat_count === undefined)).toBe(true);
+    expect(result[0].repeat_count).toBe(2);
+    expect(result[0].timestamp).toBe(laterGuns.timestamp);
+    expect(result[1].repeat_count).toBeUndefined();
+  });
+
+  it('does not double-count duplicate evidence or replace newer details with an older alert', () => {
+    const latest={...alert('E_POSE_VAULTING_SUSPECTED', '2026-10-06T05:20:00Z'), evidence_id: 20};
+    const duplicate=mergeAlertEvent([latest], latest);
+    expect(duplicate[0].repeat_count).toBe(1);
+    const earlier={...alert('E_POSE_VAULTING_SUSPECTED', '2026-10-06T05:00:00Z'), evidence_id: 10};
+    const merged=mergeAlertEvent(duplicate, earlier);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].evidence_id).toBe(20);
+    expect(merged[0].timestamp).toBe(latest.timestamp);
+    expect(merged[0].first_timestamp).toBe(earlier.timestamp);
+    expect(merged[0].repeat_count).toBe(2);
+  });
+
+  it('can still apply an explicitly requested finite merge window', () => {
+    const first=alert('E_AI_GUNS', '2026-10-06T05:00:00Z');
+    const later=alert('E_AI_GUNS', '2026-10-06T05:01:01Z');
+    expect(mergeAlertEvent([first], later, 60_000)).toHaveLength(2);
   });
 
   it('keeps only the most recent alert history entries', () => {

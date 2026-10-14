@@ -17,6 +17,8 @@ import {
 } from './video/videoStagePreferences';
 
 export interface TrackOverlayData {
+  stage?: 'location' | 'pose_location' | 'complete';
+  frame_received_at_monotonic?: number;
   received_at_ms?: number;
   pose_received_at_ms?: number;
   tracking_received_at_ms?: number;
@@ -29,7 +31,8 @@ export interface TrackOverlayData {
     safety_status?: string | null;
     identity_id?: number | null;
     display_name?: string | null;
-    face_status?: 'pending' | 'recognized' | 'unknown' | 'unavailable' | null;
+    face_status?: 'pending' | 'recognized' | 'unknown' | 'no_face' | 'unavailable' | null;
+    face_result_received_at_ms?: number;
     face_score?: number | null;
     fence_behavior?: string | null;
     fence_action_score?: number;
@@ -56,7 +59,8 @@ export interface TrackOverlayData {
     safety_status?: string | null;
     identity_id?: number | null;
     display_name?: string | null;
-    face_status?: 'pending' | 'recognized' | 'unknown' | 'unavailable' | null;
+    face_status?: 'pending' | 'recognized' | 'unknown' | 'no_face' | 'unavailable' | null;
+    face_result_received_at_ms?: number;
     face_score?: number | null;
     fence_behavior?: string | null;
     fence_action_score?: number;
@@ -334,7 +338,7 @@ export function TrackOverlay({
         approaching: '靠近围栏',
         dwelling: '围栏徘徊',
         contact: '接触围栏',
-        climbing_suspected: '疑似翻越',
+        climbing_suspected: '疑似攀爬',
         tampering_suspected: '疑似破坏围栏',
         tampering_confirmed: '确认破坏围栏',
       };

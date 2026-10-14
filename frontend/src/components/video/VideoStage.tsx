@@ -3,6 +3,8 @@ import { Camera, Gauge, Layers3, Maximize2, Minimize2, Play, SlidersHorizontal, 
 import { PoseActionWarning } from '../alerts/PoseActionWarning';
 import { TrackOverlay } from '../TrackOverlay1';
 import { CameraControlPanel } from './CameraControlPanel';
+import { WeaponDetectionControl } from './WeaponDetectionControl';
+import { FenceActionControl } from './FenceActionControl';
 import { CameraVideo } from './CameraVideo';
 import { OmniMonitorEntry } from './OmniMonitorEntry';
 import { OmniMonitorOverlay } from './OmniMonitorOverlay';
@@ -22,9 +24,9 @@ const AI_LAYER_OPTIONS: Array<{
   description: string;
   color: string;
 }> = [
-  { key: 'helmet', label: '安全帽检测', description: '人员、头部、安全帽', color: '#facc15' },
-  { key: 'weapon', label: '武器检测', description: '枪械、刀具', color: '#fb7185' },
-  { key: 'pose', label: '姿态检测', description: '人体框、骨架、姿态', color: '#2dd4bf' },
+  { key: 'helmet', label: '安全帽画框', description: '人员、头部、安全帽', color: '#facc15' },
+  { key: 'weapon', label: '刀枪画框', description: '只控制枪械、刀具画框显示', color: '#fb7185' },
+  { key: 'pose', label: '姿态画框', description: '人体框、骨架、姿态', color: '#2dd4bf' },
   { key: 'face', label: '人脸身份', description: '姓名和识别状态', color: '#4ade80' },
   { key: 'tracking', label: '跟踪与防区', description: '锁定框、辅助线、防区', color: '#60a5fa' },
 ];
@@ -227,8 +229,8 @@ export function VideoStage({
                       ? 'bg-emerald-300/15 text-emerald-200 hover:bg-emerald-300/25'
                       : 'hover:bg-white hover:text-black'
                   }`}
-                  title="选择 AI 检测叠层"
-                  aria-label="AI 检测叠层"
+                  title="AI 显示与检测"
+                  aria-label="AI 显示与检测"
                   aria-expanded={isAiLayerPanelOpen}
                   aria-controls="ai-layer-popover"
                 >
@@ -245,10 +247,12 @@ export function VideoStage({
                     aria-label="AI 检测叠层显示开关"
                     className="absolute bottom-[calc(100%+14px)] left-1/2 z-50 w-72 -translate-x-1/2 rounded-xl border border-white/20 bg-[#070e14]/98 p-3 text-left shadow-[0_18px_55px_rgba(0,0,0,0.72)] backdrop-blur"
                   >
-                    <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2">
+                    <WeaponDetectionControl />
+                    <div className="mt-3"><FenceActionControl /></div>
+                    <div className="mb-2 mt-3 flex items-center justify-between border-b border-white/10 pb-2">
                       <div>
-                        <div className="text-xs font-black text-white">AI 检测叠层</div>
-                        <div className="mt-0.5 text-[10px] text-white/45">仅控制显示，不会停用模型</div>
+                        <div className="text-xs font-black text-white">画面叠层显示</div>
+                        <div className="mt-0.5 text-[10px] text-white/45">以下开关仅控制画框和标签显示</div>
                       </div>
                       <button
                         type="button"

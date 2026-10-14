@@ -11,7 +11,6 @@ type NavPageHeaderProps = {
   batteryPct: number | null | undefined
   canOperate: boolean
   loading: boolean
-  loadingMessage?: string
   restartLocalizationSending: boolean
   selectedSceneNavigable: boolean
   webglSupported: boolean
@@ -25,7 +24,6 @@ export function NavPageHeader({
   batteryPct,
   canOperate,
   loading,
-  loadingMessage,
   restartLocalizationSending,
   selectedSceneNavigable,
   webglSupported,
@@ -46,6 +44,13 @@ export function NavPageHeader({
           <h1>BotDog 导航巡逻</h1>
           <p>from 西部泰力</p>
         </div>
+        <span
+          className={`pcd-loading ${loading ? '' : 'is-idle'}`}
+          role={loading ? 'status' : undefined}
+          aria-hidden={!loading}
+        >
+          <Loader2 size={14} aria-hidden="true" /> 加载中
+        </span>
       </div>
       <div className="pcd-header-actions">
         <div className="pcd-battery-status" title="机器狗剩余电量">
@@ -53,11 +58,6 @@ export function NavPageHeader({
           <span>电量</span>
           <strong>{batteryPct != null ? `${batteryPct.toFixed(0)}%` : '--'}</strong>
         </div>
-        {loading ? (
-          <span className="pcd-loading" role="status">
-            <Loader2 size={16} /> {loadingMessage || '加载中'}
-          </span>
-        ) : null}
         <button
           className="pcd-secondary-button"
           disabled={!canOperate || restartLocalizationSending || !selectedSceneNavigable || !webglSupported}

@@ -29,14 +29,13 @@ async def fence_detection_status(
             "distance_m": None,
             "desired_yaw_deg": None,
             "desired_pitch_deg": None,
+            "behavior_mode": "action_only",
             "behavior": "normal",
             "behavior_track_id": None,
             "persons": [],
             "tamper": {
-                "enabled": bool(settings.FENCE_TAMPER_ENABLED),
-                "structure_check_enabled": bool(
-                    settings.FENCE_TAMPER_STRUCTURE_ENABLED
-                ),
+                "enabled": False,
+                "structure_check_enabled": False,
                 "reference_ready": False,
                 "reference_age_seconds": None,
                 "pending": False,

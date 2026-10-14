@@ -1,7 +1,7 @@
 """人体姿态推理、轻量跟踪与时序事件判定。
 
 第一阶段只使用 COCO 17 点人体骨架，不在单帧上直接宣称发生了复杂行为。
-攀爬、蹲伏、倒地和徘徊事件均在全画面判断；蹲伏和徘徊按连续时长触发，
+攀爬、翻越、蹲伏、倒地和徘徊事件均在全画面判断；蹲伏和徘徊按连续时长触发，
 人员缺失后清零，蹲伏姿态中断后重新计时。重点区信息仅供观察结果展示。
 胸口及以上双手活动为全画面的疑似破坏动作候选规则，不证明围栏接触或损坏。
 """
@@ -103,10 +103,12 @@ class _TrackState:
     )
     # 时间、左右手在躯干坐标系内的位置；双手必须同时处于胸口及以上。
     chest_motion: deque[tuple[float, float, float, float, float]] = field(default_factory=deque)
-    # 时间、左右膝/踝相对高度、辅助动作、髋部y、躯干长度。
+    # 时间、左右膝/踝相对高度、辅助动作、髋部y、躯干长度、撑跳参考量。
     vault_history: deque[tuple[float, float, float, float, float, bool, float, float]] = field(default_factory=deque)
     # 时间、左右脚相对髋部坐标及撑越候选；有界短窗，不新增模型推理。
     supported_vault_history: deque = field(default_factory=lambda: deque(maxlen=32))
+    # 双手撑扶下的抬膝过程；相对手部位置比较，避免身体整体平移触发。
+    supported_step_history: deque = field(default_factory=lambda: deque(maxlen=128))
     last_events: dict[str, float] = field(default_factory=dict)
 
 
@@ -369,7 +371,7 @@ class PoseEventEngine:
         stable_hits: int = 3,
         crouch_seconds: float = 3.0,
         loiter_seconds: float = 5.0,
-        event_cooldown_seconds: float = 15.0,
+        event_cooldown_seconds: float = 30.0,
         track_ttl_seconds: float = 3.0,
         match_iou_threshold: float = 0.25,
         posture_window_frames: int | None = None,
@@ -427,6 +429,7 @@ class PoseEventEngine:
                 # 双手活动允许短暂漏检，恢复后由采样间隔判定是否清零。
                 state.vault_history.clear()
                 state.supported_vault_history.clear()
+                state.supported_step_history.clear()
                 state.last_events.clear()
         self._events_enabled = events_enabled
         self._drop_stale_tracks(timestamp)
@@ -598,17 +601,21 @@ class PoseEventEngine:
         climb_motion, climb_motion_confidence = self._detect_climb_motion(state)
         vault_duration = self._detect_vault_motion(observation, state, now)
         supported_duration = self._detect_supported_vault(observation, state, now)
+        step_duration = self._detect_supported_step(observation, state, now)
         if supported_duration is not None:
             vault_duration = supported_duration
-        if climbing_pose_confirmed or climb_motion or vault_duration is not None:
+        if step_duration is not None:
+            vault_duration = step_duration
+        # 高跨、撑越和撑跳属于翻越；同帧有翻越证据时不再重复标为攀爬。
+        # 两类事件分别使用各自的冷却计时，不相互压住。
+        if vault_duration is not None:
+            event_specs.append(("POSE_VAULTING_SUSPECTED", 0.7, vault_duration))
+        elif climbing_pose_confirmed or climb_motion:
             confidence = max(
                 observation.posture_confidence if climbing_pose_confirmed else 0.0,
                 climb_motion_confidence,
-                0.7 if vault_duration is not None else 0.0,
             )
-            if vault_duration is not None:
-                duration = vault_duration
-            elif climbing_pose_confirmed:
+            if climbing_pose_confirmed:
                 duration = posture_duration
             else:
                 duration = max(0.0, now - state.motion_history[0][0])
@@ -645,7 +652,7 @@ class PoseEventEngine:
 
         events: list[PoseEvent] = []
         for event_type, confidence, duration in event_specs:
-            if event_type in {"POSE_DAMAGE_SUSPECTED", "POSE_CLIMBING_SUSPECTED"}:
+            if event_type in {"POSE_DAMAGE_SUSPECTED", "POSE_CLIMBING_SUSPECTED", "POSE_VAULTING_SUSPECTED"}:
                 self.active_actions.add(event_type)
             last_event_at = state.last_events.get(event_type)
             if (
@@ -731,6 +738,84 @@ class PoseEventEngine:
                 return duration
         return None
 
+    def _detect_supported_step(
+        self, observation: PoseObservation, state: _TrackState, now: float,
+    ) -> float | None:
+        """双手分开撑扶，伸腿后持续抬膝抬脚；允许脚仍低于髋部。
+
+        以双手中点为参考，要求同一条腿同时有膝、踝抬升证据。
+        仅凭扶手、静态高抬腿、身体整体平移或单帧跳点不确认动作。
+        """
+        history = state.supported_step_history
+        if history and not 0 < now - history[-1][0] <= 0.3 + 1e-9:
+            history.clear()
+
+        def point(index: int) -> PoseKeypoint | None:
+            p = _point(observation.keypoints, index, self._keypoint_confidence)
+            return p if p is not None and all(math.isfinite(v) for v in
+                                             (p.x, p.y, p.confidence)) else None
+
+        ls, rs, lh, rh, lw, rw, le, re = [point(i) for i in (5, 6, 11, 12, 9, 10, 7, 8)]
+        if any(p is None for p in (ls, rs, lh, rh, lw, rw, le, re)):
+            return None
+        sx, sy = (ls.x + rs.x) / 2, (ls.y + rs.y) / 2
+        hx, hy = (lh.x + rh.x) / 2, (lh.y + rh.y) / 2
+        length = math.hypot(hx - sx, hy - sy)
+        if length < 5 or hy <= sy:
+            history.clear()
+            return None
+        supported = (
+            all(-0.45 <= (w.y - hy) / length <= 0.7 for w in (lw, rw))
+            and all(w.y - e.y >= length * 0.05 for w, e in ((lw, le), (rw, re)))
+            and abs(lw.x - rw.x) >= length * 0.65
+        )
+        if not supported:
+            history.clear()
+            return None
+        wrist_y = (lw.y + rw.y) / 2
+        legs = []
+        for hip, ki, ai in ((lh, 13, 15), (rh, 14, 16)):
+            knee, ankle = point(ki), point(ai)
+            legs.append(None if knee is None or ankle is None else (
+                knee.y - wrist_y, ankle.y - wrist_y,
+                (knee.y - hip.y) / length, (ankle.y - hip.y) / length,
+            ))
+        history.append((now, length, hy - wrist_y, *legs))
+        while history and now - history[0][0] > 2.5:
+            history.popleft()
+        samples = list(history)
+        for side in (3, 4):
+            current = samples[-1][side]
+            if current is None or current[2] > 0.75:
+                continue
+            for index in range(1, len(samples) - 1):
+                before = samples[index - 1:index + 1]
+                if not all(s[side] is not None and s[side][2] >= 0.6
+                           and s[side][3] >= 1.0 for s in before):
+                    continue
+                base_length = (before[0][1] + before[1][1]) / 2
+                base_knee = (before[0][side][0] + before[1][side][0]) / 2
+                base_ankle = (before[0][side][1] + before[1][side][1]) / 2
+                base_hip = (before[0][2] + before[1][2]) / 2
+                def raised(sample: tuple, *, strict: bool) -> bool:
+                    leg = sample[side]
+                    return (leg is not None and leg[2] <= (0.55 if strict else 0.75)
+                            and 0.65 <= sample[1] / base_length <= 1.5
+                            and sample[2] - base_hip <= base_length * 0.15
+                            and (leg[3] >= 0.8 or base_hip - sample[2] >= base_length * 0.05)
+                            and base_knee - leg[0] >= base_length * (0.25 if strict else 0.2)
+                            and base_ankle - leg[1] >= base_length * (0.2 if strict else 0.12))
+                recent = [s for s in samples[index + 1:] if now - s[0] <= 0.3 + 1e-9]
+                hits = [s for s in recent if raised(s, strict=False)]
+                # 末帧也必须有效；仅由最近0.3秒内的真实有效样本确认。
+                if (len(hits) >= 2 and hits[-1] is samples[-1]
+                        and any(raised(s, strict=True) for s in hits)
+                        and hits[-1][0] - hits[0][0] >= 0.1 - 1e-9):
+                    duration = now - hits[0][0]
+                    history.clear()
+                    return duration
+        return None
+
     def _detect_vault_motion(
         self, observation: PoseObservation, state: _TrackState, now: float,
     ) -> float | None:
@@ -740,7 +825,9 @@ class PoseEventEngine:
                   for i in (LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_HIP, RIGHT_HIP,
                             LEFT_KNEE, RIGHT_KNEE, LEFT_ANKLE, RIGHT_ANKLE)]
         if any(p is None or not all(math.isfinite(v) for v in (p.x, p.y)) for p in points):
-            history.clear()
+            # 短暂踝部遮挡不丢掉此前真实动作；不插值、不以漏点帧确认。
+            if history and (not 0 < now - history[-1][0] <= 0.35 + 1e-9):
+                history.clear()
             return None
         ls, rs, lh, rh, lk, rk, la, ra = points
         sx, sy = (ls.x + rs.x) / 2, (ls.y + rs.y) / 2
@@ -758,9 +845,24 @@ class PoseEventEngine:
             if wrist is not None and elbow is not None:
                 support += int(abs(wrist.y - hy) <= length * 0.6 and elbow.y < wrist.y)
         assisted = support >= 2 or abs(hx - sx) / length >= 0.3 or max(knees) <= 0.35
+        # 双手撑跳时躯干会前折、双腿也可能短暂伸直。以手部为参考，
+        # 检查髋和双脚确实腾起后恢复，不依赖腾起时的收腿分类。
+        wrists = [_point(observation.keypoints, i, self._keypoint_confidence) for i in (9, 10)]
+        elbows = [_point(observation.keypoints, i, self._keypoint_confidence) for i in (7, 8)]
+        jump_anchor = None
+        if all(p is not None and all(math.isfinite(v) for v in (p.x, p.y))
+               for p in (*wrists, *elbows)):
+            span = abs(wrists[0].x - wrists[1].x)
+            wrist_y = (wrists[0].y + wrists[1].y) / 2
+            if (span >= length * 0.65
+                    and all(w.y - e.y >= length * 0.05 for w, e in zip(wrists, elbows))
+                    and wrist_y >= sy + length * 0.1):
+                jump_anchor = ((hy - wrist_y) / span,
+                               (la.y - wrist_y) / span, (ra.y - wrist_y) / span,
+                               length / span)
         if history and not 0 < now - history[-1][0] <= 0.5:
             history.clear()
-        history.append((now, *knees, *ankles, assisted, hy, length))
+        history.append((now, *knees, *ankles, assisted, hy, length, jump_anchor))
         while history and now - history[0][0] > self._vault_window_seconds:
             history.popleft()
         if len(history) < 6:
@@ -780,6 +882,20 @@ class PoseEventEngine:
             base = [(before[0][i] + before[1][i]) / 2 for i in (3, 4)]
             base_hip = (before[0][6] + before[1][6]) / 2
             base_length = (before[0][7] + before[1][7]) / 2
+            if (all(s[8] is not None and abs(s[8][0]) <= s[8][3] * 0.7 for s in before)
+                    and all(s[8] is not None for s in samples[-2:])):
+                reference = [(before[0][8][i] + before[1][8][i]) / 2 for i in range(4)]
+                air = [s for s in samples[index + 1:-2]
+                       if s[8] is not None
+                       and reference[0] - s[8][0] >= reference[3] * 0.4
+                       and all(reference[i] - s[8][i] >= reference[3] * 0.5 for i in (1, 2))]
+                if (len(air) >= 2 and air[-1][0] - air[0][0] >= 0.1 - 1e-9
+                        and all(s[8][0] - min(a[8][0] for a in air) >= reference[3] * 0.25
+                                and all(s[8][i] - min(a[8][i] for a in air) >= reference[3] * 0.4
+                                        for i in (1, 2)) for s in samples[-2:])):
+                    duration = now - air[0][0]
+                    history.clear()
+                    return duration
             compact = [s for s in samples[index + 1:-2]
                        if s[5] and min(s[1:3]) <= 0.35
                        and 0.7 <= s[7] / base_length <= 1.4

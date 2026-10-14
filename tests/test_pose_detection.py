@@ -400,12 +400,13 @@ def _damage_events(engine, pose, now):
     return [e for e in events if e.event_type == "POSE_DAMAGE_SUSPECTED"]
 
 
-def test_chest_motion_emits_shared_event_under_two_seconds_and_cools_down():
+def test_chest_motion_confirms_under_two_seconds_and_repeats_after_thirty():
     engine = PoseEventEngine()
     hits = []
-    for i in range(16):
+    for i in range(161):
         hits.extend(_damage_events(engine, _chest_pose(i, translate=i * 2, scale=1 + i * .01), i * .2))
-    assert len(hits) == 1
+    assert len(hits) == 2
+    assert hits[1].observed_monotonic - hits[0].observed_monotonic >= 30
     assert .8 <= hits[0].duration_seconds < 2
 
 
@@ -458,7 +459,7 @@ def test_vault_sequence_without_raised_hands_or_zone() -> None:
         if i < len(sequence) - 1:
             assert not current
         events.extend(current)
-    assert [e.event_type for e in events] == ["POSE_CLIMBING_SUSPECTED"]
+    assert [e.event_type for e in events] == ["POSE_VAULTING_SUSPECTED"]
     assert events[0].observed_monotonic == 1.0
     assert abs(events[0].duration_seconds - 0.6) < 1e-6
 
@@ -509,7 +510,7 @@ def test_sequential_high_steps_require_both_legs_and_recovery() -> None:
         _, events = engine.update([pose], now=i * 0.2)
         if i < len(sequence) - 1:
             assert not events
-    assert [e.event_type for e in events] == ['POSE_CLIMBING_SUSPECTED']
+    assert [e.event_type for e in events] == ['POSE_VAULTING_SUSPECTED']
 
 
 def test_alternating_normal_steps_do_not_trigger_vault() -> None:
@@ -539,7 +540,7 @@ def test_supported_crossing_requires_multiple_frames_and_motion() -> None:
     _, events = engine.update([_supported_crossing_pose()], now=.1)
     assert not events
     _, events = engine.update([_supported_crossing_pose(-15)], now=.2)
-    assert [e.event_type for e in events] == ['POSE_CLIMBING_SUSPECTED']
+    assert [e.event_type for e in events] == ['POSE_VAULTING_SUSPECTED']
     # 仍沿用统一告警冷却。
     _, events = engine.update([_supported_crossing_pose()], now=.3)
     assert not events
@@ -591,22 +592,23 @@ def test_supported_crossing_continues_after_foot_drops_and_brief_missing_pose():
         points[10] = PoseKeypoint(70, 65, .95)
         continuation = _pose(keypoints=points)
         _, events = engine.update([continuation], now=.2)
-        assert any(e.event_type == 'POSE_CLIMBING_SUSPECTED' for e in events)
+        assert any(e.event_type == 'POSE_VAULTING_SUSPECTED' for e in events)
         # 相同后续姿势，没有严格的起始抬腿证据时不能触发。
         engine = PoseEventEngine()
         for i in range(5):
             _, events = engine.update([continuation], now=i*.1)
-            assert not any(e.event_type == 'POSE_CLIMBING_SUSPECTED' for e in events)
+            assert not any(e.event_type == 'POSE_VAULTING_SUSPECTED' for e in events)
 
 
 def test_damage_action_does_not_require_a_configured_or_inside_zone():
     for zone in (None, _Zone(False, configured=False), _Zone(False), _Zone(True)):
         engine = PoseEventEngine()
         hits = []
-        for i in range(16):
+        for i in range(161):
             _, events = engine.update([_chest_pose(i)], zone_gate=zone, now=i * .2)
             hits.extend(e for e in events if e.event_type == "POSE_DAMAGE_SUSPECTED")
-        assert len(hits) == 1
+        assert len(hits) == 2
+        assert hits[1].observed_monotonic - hits[0].observed_monotonic >= 30
 
 
 def test_chest_motion_rejects_low_hands_static_body_and_invalid_points():

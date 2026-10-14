@@ -252,6 +252,20 @@ export type MappingControlRequest = {
   scene_name?: string | null
 }
 
+export type MappingSaveProgress = {
+  stage: string
+  label: string
+  detail: string
+  stage_started_at?: number | null
+  stage_elapsed_seconds?: number | null
+  updated_at?: number | null
+  update_age_seconds?: number | null
+  completed?: number | null
+  total?: number | null
+  unit?: string | null
+  baseline_saved: boolean
+}
+
 export type MappingControlResponse = {
   success: boolean
   enabled: boolean
@@ -262,6 +276,12 @@ export type MappingControlResponse = {
   map_dir: string | null
   pid: number | null
   started_at?: number | null
+  save_started_at?: number | null
+  save_elapsed_seconds?: number | null
+  save_worker_alive?: boolean | null
+  save_progress?: MappingSaveProgress | null
+  height_refinement_state?: 'height_refined' | 'baseline_saved' | 'unknown' | 'failed' | null
+  height_refinement_reason?: string | null
   map_pcd_candidates: string[]
   ground_pcd_candidates: string[]
   pcd_files: Array<{ name: string; path: string; size_bytes: number }>

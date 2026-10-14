@@ -221,6 +221,9 @@ async def get_system_config(
             if v.get("category") == category
         }
 
+    if "weapon_enabled" in all_configs:
+        all_configs["weapon_enabled"]["runtime_value"] = bool(settings.WEAPON_ENABLED)
+
     return {
         "configs": all_configs,
         "total": len(all_configs),
@@ -277,6 +280,24 @@ async def update_system_config(
             else:
                 await disable_auto_tracking()
             runtime_apply = {"applied": True, "target": "auto_track", "message": "运行时已生效"}
+        elif key == "weapon_enabled":
+            from ... import main
+
+            enabled = _parse_bool(value)
+            worker = main._ai_worker
+            if worker is None:
+                runtime_apply = {"applied": False, "target": "ai", "message": "AI 服务未运行，设置将在服务启动后生效"}
+            else:
+                try:
+                    await worker.set_weapon_detection_enabled(enabled)
+                    runtime_apply = {"applied": True, "target": "ai", "message": "刀枪检测及告警已开启" if enabled else "刀枪检测及告警已关闭"}
+                except ValueError as exc:
+                    # Keep persisted state consistent with the effective off state on load failure.
+                    config = await config_service.update_config(
+                        session=db, key=key, value=settings.WEAPON_ENABLED,
+                        changed_by=changed_by, reason=str(exc),
+                    )
+                    runtime_apply = {"applied": False, "target": "ai", "message": str(exc)}
         else:
             runtime_apply = _apply_runtime_update(key, value)
 

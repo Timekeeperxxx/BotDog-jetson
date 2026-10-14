@@ -230,8 +230,9 @@ class EventBroadcaster:
         success_count = await self._broadcast_bounded(alert_message)
 
         get_logger("WebSocket事件").info(
-            "告警事件已广播：event_code={}，成功连接数={}",
+            "告警事件已广播：event_code={}，evidence_id={}，成功连接数={}",
             event_code,
+            evidence_id,
             success_count,
         )
 

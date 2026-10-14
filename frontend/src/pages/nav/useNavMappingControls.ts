@@ -4,11 +4,19 @@ import {
   getMappingStatus,
   setMappingEnabled,
 } from '../../api/pcdMapApi'
+import type { MappingControlResponse } from '../../types/pcdMap'
 import type { LogItem, MappingSessionInfo } from './navPageUtils'
 import { validateMappingSceneName } from './navPageUtils'
 
 export const MIN_MAPPING_RUNTIME_SECONDS = 90
 const RADAR_PREFLIGHT_TIMEOUT_MS = 6000
+
+export function mappingCompletionTitle(status: MappingControlResponse): string {
+  if (!status.saved) return '地图保存未完成'
+  if (status.height_refinement_state === 'baseline_saved') return '地图已保存，保留基线'
+  if (status.height_refinement_state === 'height_refined') return '地图保存与高度优化完成'
+  return '地图保存完成'
+}
 
 type UseNavMappingControlsOptions = {
   addLog: (message: string, level?: LogItem['level']) => void
@@ -29,6 +37,8 @@ export function useNavMappingControls({
   const [mappingSending, setMappingSending] = useState(false)
   const [mappingPreflightChecking, setMappingPreflightChecking] = useState(false)
   const [mappingSaving, setMappingSaving] = useState(false)
+  const [mappingSaveStatus, setMappingSaveStatus] = useState<MappingControlResponse | null>(null)
+  const [mappingProgressError, setMappingProgressError] = useState<string | null>(null)
   const [mappingDialogOpen, setMappingDialogOpen] = useState(false)
   const [mappingSceneName, setMappingSceneName] = useState('')
   const [mappingSceneError, setMappingSceneError] = useState<string | null>(null)
@@ -39,11 +49,14 @@ export function useNavMappingControls({
   useEffect(() => {
     if (!canOperate) return
     let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
 
     const syncMappingStatus = async () => {
       try {
         const status = await getMappingStatus()
         if (cancelled) return
+        setMappingSaveStatus(status)
+        setMappingProgressError(null)
         if (status.saving) {
           setMappingActive(false)
           setMappingSaving(true)
@@ -58,7 +71,7 @@ export function useNavMappingControls({
         if (!status.running) {
           if (status.scene_name && status.saved != null) {
             setMappingNotice({
-              title: status.saved ? '地图保存完成' : '地图保存未完成',
+              title: mappingCompletionTitle(status),
               message: `${status.scene_name}：${status.message || (status.saved ? '已保存，可在场景列表查看' : '请查看建图日志')}`,
               kind: status.saved ? 'ready' : 'error',
             })
@@ -77,6 +90,7 @@ export function useNavMappingControls({
       } catch (error) {
         if (!cancelled) {
           addLog(error instanceof Error ? error.message : '读取建图状态失败', 'error')
+          retryTimer = setTimeout(() => { void syncMappingStatus() }, 3000)
         }
       }
     }
@@ -84,12 +98,15 @@ export function useNavMappingControls({
     void syncMappingStatus()
     return () => {
       cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
     }
   }, [addLog, canOperate, refreshScenes])
 
   const applySaveResult = useCallback((result: Awaited<ReturnType<typeof getMappingStatus>>) => {
+    setMappingSaveStatus(result)
+    setMappingProgressError(null)
     setMappingNotice({
-      title: result.saved ? '地图保存完成' : '地图保存未完成',
+      title: mappingCompletionTitle(result),
       message: `${result.scene_name || '当前场景'}：${result.message || (result.saved ? '已保存，可在场景列表查看' : '请查看建图日志')}`,
       kind: result.saved ? 'ready' : 'error',
     })
@@ -121,6 +138,8 @@ export function useNavMappingControls({
       try {
         const status = await getMappingStatus()
         if (cancelled) return
+        setMappingSaveStatus(status)
+        setMappingProgressError(null)
         if (status.saving) {
           timer = setTimeout(() => {
             void pollSaveStatus()
@@ -137,6 +156,7 @@ export function useNavMappingControls({
         applySaveResult(status)
       } catch (error) {
         if (cancelled) return
+        setMappingProgressError('暂时无法获取保存进度，正在自动重连。请勿重复保存或关闭设备。')
         addLog(error instanceof Error ? error.message : '读取地图保存状态失败，将继续重试', 'error')
         timer = setTimeout(() => {
           void pollSaveStatus()
@@ -167,6 +187,8 @@ export function useNavMappingControls({
 
     setMappingStopConfirmOpen(false)
     setMappingNotice(null)
+    setMappingSaveStatus(null)
+    setMappingProgressError(null)
     // 用户确认结束后立即退出前端建图模式并断开实时点云。
     // 地图文件仍由后端继续保存，不能让最长 30 分钟的保存等待阻塞前端视图。
     setMappingActive(false)
@@ -176,8 +198,11 @@ export function useNavMappingControls({
     addLog('前端实时建图已停止，后台正在保存地图')
     try {
       const result = await setMappingEnabled(false)
+      setMappingSaveStatus(result)
+      setMappingProgressError(null)
       if (!result.saving) applySaveResult(result)
     } catch (error) {
+      setMappingProgressError('停止请求尚未确认，正在查询后台状态。请勿重复操作。')
       addLog(`${error instanceof Error ? error.message : '停止请求未确认'}；正在查询后台状态，请勿重复操作`, 'error')
     } finally {
       setMappingSending(false)
@@ -204,6 +229,8 @@ export function useNavMappingControls({
 
     setMappingSceneError(null)
     setMappingNotice(null)
+    setMappingSaveStatus(null)
+    setMappingProgressError(null)
     setMappingSending(true)
     try {
       const preflightController = new AbortController()
@@ -284,6 +311,8 @@ export function useNavMappingControls({
     mappingSceneError,
     mappingSceneName,
     mappingSaving,
+    mappingSaveStatus,
+    mappingProgressError,
     mappingSending,
     mappingSessionInfo,
     mappingStopConfirmOpen,

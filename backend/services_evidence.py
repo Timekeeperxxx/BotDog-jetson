@@ -9,10 +9,11 @@
 from pathlib import Path
 from typing import List, Optional, Iterable
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import AnomalyEvidence
+from .evidence_labels import EVIDENCE_LABELS, evidence_label
 
 
 async def list_evidence(
@@ -21,6 +22,9 @@ async def list_evidence(
     task_id: Optional[int] = None,
     limit: int = 100,
     offset: int = 0,
+    label: Optional[str] = None,
+    query: Optional[str] = None,
+    severity: Optional[str] = None,
 ) -> List[AnomalyEvidence]:
     """
     根据可选 task_id 查询最近的异常证据记录。
@@ -29,12 +33,46 @@ async def list_evidence(
     stmt: Select[tuple[AnomalyEvidence]] = select(AnomalyEvidence)
     if task_id is not None:
         stmt = stmt.where(AnomalyEvidence.task_id == task_id)
+    if label:
+        if label.startswith('type:'):
+            stmt = stmt.where(and_(
+                or_(AnomalyEvidence.event_code.is_(None), AnomalyEvidence.event_code == ''),
+                AnomalyEvidence.event_type == label[5:],
+            ))
+        else:
+            stmt = stmt.where(AnomalyEvidence.event_code == label)
+    if severity:
+        stmt = stmt.where(AnomalyEvidence.severity == severity)
+    if query and query.strip():
+        term = query.strip()
+        label_codes = [code for code, name in EVIDENCE_LABELS.items() if term.casefold() in name.casefold()]
+        stmt = stmt.where(or_(
+            AnomalyEvidence.message.contains(term, autoescape=True),
+            AnomalyEvidence.event_code.contains(term, autoescape=True),
+            AnomalyEvidence.event_type.contains(term, autoescape=True),
+            AnomalyEvidence.severity.contains(term, autoescape=True),
+            AnomalyEvidence.event_code.in_(label_codes),
+        ))
 
     stmt = stmt.order_by(AnomalyEvidence.created_at.desc(), AnomalyEvidence.evidence_id.desc()).limit(limit).offset(offset)
 
     result = await session.execute(stmt)
     rows = result.scalars().all()
     return list(rows)
+
+
+async def list_evidence_labels(session: AsyncSession, *, task_id: Optional[int] = None) -> list[dict]:
+    """标签及数量从全部记录计算，独立于当前分页和所选标签。"""
+    stmt = select(AnomalyEvidence.event_code, AnomalyEvidence.event_type, func.count()).group_by(
+        AnomalyEvidence.event_code, AnomalyEvidence.event_type)
+    if task_id is not None:
+        stmt = stmt.where(AnomalyEvidence.task_id == task_id)
+    options = {code: {'value': code, 'label': name, 'count': 0} for code, name in EVIDENCE_LABELS.items()}
+    for code, kind, count in (await session.execute(stmt)).all():
+        value = code or 'type:' + kind
+        option = options.setdefault(value, {'value': value, 'label': evidence_label(code, kind), 'count': 0})
+        option['count'] += count
+    return sorted(options.values(), key=lambda option: (-option['count'], option['label'], option['value']))
 
 
 async def delete_evidence_by_ids(

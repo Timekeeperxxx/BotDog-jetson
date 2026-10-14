@@ -9,7 +9,8 @@ import {
   ScrollText,
 } from 'lucide-react'
 import type { LocalizationStatus, RobotPose } from '../../types/navState'
-import type { PcdSceneMetadata } from '../../types/pcdMap'
+import type { MappingControlResponse, PcdSceneMetadata } from '../../types/pcdMap'
+import { MappingSaveProgress } from './MappingSaveProgress'
 import type { LogItem } from './navPageUtils'
 
 type SceneInfoDrawerProps = {
@@ -140,6 +141,9 @@ type Notice = {
 } | null
 
 type NavMessageCenterProps = {
+  mappingSaving?: boolean
+  mappingSaveStatus?: MappingControlResponse | null
+  mappingProgressError?: string | null
   notice: Notice
   noticeKind: string
   onDismissNotice?: () => void
@@ -149,6 +153,9 @@ type NavMessageCenterProps = {
 }
 
 export function NavMessageCenter({
+  mappingSaving = false,
+  mappingSaveStatus = null,
+  mappingProgressError = null,
   notice,
   noticeKind,
   onDismissNotice,
@@ -179,20 +186,28 @@ export function NavMessageCenter({
 
   return (
     <section
-      className={`pcd-message-center is-${noticeKind} ${expanded ? 'is-log-expanded' : ''}`}
-      aria-live={noticeKind === 'error' ? 'assertive' : 'polite'}
+      className={`pcd-message-center is-${noticeKind} ${expanded ? 'is-log-expanded' : ''} ${mappingSaving ? 'is-saving' : ''}`}
+      aria-live={mappingSaving ? 'off' : noticeKind === 'error' ? 'assertive' : 'polite'}
     >
-      <div className="pcd-message-primary" title={notice?.message || undefined}>
-        <span className="pcd-message-status-icon" aria-hidden="true">{noticeIcon}</span>
-        <div className="pcd-message-copy">
-          <div className="pcd-message-heading">
-            <span className="pcd-message-label">{noticeLabel}</span>
-            <strong>{notice?.title || '系统待命'}</strong>
+      {mappingSaving ? (
+        <MappingSaveProgress
+          status={mappingSaveStatus}
+          connectionError={mappingProgressError}
+          operationError={noticeKind === 'error' ? notice : null}
+        />
+      ) : (
+        <div className="pcd-message-primary" title={notice?.message || undefined}>
+          <span className="pcd-message-status-icon" aria-hidden="true">{noticeIcon}</span>
+          <div className="pcd-message-copy">
+            <div className="pcd-message-heading">
+              <span className="pcd-message-label">{noticeLabel}</span>
+              <strong>{notice?.title || '系统待命'}</strong>
+            </div>
+            <span className="pcd-message-detail">{notice?.message || '当前没有新的操作提醒。'}</span>
           </div>
-          <span className="pcd-message-detail">{notice?.message || '当前没有新的操作提醒。'}</span>
         </div>
-      </div>
-      {onDismissNotice ? (
+      )}
+      {!mappingSaving && onDismissNotice ? (
         <button type="button" className="pcd-tool-button" onClick={onDismissNotice} aria-label="关闭建图结果提示">
           知道了
         </button>

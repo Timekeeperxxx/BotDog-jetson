@@ -56,7 +56,8 @@ async def test_task_switch_clears_dedup_even_without_idle_gap(monkeypatch):
     assert worker._person_alert_last_seen == {}
     assert worker._person_pose_hits == {}
     person = SimpleNamespace(label='person', track_id=1, face_status='unknown', identity_id=None)
-    await worker._process_person_alerts([person], b'frame')
+    for _ in range(5):
+        await worker._process_person_alerts([person], b'frame')
     worker._last_task_check_time = 0
     await worker._update_current_task_id()
     await worker._process_person_alerts([person], b'frame')

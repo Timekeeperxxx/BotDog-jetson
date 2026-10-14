@@ -54,6 +54,7 @@ export function EvidenceLightbox({ item, onClose }: EvidenceLightboxProps) {
           </button>
         </div>
         <dl className="px-6 py-3 flex flex-wrap gap-x-6 gap-y-2 text-xs text-slate-300">
+          {item.alert_label && <div><dt className="inline">告警标签：</dt><dd className="inline">{item.alert_label}</dd></div>}
           <div><dt className="inline">记录编号：</dt><dd className="inline">{item.evidence_id}</dd></div>
           <div><dt className="inline">事件代码：</dt><dd className="inline">{item.event_code || item.event_type}</dd></div>
           {item.task_id != null && <div><dt className="inline">任务编号：</dt><dd className="inline">{item.task_id}</dd></div>}

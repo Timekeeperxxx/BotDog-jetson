@@ -51,6 +51,7 @@ import {
 } from './nav/NavPageDialogs'
 import { NavDrawerCluster } from './nav/NavDrawerCluster'
 import { NavMainViewer } from './nav/NavMainViewer'
+import { MapLoadingProgress } from './nav/MapLoadingProgress'
 import { NavMessageCenter, SceneInfoDrawer } from './nav/NavPageStatusPanels'
 import { NavPageHeader, NavRightRail } from './nav/NavPageShell'
 import { NavToolStrip, type PcdLayerVisibility } from './nav/NavToolStrip'
@@ -293,6 +294,8 @@ export function PcdMapDemoPage() {
     mappingSceneError,
     mappingSceneName,
     mappingSaving,
+    mappingSaveStatus,
+    mappingProgressError,
     mappingSending,
     mappingSessionInfo,
     mappingStopConfirmOpen,
@@ -392,8 +395,8 @@ export function PcdMapDemoPage() {
         : navigationNotice?.kind ?? 'idle'
   const savingNotice = mappingSaving
     ? {
-        title: '地图正在后台保存',
-        message: `${mappingSessionInfo?.sceneName || '当前场景'}：正在完成回环优化及地图、地形保存，可能需要数分钟。请勿关闭设备，完成后会在此提示。`,
+        title: `地图正在后台保存：${mappingSaveStatus?.save_progress?.label || '等待保存开始'}`,
+        message: mappingProgressError || `${mappingSessionInfo?.sceneName || '当前场景'}：${mappingSaveStatus?.save_progress?.detail || '正在完成地图、地形与高度优化，请查看底部保存状态。'} 请勿关闭设备，完成后会在此提示。`,
         kind: 'waiting',
       }
     : null
@@ -941,7 +944,6 @@ export function PcdMapDemoPage() {
         batteryPct={telemetry?.battery_pct}
         canOperate={canOperate}
         loading={loading}
-        loadingMessage={cloudPreparation}
         previewAvailable={Boolean(preview || tileManifest)}
         restartLocalizationSending={restartLocalizationSending}
         selectedSceneNavigable={selectedSceneNavigable}
@@ -952,7 +954,7 @@ export function PcdMapDemoPage() {
 
       <div className={`pcd-workspace ${rightRailOpen ? '' : 'is-right-rail-collapsed'}`}>
         <section className="pcd-main-stage">
-          <div className="pcd-main-viewer">
+          <div className={`pcd-main-viewer ${loading ? 'is-loading' : ''}`}>
             <NavMainViewer
               centerHeight={groundCenterHeight}
               followRobot={followRobot}
@@ -983,6 +985,7 @@ export function PcdMapDemoPage() {
               onGroundPointerChange={setMouseMapPosition}
               onSetPose={handleSetPose}
             />
+            <MapLoadingProgress loading={loading} message={cloudPreparation} />
           <NavDrawerCluster
             activeDrawer={activeDrawer}
             canExecuteTask={canOperate}
@@ -1126,6 +1129,9 @@ export function PcdMapDemoPage() {
         />
 
         <NavMessageCenter
+          mappingSaving={mappingSaving}
+          mappingSaveStatus={mappingSaveStatus}
+          mappingProgressError={mappingProgressError}
           notice={currentNotice}
           noticeKind={currentNoticeKind}
           onDismissNotice={!mappingSaving && currentNotice === mappingNotice ? dismissMappingNotice : undefined}

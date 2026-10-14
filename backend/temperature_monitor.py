@@ -52,7 +52,7 @@ class TemperatureMonitor:
         self._on_alert = on_alert
         self._current_temperature: Optional[float] = None
         self._last_alert_time: Optional[float] = None
-        self._alert_cooldown = 10.0  # 告警冷却时间（秒）
+        self._alert_cooldown = max(0.0, settings.THERMAL_ALERT_COOLDOWN_SECONDS)
 
     @property
     def threshold(self) -> float:

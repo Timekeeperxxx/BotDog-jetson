@@ -76,6 +76,9 @@ export function EvidencePanel({ evidence, latestEvidenceId }: EvidencePanelProps
   const {
     searchQuery,
     setSearchQuery,
+    evidenceLabel,
+    evidenceLabels,
+    setEvidenceLabel,
     evidenceLoading,
     evidenceLoadingMore,
     evidenceHasMore,
@@ -143,10 +146,26 @@ export function EvidencePanel({ evidence, latestEvidenceId }: EvidencePanelProps
         {/* 截图告警操作栏 */}
         {activeSubTab === 'evidence' && (
           <div className="flex flex-wrap items-center gap-4">
+            <div className="flex flex-col gap-1">
+              <label htmlFor="evidence-label" className="text-xs font-bold text-slate-400">告警标签</label>
+              <select
+                id="evidence-label"
+                value={evidenceLabel}
+                onChange={(event) => setEvidenceLabel(event.target.value)}
+                className="bg-zinc-900 border-2 border-white/20 rounded-lg py-3 px-4 text-sm font-bold text-white focus:outline-none focus:border-white min-w-48"
+              >
+                <option value="">全部标签</option>
+                {evidenceLabels.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}（{option.count}）</option>
+                ))}
+              </select>
+            </div>
             <div className="relative">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
               <input
                 type="text"
+                aria-label="搜索告警"
+                maxLength={200}
                 placeholder="搜索告警..."
                 className="bg-zinc-900 border-2 border-white/20 rounded-lg py-3 pl-12 pr-6 text-sm font-bold text-white focus:outline-none focus:border-white transition-all w-80 placeholder:text-zinc-700"
                 value={searchQuery}
@@ -246,6 +265,7 @@ export function EvidencePanel({ evidence, latestEvidenceId }: EvidencePanelProps
                       <div className="absolute bottom-4 right-4">
                         <input
                           type="checkbox"
+                          aria-label={`选择记录 ${item.evidence_id}`}
                           checked={selectedEvidence.has(item.evidence_id)}
                           onChange={(e) => { e.stopPropagation(); toggleEvidenceSelected(item.evidence_id); }}
                           onClick={(e) => e.stopPropagation()}
@@ -254,6 +274,7 @@ export function EvidencePanel({ evidence, latestEvidenceId }: EvidencePanelProps
                       </div>
                     </div>
                     <div className="p-6 flex-1 flex flex-col bg-zinc-900">
+                      {item.alert_label && <span className="self-start mb-3 px-2 py-1 rounded border border-white/20 text-xs font-bold text-slate-200">{item.alert_label}</span>}
                       <h4 className="text-sm font-black text-white tracking-wide uppercase mb-4">{item.message || item.event_code || 'AI 告警'}</h4>
                       {confidence !== undefined && (
                         <div className="space-y-2 mb-4">

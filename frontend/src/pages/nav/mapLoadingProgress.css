@@ -1,0 +1,103 @@
+.pcd-main-viewer.is-loading .pcd-viewer-empty { visibility: hidden; }
+
+.pcd-cloud-load-layer {
+  position: absolute;
+  inset: 0 0 0 60px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  pointer-events: none;
+}
+
+.pcd-cloud-load-card {
+  box-sizing: border-box;
+  width: min(320px, 100%);
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(94, 234, 212, 0.25);
+  border-radius: 8px;
+  background: rgba(8, 15, 19, 0.96);
+  color: #cbd5e1;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.pcd-cloud-load-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pcd-cloud-load-heading svg {
+  flex: 0 0 auto;
+  color: #5eead4;
+  animation: videoSpin 0.9s linear infinite;
+}
+
+.pcd-cloud-load-heading strong { color: #f8fafc; font-size: 14px; }
+.pcd-cloud-load-heading > span { margin-left: auto; color: #8ea3ad; white-space: nowrap; }
+
+.pcd-cloud-load-file {
+  margin-top: 10px;
+  color: #a9bdc7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcd-cloud-load-detail {
+  margin: 10px 0 0;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: #a9bdc7;
+}
+
+.pcd-cloud-load-metrics {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  color: #8ea3ad;
+  font-variant-numeric: tabular-nums;
+}
+.pcd-cloud-load-metrics strong { color: #5eead4; }
+
+.pcd-cloud-load-card progress {
+  display: block;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  margin: 7px 0;
+  border: 0;
+  border-radius: 2px;
+  overflow: hidden;
+  background: #263841;
+  color: #5eead4;
+  accent-color: #5eead4;
+}
+.pcd-cloud-load-card progress::-webkit-progress-bar { background: #263841; }
+.pcd-cloud-load-card progress::-webkit-progress-value { background: #5eead4; }
+.pcd-cloud-load-card progress::-moz-progress-bar { background: #5eead4; }
+
+.pcd-cloud-load-count {
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: #cbd5e1;
+  font-variant-numeric: tabular-nums;
+}
+.pcd-cloud-load-note { margin: 7px 0 0; color: #8ea3ad; font-size: 11px; }
+
+@media (max-width: 480px) {
+  .pcd-cloud-load-layer { padding: 10px; }
+  .pcd-cloud-load-card { padding: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pcd-cloud-load-heading svg, .pcd-loading svg { animation: none; }
+}

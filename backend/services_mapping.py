@@ -15,6 +15,7 @@ from .config import settings
 from .lidar_mount import lidar_mount_environment, lidar_mount_log_values
 from .logging_config import get_logger
 from .nav_bridge_state import get_ros_nav_bridge
+from .mapping_save_progress import save_fields, refinement_fields
 from .pcd_reader import normalize_pcd_header, parse_pcd_header
 from .repositories.json_store import read_json
 from .services_nav_state import clear_global_path, clear_robot_pose, get_robot_pose, set_navigation_idle
@@ -41,8 +42,7 @@ MAPPING_READY_FLAG_NAME = ".ground_generation_started"
 # 给 DDS 冷启动、错误状态落盘和脚本清理留出余量。
 MAPPING_START_READY_TIMEOUT_SECONDS = float(os.environ.get("MAPPING_READY_TIMEOUT_SECONDS", "120")) + 60
 MAPPING_START_READY_POLL_INTERVAL_SECONDS = 0.5
-# 必须长于 terrain 保存 30 分钟上限及后续 SuperLIO/launch 清理时间，
-# 否则后端会提前终止脚本，ground 和 footprint 仍然来不及落盘。
+# 重复保存请求的 HTTP 等待上限；超时只返回保存中，不终止后台保存。
 MAPPING_STOP_WAIT_TIMEOUT_SECONDS = 1950
 MAPPING_STOP_FORCE_KILL_WAIT_SECONDS = 5
 # 建图最短运行时间（秒），少于此时间停止时会额外提示
@@ -455,6 +455,7 @@ class MappingService:
                 "ground_pcd_candidates": [],
                 "pcd_files": [],
                 "message": "地图正在保存" if self._session.saving else "建图正在运行",
+                **(save_fields(self._session) if self._session.saving else {}),
             }
 
     def start(self, scene_name: str) -> dict[str, Any]:
@@ -598,6 +599,7 @@ class MappingService:
             "origin_waypoint": None,
             "origin_waypoint_error": None,
             "message": "建图已停止，地图正在后台保存",
+            **save_fields(session),
         }
 
     @staticmethod
@@ -749,6 +751,8 @@ class MappingService:
                 "origin_waypoint": None,
                 "origin_waypoint_error": None,
                 "message": f"地图保存收尾失败：{exc}",
+                **save_fields(session),
+                **refinement_fields(session.map_dir, False),
             }
             self._resume_runtime_interferers(session.runtime_pause_state)
             self._resume_nav_bridge()
@@ -769,30 +773,11 @@ class MappingService:
         started_at = session.started_at
         forced = False
         try:
-            process.wait(timeout=MAPPING_STOP_WAIT_TIMEOUT_SECONDS)
-            mapping_logger.info("建图脚本已正常退出：pid={}，耗时={:.0f}s", pid, time.time() - started_at)
-        except subprocess.TimeoutExpired:
-            mapping_logger.warning(
-                "建图脚本在 {} 秒内未退出，尝试 SIGTERM -> bash（触发 trap）",
-                MAPPING_STOP_WAIT_TIMEOUT_SECONDS,
-            )
-            try:
-                os.kill(pid, signal.SIGTERM)
-                process.wait(timeout=10)
-            except (ProcessLookupError, subprocess.TimeoutExpired):
-                mapping_logger.warning(
-                    "脚本仍未退出，使用 SIGKILL 强制终止整个进程组：pgid={}",
-                    os.getpgid(pid),
-                )
-                try:
-                    os.killpg(os.getpgid(pid), signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                try:
-                    process.wait(timeout=MAPPING_STOP_FORCE_KILL_WAIT_SECONDS)
-                except subprocess.TimeoutExpired:
-                    mapping_logger.error("建图进程组 SIGKILL 后仍未退出")
-                forced = True
+            # Saving must finish its finite loop search; elapsed time is not a failure.
+            process.wait()
+            mapping_logger.info("建图脚本已正常退出：pid={}，总运行={:.0f}s，停止后保存={:.0f}s",
+                                pid, time.time() - started_at,
+                                time.time() - (session.stop_requested_at or started_at))
         except Exception as exc:
             mapping_logger.exception("等待建图保存进程退出失败：pid={}，原因={}", pid, exc)
             forced = True
@@ -850,6 +835,14 @@ class MappingService:
         if forced:
             message += "（脚本被强制终止，文件可能不完整）"
 
+        refinement = refinement_fields(map_dir_path, saved)
+        if saved and refinement["height_refinement_state"] == "height_refined":
+            message += "；地面高度修正与完整验收已完成"
+        elif saved and refinement["height_refinement_state"] == "baseline_saved":
+            message += "；未采用高度修正，已保留基线地图"
+            if refinement["height_refinement_reason"]:
+                message += "：" + str(refinement["height_refinement_reason"])
+
         for file_info in pcd_files:
             if file_info["valid"]:
                 mapping_logger.info("有效 PCD 已保存：{} ({} 字节)", file_info["path"], file_info["size_bytes"])
@@ -880,6 +873,8 @@ class MappingService:
             "origin_waypoint": origin_waypoint,
             "origin_waypoint_error": origin_waypoint_error,
             "message": message,
+            **save_fields(session),
+            **refinement,
         }
         with self._lock:
             self._last_result = dict(result)

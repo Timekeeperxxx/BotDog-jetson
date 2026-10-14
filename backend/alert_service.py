@@ -8,7 +8,10 @@
 - 管理告警生命周期
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable, Awaitable
+import asyncio
+import time
+from sqlalchemy import select
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,8 +62,97 @@ class AlertService:
         self._event_broadcaster = event_broadcaster
         self._active_alerts: Dict[str, TemperatureAlert] = {}
         self._evidence_counter = 0
+        self._repeat_last_at: dict[str, float | None] = {}
+        self._repeat_locks: dict[str, asyncio.Lock] = {}
+
+    @staticmethod
+    def _repeat_interval(event_code: str) -> float:
+        if event_code == "E_AI_PERSON":
+            value = settings.AI_COOLDOWN_SECONDS
+        elif event_code in {"E_AI_GUNS", "E_AI_KNIFE"}:
+            value = settings.WEAPON_ALERT_COOLDOWN_SECONDS
+        elif event_code.startswith("E_POSE_"):
+            value = settings.POSE_EVENT_COOLDOWN_SECONDS
+        elif event_code.startswith("E_FENCE_"):
+            value = settings.FENCE_ALERT_COOLDOWN_SECONDS
+        elif event_code == "E_THERMAL_HIGH":
+            value = settings.THERMAL_ALERT_COOLDOWN_SECONDS
+        else:
+            return 0.0
+        return max(0.0, float(value))
+
+    @staticmethod
+    def _automatic_event_enabled(event_code: str) -> bool:
+        return event_code not in {"E_AI_GUNS", "E_AI_KNIFE"} or bool(settings.WEAPON_ENABLED)
+
+    async def automatic_event_due(self, event_code: str, session: Optional[AsyncSession] = None) -> bool:
+        """同类自动告警共用计时；首次检查读取最近证据，防止重载绕过间隔。"""
+        if not self._automatic_event_enabled(event_code):
+            return False
+        interval = self._repeat_interval(event_code)
+        if interval <= 0:
+            return True
+        if event_code not in self._repeat_last_at:
+            if session is None:
+                from .database import get_session_factory
+                async with get_session_factory()() as owned_session:
+                    return await self.automatic_event_due(event_code, owned_session)
+            recent = None
+            if isinstance(session, AsyncSession):
+                from .models import AnomalyEvidence
+                result = await session.execute(select(AnomalyEvidence.created_at).where(
+                    AnomalyEvidence.event_code == event_code,
+                ).order_by(AnomalyEvidence.created_at.desc()).limit(1))
+                recent = result.scalar_one_or_none()
+            previous = None
+            if recent:
+                try:
+                    recorded = datetime.fromisoformat(str(recent).replace('Z', '+00:00'))
+                    current = datetime.fromisoformat(utc_now_iso().replace('Z', '+00:00'))
+                    age = max(0.0, (current - recorded).total_seconds())
+                    previous = time.monotonic() - age
+                except (TypeError, ValueError):
+                    pass
+            self._repeat_last_at[event_code] = previous
+        last = self._repeat_last_at[event_code]
+        return last is None or time.monotonic() - last >= interval
+
+    async def _run_automatic_event(
+        self, event_code: str, session: Optional[AsyncSession],
+        emit: Callable[[], Awaitable[EvidenceRecord]],
+        event_guard: Callable[[], bool] | None = None,
+    ) -> Optional[EvidenceRecord]:
+        if not self._automatic_event_enabled(event_code) or (event_guard and not event_guard()):
+            return None
+        if self._repeat_interval(event_code) <= 0:
+            return await emit()
+        lock = self._repeat_locks.setdefault(event_code, asyncio.Lock())
+        async with lock:
+            if not await self.automatic_event_due(event_code, session):
+                return None
+            if not self._automatic_event_enabled(event_code) or (event_guard and not event_guard()):
+                return None
+            evidence = await emit()
+            self._repeat_last_at[event_code] = time.monotonic()
+            return evidence
+
+    async def handle_ai_event(self, **event: Any) -> Optional[EvidenceRecord]:
+        event_guard = event.pop("event_guard", None)
+        return await self._run_automatic_event(
+            event['event_code'], event.get('session'),
+            lambda: self._handle_ai_event_unlimited(**event), event_guard=event_guard,
+        )
 
     async def handle_temperature_alert(
+        self, alert: TemperatureAlert, position: Optional[Dict[str, Any]] = None,
+        task_id: Optional[int] = None, session: Optional[AsyncSession] = None,
+    ) -> Optional[EvidenceRecord]:
+        return await self._run_automatic_event(
+            'E_THERMAL_HIGH', session,
+            lambda: self._handle_temperature_alert_unlimited(alert, position, task_id, session),
+        )
+
+    async def _handle_temperature_alert_unlimited(
         self,
         alert: TemperatureAlert,
         position: Optional[Dict[str, Any]] = None,
@@ -107,7 +199,7 @@ class AlertService:
 
         return evidence
 
-    async def handle_ai_event(
+    async def _handle_ai_event_unlimited(
         self,
         *,
         event_type: str,
@@ -155,7 +247,25 @@ class AlertService:
         except Exception as e:
             logger.error(f"保存证据记录失败: {e}")
 
-        await self._broadcast_alert_payload(evidence=evidence, **extra)
+        await self._broadcast_alert_payload(evidence=evidence, session=session, **extra)
+        return evidence
+
+    async def record_identity_snapshot(
+        self, *, identity_id: int, display_name: str | None,
+        confidence: float | None, file_path: str, image_url: str,
+        gps_lat: float | None, gps_lon: float | None, task_id: int | None,
+        session: AsyncSession,
+    ) -> EvidenceRecord:
+        """保存已确认档案身份的普通抓拍，不触发未授权告警。"""
+        name = str(display_name or f"档案{identity_id}")
+        evidence = EvidenceRecord(
+            task_id=task_id, event_type="IDENTITY_SNAPSHOT", event_code="E_FACE_IDENTIFIED",
+            severity="INFO", message=f"已识别档案库人员：{name}（档案ID：{identity_id}）",
+            confidence=confidence, file_path=file_path, image_url=image_url,
+            gps_lat=gps_lat, gps_lon=gps_lon,
+        )
+        await self._store_evidence(evidence, session)
+        logger.info("档案库人员抓拍已保存：identity_id={}，evidence_id={}", identity_id, evidence.evidence_id)
         return evidence
 
     async def _store_evidence(
@@ -227,6 +337,7 @@ class AlertService:
         evidence: EvidenceRecord,
         temperature: Optional[float] = None,
         threshold: Optional[float] = None,
+        session: Optional[AsyncSession] = None,
         **extra: Any,
     ) -> None:
         """
@@ -252,7 +363,13 @@ class AlertService:
         if threshold is not None:
             payload["threshold"] = threshold
 
-        await self._event_broadcaster.broadcast_alert(
+        import time
+        broadcast_started = time.monotonic()
+        timed = evidence.event_code not in UNTIMED_EVENT_CODES
+        started_at = utc_now_iso()
+        if timed:
+            evidence.timing['broadcast_started_at'] = started_at
+        success_count = await self._event_broadcaster.broadcast_alert(
             event_type=evidence.event_type,
             event_code=evidence.event_code,
             severity=evidence.severity,
@@ -264,6 +381,30 @@ class AlertService:
             confidence=evidence.confidence,
             **payload,
         )
+
+        send_timing = {
+            'broadcast_started_at': started_at,
+            'broadcast_completed_at': utc_now_iso(),
+            'broadcast_duration_ms': round((time.monotonic() - broadcast_started) * 1000, 1),
+            'broadcast_success_count': success_count if isinstance(success_count, int) else None,
+        }
+        if timed:
+            evidence.timing.update(send_timing)
+        if evidence.evidence_id and timed:
+            try:
+                from .alert_receipts import merge_alert_timing, merge_broadcast_timing
+                from .database import get_session_factory
+                if session is not None:
+                    saved, _ = await merge_alert_timing(session, evidence.evidence_id,
+                                                        lambda current: merge_broadcast_timing(current, send_timing))
+                else:
+                    async with get_session_factory()() as timing_session:
+                        saved, _ = await merge_alert_timing(timing_session, evidence.evidence_id,
+                                                            lambda current: merge_broadcast_timing(current, send_timing))
+                evidence.timing = saved
+            except Exception as exc:
+                logger.warning("告警发送计时保存失败：evidence_id={}，{}", evidence.evidence_id, exc)
+        log_alert_timing(evidence.evidence_id, evidence.event_code, evidence.message, evidence.timing, 'sent')
 
         logger.info(
             f"告警已广播: {evidence.event_code} - {evidence.message}"

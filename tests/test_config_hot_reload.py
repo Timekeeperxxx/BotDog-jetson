@@ -212,3 +212,40 @@ def test_yellow_zone_detector_update_params():
     assert detector._center_text_bonus == 0.75
 
     assert detector.update_params("unknown_key", "1") is False
+
+
+def test_weapon_switch_calls_worker_and_is_immediately_applied(monkeypatch, client):
+    from backend import main
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    monkeypatch.setattr(settings, "WEAPON_ENABLED", True)
+    async def toggle(enabled):
+        settings.WEAPON_ENABLED = enabled
+    worker = SimpleNamespace(set_weapon_detection_enabled=AsyncMock(side_effect=toggle))
+    monkeypatch.setattr(main, "_ai_worker", worker)
+    token = _login(client)
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.post("/api/v1/config", headers=headers,
+        json={"key": "weapon_enabled", "value": False})
+    assert response.status_code == 200
+    assert response.json()["runtime_apply"]["applied"]
+    worker.set_weapon_detection_enabled.assert_awaited_once_with(False)
+    configs = client.get("/api/v1/config?category=ai", headers=headers).json()["configs"]
+    assert configs["weapon_enabled"]["is_hot_reloadable"]
+    assert configs["weapon_enabled"]["runtime_value"] is False
+
+
+def test_weapon_failed_enable_does_not_persist_a_false_success(monkeypatch, client):
+    from backend import main
+    from unittest.mock import AsyncMock
+    from types import SimpleNamespace
+    monkeypatch.setattr(settings, "WEAPON_ENABLED", False)
+    worker = SimpleNamespace(set_weapon_detection_enabled=AsyncMock(side_effect=ValueError("模型加载失败")))
+    monkeypatch.setattr(main, "_ai_worker", worker)
+    token = _login(client)
+    response = client.post("/api/v1/config", headers={"Authorization": f"Bearer {token}"},
+        json={"key": "weapon_enabled", "value": True})
+    assert response.status_code == 200
+    result = response.json()
+    assert not result["runtime_apply"]["applied"]
+    assert result["config"]["value"] is False

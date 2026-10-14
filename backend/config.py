@@ -93,8 +93,10 @@ class Settings(BaseSettings):
     # 目标检测与姿态模型完成首次顺序预热后并发推理，缩短同一帧总处理时间。
     AI_PARALLEL_INFERENCE_ENABLED: bool = True
     AI_STABLE_HITS: int = 5  # 连续命中阈值
+    PERSON_ALERT_STABLE_HITS: int = 5  # 人员告警连续有效确认次数
     AI_RESET_MISSES: int = 20  # 连续未命中重置阈值
-    AI_COOLDOWN_SECONDS: float = 5.0  # 冷却时间
+    AI_COOLDOWN_SECONDS: float = 30.0  # 同一人员重复告警间隔
+    THERMAL_ALERT_COOLDOWN_SECONDS: float = 30.0
     AI_SIMULATE_DETECTION: bool = False
     AI_SIMULATE_PROB: float = 0.02
     AI_DEVICE: str = 'auto'  # auto / cpu / cuda / cuda:0
@@ -133,7 +135,7 @@ class Settings(BaseSettings):
     WEAPON_UNATTENDED_CONFIDENCE_THRESHOLD: float = 1.0
     # 过滤覆盖画面过大的异常框（键盘、桌面等常见全幅误报）。
     WEAPON_MAX_FRAME_AREA_RATIO: float = 0.35
-    WEAPON_ALERT_COOLDOWN_SECONDS: float = 60.0
+    WEAPON_ALERT_COOLDOWN_SECONDS: float = 30.0
 
     # 天气分类支路：复用 AI Worker 已解码的可见光帧，不创建第二条 RTSP。
     # 当前产品类别为 normal/rain/snow/sandstorm；雷达融合状态会在接口中明确标记。
@@ -146,8 +148,10 @@ class Settings(BaseSettings):
     WEATHER_USE_FP16: bool = True
     WEATHER_INTERVAL_SECONDS: float = 300.0
     WEATHER_CONFIDENCE_THRESHOLD: float = 0.55
-    WEATHER_SMOOTHING_WINDOW: int = 3
-    WEATHER_STABLE_VOTES: int = 2
+    WEATHER_SMOOTHING_WINDOW: int = 6
+    WEATHER_STABLE_VOTES: int = 5
+    WEATHER_SAMPLE_INTERVAL_SECONDS: float = 2.0
+    WEATHER_MIN_OBSERVATION_SECONDS: float = 10.0
 
     # 姿态检测支路：COCO 17 点骨架 + 轻量时序状态机。
     POSE_ENABLED: bool = False
@@ -163,7 +167,7 @@ class Settings(BaseSettings):
     POSE_STABLE_HITS: int = 3
     POSE_CROUCH_SECONDS: float = 3.0
     POSE_LOITER_SECONDS: float = 5.0
-    POSE_EVENT_COOLDOWN_SECONDS: float = 15.0
+    POSE_EVENT_COOLDOWN_SECONDS: float = 30.0
     POSE_TRACK_TTL_SECONDS: float = 3.0
     POSE_OVERLAY_INTERVAL_SECONDS: float = 0.2
 
@@ -229,7 +233,7 @@ class Settings(BaseSettings):
     FENCE_TAMPER_CONFIRM_GRACE_SECONDS: float = 5.0
     FENCE_TAMPER_ALIGN_MAX_SHIFT_PX: float = 16.0
     FENCE_TRACK_TTL_SECONDS: float = 2.0
-    FENCE_ALERT_COOLDOWN_SECONDS: float = 15.0
+    FENCE_ALERT_COOLDOWN_SECONDS: float = 30.0
     FENCE_CONTROL_HZ: float = 5.0
     FENCE_GIMBAL_YAW_DEADBAND_DEG: float = 0.8
     FENCE_GIMBAL_SMOOTHING_ALPHA: float = 0.35

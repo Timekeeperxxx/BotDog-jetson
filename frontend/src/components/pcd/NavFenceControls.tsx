@@ -1,26 +1,16 @@
 import { Loader2, ScanLine, ShieldCheck } from 'lucide-react'
-import type { FenceBehavior, FenceDetectionState, FenceDetectionStatus } from '../../types/fenceDetection'
+import type { FenceDetectionState, FenceDetectionStatus } from '../../types/fenceDetection'
 
 const STATE_LABELS: Record<FenceDetectionState, string> = {
   disabled: '未开启',
   finding: '正在查找围栏',
   gimbal_moving: '云台转动中',
-  detecting: '检测中',
+  detecting: '云台已对准围栏',
   tracking: '已开启 · 跟踪联动中',
   not_found: '未找到围栏',
   out_of_range: '围栏超出范围',
   localization_unavailable: '定位不可用',
   calibration_unavailable: '标定不可用',
-}
-
-const BEHAVIOR_LABELS: Record<FenceBehavior, string> = {
-  normal: '正常',
-  approaching: '靠近围栏',
-  dwelling: '围栏附近停留',
-  contact: '接触围栏',
-  climbing_suspected: '疑似翻越',
-  tampering_suspected: '疑似破坏',
-  tampering_confirmed: '确认破坏',
 }
 
 type Props = {
@@ -51,16 +41,12 @@ export function NavFenceControls({
     <div className="pcd-fence-control-cluster">
       {showStatus ? (
         <div className="pcd-fence-status-popover" role="status">
-          <strong>{error ?? (status ? STATE_LABELS[status.state] : '读取状态中')}</strong>
+          <strong>{error ?? (status ? (enabled ? '动作检测已开启' : '未开启') : '读取状态中')}</strong>
+          {!error && status ? <span>观察状态 {STATE_LABELS[status.state]}</span> : null}
           {!error && status && status.state !== 'tracking' ? (
             <div>
-              <span>目标 {status.target_fence_id ?? '--'}</span>
-              <span>距离 {status.distance_m == null ? '--' : `${status.distance_m.toFixed(2)} m`}</span>
-              <span>人员 {BEHAVIOR_LABELS[status.behavior]}{status.behavior_track_id == null ? '' : ` #${status.behavior_track_id}`}</span>
-              <span>破坏复核 {status.tamper.reference_ready ? '已就绪' : '建立基准中'}</span>
-              {status.tamper.pending ? (
-                <span>动作 {(status.tamper.action_score * 100).toFixed(0)}% · 结构 {(status.tamper.structure_change_ratio * 100).toFixed(0)}%</span>
-              ) : null}
+              <span>观察围栏 {status.target_fence_id ?? '--'}</span>
+              <span>机器人至围栏 {status.distance_m == null ? '--' : `${status.distance_m.toFixed(2)} m`}</span>
             </div>
           ) : null}
           {!error && status?.detail ? <small>{status.detail}</small> : null}

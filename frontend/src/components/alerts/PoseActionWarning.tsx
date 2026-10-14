@@ -19,6 +19,7 @@ function ActionLabel({ active, label }: { active: boolean; label: string }) {
 export function PoseActionWarning({ actions }: { actions?: string[] }) {
   return <div role="status" aria-label="持续动作警告" className="pointer-events-none absolute left-1/2 top-16 z-30 flex -translate-x-1/2 flex-wrap justify-center gap-2 whitespace-nowrap text-sm">
     <ActionLabel active={actions?.includes('POSE_DAMAGE_SUSPECTED') ?? false} label="疑似破坏动作" />
-    <ActionLabel active={actions?.includes('POSE_CLIMBING_SUSPECTED') ?? false} label="疑似攀爬 / 翻越" />
+    <ActionLabel active={actions?.includes('POSE_CLIMBING_SUSPECTED') ?? false} label="疑似攀爬" />
+    <ActionLabel active={actions?.includes('POSE_VAULTING_SUSPECTED') ?? false} label="疑似翻越" />
   </div>;
 }

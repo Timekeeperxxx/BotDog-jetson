@@ -200,6 +200,7 @@ async def test_person_alerts_fail_closed_and_deduplicate_per_track(monkeypatch):
     worker._frames_processed = 1
     worker._current_task_id = None
     worker._raise_alert = AsyncMock()
+    worker._record_recognized_person = AsyncMock(return_value=True)
     auto = SimpleNamespace(_enabled=True, process_frame=AsyncMock())
     monkeypatch.setattr(auto_track_service, "get_auto_track_service", lambda: auto)
     monkeypatch.setattr(guard_mission_service, "get_guard_mission_service", lambda: None)
@@ -214,20 +215,21 @@ async def test_person_alerts_fail_closed_and_deduplicate_per_track(monkeypatch):
     fallback = person(6, "no_face")
     fallback.is_pose_fallback = True
     detections = [known, unknown, back, fault, pending, fallback]
+    for _ in range(5):
+        await worker._process_detection(detections, b"")
+    assert worker._raise_alert.await_count == 1
+    assert auto.process_frame.await_count == 5
     await worker._process_detection(detections, b"")
-    assert worker._raise_alert.await_count == 4
-    assert auto.process_frame.await_count == 1
-    await worker._process_detection(detections, b"")
-    assert worker._raise_alert.await_count == 4
+    assert worker._raise_alert.await_count == 1
     unknown.face_status, unknown.identity_id = "recognized", 10
     await worker._process_detection(detections, b"")
     unknown.face_status, unknown.identity_id = "no_face", None
     await worker._process_detection(detections, b"")
-    assert worker._raise_alert.await_count == 4
+    assert worker._raise_alert.await_count == 1
     await worker._process_detection([], b"")
     await worker._process_detection([], b"")
     await worker._process_detection([unknown], b"")
-    assert worker._raise_alert.await_count == 5
+    assert worker._raise_alert.await_count == 1
 
 
 @pytest.mark.asyncio

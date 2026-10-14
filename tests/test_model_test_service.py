@@ -106,6 +106,45 @@ def test_pose_preview_labels_shared_damage_event():
     assert label == "疑似破坏动作"
 
 
+@pytest.mark.parametrize('event_type,label', [
+    ('POSE_VAULTING_SUSPECTED', '疑似翻越'),
+    ('POSE_CLIMBING_SUSPECTED', '疑似攀爬'),
+])
+def test_pose_preview_distinguishes_vaulting_and_climbing(event_type, label):
+    runner = model_test_service.PoseStatusTensorRTRunner.__new__(
+        model_test_service.PoseStatusTensorRTRunner
+    )
+    assert runner._status_for_pose(None, None, event_type)[0] == label
+
+
+def test_pose_preview_keeps_vault_label_when_loitering_also_occurs(monkeypatch):
+    from types import SimpleNamespace
+    from collections import Counter
+    import torch
+    from backend.pose_detection import PoseObservation, PoseEvent, Posture
+
+    frame = np.zeros((32, 48, 3), dtype=np.uint8)
+    points = tuple(PoseKeypoint(0, 0, .9) for _ in range(17))
+    observation = PoseObservation(1, (0, 0, 20, 30), .9, points, Posture.STANDING, .7, True, 20)
+    events = [PoseEvent(kind, 1, .7, (0, 0, 20, 30), Posture.STANDING, .2)
+              for kind in ('POSE_VAULTING_SUSPECTED', 'POSE_LOITERING')]
+    result = SimpleNamespace(
+        boxes=SimpleNamespace(xyxy=torch.tensor([[0, 0, 20, 30]]), conf=torch.tensor([.9])),
+        keypoints=SimpleNamespace(data=torch.tensor([[[0, 0, .9]] * 17])),
+        plot=lambda **_: frame,
+    )
+    runner = model_test_service.PoseStatusTensorRTRunner.__new__(model_test_service.PoseStatusTensorRTRunner)
+    runner.model = SimpleNamespace(predict=lambda *_args, **_kwargs: [result])
+    runner.event_engine = SimpleNamespace(update=lambda *_args, **_kwargs: ([observation], events))
+    runner.frame_time = 20
+    runner.label_counts = Counter()
+    labels = []
+    monkeypatch.setattr(model_test_service, '_draw_unicode_status_labels',
+                        lambda image, statuses: labels.extend(statuses) or image)
+    runner.process(frame, .35)
+    assert labels[0][1] == '#1 疑似翻越'
+
+
 def test_resolve_result_file_rejects_traversal(tmp_path: Path) -> None:
     result = tmp_path / "20260811-test-face.jpg"
     result.write_bytes(b"image")

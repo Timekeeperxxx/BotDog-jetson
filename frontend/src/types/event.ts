@@ -3,12 +3,15 @@
  */
 
 // 使用 interface 导出，这是最兼容的方式
+import type { AlertReceiptObservation } from '../hooks/alertReceipt';
+
 export interface AlertEvent {
   event_type: string;
   event_code: string;
   severity: 'INFO' | 'WARNING' | 'CRITICAL';
   message: string;
   evidence_id?: number;
+  receipt_observation?: AlertReceiptObservation;
   image_url?: string;
   gps?: {
     lat: number;

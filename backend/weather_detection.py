@@ -2,13 +2,14 @@
 
 The deployed baseline model predicts eleven visual weather phenomena.  The
 product contract only exposes four classes: normal, rain, snow and sandstorm.
-Rime is grouped with snow. Other labels outside the three adverse-weather
-classes are treated as normal.
+Rime is grouped with snow. Low-confidence or unsupported observations remain
+unknown. Results require time-spaced frames; changes require two valid rounds.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections import Counter, deque
 from dataclasses import dataclass
@@ -24,13 +25,14 @@ weather_logger = get_logger("天气识别")
 
 WEATHER_LABELS = ("normal", "rain", "snow", "sandstorm")
 WEATHER_LABELS_ZH = {
-    "unknown": "未知",
+    "unknown": "待确认",
     "normal": "正常",
     "rain": "雨",
     "snow": "雪",
     "sandstorm": "沙尘",
 }
 RAW_TO_PRODUCT_LABEL = {
+    "normal": "normal",
     "rain": "rain",
     "snow": "snow",
     "rime": "snow",
@@ -297,7 +299,7 @@ class _MappedObservation:
 
 
 class WeatherDetectionService:
-    """Maps raw model labels and applies a small majority-vote window."""
+    """Confirm weather across time-spaced frames, never from one observation."""
 
     def __init__(
         self,
@@ -305,10 +307,12 @@ class WeatherDetectionService:
         enabled: bool,
         classifier: WeatherClassifier | None = None,
         min_confidence: float = 0.55,
-        smoothing_window: int = 3,
-        stable_votes: int = 2,
+        smoothing_window: int = 6,
+        stable_votes: int = 5,
         initialization_error: str | None = None,
         round_interval_seconds: float = 300.0,
+        sample_interval_seconds: float = 2.0,
+        min_observation_seconds: float = 10.0,
     ) -> None:
         self.next_sample_at = 0.0
         self._refresh_pending = False
@@ -319,8 +323,22 @@ class WeatherDetectionService:
         self._classifier = classifier
         self._runtime = getattr(classifier, "runtime", "unknown") if classifier else None
         self._min_confidence = min(1.0, max(0.0, float(min_confidence)))
-        self._window_size = max(1, int(smoothing_window))
-        self._stable_votes = min(self._window_size, max(1, int(stable_votes)))
+        # Persisted 1/3-frame settings cannot re-enable instant decisions.
+        self._window_size = max(6, int(smoothing_window))
+        self._stable_votes = min(self._window_size, max(math.ceil(self._window_size * 0.8), int(stable_votes)))
+        self._min_observation_seconds = max(10.0, float(min_observation_seconds))
+        self._sample_interval_seconds = max(2.0, float(sample_interval_seconds),
+                                            self._min_observation_seconds / (self._window_size - 1))
+        self._max_sample_gap_seconds = self._sample_interval_seconds * 3
+        self._round_started_at: float | None = None
+        self._last_sample_at: float | None = None
+        self._round_generation = 0
+        self._candidate_label: str | None = None
+        self._candidate_rounds = 0
+        self._candidate_at: float | None = None
+        self._last_confirmed_at: float | None = None
+        self._last_confirmed_observed_at: str | None = None
+        self._result_status = "collecting"
         self._history: deque[_MappedObservation] = deque(maxlen=self._window_size)
         self._lock = Lock()
         self._state = "disabled" if not self.enabled else "warming_up"
@@ -380,6 +398,8 @@ class WeatherDetectionService:
             smoothing_window=settings.WEATHER_SMOOTHING_WINDOW,
             stable_votes=settings.WEATHER_STABLE_VOTES,
             round_interval_seconds=settings.WEATHER_INTERVAL_SECONDS,
+            sample_interval_seconds=getattr(settings, "WEATHER_SAMPLE_INTERVAL_SECONDS", 2.0),
+            min_observation_seconds=getattr(settings, "WEATHER_MIN_OBSERVATION_SECONDS", 10.0),
         )
 
     @property
@@ -391,102 +411,186 @@ class WeatherDetectionService:
         with self._lock:
             return self._refresh_pending
 
+    @property
+    def round_in_progress(self) -> bool:
+        with self._lock:
+            return bool(self._history)
+
+    def _clear_round(self) -> None:
+        """Caller holds the lock; votes never cross a gap or refresh boundary."""
+        self._history.clear()
+        self._round_started_at = None
+        self._last_sample_at = None
+
+    def _clear_candidate(self) -> None:
+        self._candidate_label = None
+        self._candidate_rounds = 0
+        self._candidate_at = None
+
+    def _set_uncertain(self, status: str) -> None:
+        self._label = "unknown"
+        self._confidence = 0.0
+        self._probabilities = {label: 0.0 for label in WEATHER_LABELS}
+        self._state = "warming_up"
+        self._result_status = status
+
     def request_refresh(self) -> bool:
-        """Start a new three-frame round after a console page reload."""
+        """A refresh starts a full observation round, never a single-frame result."""
         if not self.available:
             return False
         with self._lock:
             if self._refresh_pending:
                 return False
             self._refresh_pending = True
-            self._history.clear()
+            self._round_generation += 1
+            self._clear_round()
+            self._clear_candidate()
             self.next_sample_at = 0.0
-            self._detail = "页面刷新，等待本轮三次采样"
+            self._result_status = "collecting"
+            self._detail = f"等待本轮{self._window_size}次间隔采样，至少观察{self._min_observation_seconds:g}秒"
         return True
 
     def cancel_refresh(self, detail: str) -> None:
         with self._lock:
+            self._round_generation += 1
+            self._clear_round()
+            self._clear_candidate()
             self._refresh_pending = False
+            self._set_uncertain("uncertain")
             self._detail = detail
             self.next_sample_at = time.monotonic() + 10.0
 
     def process_frame(self, frame_bgr: bytes) -> dict[str, Any]:
         if not self.available or self._classifier is None:
             return self.get_status()
-
+        sampled_at = time.monotonic()
+        with self._lock:
+            due = sampled_at >= self.next_sample_at
+            generation = self._round_generation
+            if due and self._last_sample_at is not None and sampled_at - self._last_sample_at > self._max_sample_gap_seconds:
+                self._clear_round()
+                self._clear_candidate()
+                self._set_uncertain("collecting")
+        if not due:
+            return self.get_status()
         started = time.perf_counter()
         try:
-            raw_probabilities = self._classifier.predict(frame_bgr)
-            observation = self._map_probabilities(raw_probabilities)
-        except Exception as exc:  # noqa: BLE001 - keep the main AI worker alive
+            observation = self._map_probabilities(self._classifier.predict(frame_bgr))
+        except Exception as exc:  # noqa: BLE001 - isolate weather failures
             with self._lock:
-                self._history.clear()
-                self.next_sample_at = time.monotonic() + 10.0
-                self._errors += 1
-                self._last_error = str(exc)
-                self._refresh_pending = False
-                self._state = "degraded"
-                self._detail = f"最近一次天气推理失败：{exc}"
-                self._last_inference_ms = round((time.perf_counter() - started) * 1000, 1)
+                if generation == self._round_generation:
+                    self._clear_round()
+                    self._clear_candidate()
+                    self.next_sample_at = time.monotonic() + 10.0
+                    self._errors += 1
+                    self._last_error = str(exc)
+                    self._refresh_pending = False
+                    self._set_uncertain("uncertain")
+                    self._state = "degraded"
+                    self._detail = f"天气采样失败，待重新确认：{exc}"
+                    self._last_inference_ms = round((time.perf_counter() - started) * 1000, 1)
             weather_logger.warning("天气推理失败，本帧已跳过：{}", exc)
             return self.get_status()
-
         with self._lock:
-            self._history.append(observation)
-            self._frames_processed += 1
-            self._raw_label = observation.raw_label
-            self._raw_confidence = observation.raw_confidence
-            self._probabilities = observation.probabilities
-            self._observed_at = utc_now_iso()
-            self._last_inference_ms = round((time.perf_counter() - started) * 1000, 1)
-            self._last_error = None
-
-            # 每轮独立投票，旧一轮的画面不参与本轮结果。
-            if len(self._history) < self._window_size:
-                self._state = "warming_up" if self._label == "unknown" else "ready"
-                self._detail = f"本轮采样 {len(self._history)}/{self._window_size}，保持上一结果"
-            else:
-                votes = Counter(item.label for item in self._history)
-                voted_label, vote_count = votes.most_common(1)[0]
-                valid = vote_count >= self._stable_votes and vote_count > self._window_size / 2
-                changed = valid and self._previous_round_label not in (None, voted_label)
-                delay = 10.0 if changed or not valid else self._round_interval_seconds
-                if valid:
-                    supporting = [item.confidence for item in self._history if item.label == voted_label]
-                    self._label = voted_label
-                    self._confidence = sum(supporting) / len(supporting)
-                    self._previous_round_label = voted_label
-                self._state = "ready" if self._label != "unknown" else "warming_up"
-                reason = "结果变化" if changed else "本轮无多数结果" if not valid else "结果稳定"
-                self._detail = f"本轮 {vote_count}/{self._window_size} 票，{reason}，{delay:g} 秒后复测"
-                self._rounds_processed += 1
-                self._refresh_pending = False
-                self._history.clear()
-                self.next_sample_at = time.monotonic() + delay
-
+            # A refresh during GPU work invalidates that old frame.
+            if generation == self._round_generation:
+                self._record_observation(observation, sampled_at, started)
         return self.get_status()
+
+    def _record_observation(self, observation: _MappedObservation, now: float, started: float) -> None:
+        if self._round_started_at is None:
+            self._round_started_at = now
+        self._last_sample_at = now
+        self._history.append(observation)
+        self._frames_processed += 1
+        self._raw_label = observation.raw_label
+        self._raw_confidence = observation.raw_confidence
+        self._last_inference_ms = round((time.perf_counter() - started) * 1000, 1)
+        self._last_error = None
+        elapsed = now - self._round_started_at
+        if len(self._history) < self._window_size or elapsed + 1e-9 < self._min_observation_seconds:
+            self._state = "warming_up" if self._label == "unknown" else "ready"
+            self._result_status = "collecting"
+            self._detail = f"多帧确认中：{len(self._history)}/{self._window_size}张，已观察{elapsed:.1f}/{self._min_observation_seconds:g}秒"
+            self.next_sample_at = now + self._sample_interval_seconds
+            return
+        votes = Counter(item.label for item in self._history if item.label != "unknown")
+        voted_label, vote_count = votes.most_common(1)[0] if votes else ("unknown", 0)
+        valid = vote_count >= self._stable_votes
+        changed = valid and self._previous_round_label not in (None, voted_label)
+        confirmed = valid
+        if changed:
+            fresh = (self._candidate_at is not None and now - self._candidate_at
+                     <= max(30.0, 2 * self._min_observation_seconds + 10.0))
+            if self._candidate_label == voted_label and fresh:
+                self._candidate_rounds += 1
+            else:
+                self._candidate_label = voted_label
+                self._candidate_rounds = 1
+            self._candidate_at = now
+            confirmed = self._candidate_rounds >= 2
+        else:
+            self._clear_candidate()
+        if confirmed:
+            self._label = voted_label
+            supporting = [item.confidence for item in self._history if item.label == voted_label]
+            self._confidence = sum(supporting) / len(supporting)
+            self._probabilities = {
+                label: sum(item.probabilities[label] for item in self._history) / self._window_size
+                for label in WEATHER_LABELS
+            }
+            self._previous_round_label = voted_label
+            self._observed_at = utc_now_iso()
+            self._last_confirmed_observed_at = self._observed_at
+            self._last_confirmed_at = now
+            self._state = "ready"
+            self._result_status = "confirmed"
+            self._clear_candidate()
+            reason = "跨两轮确认变化" if changed else "多帧确认"
+        else:
+            self._set_uncertain("pending_change" if changed else "uncertain")
+            reason = "疑似天气变化，等待第二轮复核" if changed else "证据不足，待确认"
+        delay = 10.0 if changed or not valid else self._round_interval_seconds
+        self._detail = f"本轮{vote_count}/{self._window_size}张一致，观察{elapsed:.1f}秒，{reason}；{delay:g}秒后复测"
+        self._rounds_processed += 1
+        self._refresh_pending = False
+        self._clear_round()
+        self.next_sample_at = now + delay
 
     def get_status(self) -> dict[str, Any]:
         with self._lock:
+            now = time.monotonic()
+            stale = (self._label != "unknown" and self._last_confirmed_at is not None
+                     and now - self._last_confirmed_at > self._round_interval_seconds + self._min_observation_seconds + 30.0)
+            label = "unknown" if stale else self._label
             return {
                 "enabled": self.enabled,
-                "state": self._state,
-                "detail": self._detail,
-                "label": self._label,
-                "label_zh": WEATHER_LABELS_ZH.get(self._label, self._label),
-                "confidence": round(self._confidence, 4),
+                "state": "warming_up" if stale else self._state,
+                "detail": "天气结果已过期，等待新的多帧确认" if stale else self._detail,
+                "label": label,
+                "label_zh": WEATHER_LABELS_ZH.get(label, label),
+                "confidence": 0.0 if label == "unknown" else round(self._confidence, 4),
                 "raw_label": self._raw_label,
                 "raw_confidence": round(self._raw_confidence, 4),
                 "probabilities": {
-                    key: round(value, 4) for key, value in self._probabilities.items()
+                    key: 0.0 if label == "unknown" else round(value, 4) for key, value in self._probabilities.items()
                 },
-                "observed_at": self._observed_at,
+                "observed_at": None if label == "unknown" else self._observed_at,
                 "inference_ms": self._last_inference_ms,
                 "frames_processed": self._frames_processed,
                 "smoothing_window": self._window_size,
                 "stable_votes": self._stable_votes,
                 "rounds_processed": self._rounds_processed,
                 "round_samples": len(self._history),
+                "sample_interval_seconds": self._sample_interval_seconds,
+                "min_observation_seconds": self._min_observation_seconds,
+                "round_observation_seconds": round(max(0.0, (self._last_sample_at or 0.0) - (self._round_started_at or 0.0)), 1),
+                "result_status": "stale" if stale else self._result_status,
+                "change_confirm_rounds": 2,
+                "candidate_label": self._candidate_label,
+                "candidate_rounds": self._candidate_rounds,
+                "last_confirmed_label": self._previous_round_label,
+                "last_confirmed_at": self._last_confirmed_observed_at,
                 "next_sample_in_seconds": round(max(0.0, self.next_sample_at - time.monotonic()), 1),
                 "source": "visible_camera",
                 "runtime": self._runtime,
@@ -499,39 +603,27 @@ class WeatherDetectionService:
         self,
         raw_probabilities: Mapping[str, float],
     ) -> _MappedObservation:
-        cleaned = {
-            str(label).strip().lower(): max(0.0, float(value))
-            for label, value in raw_probabilities.items()
-        }
-        if not cleaned:
-            raise ValueError("天气模型未返回任何类别概率")
+        cleaned = {str(label).strip().lower(): float(value) for label, value in raw_probabilities.items()}
+        if not cleaned or any(not math.isfinite(value) or not 0.0 <= value <= 1.0 for value in cleaned.values()):
+            raise ValueError("天气模型未返回有效类别概率")
         raw_label, raw_confidence = max(cleaned.items(), key=lambda item: item[1])
-        mapped = RAW_TO_PRODUCT_LABEL.get(raw_label)
-        if mapped is None or raw_confidence < self._min_confidence:
-            mapped = "normal"
-
-        target_probabilities = {
+        mapped = RAW_TO_PRODUCT_LABEL.get(raw_label, "unknown")
+        if raw_confidence < self._min_confidence:
+            mapped = "unknown"
+        product_probabilities = {
+            "normal": cleaned.get("normal", 0.0),
             "rain": cleaned.get("rain", 0.0),
-            "snow": cleaned.get("snow", 0.0) + cleaned.get("rime", 0.0),
+            "snow": min(1.0, cleaned.get("snow", 0.0) + cleaned.get("rime", 0.0)),
             "sandstorm": cleaned.get("sandstorm", 0.0),
         }
-        target_sum = min(1.0, sum(target_probabilities.values()))
-        product_probabilities = {
-            "normal": max(0.0, 1.0 - target_sum),
-            **target_probabilities,
-        }
-        confidence = (
-            raw_confidence
-            if mapped != "normal"
-            else max(product_probabilities["normal"], raw_confidence)
-        )
         return _MappedObservation(
             label=mapped,
-            confidence=min(1.0, confidence),
+            confidence=raw_confidence,
             raw_label=raw_label,
-            raw_confidence=min(1.0, raw_confidence),
+            raw_confidence=raw_confidence,
             probabilities=product_probabilities,
         )
+
 
 
 _weather_detection_service: WeatherDetectionService | None = None
