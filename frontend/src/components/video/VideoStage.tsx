@@ -4,6 +4,7 @@ import { PoseActionWarning } from '../alerts/PoseActionWarning';
 import { TrackOverlay } from '../TrackOverlay1';
 import { CameraControlPanel } from './CameraControlPanel';
 import { WeaponDetectionControl } from './WeaponDetectionControl';
+import { PackageDetectionControl } from './PackageDetectionControl';
 import { FenceActionControl } from './FenceActionControl';
 import { CameraVideo } from './CameraVideo';
 import { OmniMonitorEntry } from './OmniMonitorEntry';
@@ -26,6 +27,7 @@ const AI_LAYER_OPTIONS: Array<{
 }> = [
   { key: 'helmet', label: '安全帽画框', description: '人员、头部、安全帽', color: '#facc15' },
   { key: 'weapon', label: '刀枪画框', description: '只控制枪械、刀具画框显示', color: '#fb7185' },
+  { key: 'package', label: '包裹画框', description: '双肩包、手提包、行李箱', color: '#f59e0b' },
   { key: 'pose', label: '姿态画框', description: '人体框、骨架、姿态', color: '#2dd4bf' },
   { key: 'face', label: '人脸身份', description: '姓名和识别状态', color: '#4ade80' },
   { key: 'tracking', label: '跟踪与防区', description: '锁定框、辅助线、防区', color: '#60a5fa' },
@@ -248,6 +250,7 @@ export function VideoStage({
                     className="absolute bottom-[calc(100%+14px)] left-1/2 z-50 w-72 -translate-x-1/2 rounded-xl border border-white/20 bg-[#070e14]/98 p-3 text-left shadow-[0_18px_55px_rgba(0,0,0,0.72)] backdrop-blur"
                   >
                     <WeaponDetectionControl />
+                    <div className="mt-3"><PackageDetectionControl /></div>
                     <div className="mt-3"><FenceActionControl /></div>
                     <div className="mb-2 mt-3 flex items-center justify-between border-b border-white/10 pb-2">
                       <div>

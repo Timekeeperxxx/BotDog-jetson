@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .alert_service import get_alert_service
+from .abandoned_package import PACKAGE_LABELS
 from .alert_timing import observation_timing
 from .config import settings
 from .lightweight_tracker import calc_iou
@@ -91,6 +92,8 @@ class AIWorkerProcessingMixin:
         # 因此不会向机器人下发任何运动命令。
         if settings.AI_CONTINUOUS_DETECTION_ENABLED:
             return True
+        if settings.PACKAGE_ENABLED and self._get_active_navigation_task_id() is not None:
+            return True
         try:
             from .fence_detection_service import get_fence_detection_service
 
@@ -168,6 +171,10 @@ class AIWorkerProcessingMixin:
         return self._suspect_skip if self._is_suspect_mode() else self._patrol_skip
 
     def _reset_detection_state(self) -> None:
+        # Reset lazily in the next package inference, after any in-flight CPU
+        # registration finishes; never mutate its state from another thread.
+        self._package_reset_pending = True
+        self._last_package_at = 0.0
         self._person_alert_last_seen.clear()
         if hasattr(self, '_person_last_alert_at'):
             self._person_last_alert_at.clear()
@@ -347,7 +354,7 @@ class AIWorkerProcessingMixin:
                 face_score=getattr(d, "face_score", None),
             )
             for d in detections
-            if d.bbox is not None
+            if d.bbox is not None and d.label not in PACKAGE_LABELS
         ]
 
         await self._process_person_alerts(detections, frame)
@@ -692,6 +699,12 @@ class AIWorkerProcessingMixin:
                 "frame_h": self._frame_height,
                 "keypoint_confidence": settings.POSE_KEYPOINT_CONFIDENCE,
                 "stage": stage,
+                "package_updated": stage in {"package", "complete"} and getattr(self, "_package_updated", False),
+                "package_overlap_cleared_track_ids": (
+                    list(getattr(self, "_package_overlap_cleared_track_ids", []))
+                    if stage in {"package", "complete"} and getattr(self, "_package_updated", False)
+                    else []
+                ),
                 "frame_received_at_monotonic": getattr(self, "_current_frame_received_at", None),
                 "frame_age_ms": round(max(0.0, now - (getattr(self, "_current_frame_received_at", None) or now)) * 1000, 1),
                 "detections": [
@@ -706,6 +719,10 @@ class AIWorkerProcessingMixin:
                         "display_name": getattr(detection, "display_name", None) if stage == "complete" else None,
                         "face_status": getattr(detection, "face_status", None) if stage == "complete" else ("pending" if detection.label == "person" else None),
                         "face_score": getattr(detection, "face_score", None) if stage == "complete" else None,
+                        **({
+                            "package_state": getattr(detection, "package_state", "unknown"),
+                            "unattended_seconds": getattr(detection, "unattended_seconds", None),
+                        } if detection.label in PACKAGE_LABELS else {}),
                     }
                     for detection in detections
                     if detection.bbox is not None
@@ -770,10 +787,10 @@ class AIWorkerProcessingMixin:
         # 只覆盖解码后到结果的耗时，不冒充摄像头端到端延迟；无人连接也保留诊断。
         ai_logger.info(
             "AI 性能：frames={}，queue_age={}ms，processing={}ms，detect={}ms，"
-            "pose={}ms，weapon={}ms，weather={}ms，postprocess={}ms，dropped={}，face={}ms，overlay={}ms，events={}ms",
+            "pose={}ms，weapon={}ms，weather={}ms，package={}ms，postprocess={}ms，dropped={}，face={}ms，overlay={}ms，events={}ms",
             self._frames_processed, self._last_frame_age_ms, self._last_processing_ms,
             self._last_detect_ms, self._last_pose_ms, self._last_weapon_ms,
-            self._last_weather_ms, self._last_postprocess_ms, self._queued_frames_dropped,
+            self._last_weather_ms, self._last_package_ms, self._last_postprocess_ms, self._queued_frames_dropped,
             getattr(self, '_last_face_stage_ms', 0.0),
             getattr(self, '_last_overlay_stage_ms', 0.0),
             getattr(self, '_last_events_stage_ms', 0.0),
@@ -819,6 +836,8 @@ class AIWorkerProcessingMixin:
                     "weapon_detections_count": self._weapon_detections_count,
                     "weapon_filtered_detections_count": self._weapon_filtered_detections_count,
                     "weapon_alerts_count": self._weapon_alerts_count,
+                    "package": self._package_status_payload(),
+                    "inference_cpu": getattr(self, "_inference_cpu_runtime", None),
                     "weather": self._weather_service.get_status(),
                     "parallel_inference_enabled": self._parallel_inference_enabled,
                     "inference_warmed_up": (
@@ -827,6 +846,10 @@ class AIWorkerProcessingMixin:
                         and (
                             self._weapon_detector is None
                             or self._weapon_warmed_up
+                        )
+                        and (
+                            self._package_detector is None
+                            or self._package_warmed_up
                         )
                         and (
                             not self._weather_service.available

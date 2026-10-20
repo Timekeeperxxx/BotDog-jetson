@@ -9,6 +9,7 @@
 
 import asyncio
 import json
+import math
 from collections.abc import Callable
 from typing import Dict, Set, Any, Optional
 from datetime import datetime
@@ -37,26 +38,48 @@ class EventBroadcaster:
         self._connections: Set[WebSocket] = set()
         self._lock = asyncio.Lock()
         self._nav_state_provider = nav_state_provider
+        self._pending_overlay: tuple[float, dict, float] | None = None
+        self._pending_package_overlay: tuple[float, dict, float] | None = None
+        self._overlay_task: asyncio.Task[None] | None = None
 
     def publish_latest_overlay(self, message: dict, timeout: float) -> None:
-        """Never block inference or queue old overlay frames behind slow clients."""
-        self._pending_overlay = (asyncio.get_running_loop().time(), message, timeout)
-        task = getattr(self, '_overlay_task', None)
-        if task is None or task.done():
+        """Keep at most one authoritative package update and the latest overlay."""
+        entry = (asyncio.get_running_loop().time(), message, timeout)
+        self._pending_overlay = entry
+        payload = message.get("payload")
+        if isinstance(payload, dict) and payload.get("package_updated") is True:
+            # A later partial must not erase a confirmation, overlap or empty sample.
+            self._pending_package_overlay = entry
+        if self._overlay_task is None or self._overlay_task.done():
             self._overlay_task = asyncio.create_task(self._send_latest_overlays())
+
+    async def _send_overlay(self, connection: WebSocket, message: dict) -> None:
+        payload = message.get("payload")
+        received_at = payload.get("frame_received_at_monotonic") if isinstance(payload, dict) else None
+        if isinstance(received_at, (int, float)) and math.isfinite(received_at):
+            # Compute per client after taking the send lock; never re-date the source
+            # frame or mutate the queued message shared with the other clients.
+            frame_age_ms = round(max(0.0, asyncio.get_running_loop().time() - received_at) * 1000, 1)
+            message = {**message, "payload": {**payload, "frame_age_ms": frame_age_ms}}
+        await connection.send_json(message)
 
     async def _send_latest_overlays(self) -> None:
         try:
-            while self._pending_overlay is not None:
+            while self._pending_overlay is not None or self._pending_package_overlay is not None:
                 async with self._lock:
-                    # Select AFTER acquiring the lock: an older waiting frame may be replaced.
-                    created, message, timeout = self._pending_overlay
-                    self._pending_overlay = None
+                    # Select AFTER acquiring the lock. The authoritative entry always
+                    # precedes (or is identical to) the latest ordinary overlay.
+                    entry = self._pending_package_overlay or self._pending_overlay
+                    if self._pending_package_overlay is entry:
+                        self._pending_package_overlay = None
+                    if self._pending_overlay is entry:
+                        self._pending_overlay = None
+                    created, message, timeout = entry
                     if asyncio.get_running_loop().time() - created > 0.5:
                         continue
                     connections = tuple(self._connections)
                     results = await asyncio.gather(*(
-                        asyncio.wait_for(connection.send_json(message), timeout=timeout)
+                        asyncio.wait_for(self._send_overlay(connection, message), timeout=timeout)
                         for connection in connections
                     ), return_exceptions=True)
                     for connection, result in zip(connections, results):
@@ -64,9 +87,11 @@ class EventBroadcaster:
                             self._connections.discard(connection)
         except asyncio.CancelledError:
             self._pending_overlay = None
+            self._pending_package_overlay = None
             raise
         except Exception as exc:
             self._pending_overlay = None
+            self._pending_package_overlay = None
             get_logger("WebSocket事件").warning("叠层发送失败：{}", exc)
 
     def has_connections(self) -> bool:

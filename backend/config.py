@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     AI_FPS: int = 5
     AI_STREAM_READER: Literal["ffmpeg", "gstreamer"] = "ffmpeg"
     AI_INFERENCE_IMGSZ: int = 640
+    # Keep live GPU preprocessing consistent with the low-latency board replay.
+    AI_TORCH_NUM_THREADS: int = 2
+    AI_OPENCV_NUM_THREADS: int = 2
     AI_FFMPEG_RETRY_MIN_SECONDS: float = 1.0
     AI_FFMPEG_RETRY_MAX_SECONDS: float = 3.0
     # FFmpeg 正常软件解码 640x360 RTSP 时常驻内存远低于此值；超过上限说明
@@ -104,6 +107,22 @@ class Settings(BaseSettings):
     AI_CONFIDENCE_THRESHOLD: float = 0.4  # 推理置信度阈值
     AI_TARGET_CLASSES: list[str] = ['person', 'head', 'helmet']  # 目标类别
     AI_USE_BYTETRACK: bool = False
+    # 独立包类支路；总开关默认关闭，显式配置本机生成的 TensorRT 模型后启用。
+    PACKAGE_ENABLED: bool = False
+    PACKAGE_MODEL_PATH: str = '/home/jetson/Projects/Models/yolo11n-backpack-fp16.engine'
+    PACKAGE_DEVICE: str = 'auto'
+    PACKAGE_INFERENCE_IMGSZ: int = 640
+    PACKAGE_CONFIDENCE_THRESHOLD: float = 0.25
+    PACKAGE_INTERVAL_SECONDS: float = 0.20
+    PACKAGE_CONFIRM_SECONDS: float = 3.0
+    PACKAGE_MAX_GAP_SECONDS: float = 0.8
+    PACKAGE_REFINE_ENABLED: bool = True
+    PACKAGE_REFINE_MAX_CROPS: int = 6
+    # 包类模式保留模型原始分类；关闭时仅输出 backpack。
+    PACKAGE_INCLUDE_LUGGAGE: bool = True
+    PACKAGE_REVIEW_ENABLED: bool = False
+    PACKAGE_REVIEW_MODEL_PATH: str = ''
+    PACKAGE_REVIEW_METADATA_PATH: str = ''
     # 独立于巡检任务和自动跟踪，持续进行只读视觉分析；不会下发机器人运动命令。
     AI_CONTINUOUS_DETECTION_ENABLED: bool = False
     # 是否在普通巡检/session 运行时启用旧的被动 AI 告警。

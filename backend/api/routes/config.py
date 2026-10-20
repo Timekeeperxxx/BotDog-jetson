@@ -1,5 +1,6 @@
 """系统配置管理路由。"""
 
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,6 +13,71 @@ from ...database import get_db
 from ...logging_config import logger
 
 router = APIRouter(prefix="/api/v1/config", tags=["config"])
+# Serialize the package key's persistence + runtime apply + failure writeback.
+# Other keys, including the existing weapon path, retain their current behavior.
+_package_config_lock = asyncio.Lock()
+
+
+def _package_runtime_fields(worker) -> dict:
+    return {
+        "runtime_value": bool(worker is not None and worker.package_detection_enabled),
+        "runtime_state": worker._package_status_payload()["state"] if worker is not None else "unavailable",
+    }
+
+
+async def _update_package_enabled(config_service, db, value, user, reason):
+    from ... import main
+
+    enabled = _parse_bool(value)
+    async with _package_config_lock:
+        config = await config_service.update_config(
+            session=db, key="package_enabled", value=enabled,
+            changed_by=user.username, reason=reason,
+        )
+        worker = main._ai_worker
+        error = None
+        try:
+            if worker is None:
+                settings.PACKAGE_ENABLED = False
+                if enabled:
+                    error = "AI 服务未运行，包检测未开启"
+            else:
+                await worker.set_package_detection_enabled(enabled)
+        except ValueError as exc:
+            error = str(exc)
+        except asyncio.CancelledError:
+            # The worker also retires a cancelled load; do not leave a saved True.
+            # Cancellation while waiting for an admitted event's lock may precede
+            # the off transition itself. Complete it before persisting False.
+            if worker is not None and worker.package_detection_enabled:
+                await worker.set_package_detection_enabled(False)
+            await config_service.update_config(
+                session=db, key="package_enabled", value=False,
+                changed_by=user.username, reason="包检测开关操作已取消",
+            )
+            raise
+        runtime = _package_runtime_fields(worker)
+        applied = error is None and runtime["runtime_value"] == enabled
+        if not applied:
+            error = error or "包检测运行状态与请求不一致"
+            config = await config_service.update_config(
+                session=db, key="package_enabled", value=runtime["runtime_value"],
+                changed_by=user.username, reason=error,
+            )
+        message = error or ("包检测及告警已开启" if enabled else "包检测及告警已关闭")
+        runtime_apply = {"applied": applied, "target": "ai", "message": message, **runtime}
+        if error:
+            runtime_apply["error"] = error
+        await safe_write_audit_log(
+            db, level="INFO" if applied else "WARNING", module="BACKEND",
+            message=(f"用户={user.username} 角色={user.role} 操作=config.update "
+                     f"目标=package_enabled runtime_target=ai runtime_applied={applied} "
+                     f"结果={'success' if applied else 'failed'}"),
+        )
+        return {
+            "success": applied, "message": message,
+            "config": {**config.to_dict(), **runtime}, "runtime_apply": runtime_apply,
+        }
 
 
 def _parse_bool(value) -> bool:
@@ -223,6 +289,10 @@ async def get_system_config(
 
     if "weapon_enabled" in all_configs:
         all_configs["weapon_enabled"]["runtime_value"] = bool(settings.WEAPON_ENABLED)
+    if "package_enabled" in all_configs:
+        from ... import main
+
+        all_configs["package_enabled"].update(_package_runtime_fields(main._ai_worker))
 
     return {
         "configs": all_configs,
@@ -264,6 +334,8 @@ async def update_system_config(
         )
 
     try:
+        if key == "package_enabled":
+            return await _update_package_enabled(config_service, db, value, user, reason)
         config = await config_service.update_config(
             session=db,
             key=key,

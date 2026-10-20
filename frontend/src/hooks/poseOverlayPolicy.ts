@@ -1,9 +1,11 @@
 import type { TrackOverlayData } from '../components/TrackOverlay1';
+import { observationAt } from './packageOverlayObservation';
 
 export type PoseOverlayPayload = Pick<
   TrackOverlayData,
   'frame_w' | 'frame_h' | 'detections' | 'poses' | 'keypoint_confidence' | 'active_actions'
-> & Partial<Pick<TrackOverlayData, 'stage' | 'frame_received_at_monotonic'>>;
+> & Partial<Pick<TrackOverlayData, 'stage' | 'frame_received_at_monotonic' | 'frame_age_ms'
+  | 'package_updated' | 'pose_updated' | 'package_overlap_cleared_track_ids'>>;
 
 export const FACE_RESULT_DISPLAY_MAX_AGE_MS = 750;
 type Detection = NonNullable<TrackOverlayData['detections']>[number];
@@ -42,7 +44,7 @@ export function mergePoseOverlay(
       && payload.frame_received_at_monotonic !== undefined
       && payload.frame_received_at_monotonic < previous.frame_received_at_monotonic) return previous;
 
-  const early = payload.stage === 'location' || payload.stage === 'pose_location';
+  const early = payload.stage === 'location' || payload.stage === 'pose_location' || payload.stage === 'package';
   const sameDimensions = previous?.frame_w === payload.frame_w && previous?.frame_h === payload.frame_h;
   const candidates = sameDimensions ? (previous?.detections ?? []).filter(item => (
     (item.class_name ?? 'person') === 'person'
@@ -69,9 +71,13 @@ export function mergePoseOverlay(
     return carryFaceResult(item, matching);
   });
 
-  const positionOnly = payload.stage === 'location';
+  const positionOnly = payload.stage === 'location' || payload.stage === 'package';
+  // Completed packets can contain cached skeletons. Only a fresh pose stage
+  // (or an explicit producer marker) advances the pose observation clock.
+  const poseUpdated = !positionOnly && (payload.stage === 'pose_location' || payload.pose_updated === true
+    || (payload.stage === undefined && Array.isArray(payload.poses)));
+  const observedAt = observationAt(now, payload.frame_age_ms);
   return {
-    persons: previous?.persons ?? [],
     active_bbox: previous?.active_bbox ?? null,
     command: previous?.command ?? null,
     reason: previous?.reason ?? '',
@@ -81,10 +87,18 @@ export function mergePoseOverlay(
     forward_area_ratio: previous?.forward_area_ratio ?? 1,
     ...previous,
     ...payload,
-    detections,
-    poses: positionOnly ? previous?.poses ?? payload.poses : payload.poses,
-    active_actions: positionOnly ? previous?.active_actions ?? payload.active_actions : payload.active_actions,
+    detections: detections ?? [],
+    persons: (detections ?? []).filter(d => (d.class_name ?? 'person') === 'person')
+      .map(d => ({ ...d, is_stranger: d.is_stranger ?? undefined })),
+    poses: poseUpdated ? payload.poses : sameDimensions ? previous?.poses : undefined,
+    active_actions: poseUpdated ? payload.active_actions : sameDimensions ? previous?.active_actions : undefined,
+    keypoint_confidence: poseUpdated ? payload.keypoint_confidence
+      : sameDimensions ? previous?.keypoint_confidence : undefined,
     received_at_ms: now,
-    pose_received_at_ms: positionOnly ? previous?.pose_received_at_ms : now,
+    person_received_at_ms: Array.isArray(payload.detections) ? observedAt : undefined,
+    person_frame_received_at_monotonic: payload.frame_received_at_monotonic,
+    pose_received_at_ms: poseUpdated ? observedAt : sameDimensions ? previous?.pose_received_at_ms : undefined,
+    pose_frame_received_at_monotonic: poseUpdated ? payload.frame_received_at_monotonic
+      : sameDimensions ? previous?.pose_frame_received_at_monotonic : undefined,
   };
 }

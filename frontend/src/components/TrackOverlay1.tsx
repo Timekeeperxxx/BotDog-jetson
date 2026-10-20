@@ -11,17 +11,43 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { placeOverlayLabel, type LabelRect } from './overlayLabelLayout';
+import { boxesIntersect, freshPersonBoxes, observationFresh, PACKAGE_CLASSES, PACKAGE_OBSERVATION_TTL_MS } from '../hooks/packageOverlayObservation';
 import {
   DEFAULT_AI_OVERLAY_VISIBILITY,
   type AiOverlayVisibility,
 } from './video/videoStagePreferences';
 
+export type PackageState = 'unknown' | 'unattended' | 'overlapping' | 'alerted';
+
+function packageAppearance(state?: PackageState | null) {
+  switch (state) {
+    case 'alerted':
+      return { box: 'rgba(255,45,45,0.95)', label: 'rgba(160,20,20,0.94)', text: '疑似遗弃' };
+    case 'unattended':
+      return { box: 'rgba(255,180,40,0.98)', label: 'rgba(130,75,0,0.94)', text: '待确认' };
+    case 'overlapping':
+      return { box: 'rgba(70,170,255,0.9)', label: 'rgba(20,80,150,0.92)', text: '人员框重叠' };
+    default:
+      return { box: 'rgba(220,220,220,0.85)', label: 'rgba(80,80,80,0.92)', text: '状态未知' };
+  }
+}
+
 export interface TrackOverlayData {
-  stage?: 'location' | 'pose_location' | 'complete';
+  stage?: 'location' | 'pose_location' | 'package' | 'complete';
   frame_received_at_monotonic?: number;
   received_at_ms?: number;
+  person_received_at_ms?: number;
+  person_frame_received_at_monotonic?: number;
   pose_received_at_ms?: number;
+  pose_frame_received_at_monotonic?: number;
+  pose_updated?: boolean;
   tracking_received_at_ms?: number;
+  package_received_at_ms?: number;
+  package_frame_received_at_monotonic?: number;
+  package_person_boxes?: number[][];
+  package_overlap_cleared_track_ids?: number[];
+  package_updated?: boolean;
+  frame_age_ms?: number;
   detections?: {
     bbox: number[];
     conf: number;
@@ -37,6 +63,8 @@ export interface TrackOverlayData {
     fence_behavior?: string | null;
     fence_action_score?: number;
     fence_structure_change_ratio?: number;
+    package_state?: PackageState | null;
+    unattended_seconds?: number | null;
   }[];
   poses?: {
     track_id: number;
@@ -122,10 +150,14 @@ export function TrackOverlay({
 
     if (!data || data.frame_w <= 0 || data.frame_h <= 0) return;
     const now = performance.now();
-    if (data.received_at_ms !== undefined && now - data.received_at_ms >= 750) return;
-    const showTracking = visibility.tracking && (
-      data.tracking_received_at_ms === undefined || now - data.tracking_received_at_ms < 750
-    );
+    // Each layer expires on its own observation clock. A late face/position
+    // packet must neither hide a fresh package nor renew another layer.
+    const fresh = (stamp: number | undefined) => stamp === undefined
+      ? data.received_at_ms === undefined : observationFresh(stamp, now);
+    const personFresh = fresh(data.person_received_at_ms ?? data.received_at_ms);
+    const poseFresh = fresh(data.pose_received_at_ms);
+    const packageFresh = fresh(data.package_received_at_ms);
+    const showTracking = visibility.tracking && fresh(data.tracking_received_at_ms);
 
 
     const labels: { text: string; bbox: number[]; background: string; color: string }[] = [];
@@ -174,20 +206,24 @@ export function TrackOverlay({
       ctx.restore();
     }
 
-    const allDetections = data.detections
+    const allDetections: NonNullable<TrackOverlayData['detections']> = data.detections
       ?? data.persons.map((p) => ({ ...p, class_name: p.class_name || 'person' }));
 
+    const people = freshPersonBoxes(data, now);
     const overlayDetections = allDetections.filter((detection) => {
       const className = detection.class_name || 'person';
+      if (PACKAGE_CLASSES.has(className)) return visibility.package === true && packageFresh;
+      if (!personFresh) return false;
       if (className === 'guns' || className === 'knife') return visibility.weapon;
       if (className === 'head' || className === 'helmet') return visibility.helmet;
       if (className === 'person') {
         return visibility.helmet || (visibility.face && Boolean(detection.face_status));
       }
       return visibility.helmet;
-    });
+    }).map(detection => PACKAGE_CLASSES.has(detection.class_name ?? '')
+      && people.some(box => boxesIntersect(box, detection.bbox))
+      ? { ...detection, package_state: 'overlapping' as const, unattended_seconds: 0 } : detection);
 
-    const poseFresh = data.pose_received_at_ms === undefined || now - data.pose_received_at_ms < 750;
     const visiblePoses = visibility.pose && poseFresh ? (data.poses ?? []) : [];
     const postureLabels: Record<string, string> = {
       standing: '站立',
@@ -333,7 +369,8 @@ export function TrackOverlay({
       const className = p.class_name || 'person';
       const visibleSafetyStatus = visibility.helmet ? p.safety_status : null;
       const visibleStrangerStatus = visibility.face ? p.is_stranger : null;
-      const colors = colorForClass(className, visibleStrangerStatus, visibleSafetyStatus);
+      const packageStyle = PACKAGE_CLASSES.has(className) ? packageAppearance(p.package_state) : null;
+      const colors = packageStyle ?? colorForClass(className, visibleStrangerStatus, visibleSafetyStatus);
       const fenceLabels: Record<string, string> = {
         approaching: '靠近围栏',
         dwelling: '围栏徘徊',
@@ -345,8 +382,9 @@ export function TrackOverlay({
       const fenceLabel = className === 'person' && p.fence_behavior
         ? fenceLabels[p.fence_behavior] ?? ''
         : '';
-      const isFenceTamper = p.fence_behavior === 'tampering_suspected'
-        || p.fence_behavior === 'tampering_confirmed';
+      // 包轨迹不借用同编号人员的围栏状态；其他类别沿用板端原行为。
+      const isFenceTamper = !packageStyle && (p.fence_behavior === 'tampering_suspected'
+        || p.fence_behavior === 'tampering_confirmed');
 
       ctx.save();
       ctx.strokeStyle = isFenceTamper ? 'rgba(255,45,45,0.98)' : colors.box;
@@ -370,12 +408,23 @@ export function TrackOverlay({
         helmet: '安全帽',
         guns: '枪械',
         knife: '刀具',
+        backpack: '双肩包候选',
+        handbag: '手提包候选',
+        suitcase: '行李箱候选',
+        luggage: '行李候选',
+        parcel: '包裹候选',
       };
       const baseLabel = className === 'person' && !visibility.helmet && visibility.face
         ? '人脸'
         : (classLabels[className] ?? className);
       const fencePart = fenceLabel ? ` · ${fenceLabel}` : '';
-      const headerText = `${baseLabel}${idPart}${faceLabel}${fencePart} ${(p.conf * 100).toFixed(0)}%`;
+      // Render only the supplied state. Events and timer thresholds do not own the alert latch.
+      const packageSeconds = p.package_state === 'unattended'
+        && typeof p.unattended_seconds === 'number' && Number.isFinite(p.unattended_seconds)
+        && p.unattended_seconds >= 0
+        ? ` ${p.unattended_seconds.toFixed(1)}s` : '';
+      const packagePart = packageStyle ? ` · ${packageStyle.text}${packageSeconds}` : '';
+      const headerText = `${baseLabel}${idPart}${faceLabel}${fencePart}${packagePart} ${(p.conf * 100).toFixed(0)}%`;
       const showNoHelmetTag = visibility.helmet && p.safety_status === 'no_helmet';
       const showIdentityTag = visibility.face && p.is_stranger !== undefined && p.is_stranger !== null;
       const labelLines: LabelLine[] = [{
@@ -659,11 +708,15 @@ export function TrackOverlay({
 
   useEffect(() => {
     draw();
-    if (data?.received_at_ms === undefined) return;
-    const remaining = Math.max(0, 750 - (performance.now() - data.received_at_ms));
-    const timer = window.setTimeout(draw, remaining + 1);
-    return () => window.clearTimeout(timer);
-  }, [draw, data?.received_at_ms]);
+    const stamps = [data?.person_received_at_ms ?? data?.received_at_ms,
+      data?.pose_received_at_ms, data?.tracking_received_at_ms, data?.package_received_at_ms]
+      .filter((stamp): stamp is number => typeof stamp === 'number' && Number.isFinite(stamp));
+    const now = performance.now();
+    const timers = stamps.map((stamp) => window.setTimeout(draw,
+      Math.max(0, Math.ceil(stamp + PACKAGE_OBSERVATION_TTL_MS - now)) + 1));
+    return () => timers.forEach((timer) => window.clearTimeout(timer));
+  }, [draw, data?.received_at_ms, data?.person_received_at_ms, data?.pose_received_at_ms,
+    data?.tracking_received_at_ms, data?.package_received_at_ms]);
 
   // 窗口 resize 时重绘
   useEffect(() => {

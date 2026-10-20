@@ -85,6 +85,7 @@ const alertTitles: Record<string, string> = {
   E_AI_PERSON: '检测到人员',
   E_AI_GUNS: '发现疑似枪械',
   E_AI_KNIFE: '发现疑似刀具',
+  E_PACKAGE_ABANDONED: '发现疑似遗弃包裹',
   E_POSE_DAMAGE_SUSPECTED: '疑似破坏动作',
   E_POSE_CLIMBING_SUSPECTED: '人员疑似攀爬',
   E_POSE_VAULTING_SUSPECTED: '人员疑似翻越',

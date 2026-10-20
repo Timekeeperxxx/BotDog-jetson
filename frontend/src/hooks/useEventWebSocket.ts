@@ -10,6 +10,8 @@ import type { TrackOverlayData } from '../components/TrackOverlay1';
 import { ALERT_LATEST_DISPLAY_MS, mergeAlertEvent, parseAlertEvent } from './alertEventPolicy';
 import { mergePoseOverlay, type PoseOverlayPayload } from './poseOverlayPolicy';
 import { recordAlertReceived } from './alertReceipt';
+import { expirePackageObservation, hasPackageObservation, isPackageUpdate, mergePackageObservation,
+  observationAt, reconcilePackageAlert, PACKAGE_OBSERVATION_TTL_MS, type PackageAlertLink } from './packageOverlayObservation';
 
 export interface EventHookState {
   status: EventWebSocketStatus;
@@ -43,6 +45,7 @@ export function useEventWebSocket(): EventHookState {
   const connectionIdRef = useRef(0);
   const connectRef = useRef<() => void>(() => {});
   const weatherRefreshSentRef = useRef(false);
+  const packageAlertLinkRef = useRef<PackageAlertLink | null>(null);
 
   const connect = useCallback(() => {
     const rs = wsRef.current?.readyState;
@@ -106,21 +109,35 @@ export function useEventWebSocket(): EventHookState {
 
           if (message.msg_type === 'TRACK_OVERLAY' && message.payload) {
             const payload = message.payload as unknown as TrackOverlayData;
-            setTrackOverlay((previous) => ({
-              ...payload,
-              poses: previous?.poses,
-              active_actions: previous?.active_actions,
-              keypoint_confidence: previous?.keypoint_confidence,
-              pose_received_at_ms: previous?.pose_received_at_ms,
-              received_at_ms: performance.now(),
-              tracking_received_at_ms: performance.now(),
-            }));
+            setTrackOverlay((previous) => {
+              const sameSize = previous?.frame_w === payload.frame_w && previous?.frame_h === payload.frame_h;
+              const observedAt = observationAt(receivedAt, payload.frame_age_ms);
+              return mergePackageObservation(previous, {
+                ...payload,
+                frame_received_at_monotonic: payload.frame_received_at_monotonic ?? previous?.frame_received_at_monotonic,
+                poses: sameSize ? previous?.poses : undefined,
+                active_actions: sameSize ? previous?.active_actions : undefined,
+                keypoint_confidence: sameSize ? previous?.keypoint_confidence : undefined,
+                pose_received_at_ms: sameSize ? previous?.pose_received_at_ms : undefined,
+                pose_frame_received_at_monotonic: sameSize ? previous?.pose_frame_received_at_monotonic : undefined,
+                person_received_at_ms: observedAt,
+                person_frame_received_at_monotonic: payload.frame_received_at_monotonic,
+                received_at_ms: receivedAt,
+                tracking_received_at_ms: observedAt,
+              }, 'TRACK_OVERLAY', receivedAt, payload);
+            });
             return;
           }
 
           if (message.msg_type === 'POSE_OVERLAY' && message.payload) {
             const payload = message.payload as unknown as PoseOverlayPayload;
-            setTrackOverlay((previous) => mergePoseOverlay(previous, payload, performance.now()));
+            setTrackOverlay((previous) => {
+              const merged = mergePoseOverlay(previous, payload, receivedAt);
+              // Layers have independent ordering: a valid authoritative package
+              // can arrive after a newer person stage, without regressing people.
+              if (merged === previous && !isPackageUpdate(payload, 'POSE_OVERLAY')) return previous;
+              return mergePackageObservation(previous, merged, 'POSE_OVERLAY', receivedAt, payload);
+            });
             return;
           }
 
@@ -149,6 +166,7 @@ export function useEventWebSocket(): EventHookState {
           return;
         }
         setStatus({ status: 'disconnected', error: event.reason || null });
+        packageAlertLinkRef.current = null;
         setTrackOverlay(null);
 
         if (event.code === 1000) {
@@ -168,6 +186,29 @@ export function useEventWebSocket(): EventHookState {
       setStatus({ status: 'error', error: 'create failed' });
     }
   }, []);
+
+  useEffect(() => {
+    if (!latestAlert) {
+      packageAlertLinkRef.current = null;
+      return;
+    }
+    const result = reconcilePackageAlert(latestAlert, packageAlertLinkRef.current, trackOverlay, performance.now());
+    packageAlertLinkRef.current = result.link;
+    if (result.overlapping) {
+      // Only dismiss this currently associated popup. Evidence/history is intact.
+      setLatestAlert(current => current === latestAlert ? null : current);
+    }
+  }, [latestAlert, trackOverlay]);
+
+  useEffect(() => {
+    const observedAt = trackOverlay?.package_received_at_ms;
+    if (observedAt === undefined || !hasPackageObservation(trackOverlay)) return;
+    const delay = Math.max(0, Math.ceil(observedAt + PACKAGE_OBSERVATION_TTL_MS - performance.now())) + 1;
+    const timer = window.setTimeout(() => {
+      setTrackOverlay((current) => current ? expirePackageObservation(current, performance.now()) : current);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [trackOverlay]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -193,6 +234,7 @@ export function useEventWebSocket(): EventHookState {
 
   const disconnect = useCallback(() => {
     connectionIdRef.current += 1;
+    packageAlertLinkRef.current = null;
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -201,6 +243,7 @@ export function useEventWebSocket(): EventHookState {
       wsRef.current.close(1000);
       wsRef.current = null;
     }
+    setTrackOverlay(null);
     setStatus({ status: 'disconnected', error: null });
   }, []);
 

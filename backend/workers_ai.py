@@ -26,6 +26,7 @@ from .config import settings
 from .logging_config import get_logger
 from .pose_detection import PoseEventEngine, PoseObservation, UltralyticsPoseDetector
 from .workers_ai_processing import AIWorkerProcessingMixin
+from .workers_ai_packages import PackageWorkerMixin
 
 model_logger = get_logger("AI模型")
 video_logger = get_logger("AI视频")
@@ -314,7 +315,7 @@ class _YoloDetector(_BaseDetector):
         return intersection / union if union > 0 else 0.0
 
 
-class AIWorker(AIWorkerProcessingMixin):
+class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
     def __init__(
         self,
         *,
@@ -449,6 +450,12 @@ class AIWorker(AIWorkerProcessingMixin):
             f"分辨率={self._frame_width}x{self._frame_height}"
         )
 
+        from .inference_cpu import configure_inference_cpu
+
+        self._inference_cpu_runtime = configure_inference_cpu(
+            settings.AI_TORCH_NUM_THREADS, settings.AI_OPENCV_NUM_THREADS,
+        )
+
         from .weather_detection import (
             WeatherDetectionService,
             set_weather_detection_service,
@@ -456,6 +463,7 @@ class AIWorker(AIWorkerProcessingMixin):
 
         self._weather_service = WeatherDetectionService.from_settings(settings)
         set_weather_detection_service(self._weather_service)
+        self._initialize_packages()
 
         if settings.AI_SIMULATE_DETECTION:
             self._detector: _BaseDetector = _SimulatedDetector(settings.AI_SIMULATE_PROB)
@@ -598,6 +606,7 @@ class AIWorker(AIWorkerProcessingMixin):
             "detail": (
                 f"{self._startup_detail}，pose={self._pose_status}，"
                 f"weapon={self._weapon_status}，weather={weather_status['state']}"
+                f"，package={self._package_status}"
             ),
         }
 
@@ -636,6 +645,7 @@ class AIWorker(AIWorkerProcessingMixin):
             ("主检测预热", self._detector, "_detector_warmed_up", "detect_many"),
             ("姿态预热", self._pose_detector, "_pose_warmed_up", "detect"),
             ("刀枪预热", self._weapon_detector, "_weapon_warmed_up", "detect_many"),
+            ("背包预热", self._package_detector, "_package_warmed_up", "detect_many"),
         ]
         for stage, detector, flag, method in models:
             if detector is None or getattr(self, flag):
@@ -1124,6 +1134,7 @@ class AIWorker(AIWorkerProcessingMixin):
 
         # 调用 detect_many 返回所有候选结果。
         t_start = time.monotonic()
+        package_observation_completed = False
         try:
             if hasattr(self._detector, 'detect_many'):
                 detections = await self._run_inference("主检测", self._detector.detect_many, frame)
@@ -1131,6 +1142,15 @@ class AIWorker(AIWorkerProcessingMixin):
                 # _SimulatedDetector/_NullDetector 回退到 detect() 兼容
                 single = await self._run_inference("主检测", self._detector.detect, frame)
                 detections = [single] if single else []
+            # Only this frame's successful, person-capable main inference can
+            # establish absence. Null/simulated/unknown results are not "no people".
+            main_person_detections = None
+            if (detections is not None
+                    and not isinstance(self._detector, (_NullDetector, _SimulatedDetector))
+                    and (not isinstance(self._detector, _YoloDetector)
+                         or "person" in self._detector._target_classes)):
+                main_person_detections = [d for d in detections if d.label == "person"]
+            detections = list(detections) if detections is not None else []
             t_detect_end = time.monotonic()
             self._last_detect_ms = round((t_detect_end - t_start) * 1000, 1)
             self._detector_warmed_up = True
@@ -1219,11 +1239,26 @@ class AIWorker(AIWorkerProcessingMixin):
             else:
                 self._last_weapon_ms = 0.0
 
+            package_events, package_bags = await self._maybe_infer_packages(
+                frame, frame_read_at if frame_read_at is not None else t_start,
+                person_detections=self._package_current_person_detections(
+                    main_person_detections, fresh_pose_observations,
+                ),
+            )
+            package_observation_completed = True
+            detections.extend(package_bags)
+            if self._package_updated:
+                # Only this frame's pose results; a package position update must
+                # not re-stamp cached poses as a fresh observation.
+                await self._broadcast_pose_overlay(
+                    fresh_pose_observations, detections, stage="package", force=True,
+                )
+
             # 天气只需低频分类。若本帧已有姿态/武器 GPU 任务，顺延到下一空闲
             # 周期，避免天气的 30~50 ms 再叠加到延迟尖峰上。
             await self._maybe_process_weather(
                 frame,
-                defer=pose_due or weapon_due,
+                defer=pose_due or weapon_due or self._last_package_ms > 0,
             )
 
             preview_detections = list(detections)
@@ -1337,6 +1372,8 @@ class AIWorker(AIWorkerProcessingMixin):
                 await self._process_weapon_detections(eligible_weapon_detections, frame)
             if pose_due:
                 await self._process_pose_events(pose_events, frame)
+            if package_events:
+                await self._process_package_events(package_events, frame)
             # 围栏保留开启状态；显式跟踪联动接管时只放行 AutoTrack，
             # Guard 仍不可争抢控制；动作告警不依赖云台观察状态或人员距离。
             await self._process_detection(
@@ -1356,6 +1393,10 @@ class AIWorker(AIWorkerProcessingMixin):
             if detections:
                 self._detections_count += 1
         finally:
+            if not package_observation_completed:
+                # A failed/cancelled main frame must break package confirmation,
+                # including short failures within PACKAGE_MAX_GAP_SECONDS.
+                self._package_reset_pending = True
             # 检测支路异常或外层超时取消时，也要取走姿态 Task 的结果/异常，
             # 防止后台留下未回收 Task。to_thread 底层调用不可强杀，但不会入队旧帧。
             if pose_task is not None and not pose_task_consumed:
@@ -1369,6 +1410,30 @@ class AIWorker(AIWorkerProcessingMixin):
                     weapon_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await weapon_task
+
+    @staticmethod
+    def _package_current_person_detections(
+        main_person_detections: list[DetectionResult] | None,
+        fresh_pose_observations: list[PoseObservation],
+    ) -> list[DetectionResult] | None:
+        """Use all current people for package overlap, preserving unknown main results.
+
+        PackageWorkerMixin validates these boxes/confidences before temporal
+        processing. Invalid observations remain unknown, never a claimed absence.
+        """
+        if main_person_detections is None:
+            return None
+        return [
+            *main_person_detections,
+            *[
+                DetectionResult(
+                    label="person", confidence=observation.confidence,
+                    bbox=observation.bbox, track_id=observation.track_id,
+                    is_pose_fallback=True,
+                )
+                for observation in fresh_pose_observations
+            ],
+        ]
 
     @staticmethod
     def _merge_pose_person_fallback(

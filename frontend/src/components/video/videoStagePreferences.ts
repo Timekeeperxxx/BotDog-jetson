@@ -4,6 +4,7 @@ export const AI_OVERLAY_LAYERS_STORAGE_KEY = 'botdog.ai-overlay-layers.v3';
 export type AiOverlayVisibility = {
   helmet: boolean;
   weapon: boolean;
+  package?: boolean;
   pose: boolean;
   face: boolean;
   tracking: boolean;
@@ -14,6 +15,7 @@ export type AiOverlayLayer = keyof AiOverlayVisibility;
 export const DEFAULT_AI_OVERLAY_VISIBILITY: AiOverlayVisibility = {
   helmet: true,
   weapon: true,
+  package: true,
   pose: true,
   face: true,
   tracking: true,
@@ -22,6 +24,7 @@ export const DEFAULT_AI_OVERLAY_VISIBILITY: AiOverlayVisibility = {
 const AI_OVERLAY_LAYERS: AiOverlayLayer[] = [
   'helmet',
   'weapon',
+  'package',
   'pose',
   'face',
   'tracking',
@@ -31,6 +34,7 @@ function allLayers(visible: boolean): AiOverlayVisibility {
   return {
     helmet: visible,
     weapon: visible,
+    package: visible,
     pose: visible,
     face: visible,
     tracking: visible,
@@ -46,6 +50,11 @@ export function getInitialAiOverlayVisibility(
   if (savedLayers !== null) {
     try {
       const parsed = JSON.parse(savedLayers) as Record<string, unknown>;
+      // Preserve an existing hide-all setting when introducing the bag layer.
+      if (parsed.package === undefined) {
+        parsed.package = !['helmet', 'weapon', 'pose', 'face', 'tracking']
+          .every((layer) => parsed[layer] === false);
+      }
       return AI_OVERLAY_LAYERS.reduce<AiOverlayVisibility>(
         (visibility, layer) => ({
           ...visibility,
