@@ -38,6 +38,7 @@ class EvidenceRecord:
     gps_lat: Optional[float]
     gps_lon: Optional[float]
     evidence_id: Optional[int] = None
+    access_context: dict | None = None
     timing: dict = field(default_factory=lambda: {"generated_at": utc_now_iso(), "source": "event_start_unavailable"})
 
 
@@ -67,7 +68,7 @@ class AlertService:
 
     @staticmethod
     def _repeat_interval(event_code: str) -> float:
-        if event_code == "E_AI_PERSON":
+        if event_code in {"E_AI_PERSON", "E_MAP_ACCESS_DENIED"}:
             value = settings.AI_COOLDOWN_SECONDS
         elif event_code in {"E_AI_GUNS", "E_AI_KNIFE"}:
             value = settings.WEAPON_ALERT_COOLDOWN_SECONDS
@@ -85,24 +86,26 @@ class AlertService:
     def _automatic_event_enabled(event_code: str) -> bool:
         return event_code not in {"E_AI_GUNS", "E_AI_KNIFE"} or bool(settings.WEAPON_ENABLED)
 
-    async def automatic_event_due(self, event_code: str, session: Optional[AsyncSession] = None) -> bool:
+    async def automatic_event_due(self, event_code: str, session: Optional[AsyncSession] = None, *, repeat_scope: str | None = None) -> bool:
         """同类自动告警共用计时；首次检查读取最近证据，防止重载绕过间隔。"""
         if not self._automatic_event_enabled(event_code):
             return False
         interval = self._repeat_interval(event_code)
         if interval <= 0:
             return True
-        if event_code not in self._repeat_last_at:
+        repeat_key = event_code if repeat_scope is None else f'{event_code}:{repeat_scope}'
+        if repeat_key not in self._repeat_last_at:
             if session is None:
                 from .database import get_session_factory
                 async with get_session_factory()() as owned_session:
-                    return await self.automatic_event_due(event_code, owned_session)
+                    return await self.automatic_event_due(event_code, owned_session, repeat_scope=repeat_scope)
             recent = None
             if isinstance(session, AsyncSession):
                 from .models import AnomalyEvidence
-                result = await session.execute(select(AnomalyEvidence.created_at).where(
-                    AnomalyEvidence.event_code == event_code,
-                ).order_by(AnomalyEvidence.created_at.desc()).limit(1))
+                query = select(AnomalyEvidence.created_at).where(AnomalyEvidence.event_code == event_code)
+                if repeat_scope is not None:
+                    query = query.where(AnomalyEvidence.access_context['repeat_scope'].as_string() == repeat_scope)
+                result = await session.execute(query.order_by(AnomalyEvidence.created_at.desc()).limit(1))
                 recent = result.scalar_one_or_none()
             previous = None
             if recent:
@@ -113,34 +116,37 @@ class AlertService:
                     previous = time.monotonic() - age
                 except (TypeError, ValueError):
                     pass
-            self._repeat_last_at[event_code] = previous
-        last = self._repeat_last_at[event_code]
+            self._repeat_last_at[repeat_key] = previous
+        last = self._repeat_last_at[repeat_key]
         return last is None or time.monotonic() - last >= interval
 
     async def _run_automatic_event(
         self, event_code: str, session: Optional[AsyncSession],
         emit: Callable[[], Awaitable[EvidenceRecord]],
         event_guard: Callable[[], bool] | None = None,
+        repeat_scope: str | None = None,
     ) -> Optional[EvidenceRecord]:
         if not self._automatic_event_enabled(event_code) or (event_guard and not event_guard()):
             return None
         if self._repeat_interval(event_code) <= 0:
             return await emit()
-        lock = self._repeat_locks.setdefault(event_code, asyncio.Lock())
+        repeat_key = event_code if repeat_scope is None else f'{event_code}:{repeat_scope}'
+        lock = self._repeat_locks.setdefault(repeat_key, asyncio.Lock())
         async with lock:
-            if not await self.automatic_event_due(event_code, session):
+            if not await self.automatic_event_due(event_code, session, repeat_scope=repeat_scope):
                 return None
             if not self._automatic_event_enabled(event_code) or (event_guard and not event_guard()):
                 return None
             evidence = await emit()
-            self._repeat_last_at[event_code] = time.monotonic()
+            self._repeat_last_at[repeat_key] = time.monotonic()
             return evidence
 
     async def handle_ai_event(self, **event: Any) -> Optional[EvidenceRecord]:
         event_guard = event.pop("event_guard", None)
+        repeat_scope = event.pop('repeat_scope', None)
         return await self._run_automatic_event(
             event['event_code'], event.get('session'),
-            lambda: self._handle_ai_event_unlimited(**event), event_guard=event_guard,
+            lambda: self._handle_ai_event_unlimited(**event), event_guard=event_guard, repeat_scope=repeat_scope,
         )
 
     async def handle_temperature_alert(
@@ -214,6 +220,7 @@ class AlertService:
         task_id: Optional[int],
         session: Optional[AsyncSession] = None,
         timing: dict | None = None,
+        access_context: dict | None = None,
         **extra: Any,
     ) -> EvidenceRecord:
         """
@@ -230,6 +237,7 @@ class AlertService:
             image_url=image_url,
             gps_lat=gps_lat,
             gps_lon=gps_lon,
+            access_context=access_context,
         )
 
         if timing:
@@ -304,6 +312,7 @@ class AlertService:
             gps_lat=evidence.gps_lat,
             gps_lon=evidence.gps_lon,
             timing=evidence.timing,
+            access_context=evidence.access_context,
             created_at=evidence.timing.get("generated_at") or utc_now_iso(),
         )
 
@@ -358,6 +367,8 @@ class AlertService:
 
         payload: Dict[str, Any] = dict(extra)
         payload["timing"] = evidence.timing or None
+        if evidence.access_context is not None:
+            payload['access_context'] = evidence.access_context
         if temperature is not None:
             payload["temperature"] = temperature
         if threshold is not None:

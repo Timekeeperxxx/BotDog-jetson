@@ -352,6 +352,7 @@ class AIWorkerProcessingMixin:
                 display_name=getattr(d, "display_name", None),
                 face_status=getattr(d, "face_status", None),
                 face_score=getattr(d, "face_score", None),
+                map_access=getattr(d, "map_access", None),
             )
             for d in detections
             if d.bbox is not None and d.label not in PACKAGE_LABELS
@@ -419,6 +420,11 @@ class AIWorkerProcessingMixin:
         await self._process_recognized_person_snapshots(persons, frame, tick)
         present_ids = {d.track_id for d in persons}
         for detection in persons:
+            access = getattr(detection, 'map_access', None)
+            if access and access.get('status') in {'denied', 'indeterminate'}:
+                if access['status'] == 'denied' and detection.track_id in confirmed_ids:
+                    await self._raise_map_access_alert(detection, frame)
+                continue
             track_id = detection.track_id
             bbox = getattr(detection, "bbox", None)
             # 主检测和姿态兜底的轨迹编号可能不同。旧编号已不在本帧且人体框
@@ -464,6 +470,36 @@ class AIWorkerProcessingMixin:
                 del self._person_alert_last_seen[track_id]
                 self._person_last_alert_at.pop(track_id, None)
                 self._person_alert_boxes.pop(track_id, None)
+
+    async def _raise_map_access_alert(self, detection, frame: bytes) -> bool:
+        from .services_map_access import get_map_access_service
+        access = dict(detection.map_access)
+        subject = f"identity:{access['identity_id']}" if access.get('identity_id') else f"track:{detection.track_id}"
+        denied = sorted(access['denied_zone_ids'])
+        scope = f"{access['scene_id']}:{subject}:{','.join(map(str,denied))}:{access.get('permission_version','')}"
+        access['repeat_scope'] = scope
+        service = get_alert_service()
+        async with self._session_factory() as session:
+            if not await service.automatic_event_due('E_MAP_ACCESS_DENIED',session,repeat_scope=scope):
+                return False
+        path,url=await self._save_snapshot(frame)
+        names='、'.join(f"{z['name']}（{z['access_level']}级）" for z in access['zones'] if z['id'] in denied)
+        who=access.get('display_name') or '身份未确认人员'
+        level=access.get('identity_access_level')
+        who += f'（权限{level}级）' if level else '（未设置通行级别）'
+        async with self._session_factory() as session:
+            evidence=await service.handle_ai_event(
+                event_type='MAP_ACCESS_DENIED',event_code='E_MAP_ACCESS_DENIED',
+                severity='CRITICAL',message=f'机器人所在区域：{names}；{who}无该区域通行权限',
+                confidence=detection.confidence,file_path=str(path),image_url=url,
+                gps_lat=None,gps_lon=None,
+                task_id=self._current_task_id if isinstance(self._current_task_id,int) else None,
+                session=session,access_context=access,repeat_scope=scope,
+                timing=observation_timing(getattr(self,'_current_frame_received_at',None)),
+                event_guard=lambda: get_map_access_service().revision==access['revision'],
+            )
+        if evidence is None: path.unlink(missing_ok=True)
+        return evidence is not None
 
     async def _process_recognized_person_snapshots(self, persons, frame: bytes, tick: int) -> None:
         """档案库身份在本次连续出现期间保存一次，短时无脸不重拍。"""
@@ -557,13 +593,7 @@ class AIWorkerProcessingMixin:
         label_zh_value = label_zh.get(detection.label, detection.label)
         message = f"检测到目标: {label_zh_value}"
         if detection.label == "person":
-            reason = {
-                "unknown": "人脸未匹配",
-                "no_face": "无可用人脸",
-                "unavailable": "人脸识别服务不可用",
-                "pending": "身份尚未确认",
-            }.get(getattr(detection, "face_status", None), "无有效身份结果")
-            message = f"检测到未授权人员: {reason}"
+            message = "检测到未授权人员"
 
         alert_service = get_alert_service()
 
@@ -600,7 +630,7 @@ class AIWorkerProcessingMixin:
             "POSE_DAMAGE_SUSPECTED": (
                 "E_POSE_DAMAGE_SUSPECTED",
                 "WARNING",
-                "检测到疑似破坏动作（双手在胸口及以上活动）",
+                "检测到疑似破坏动作（双手反复操作）",
             ),
             "POSE_CLIMBING_SUSPECTED": (
                 "E_POSE_CLIMBING_SUSPECTED",
@@ -719,6 +749,7 @@ class AIWorkerProcessingMixin:
                         "display_name": getattr(detection, "display_name", None) if stage == "complete" else None,
                         "face_status": getattr(detection, "face_status", None) if stage == "complete" else ("pending" if detection.label == "person" else None),
                         "face_score": getattr(detection, "face_score", None) if stage == "complete" else None,
+                        "map_access": getattr(detection, "map_access", None) if stage == "complete" else None,
                         **({
                             "package_state": getattr(detection, "package_state", "unknown"),
                             "unattended_seconds": getattr(detection, "unattended_seconds", None),

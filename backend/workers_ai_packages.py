@@ -29,12 +29,15 @@ class PackageDetection:
 
 class BackpackDetector:
     def __init__(self, path, device, confidence, imgsz, width, height, *,
-                 refine=False, include_luggage=False, max_refine_crops=6, roi_reviewer=None):
+                 refine=False, include_luggage=False, max_refine_crops=6, roi_reviewer=None,
+                 refine_policy="legacy"):
         # Never download a missing model in the live backend startup path.
         if not Path(path).is_file():
             raise FileNotFoundError(f"背包检测模型不存在：{path}")
         if not 1 <= max_refine_crops <= 8:
             raise ValueError("局部复核区域数量必须为1至8")
+        if refine_policy not in {"legacy", "weak"}:
+            raise ValueError("包候选复核策略无效")
         from ultralytics import YOLO
         if device == "auto":
             import torch
@@ -52,6 +55,7 @@ class BackpackDetector:
         self.review_confidence = min(.25, confidence)
         self.width, self.height = width, height
         self.refine, self.include_luggage = refine, include_luggage
+        self.refine_policy = refine_policy
         self.max_refine_crops = max_refine_crops
         self.roi_reviewer = roi_reviewer
         self.whole_frame_context = {"table", "bin"}.issubset(self.names.values())
@@ -64,7 +68,7 @@ class BackpackDetector:
         self.last_status = {}
 
     @staticmethod
-    def _deduplicate(detections):
+    def _deduplicate(detections, *, containment_threshold=None):
         # Bag-family NMS preserves the winning model label and confidence;
         # duplicate labels of the same object must not create multiple alerts.
         kept = []
@@ -75,13 +79,27 @@ class BackpackDetector:
                 b = previous.bbox
                 inter = max(0., min(a[2], b[2])-max(a[0], b[0])) * max(
                     0., min(a[3], b[3])-max(a[1], b[1]))
-                union = (a[2]-a[0])*(a[3]-a[1])+(b[2]-b[0])*(b[3]-b[1])-inter
-                if union > 0 and inter/union >= .5:
+                area_a = (a[2]-a[0])*(a[3]-a[1])
+                area_b = (b[2]-b[0])*(b[3]-b[1])
+                union = area_a + area_b - inter
+                nested = (containment_threshold is not None
+                          and min(area_a, area_b) > 0
+                          and inter/min(area_a, area_b) >= containment_threshold)
+                if (union > 0 and inter/union >= .5) or nested:
                     duplicate = True
                     break
             if not duplicate:
                 kept.append(detection)
         return kept
+
+    @staticmethod
+    def _box_coverage(inner, outer):
+        area = (inner[2]-inner[0])*(inner[3]-inner[1])
+        if area <= 0:
+            return 0.
+        intersection = max(0., min(inner[2], outer[2])-max(inner[0], outer[0])) * max(
+            0., min(inner[3], outer[3])-max(inner[1], outer[1]))
+        return intersection/area
 
     def _predict(self, image, classes, confidence, *, offset=(0, 0), source="full"):
         if not classes:
@@ -119,7 +137,7 @@ class BackpackDetector:
                 detections.append(PackageDetection(label, score, coordinates, source=source))
         return detections
 
-    def detect_many(self, frame):
+    def detect_many(self, frame, *, protected_detections=()):
         image = np.frombuffer(frame, dtype=np.uint8).reshape(self.height, self.width, 3)
         # Low scores propose regions only; every returned observation still has
         # the normal confidence threshold and comes from the current frame.
@@ -131,8 +149,23 @@ class BackpackDetector:
         review_threshold = self.review_confidence if self.refine else self.confidence
         bags = [d for d in proposals if d.label in self.target_labels and d.confidence >= review_threshold]
         regions = []
+        protected = list(protected_detections)
+        if self.refine_policy == "weak":
+            protected.extend(d for d in proposals if d.label in self.target_labels
+                             and d.confidence >= self.confidence)
+        skipped_covered = rejected_unrelated = rejected_fragments = 0
         if self.refine:
-            uncertain = [d for d in proposals if d.label != "backpack" or d.confidence < self.review_confidence]
+            # Weak mode protects accepted whole-frame boxes. The specialist's
+            # legacy mode keeps its existing suitcase refinement behavior.
+            uncertain = []
+            for detection in proposals:
+                if (detection.label in self.target_labels and detection.confidence >= self.confidence
+                        and (self.refine_policy == "weak" or detection.label == "backpack")):
+                    continue
+                if any(self._box_coverage(detection.bbox, d.bbox) >= .9 for d in protected):
+                    skipped_covered += 1
+                    continue
+                uncertain.append(detection)
             for detection in uncertain[:self.max_refine_crops]:
                 a, c, e, g = detection.bbox
                 cx, cy = (a+e)/2, (c+g)/2
@@ -145,10 +178,26 @@ class BackpackDetector:
                 regions.append((x1, y1, x2, y2))
                 verified = self._predict(image[y1:y2, x1:x2], self.bag_classes,
                                          self.review_confidence, offset=(x1, y1), source="refined")
-                bags.extend(d for d in verified if d.label in self.target_labels
-                            and d.confidence >= self.review_confidence)
+                for candidate in verified:
+                    if candidate.label not in self.target_labels or candidate.confidence < self.review_confidence:
+                        continue
+                    if (self.refine_policy == "weak" and
+                            max(self._box_coverage(candidate.bbox, detection.bbox),
+                                self._box_coverage(detection.bbox, candidate.bbox)) < .5):
+                        rejected_unrelated += 1
+                        continue
+                    candidate_area = ((candidate.bbox[2]-candidate.bbox[0]) *
+                                      (candidate.bbox[3]-candidate.bbox[1]))
+                    if any(self._box_coverage(candidate.bbox, d.bbox) >= .9 and
+                           candidate_area < .9*(d.bbox[2]-d.bbox[0])*(d.bbox[3]-d.bbox[1])
+                           for d in protected):
+                        rejected_fragments += 1
+                        continue
+                    bags.append(candidate)
         result = self._deduplicate(bags) if self.refine or self.include_luggage else bags
         result = [d for d in result if d.confidence >= self.confidence]
+        result = [d for d in result if not any(
+            self._box_coverage(d.bbox, p.bbox) >= .9 for p in protected_detections)]
         for detection in result:
             detection.bbox = tuple(int(v) for v in detection.bbox)
         self.last_status = {"refine_enabled": self.refine, "include_luggage": self.include_luggage,
@@ -156,11 +205,59 @@ class BackpackDetector:
                             "proposal_count": len(raw), "package_candidate_count": len(bag_candidates),
                             "accepted_before_roi": len(result),
                             "regions_evaluated": 1+len(regions), "refine_regions": regions,
+                            "protected_full_count": len(protected),
+                            "refine_policy": self.refine_policy,
+                            "refine_skipped_covered": skipped_covered,
+                            "refine_rejected_unrelated": rejected_unrelated,
+                            "refine_rejected_fragments": rejected_fragments,
                             "whole_frame_context": self.whole_frame_context}
         if self.roi_reviewer is not None:
             result = self.roi_reviewer.filter(image, result)
             self.last_status["roi_review"] = dict(self.roi_reviewer.last_status)
         self.last_status["accepted_after_roi"] = len(result)
+        return result
+
+
+class PackageDualDetector:
+    """Current-frame whole-object detector with a trained small-bag fallback."""
+
+    def __init__(self, path, detail_path, device, confidence, imgsz, width, height, *,
+                 refine=True, include_luggage=True, max_refine_crops=6, roi_reviewer=None):
+        self.width, self.height = width, height
+        self.roi_reviewer = roi_reviewer
+        self.primary = BackpackDetector(path, device, confidence, imgsz, width, height,
+                                        refine=False, include_luggage=include_luggage,
+                                        roi_reviewer=roi_reviewer)
+        self.detail = BackpackDetector(detail_path, device, confidence, imgsz, width, height,
+                                       refine=refine, include_luggage=include_luggage,
+                                       max_refine_crops=max_refine_crops,
+                                       roi_reviewer=roi_reviewer, refine_policy="legacy")
+        # Extra labels in historical specialist weights only propose crops.
+        # Returned labels must be declared by the primary model.
+        self.target_labels = set(self.primary.names.values()) & self.primary.target_labels
+        self.detail.target_labels = self.target_labels
+        self.last_status = {}
+
+    def detect_many(self, frame):
+        for detector in (self.primary, self.detail):
+            detector.width, detector.height = self.width, self.height
+        primary = self.primary.detect_many(frame)
+        detail = self.detail.detect_many(frame, protected_detections=primary)
+        # Whole-object and specialist boxes can describe the same bag with
+        # IoU just below .5. Collapse near-contained boxes before tracking so
+        # they cannot maintain separate three-second alarm episodes.
+        result = BackpackDetector._deduplicate([*primary, *detail],
+                                               containment_threshold=.9)
+        self.last_status = {
+            "mode": "whole_object_with_small_bag_fallback",
+            "output_labels": sorted(self.target_labels),
+            "regions_evaluated": self.primary.last_status["regions_evaluated"] +
+                                 self.detail.last_status["regions_evaluated"],
+            "primary_accepted": len(primary), "detail_accepted": len(detail),
+            "accepted_after_roi": len(result),
+            "primary": dict(self.primary.last_status),
+            "detail": dict(self.detail.last_status),
+        }
         return result
 
 
@@ -211,14 +308,18 @@ class PackageWorkerMixin:
             from .package_roi_review import PackageRoiReviewer
             roi_reviewer = PackageRoiReviewer(settings.PACKAGE_REVIEW_MODEL_PATH,
                 settings.PACKAGE_REVIEW_METADATA_PATH, settings.PACKAGE_DEVICE)
-        detector = BackpackDetector(
-            settings.PACKAGE_MODEL_PATH, settings.PACKAGE_DEVICE,
-            settings.PACKAGE_CONFIDENCE_THRESHOLD, settings.PACKAGE_INFERENCE_IMGSZ,
-            self._frame_width, self._frame_height,
-            refine=settings.PACKAGE_REFINE_ENABLED,
-            include_luggage=settings.PACKAGE_INCLUDE_LUGGAGE,
-            max_refine_crops=settings.PACKAGE_REFINE_MAX_CROPS,
-            roi_reviewer=roi_reviewer)
+        arguments = (settings.PACKAGE_MODEL_PATH, settings.PACKAGE_DEVICE,
+                     settings.PACKAGE_CONFIDENCE_THRESHOLD, settings.PACKAGE_INFERENCE_IMGSZ,
+                     self._frame_width, self._frame_height)
+        options = dict(refine=settings.PACKAGE_REFINE_ENABLED,
+                       include_luggage=settings.PACKAGE_INCLUDE_LUGGAGE,
+                       max_refine_crops=settings.PACKAGE_REFINE_MAX_CROPS,
+                       roi_reviewer=roi_reviewer)
+        if settings.PACKAGE_DETAIL_MODEL_PATH.strip():
+            detector = PackageDualDetector(arguments[0], settings.PACKAGE_DETAIL_MODEL_PATH,
+                                           *arguments[1:], **options)
+        else:
+            detector = BackpackDetector(*arguments, **options)
         service = PackageObservationService(PackageConfig(
             confirm_seconds=settings.PACKAGE_CONFIRM_SECONDS,
             max_gap_seconds=settings.PACKAGE_MAX_GAP_SECONDS,

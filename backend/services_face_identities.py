@@ -108,6 +108,10 @@ class FaceIdentityService:
         self.matcher.replace(records)
         self.runtime.clear()
         self._last_reload_at = utc_now_iso()
+        from .services_map_access import get_map_access_service
+        access = get_map_access_service()
+        async with access.lock:
+            await access.reload(session)
 
     async def list_identities(self, session: AsyncSession) -> list[FaceIdentity]:
         result = await session.execute(

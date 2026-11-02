@@ -1,5 +1,6 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState, type ComponentProps } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { NavRightRail } from './NavPageShell'
 
@@ -14,6 +15,11 @@ vi.mock('../../stores/authStore', () => ({
 
 function props() {
   return {
+    activeTab: 'waypoints' as const,
+    accessZonesCount: 0,
+    accessZonesAvailable: true,
+    accessZonesPanel: <div>区域列表</div>,
+    onTabChange: vi.fn(),
     open: true,
     bounds: null, canOperate: true, localizationStopSending: false, softStopSending: false, executionPath: null,
     globalPath: null, layers: [], goToSending: false, navigatingWaypointId: null,
@@ -28,11 +34,19 @@ function props() {
   }
 }
 
+function Rail(callbacks: ComponentProps<typeof NavRightRail>) {
+  const [activeTab, setActiveTab] = useState(callbacks.activeTab)
+  return <NavRightRail {...callbacks} activeTab={activeTab} onTabChange={tab => {
+    setActiveTab(tab)
+    callbacks.onTabChange(tab)
+  }} />
+}
+
 describe('NavRightRail', () => {
   it('exposes an accessible drawer toggle', async () => {
     const user = userEvent.setup()
     const callbacks = props()
-    render(<NavRightRail {...callbacks} />)
+    render(<Rail {...callbacks} />)
     const toggle = screen.getByRole('button', { name: '收起右侧面板' })
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     await user.click(toggle)
@@ -42,7 +56,7 @@ describe('NavRightRail', () => {
   it('shares one list area and preserves actions and emergency stop across keyboard tab changes', async () => {
     const user = userEvent.setup()
     const callbacks = props()
-    render(<NavRightRail {...callbacks} />)
+    render(<Rail {...callbacks} />)
     const waypointsTab = screen.getByRole('tab', { name: '导航点 1' })
     const fencesTab = screen.getByRole('tab', { name: '围栏 1' })
     expect(waypointsTab).toHaveAttribute('aria-selected', 'true')
@@ -72,7 +86,7 @@ describe('NavRightRail', () => {
 
   it('shows an empty hint only in the selected list and keeps the stop permission gate', async () => {
     const user = userEvent.setup()
-    render(<NavRightRail {...props()} fences={[]} canOperate={false} />)
+    render(<Rail {...props()} fences={[]} canOperate={false} />)
     await user.click(screen.getByRole('tab', { name: '围栏 0' }))
     expect(screen.getByText('点击“添加围栏”，在地面依次选择起点和终点')).toBeInTheDocument()
     expect(screen.queryByText('巡检点1')).not.toBeInTheDocument()
@@ -81,7 +95,7 @@ describe('NavRightRail', () => {
 })
 
 it('locks both stop controls during localization shutdown', () => {
-  render(<NavRightRail {...props()} localizationStopSending />)
+  render(<Rail {...props()} localizationStopSending />)
   expect(screen.getByRole('button', { name: '导航软停' })).toBeDisabled()
   expect(screen.getByRole('button', { name: '正在停止...' })).toBeDisabled()
 })

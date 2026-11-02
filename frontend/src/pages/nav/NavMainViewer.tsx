@@ -2,6 +2,7 @@ import { NO_HEIGHT_CLIP, type HeightClip } from '../../components/pcd/PointCloud
 import { PointCloud3DViewer } from '../../components/pcd/PointCloud3DViewer'
 import type { GlobalPath, RobotPose } from '../../types/navState'
 import type { NavFence, NavWaypoint, PcdSceneTileManifest, PointCloudQualityMode, WallColorMode } from '../../types/pcdMap'
+import type { MapRegionOverlay } from '../../components/pcd/MapRegionOverlay'
 import type { PointCloudLayer } from './NavPageShell'
 
 type NavMainViewerProps = {
@@ -10,7 +11,9 @@ type NavMainViewerProps = {
   followRobot: boolean
   globalPath: GlobalPath | null
   layers: PointCloudLayer[]
-  mode: 'none' | 'waypoint' | 'pose' | 'fence'
+  mode: 'none' | 'waypoint' | 'pose' | 'fence' | 'map-zone'
+  mapRegions?: MapRegionOverlay[]
+  onAddMapPoint?: (point: { x: number; y: number; z: number }) => void
   pointCloudQualityMode: PointCloudQualityMode
   robotPose: RobotPose | null
   viewKey: string
@@ -42,6 +45,8 @@ export function NavMainViewer({
   globalPath,
   layers,
   mode,
+  mapRegions,
+  onAddMapPoint,
   pointCloudQualityMode,
   robotPose,
   viewKey,
@@ -96,6 +101,8 @@ export function NavMainViewer({
       globalPath={globalPath}
       executionPath={executionPath}
       mode={mode}
+      mapRegions={mapRegions}
+      onAddMapPoint={onAddMapPoint}
       followRobot={followRobot}
       centerHeight={centerHeight}
       onViewCenterChange={onViewCenterChange}

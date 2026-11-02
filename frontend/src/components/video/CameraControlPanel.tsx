@@ -11,6 +11,8 @@ import {
   X,
 } from 'lucide-react';
 import { apiFetch } from '../../api/apiFetch';
+import { useKeyboardGimbalControl } from '../../hooks/useKeyboardGimbalControl';
+import { hasAuthSession, hasRole, useAuthState } from '../../stores/authStore';
 
 type GimbalMode = 'angle' | 'head_lock' | 'head_follow' | 'fpv';
 
@@ -71,6 +73,8 @@ const actionButton =
   'h-9 min-w-9 rounded-lg border border-white/15 bg-white/[0.04] text-slate-200 hover:border-cyan-300/60 hover:bg-cyan-300/10 hover:text-cyan-100 disabled:cursor-not-allowed disabled:opacity-30 transition-all';
 
 export function CameraControlPanel({ open, onClose }: Props) {
+  useAuthState();
+  const canOperate = hasAuthSession() && hasRole('operator');
   const [status, setStatus] = useState<GimbalStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -134,9 +138,16 @@ export function CameraControlPanel({ open, onClose }: Props) {
     }
   }, [updateFromStatus]);
 
+  const handleKeyboardError = useCallback((message: string) => setError(message), []);
+  const { isJogging } = useKeyboardGimbalControl<GimbalStatus>({
+    enabled: open && canOperate && Boolean(status?.connected) && busy === null,
+    onStatus: updateFromStatus,
+    onError: handleKeyboardError,
+  });
+
   if (!open) return null;
 
-  const controlsDisabled = busy !== null || !status?.connected;
+  const controlsDisabled = busy !== null || !status?.connected || !canOperate || isJogging;
   const setMode = (mode: GimbalMode) => runAction(
     `mode-${mode}`,
     '/api/v1/gimbal/mode',
@@ -197,14 +208,14 @@ export function CameraControlPanel({ open, onClose }: Props) {
 
         <div className="mt-4 grid gap-4 lg:grid-cols-[220px_1fr]">
           <section className="rounded-xl border border-white/10 bg-white/[0.025] p-4">
-            <div className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-white/40">云台点动</div>
+            <div className="mb-3 text-[10px] font-black uppercase tracking-[0.2em] text-white/40">镜头方向</div>
             <div className="mx-auto grid w-[132px] grid-cols-3 gap-2">
               <div />
-              <button type="button" disabled={controlsDisabled} onClick={() => void jog(12, 0)} className={actionButton} title="向上点动">
+              <button type="button" disabled={controlsDisabled} onClick={() => void jog(12, 0)} className={actionButton} title="向上点动" aria-keyshortcuts="ArrowUp">
                 <ChevronUp className="mx-auto" size={20} />
               </button>
               <div />
-              <button type="button" disabled={controlsDisabled} onClick={() => void jog(0, -12)} className={actionButton} title="向左点动">
+              <button type="button" disabled={controlsDisabled} onClick={() => void jog(0, -12)} className={actionButton} title="向左点动" aria-keyshortcuts="ArrowLeft">
                 <ChevronLeft className="mx-auto" size={20} />
               </button>
               <button
@@ -216,16 +227,16 @@ export function CameraControlPanel({ open, onClose }: Props) {
               >
                 <Crosshair className="mx-auto" size={18} />
               </button>
-              <button type="button" disabled={controlsDisabled} onClick={() => void jog(0, 12)} className={actionButton} title="向右点动">
+              <button type="button" disabled={controlsDisabled} onClick={() => void jog(0, 12)} className={actionButton} title="向右点动" aria-keyshortcuts="ArrowRight">
                 <ChevronRight className="mx-auto" size={20} />
               </button>
               <div />
-              <button type="button" disabled={controlsDisabled} onClick={() => void jog(-12, 0)} className={actionButton} title="向下点动">
+              <button type="button" disabled={controlsDisabled} onClick={() => void jog(-12, 0)} className={actionButton} title="向下点动" aria-keyshortcuts="ArrowDown">
                 <ChevronDown className="mx-auto" size={20} />
               </button>
               <div />
             </div>
-            <p className="mt-3 text-center text-[9px] leading-4 text-white/30">每次点动 0.45 秒，后端自动停止</p>
+            <p className="mt-3 text-center text-[9px] leading-4 text-white/30">↑↓←→ 调整镜头 · 松开停止</p>
           </section>
 
           <section className="rounded-xl border border-white/10 bg-white/[0.025] p-4">

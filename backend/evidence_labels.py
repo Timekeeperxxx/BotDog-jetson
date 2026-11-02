@@ -8,6 +8,7 @@ EVIDENCE_LABELS = {
     'E_POSE_LYING': '倒地',
     'E_POSE_LOITERING': '徘徊',
     'E_AI_PERSON': '人员',
+    'E_MAP_ACCESS_DENIED': '区域越权',
     'E_FACE_IDENTIFIED': '已识别人员',
     'E_AI_GUNS': '枪械',
     'E_AI_KNIFE': '刀具',

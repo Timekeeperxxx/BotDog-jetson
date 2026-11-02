@@ -1,3 +1,4 @@
+import { createMapRegionOverlay, type MapRegionOverlay } from './MapRegionOverlay'
 import { NO_HEIGHT_CLIP, type HeightClip, setMaterialHeightClip } from './PointCloudHeightClip'
 import { setPointCloudPointSize, setPointCloudIntensityPreference } from './PointCloud3DViewerUtils'
 import type { PotreeSceneManager } from './PotreeSceneManager'
@@ -61,6 +62,7 @@ const GROUND_PICK_THRESHOLD_PX = 44
 const GROUND_FALLBACK_BOUNDS_MARGIN_M = 1.0
 const WALL_HEIGHT_SAMPLE_LIMIT = 4096
 
+const EMPTY_MAP_REGIONS: MapRegionOverlay[] = []
 const EMPTY_EXTRA_PATHS: { path: GlobalPath; color: string }[] = []
 
 type Props = {
@@ -70,6 +72,7 @@ type Props = {
   highlightedWaypointId?: string | null
   waypoints: NavWaypoint[]
   fences: NavFence[]
+  mapRegions?: MapRegionOverlay[]
   fencesVisible?: boolean
   robotPose: RobotPose | null
   markerPose?: RobotPose | null
@@ -81,7 +84,8 @@ type Props = {
   extraPaths?: { path: GlobalPath; color: string }[]
   executionPathLabel?: string
   fitOnLayerChange?: boolean
-  mode?: 'none' | 'waypoint' | 'pose' | 'fence'
+  mode?: 'none' | 'waypoint' | 'pose' | 'fence' | 'map-zone'
+  onAddMapPoint?: (pos: { x: number; y: number; z: number }) => void
   followRobot?: boolean
   robotFocusRequest?: number
   centerHeight?: number | null
@@ -118,6 +122,7 @@ export function PointCloud3DViewer({
   waypoints,
   fences,
   fencesVisible = true,
+  mapRegions = EMPTY_MAP_REGIONS,
   robotPose,
   markerPose,
   obstacleMarkers,
@@ -143,6 +148,7 @@ export function PointCloud3DViewer({
   onGroundPointerChange,
   onAddWaypoint,
   onAddFence,
+  onAddMapPoint,
   onSetPose,
 }: Props) {
   const viewCenterCallbackRef = useRef(onViewCenterChange)
@@ -172,6 +178,7 @@ export function PointCloud3DViewer({
   const pathGroupRef = useRef<THREE.Group | null>(null)
   const waypointGroupRef = useRef<THREE.Group | null>(null)
   const fenceGroupRef = useRef<THREE.Group | null>(null)
+  const mapRegionGroupRef = useRef<THREE.Group | null>(null)
   const pendingGroupRef = useRef<THREE.Group | null>(null)
   const robotGroupRef = useRef<THREE.Group | null>(null)
   const scanBodyGroupRef = useRef<THREE.Group | null>(null)
@@ -469,6 +476,7 @@ export function PointCloud3DViewer({
       if (manager && 'afterRender' in manager) manager.update(orbitInteractionActive, now, followingRef.current)
       else manager?.update(moving, now)
       waypointGroup.traverse((object) => applyAdaptiveOverlayScale(object, camera, renderer))
+      mapRegionGroupRef.current?.traverse((object) => applyAdaptiveOverlayScale(object, camera, renderer))
       pendingGroup.traverse((object) => applyAdaptiveOverlayScale(object, camera, renderer))
       applyAdaptiveOverlayScale(robotGroup, camera, renderer)
       orbitPivotMarker.position.copy(controls.target)
@@ -1025,6 +1033,19 @@ export function PointCloud3DViewer({
   }, [highlightedWaypointId, waypoints, webglSupported])
 
   useEffect(() => {
+    const scene = sceneRef.current
+    if (!webglSupported || !scene) return
+    const group = new THREE.Group()
+    mapRegions.forEach(region => group.add(createMapRegionOverlay(region)))
+    mapRegionGroupRef.current = group
+    scene.add(group); invalidateRenderRef.current()
+    return () => {
+      if (mapRegionGroupRef.current === group) mapRegionGroupRef.current = null
+      scene.remove(group); disposeObject3D(group); invalidateRenderRef.current()
+    }
+  }, [mapRegions, webglSupported])
+
+  useEffect(() => {
     if (!webglSupported) return
     const group = fenceGroupRef.current
     if (!group) return
@@ -1224,7 +1245,7 @@ export function PointCloud3DViewer({
       const rect = host.getBoundingClientRect()
       const point = manager.pickGround(event.clientX - rect.left, event.clientY - rect.top,
         rect.width, rect.height, GROUND_PICK_THRESHOLD_PX)
-      return point ? threeToMap(point.x, point.y, point.z) : readGroundPlanePoint(event)
+      return point ? threeToMap(point.x, point.y, point.z) : mode === 'map-zone' ? null : readGroundPlanePoint(event)
     }
 
     const groundObjects = cloudGroup.children.filter((child) => child.userData.role === 'ground')
@@ -1260,7 +1281,7 @@ export function PointCloud3DViewer({
     })
 
     const pickedPoint = bestPoint as THREE.Vector3 | null
-    if (!pickedPoint) return readGroundPlanePoint(event)
+    if (!pickedPoint) return mode === 'map-zone' ? null : readGroundPlanePoint(event)
 
     const mapPoint = threeToMap(pickedPoint.x, pickedPoint.y, pickedPoint.z)
     return {
@@ -1316,7 +1337,9 @@ export function PointCloud3DViewer({
     const target = pendingTargetRef.current
     if (!target) return
 
-    if (mode === 'fence') {
+    if (mode === 'map-zone') {
+      onAddMapPoint?.({ x: target.x, y: target.y, z: target.z })
+    } else if (mode === 'fence') {
       const next = advanceFenceDraft(
         pendingFenceStartRef.current,
         { x: target.x, y: target.y, z: target.z },

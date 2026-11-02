@@ -993,6 +993,7 @@ async def test_ai_ffmpeg_command_avoids_timestamp_dependent_fps_and_hwaccel(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(workers_ai.settings, "AI_STREAM_READER", "ffmpeg")
     worker = _worker(tmp_path, monkeypatch)
     process = _FakeProcess()
     captured: dict[str, object] = {}
@@ -1155,6 +1156,7 @@ async def test_chest_damage_event_creates_formal_alert_with_snapshot(tmp_path, m
     assert kwargs["event_code"] == "E_POSE_DAMAGE_SUSPECTED"
     assert kwargs["event_type"] == "POSE_DAMAGE_SUSPECTED"
     assert "疑似破坏动作" in kwargs["message"]
+    assert "双手反复操作" in kwargs["message"]
     assert kwargs["file_path"] == str(snapshot)
 
 

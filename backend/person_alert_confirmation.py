@@ -13,6 +13,7 @@ class _Confirmation:
     hits: int = 0
     last_frame: int = 0
     pose_batch: int = -1
+    access_key: tuple | None = None
 
 
 class PersonAlertConfirmation:
@@ -68,7 +69,14 @@ class PersonAlertConfirmation:
             state.pose_batch = pose_batch
             # Identity confirmation must finish before an unauthorized streak can start.
             # A recognized frame immediately cancels a prior unauthorized streak.
-            if is_authorized_person(person) or getattr(person, 'face_status', None) == 'pending':
+            access = getattr(person, 'map_access', None)
+            access_key = (access.get('scene_id'),tuple(access.get('denied_zone_ids',())),
+                          access.get('identity_id'),access.get('revision')) if access else None
+            if state.access_key != access_key:
+                state.hits = 0
+                state.access_key = access_key
+            if (is_authorized_person(person) or getattr(person, 'face_status', None) == 'pending'
+                    or (access and access.get('status') == 'indeterminate')):
                 state.hits = 0
                 continue
             if not fresh:

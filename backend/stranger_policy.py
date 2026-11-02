@@ -106,6 +106,9 @@ def set_stranger_policy(policy: StrangerPolicy) -> None:
 
 def is_authorized_person(detection: Any) -> bool:
     """仅已确认匹配到启用身份库的人员免于未授权告警。"""
+    access = getattr(detection, 'map_access', None)
+    if access is not None:
+        return access.get('status') == 'allowed'
     return (
         getattr(detection, "face_status", None) == "recognized"
         and getattr(detection, "identity_id", None) is not None

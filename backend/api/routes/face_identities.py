@@ -54,6 +54,7 @@ async def create_face_identity(
     identity = FaceIdentity(
         display_name=body.display_name,
         notes=body.notes,
+        access_level=body.access_level,
         enabled=1 if body.enabled else 0,
     )
     db.add(identity)
@@ -63,11 +64,15 @@ async def create_face_identity(
         await db.rollback()
         raise HTTPException(status_code=409, detail="人员姓名已存在") from exc
     await db.refresh(identity)
+    from ...services_map_access import get_map_access_service
+    access = get_map_access_service()
+    async with access.lock:
+        await access.reload(db)
     await safe_write_audit_log(
         db,
         level="INFO",
         module="BACKEND",
-        message=f"用户={admin.username} 操作=face_identity.create 目标={identity.id} 姓名={identity.display_name}",
+        message=f"用户={admin.username} 操作=face_identity.create 目标={identity.id} 姓名={identity.display_name} 权限级别={identity.access_level}",
     )
     return await get_face_identity_service().get_identity(db, identity.id)
 
@@ -100,6 +105,8 @@ async def update_face_identity(
         identity.display_name = changes["display_name"]
     if "notes" in changes:
         identity.notes = changes["notes"]
+    if "access_level" in changes:
+        identity.access_level = changes["access_level"]
     if "enabled" in changes:
         identity.enabled = 1 if changes["enabled"] else 0
     identity.updated_at = utc_now_iso()
@@ -113,7 +120,7 @@ async def update_face_identity(
         db,
         level="INFO",
         module="BACKEND",
-        message=f"用户={admin.username} 操作=face_identity.update 目标={identity_id}",
+        message=f"用户={admin.username} 操作=face_identity.update 目标={identity_id} 权限级别={identity.access_level}",
     )
     return await service.get_identity(db, identity_id)
 

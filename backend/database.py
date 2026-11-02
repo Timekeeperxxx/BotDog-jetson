@@ -77,9 +77,15 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         from . import models, models_config  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
+        for table in ('face_identities','map_access_zones'):
+            names = await conn.run_sync(lambda c, table=table: {col['name'] for col in inspect(c).get_columns(table)})
+            if 'access_level' not in names:
+                await conn.execute(text(f'ALTER TABLE {table} ADD COLUMN access_level INTEGER CHECK (access_level IS NULL OR access_level BETWEEN 1 AND 3)'))
         columns = await conn.run_sync(lambda c: {col['name'] for col in inspect(c).get_columns('anomaly_evidence')})
         if 'timing' not in columns:
             await conn.execute(text('ALTER TABLE anomaly_evidence ADD COLUMN timing JSON'))
+        if 'access_context' not in columns:
+            await conn.execute(text('ALTER TABLE anomaly_evidence ADD COLUMN access_context JSON'))
 
 
 __all__ = ["Base", "get_db", "get_engine", "get_session_factory", "init_db"]

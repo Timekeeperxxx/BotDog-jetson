@@ -201,15 +201,17 @@ export function createMapYawDirection(yaw: number) {
   return new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)).normalize()
 }
 
-export function createWaypointLabelSprite(text: string) {
+export function createWaypointLabelSprite(text: string, fitTextWidth = false) {
   const canvas = document.createElement('canvas')
-  const width = 512
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+
+  const font = 'bold 44px sans-serif'
+  ctx.font = font
+  const width = fitTextWidth ? Math.max(512, Math.ceil(ctx.measureText(text).width) + 64) : 512
   const height = 128
   canvas.width = width
   canvas.height = height
-
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return null
 
   ctx.clearRect(0, 0, width, height)
   ctx.fillStyle = 'rgba(7, 14, 20, 0.56)'
@@ -221,7 +223,7 @@ export function createWaypointLabelSprite(text: string) {
   ctx.stroke()
 
   ctx.fillStyle = 'rgba(248, 250, 252, 0.94)'
-  ctx.font = 'bold 44px sans-serif'
+  ctx.font = font
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(text, width / 2, height / 2)
@@ -236,7 +238,7 @@ export function createWaypointLabelSprite(text: string) {
     depthTest: false,
   })
   const sprite = new THREE.Sprite(material)
-  sprite.scale.set(2.8, 0.7, 1)
+  sprite.scale.set(2.8 * width / 512, 0.7, 1)
   sprite.center.set(0.5, 0)
   sprite.renderOrder = 38
   return sprite

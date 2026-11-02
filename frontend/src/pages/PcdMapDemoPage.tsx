@@ -51,9 +51,12 @@ import {
 } from './nav/NavPageDialogs'
 import { NavDrawerCluster } from './nav/NavDrawerCluster'
 import { NavMainViewer } from './nav/NavMainViewer'
+import type { MapRegionOverlay } from '../components/pcd/MapRegionOverlay'
+import { NavAccessZonesPanel } from './nav/NavAccessZonesPanel'
+import { useNavAccessZones } from './nav/useNavAccessZones'
 import { MapLoadingProgress } from './nav/MapLoadingProgress'
 import { NavMessageCenter, SceneInfoDrawer } from './nav/NavPageStatusPanels'
-import { NavPageHeader, NavRightRail } from './nav/NavPageShell'
+import { NavPageHeader, NavRightRail, type NavRailTab } from './nav/NavPageShell'
 import { NavToolStrip, type PcdLayerVisibility } from './nav/NavToolStrip'
 import {
   formatRestartHealthLog,
@@ -72,6 +75,10 @@ type OperationNotice = {
 export function PcdMapDemoPage() {
   useAuthState()
   const canOperate = hasAuthSession() && hasRole('operator')
+  const canManageAccessZones = hasAuthSession() && hasRole('admin')
+  const [activeRailTab, setActiveRailTab] = useState<NavRailTab>('waypoints')
+  const [rightRailOpen, setRightRailOpen] = useState(true)
+  const accessPanelOpen = rightRailOpen && activeRailTab === 'regions'
   const fenceDetection = useFenceDetection()
   const [pcdLayerPanelOpen, setPcdLayerPanelOpen] = useState(false)
   const [pointCloudPreferences, setPointCloudPreferences] = useState(loadPointCloudPreferences)
@@ -85,7 +92,6 @@ export function PcdMapDemoPage() {
   const [fenceMode, setFenceMode] = useState(false)
   const [activeDrawer, setActiveDrawer] = useState<'task' | 'map' | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
-  const [rightRailOpen, setRightRailOpen] = useState(true)
   const [followRobot, setFollowRobot] = useState(false)
   const [toolMode, setToolMode] = useState<'none' | 'obstacle' | 'pose'>('none')
   const [navigatingWaypointId, setNavigatingWaypointId] = useState<string | null>(null)
@@ -130,7 +136,7 @@ export function PcdMapDemoPage() {
 
   const { linearSpeed, resetSpeeds: resetKeyboardSpeeds, turnSpeed } = useKeyboardRobotControl({
     canOperate,
-    enabled: keyboardControlEnabled,
+    enabled: keyboardControlEnabled && !accessPanelOpen,
     isControlling,
     currentCmd,
     startCommand,
@@ -223,6 +229,7 @@ export function PcdMapDemoPage() {
     setOperationNotice(null)
     setAddMode(false)
     setFenceMode(false)
+    setActiveRailTab('waypoints')
     setFences([])
     setInitialState({
       robotPose: null,
@@ -261,6 +268,8 @@ export function PcdMapDemoPage() {
     onLog: addLog,
     onSceneChanging: handleSceneChanging,
   })
+
+  const accessEditor = useNavAccessZones(selectedSceneId, hasAuthSession(), canManageAccessZones, addLog)
 
   useEffect(() => {
     setHeightClip(loadSceneHeightClip(selectedSceneId))
@@ -750,6 +759,7 @@ export function PcdMapDemoPage() {
       if (resolved !== 'none') {
         setAddMode(false)
         setFenceMode(false)
+        setActiveRailTab('waypoints')
       }
       addLog(
         resolved === 'none'
@@ -791,6 +801,7 @@ export function PcdMapDemoPage() {
       if (nextValue) {
         setToolMode('none')
         setFenceMode(false)
+        setActiveRailTab('waypoints')
       }
       addLog(nextValue ? '已切换到添加导航点模式' : '已退出标点')
       return nextValue
@@ -801,6 +812,7 @@ export function PcdMapDemoPage() {
       const nextValue = !value
       if (nextValue) {
         setAddMode(false)
+        setActiveRailTab('fences')
         setToolMode('none')
         setFencesVisible(true)
       }
@@ -810,8 +822,8 @@ export function PcdMapDemoPage() {
   }, [addLog])
   const openTaskDrawer = useCallback(() => setActiveDrawer('task'), [])
 
-  const pointCloudMode: 'none' | 'waypoint' | 'pose' | 'fence' =
-    fenceMode ? 'fence' : addMode ? 'waypoint' : (toolMode === 'pose' ? 'pose' : 'none')
+  const pointCloudMode: 'none' | 'waypoint' | 'pose' | 'fence' | 'map-zone' =
+    accessPanelOpen && accessEditor.drawing ? 'map-zone' : fenceMode ? 'fence' : addMode ? 'waypoint' : (toolMode === 'pose' ? 'pose' : 'none')
 
   const {
     allLayers,
@@ -937,6 +949,11 @@ export function PcdMapDemoPage() {
     }
   }, [addLog, canOperate, navAutoTrackEnabled, navAutoTrackLoading])
 
+  const accessMapRegions = useMemo<MapRegionOverlay[]>(() => mappingActive ? [] : [
+    ...accessEditor.zones.filter(zone => !accessPanelOpen || zone.id !== accessEditor.editingId),
+    ...(accessPanelOpen && accessEditor.draft.length ? [{ id: 'draft', name: accessEditor.name || '新区域', access_level: Number(accessEditor.level) || null, enabled: true, vertices: accessEditor.draft.map(p => [p.x, p.y, p.z]) }] : []),
+  ], [mappingActive, accessEditor.zones, accessPanelOpen, accessEditor.editingId, accessEditor.draft, accessEditor.name, accessEditor.level])
+
   return (
     <main className="pcd-demo-page">
       <NavPageHeader
@@ -961,7 +978,9 @@ export function PcdMapDemoPage() {
               executionPath={displayedExecutionPath}
               globalPath={displayedGlobalPath}
               layers={allLayers}
-              mode={pointCloudMode}
+              mode={mappingActive ? 'none' : pointCloudMode}
+              mapRegions={accessMapRegions}
+              onAddMapPoint={accessEditor.addPoint}
               pointCloudQualityMode={pointCloudQualityMode}
               heightClip={heightClip}
               pointSize={pointSize}
@@ -1099,6 +1118,18 @@ export function PcdMapDemoPage() {
         </section>
 
         <NavRightRail
+          activeTab={activeRailTab}
+          accessZonesCount={accessEditor.zones.length}
+          accessZonesAvailable={Boolean((preview || tileManifest) && selectedSceneNavigable && webglSupported && !mappingActive && !mappingPreflightChecking && !mappingSending && !mappingSaving)}
+          accessZonesPanel={<NavAccessZonesPanel editor={accessEditor} canManage={canManageAccessZones && !mappingActive && !mappingPreflightChecking && !mappingSending && !mappingSaving} />}
+          onTabChange={(tab) => {
+            setActiveRailTab(tab)
+            if (tab === 'regions') {
+              setAddMode(false); setFenceMode(false); setToolMode('none'); setActiveDrawer(null); setFollowRobot(false)
+            } else {
+              accessEditor.setDrawing(false)
+            }
+          }}
           open={rightRailOpen}
           bounds={rightRailBounds}
           canOperate={canOperate}
@@ -1125,7 +1156,7 @@ export function PcdMapDemoPage() {
           onToggleFencesVisible={() => setFencesVisible((value) => !value)}
           onToggleFenceEnabled={(fenceId, enabled) => void handleToggleFenceEnabled(fenceId, enabled)}
           onDeleteFence={(fenceId) => void handleDeleteFence(fenceId)}
-          onToggle={() => setRightRailOpen((value) => !value)}
+          onToggle={() => { accessEditor.setDrawing(false); setRightRailOpen((value) => !value) }}
         />
 
         <NavMessageCenter

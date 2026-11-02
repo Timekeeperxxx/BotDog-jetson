@@ -59,6 +59,7 @@ class DetectionResult:
     # 姿态模型的人体框只用于补齐叠层和跟踪输入，不能单独作为“陌生人”
     # 被动告警的证据。否则姿态模型对背景的低置信度误检会绕过主检测器阈值。
     is_pose_fallback: bool = False
+    map_access: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -1345,6 +1346,10 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
                     detection.display_name = None
             await self._report_face_service_fault(face_error)
             self._last_face_stage_ms = round((time.monotonic() - face_stage_started) * 1000, 1)
+            from .services_map_access import get_map_access_service
+            await get_map_access_service().annotate(
+                persons, frame_monotonic=frame_read_at if frame_read_at is not None else t_start,
+            )
             if not settings.WEAPON_ENABLED or weapon_generation != self._weapon_generation:
                 detections = [d for d in detections if d.label not in {"guns", "knife"}]
                 preview_detections = [d for d in preview_detections if d.label not in {"guns", "knife"}]

@@ -377,6 +377,9 @@ def test_iou_tracker_keeps_identity_for_moving_person() -> None:
 
 def _chest_pose(step, *, mode="both", translate=0.0, scale=1.0):
     points = _keypoints()
+    # 操作夹具保留可见前臂；举掌投影过短另有负例覆盖。
+    points[7] = PoseKeypoint(30, 105, .95)
+    points[8] = PoseKeypoint(70, 105, .95)
     shift = 12.0 * (step % 2)
     points[9] = PoseKeypoint(30 + shift, 80, .95)
     points[10] = PoseKeypoint(70 - shift if mode != "one" else 70, 80, .95)
@@ -418,7 +421,9 @@ def test_chest_motion_does_not_combine_hands_from_different_people():
     engine = PoseEventEngine()
     for i in range(10):
         a = _chest_pose(i, mode="missing")
-        b = _chest_pose(i, mode="missing", translate=300)
+        points = list(_chest_pose(i, translate=300).keypoints)
+        points[9] = PoseKeypoint(points[9].x, points[9].y, .1)
+        b = _pose(keypoints=points)
         b = RawPose((300, 300, 400, 500), b.confidence, b.keypoints)
         _, events = engine.update([a, b], now=i * .2)
         assert not any(e.event_type == "POSE_DAMAGE_SUSPECTED" for e in events)
@@ -628,14 +633,16 @@ def test_chest_motion_tolerates_brief_occlusion_but_resets_long_gaps():
         elif mode == "missing":
             assert not _damage_events(engine, _chest_pose(0, mode="missing"), .8)
         if mode != "gap":
-            assert _damage_events(engine, _chest_pose(0), 1.0)
+            # 保留已观察的0.6秒，但漏点到恢复之间的间隔不计入有效时长。
+            assert not _damage_events(engine, _chest_pose(0), 1.0)
+            assert _damage_events(engine, _chest_pose(1), 1.2)
         else:
             for i in range(4):
                 assert not _damage_events(engine, _chest_pose(i), 2.0 + i * .2)
             assert _damage_events(engine, _chest_pose(4), 2.8)
 
 
-def test_chest_activity_accepts_one_moving_hand_without_hips_or_reversals():
+def test_chest_activity_rejects_monotonic_hand_raise_without_hips():
     engine = PoseEventEngine()
     hits = []
     for i in range(5):
@@ -643,8 +650,7 @@ def test_chest_activity_accepts_one_moving_hand_without_hips_or_reversals():
         points[9] = PoseKeypoint(30 + 2 * i, 80, .95)
         points[11] = points[12] = PoseKeypoint(0, 0, .1)
         hits += _damage_events(engine, _pose(keypoints=points), i * .2)
-    assert len(hits) == 1
-    assert hits[0].duration_seconds == .8
+    assert hits == []
 
 
 def test_chest_activity_rejects_tiny_jitter_and_single_adjustment():
@@ -657,7 +663,7 @@ def test_chest_activity_rejects_tiny_jitter_and_single_adjustment():
             assert not _damage_events(engine, _pose(keypoints=points), i * .2)
 
 
-def test_chest_or_higher_accepts_either_hand_and_axis_without_reversals():
+def test_chest_or_higher_accepts_either_operating_hand_and_axis_with_reversals():
     for hand in (9, 10):
         for axis in (0, 1):
             for height in (80, 20, -20):
@@ -668,13 +674,13 @@ def test_chest_or_higher_accepts_either_hand_and_axis_without_reversals():
                     points[9] = PoseKeypoint(30, height, .95)
                     points[10] = PoseKeypoint(70, height, .95)
                     wrist = points[hand]
-                    points[hand] = PoseKeypoint(wrist.x + (2*i if axis == 0 else 0),
-                                                wrist.y - (2*i if axis == 1 else 0), .95)
+                    points[hand] = PoseKeypoint(wrist.x + (12*(i%2) if axis == 0 else 0),
+                                                wrist.y - (12*(i%2) if axis == 1 else 0), .95)
                     hits += _damage_events(engine, _pose(keypoints=points), i*.2)
                 assert len(hits) == 1, (hand, axis, height)
 
 
-def test_one_hand_below_chest_does_not_trigger():
+def test_one_hand_below_waist_does_not_trigger():
     for low_hand in (9, 10):
         engine = PoseEventEngine()
         for i in range(10):

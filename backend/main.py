@@ -494,6 +494,7 @@ def register_routes(app: FastAPI) -> None:
     from .api.routes import control_debug as _control_debug_routes
     from .api.routes import evidence as _evidence_routes
     from .api.routes import focus_zones as _focus_zone_routes
+    from .api.routes import map_access as _map_access_routes
     from .api.routes import guard_mission as _guard_mission_routes
     from .api.routes import log_files as _log_files_routes
     from .api.routes import logs as _logs_routes
@@ -525,6 +526,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(_config_routes.router)
     app.include_router(_evidence_routes.router)
     app.include_router(_focus_zone_routes.router)
+    app.include_router(_map_access_routes.router)
     app.include_router(_guard_mission_routes.router)
     app.include_router(_video_source_routes.router)
     app.include_router(_network_interface_routes.router)

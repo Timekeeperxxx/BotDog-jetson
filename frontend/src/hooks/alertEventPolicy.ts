@@ -6,6 +6,10 @@ export const ALERT_LATEST_DISPLAY_MS = 60_000;
 export const ALERT_HISTORY_LIMIT = 10;
 
 function alertMergeKey(alert: AlertEvent): string | null {
+  if (alert.event_code === 'E_MAP_ACCESS_DENIED') {
+    const access = alert.access_context as { repeat_scope?: string } | undefined;
+    return `${alert.event_code}:${access?.repeat_scope ?? alert.evidence_id ?? alert.timestamp}`;
+  }
   const key = alert.event_code || alert.event_type;
   return key ? String(key) : null;
 }
@@ -83,6 +87,7 @@ export function parseAlertEvent(message: {
 
 const alertTitles: Record<string, string> = {
   E_AI_PERSON: '检测到人员',
+  E_MAP_ACCESS_DENIED: '人员区域越权',
   E_AI_GUNS: '发现疑似枪械',
   E_AI_KNIFE: '发现疑似刀具',
   E_PACKAGE_ABANDONED: '发现疑似遗弃包裹',

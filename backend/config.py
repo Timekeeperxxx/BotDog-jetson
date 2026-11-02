@@ -110,6 +110,7 @@ class Settings(BaseSettings):
     # 独立包类支路；总开关默认关闭，显式配置本机生成的 TensorRT 模型后启用。
     PACKAGE_ENABLED: bool = False
     PACKAGE_MODEL_PATH: str = '/home/jetson/Projects/Models/yolo11n-backpack-fp16.engine'
+    PACKAGE_DETAIL_MODEL_PATH: str = ''
     PACKAGE_DEVICE: str = 'auto'
     PACKAGE_INFERENCE_IMGSZ: int = 640
     PACKAGE_CONFIDENCE_THRESHOLD: float = 0.25
@@ -181,8 +182,8 @@ class Settings(BaseSettings):
     POSE_KEYPOINT_CONFIDENCE: float = 0.35
     POSE_MIN_VISIBLE_KEYPOINTS: int = 5
     POSE_FRAME_SKIP: int = 1
-    POSE_CHEST_MOTION_SECONDS: float = 0.8  # 双手胸口及以上活动的最短观察时长
-    POSE_CHEST_MOTION_SPAN: float = 0.15  # 任一手最小活动幅度 / 估计躯干长度（1.5倍肩宽）
+    POSE_CHEST_MOTION_SECONDS: float = 0.8  # 双手腰部以上活动的最短有效观察时长，保留旧配置键名
+    POSE_CHEST_MOTION_SPAN: float = 0.15  # 双手可见时的活动幅度 / 估计躯干长度（1.5倍肩宽）
     POSE_STABLE_HITS: int = 3
     POSE_CROUCH_SECONDS: float = 3.0
     POSE_LOITER_SECONDS: float = 5.0

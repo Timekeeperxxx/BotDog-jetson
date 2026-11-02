@@ -56,6 +56,7 @@ async def get_evidence(
                 "gps_lon": row.gps_lon,
                 "created_at": row.created_at,
                 "timing": row.timing,
+                "access_context": row.access_context,
             }
             for row in rows
         ],

@@ -12,6 +12,7 @@ export function AdminFaceIdentitiesPage() {
   const [formOpen, setFormOpen] = useState(false)
   const [displayName, setDisplayName] = useState('')
   const [notes, setNotes] = useState('')
+  const [accessLevel, setAccessLevel] = useState('')
   const [enabled, setEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<FaceIdentity | null>(null)
@@ -44,6 +45,7 @@ export function AdminFaceIdentitiesPage() {
     setEditing(null)
     setDisplayName('')
     setNotes('')
+    setAccessLevel('')
     setEnabled(true)
     setFormOpen(true)
   }
@@ -52,6 +54,7 @@ export function AdminFaceIdentitiesPage() {
     setEditing(identity)
     setDisplayName(identity.display_name)
     setNotes(identity.notes ?? '')
+    setAccessLevel(identity.access_level ? String(identity.access_level) : '')
     setEnabled(identity.enabled)
     setFormOpen(true)
   }
@@ -70,12 +73,14 @@ export function AdminFaceIdentitiesPage() {
           display_name: name,
           notes: notes.trim() || null,
           enabled,
+          access_level: accessLevel ? Number(accessLevel) : null,
         })
       } else {
         await faceIdentitiesApi.create({
           display_name: name,
           notes: notes.trim() || null,
           enabled,
+          access_level: accessLevel ? Number(accessLevel) : null,
         })
       }
       setFormOpen(false)
@@ -134,7 +139,7 @@ export function AdminFaceIdentitiesPage() {
     <div className="space-y-6">
       <AdminCard
         title="人脸识别状态"
-        subtitle="YuNet 检测 + SFace 特征匹配。识别只用于显示姓名，不触发开锁或机器人动作。"
+        subtitle="导航地图设置区域级别，人脸档案设置人员权限级别。1级最高：1级可进入1/2/3级区域，2级可进入2/3级，3级仅可进入3级。"
         actions={<ToolbarButton onClick={() => void refresh()} disabled={loading}><RefreshCw size={14} className="inline-block" /> 刷新</ToolbarButton>}
       >
         <div className="grid gap-4 md:grid-cols-4">
@@ -157,12 +162,13 @@ export function AdminFaceIdentitiesPage() {
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full">
-              <thead><tr><TableHead>姓名</TableHead><TableHead>状态</TableHead><TableHead>人脸模板</TableHead><TableHead>备注</TableHead><TableHead>操作</TableHead></tr></thead>
+              <thead><tr><TableHead>姓名</TableHead><TableHead>状态</TableHead><TableHead>权限级别</TableHead><TableHead>人脸模板</TableHead><TableHead>备注</TableHead><TableHead>操作</TableHead></tr></thead>
               <tbody>
                 {identities.map((identity) => (
                   <tr key={identity.id}>
                     <TableCell><div className="font-semibold text-white">{identity.display_name}</div><div className="mt-1 text-xs text-zinc-500">#{identity.id}</div></TableCell>
                     <TableCell><StatusBadge status={identity.enabled ? 'normal' : 'degraded'} /></TableCell>
+                    <TableCell>{identity.access_level ? `${identity.access_level}级` : '未设置权限'}</TableCell>
                     <TableCell>
                       <div className="flex flex-wrap items-center gap-2">
                         {identity.templates.map((template) => (
@@ -217,6 +223,7 @@ export function AdminFaceIdentitiesPage() {
             <h3 className="text-lg font-semibold text-white">{editing ? '编辑人员' : '新增人员'}</h3>
             <div className="mt-5 space-y-4">
               <label className="block text-sm text-zinc-300">显示姓名<input autoFocus value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={100} className="mt-2 w-full rounded-md border border-white/10 bg-[#0d1014] px-3 py-2 text-white outline-none focus:border-sky-600" /></label>
+              <label className="block text-sm text-zinc-300">人员权限级别<select aria-label="人员权限级别" value={accessLevel} onChange={e => setAccessLevel(e.target.value)} className="mt-2 w-full rounded-md border border-white/10 bg-[#0d1014] px-3 py-2 text-white"><option value="">未设置（受控区域不放行）</option><option value="1">1级 · 可进入1、2、3级区域</option><option value="2">2级 · 可进入2、3级区域</option><option value="3">3级 · 仅可进入3级区域</option></select></label>
               <label className="block text-sm text-zinc-300">备注<textarea value={notes} onChange={(event) => setNotes(event.target.value)} maxLength={500} rows={3} className="mt-2 w-full rounded-md border border-white/10 bg-[#0d1014] px-3 py-2 text-white outline-none focus:border-sky-600" /></label>
               <label className="flex items-center gap-2 text-sm text-zinc-300"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /> 启用识别</label>
             </div>

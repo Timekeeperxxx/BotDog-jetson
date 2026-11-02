@@ -15,6 +15,7 @@ export interface FaceIdentity {
   display_name: string
   notes: string | null
   enabled: boolean
+  access_level: number | null
   created_at: string
   updated_at: string
   templates: FaceTemplate[]
@@ -41,14 +42,14 @@ export const faceIdentitiesApi = {
   status(): Promise<FaceRecognitionStatus> {
     return apiFetch('/api/v1/face-recognition/status')
   },
-  create(payload: { display_name: string; notes?: string | null; enabled?: boolean }): Promise<FaceIdentity> {
+  create(payload: { display_name: string; notes?: string | null; enabled?: boolean; access_level?: number | null }): Promise<FaceIdentity> {
     return apiFetch('/api/v1/face-identities', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     })
   },
-  update(identityId: number, payload: { display_name?: string; notes?: string | null; enabled?: boolean }): Promise<FaceIdentity> {
+  update(identityId: number, payload: { display_name?: string; notes?: string | null; enabled?: boolean; access_level?: number | null }): Promise<FaceIdentity> {
     return apiFetch(`/api/v1/face-identities/${identityId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

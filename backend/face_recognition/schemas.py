@@ -22,6 +22,7 @@ class FaceIdentityResponse(BaseModel):
     display_name: str
     notes: str | None
     enabled: bool
+    access_level: int | None = None
     created_at: str
     updated_at: str
     templates: list[FaceTemplateResponse] = Field(default_factory=list)
@@ -31,6 +32,7 @@ class FaceIdentityCreate(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=100)
     notes: str | None = Field(default=None, max_length=500)
     enabled: bool = True
+    access_level: int | None = Field(default=None, ge=1, le=3, strict=True)
 
     @field_validator("display_name")
     @classmethod
@@ -45,6 +47,7 @@ class FaceIdentityUpdate(BaseModel):
     display_name: str | None = Field(default=None, min_length=1, max_length=100)
     notes: str | None = Field(default=None, max_length=500)
     enabled: bool | None = None
+    access_level: int | None = Field(default=None, ge=1, le=3, strict=True)
 
     @field_validator("display_name")
     @classmethod

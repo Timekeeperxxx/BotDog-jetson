@@ -213,6 +213,10 @@ async def initialize_runtime_services(
             f"默认画面设置失败：{exc}",
         )
 
+    from .services_map_access import get_map_access_service
+    map_access = get_map_access_service()
+    async with session_factory() as access_session:
+        await map_access.reload(access_session)
     if settings.MULTISENSOR_ENABLED:
         async def _poll_multisensor_gimbal_status() -> None:
             interval = 1.0 / max(0.2, float(settings.MULTISENSOR_GIMBAL_POLL_HZ))

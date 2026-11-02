@@ -18,6 +18,14 @@ function alert(
 }
 
 describe('mergeAlertEvent', () => {
+  it('keeps separate people and map regions visible while merging the same violation', () => {
+    const one={...alert('E_MAP_ACCESS_DENIED','2026-10-21T10:00:00Z'),access_context:{repeat_scope:'person1:zone1'}};
+    const two={...one,access_context:{repeat_scope:'person1:zone2'}};
+    const three={...one,access_context:{repeat_scope:'person2:zone1'}};
+    const merged=mergeAlertEvent(mergeAlertEvent([one],two),three);
+    expect(merged).toHaveLength(3);
+    expect(mergeAlertEvent(merged,{...one,timestamp:'2026-10-21T10:00:31Z'})).toHaveLength(3);
+  });
   it('keeps vaulting and climbing as separate alert classes and titles', () => {
     const climb=alert('E_POSE_CLIMBING_SUSPECTED', '2026-10-06T05:00:00.000Z');
     const vault=alert('E_POSE_VAULTING_SUSPECTED', '2026-10-06T05:00:00.100Z');

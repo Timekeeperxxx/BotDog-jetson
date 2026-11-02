@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import threading
 import time
+from collections import deque
 from typing import Any
 
 from .config import settings
@@ -10,6 +11,7 @@ from .config import settings
 
 _lock = threading.RLock()
 _latest_robot_pose: dict[str, Any] | None = None
+_pose_history = deque(maxlen=240)
 _latest_global_path: dict[str, Any] | None = None
 _latest_task_route: dict[str, Any] | None = None
 _task_route_acceptance = "retained"
@@ -70,6 +72,7 @@ def update_robot_pose(pose: dict[str, Any]) -> dict[str, Any]:
 
     with _lock:
         _latest_robot_pose = next_pose
+        _pose_history.append((time.monotonic(), copy.deepcopy(next_pose)))
 
     return copy.deepcopy(next_pose)
 
@@ -79,6 +82,15 @@ def clear_robot_pose() -> None:
 
     with _lock:
         _latest_robot_pose = None
+        _pose_history.clear()
+
+
+def get_robot_pose_at(observed_monotonic: float, tolerance: float) -> dict | None:
+    with _lock:
+        if not _pose_history: return None
+        stamp, pose = min(_pose_history, key=lambda item: abs(item[0]-observed_monotonic))
+        if abs(stamp-observed_monotonic) > tolerance or _is_pose_stale(pose): return None
+        return copy.deepcopy(pose)
 
 
 def update_global_path(path: dict[str, Any]) -> dict[str, Any]:

@@ -1,6 +1,7 @@
 export type EvidenceSeverity = 'INFO' | 'WARNING' | 'CRITICAL';
 
 export interface EvidenceItem {
+  access_context?: Record<string, unknown> | null;
   alert_label?: string | null;
   evidence_id: number;
   task_id: number | null;

@@ -91,6 +91,7 @@ class DetectionResult:
     display_name: str | None = None
     face_status: str | None = None
     face_score: float | None = None
+    map_access: dict | None = None
 
 
 @dataclass

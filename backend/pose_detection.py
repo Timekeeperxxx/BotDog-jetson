@@ -3,7 +3,7 @@
 第一阶段只使用 COCO 17 点人体骨架，不在单帧上直接宣称发生了复杂行为。
 攀爬、翻越、蹲伏、倒地和徘徊事件均在全画面判断；蹲伏和徘徊按连续时长触发，
 人员缺失后清零，蹲伏姿态中断后重新计时。重点区信息仅供观察结果展示。
-胸口及以上双手活动为全画面的疑似破坏动作候选规则，不证明围栏接触或损坏。
+腰部以上双手参与的反复操作为疑似破坏动作候选，不证明围栏接触或损坏。
 """
 
 from __future__ import annotations
@@ -101,8 +101,10 @@ class _TrackState:
     motion_history: deque[tuple[float, float, float, bool]] = field(
         default_factory=deque
     )
-    # 时间、左右手在躯干坐标系内的位置；双手必须同时处于胸口及以上。
-    chest_motion: deque[tuple[float, float, float, float, float]] = field(default_factory=deque)
+    # 时间、左右手相对躯干坐标、与上一有效采样连续可见的时长。
+    # 双手必须同时处于腰部以上；漏检间隔保留进度但不计入有效时长或位移。
+    chest_motion: deque[tuple[float, float, float, float, float, float]] = field(default_factory=deque)
+    chest_motion_interrupted: bool = False
     # 时间、左右膝/踝相对高度、辅助动作、髋部y、躯干长度、撑跳参考量。
     vault_history: deque[tuple[float, float, float, float, float, bool, float, float]] = field(default_factory=deque)
     # 时间、左右脚相对髋部坐标及撑越候选；有界短窗，不新增模型推理。
@@ -187,6 +189,37 @@ def _joint_angle(a: PoseKeypoint, b: PoseKeypoint, c: PoseKeypoint) -> float:
         return 180.0
     cosine = _clamp((ab[0] * cb[0] + ab[1] * cb[1]) / denominator, -1.0, 1.0)
     return math.degrees(math.acos(cosine))
+
+
+def _motion_reversals(
+    samples: list[tuple[float, ...]], column: int, swing: float,
+) -> tuple[float, int]:
+    """可见段内的位移跨度和显著转向数，不跨漏点拼接。"""
+    direction, reversals, span = 0, 0, 0.0
+    anchor = peak = low = high = 0.0
+    connected = False
+    for sample in samples:
+        value = sample[column]
+        if sample[5] <= 0:
+            connected = False
+            direction = 0
+        if not connected:
+            anchor = peak = low = high = value
+            connected = True
+            continue
+        low, high = min(low, value), max(high, value)
+        span = max(span, high - low)
+        if direction == 0:
+            if abs(value - anchor) >= swing:
+                direction = 1 if value > anchor else -1
+                peak = value
+        elif direction * (value - peak) > 0:
+            peak = value
+        elif direction * (peak - value) >= swing:
+            reversals += 1
+            direction = -direction
+            peak = value
+    return span, reversals
 
 
 def count_raised_wrists(
@@ -426,7 +459,8 @@ class PoseEventEngine:
                 state.posture_window.clear()
                 state.posture_present_since.clear()
                 state.motion_history.clear()
-                # 双手活动允许短暂漏检，恢复后由采样间隔判定是否清零。
+                state.chest_motion.clear()
+                state.chest_motion_interrupted = False
                 state.vault_history.clear()
                 state.supported_vault_history.clear()
                 state.supported_step_history.clear()
@@ -437,6 +471,9 @@ class PoseEventEngine:
         for track_id, state in self._tracks.items():
             if track_id not in assignments.values():
                 # 双手活动允许短暂漏检，恢复后由采样间隔判定是否清零。
+                state.chest_motion_interrupted = True
+                if state.chest_motion and timestamp - state.chest_motion[-1][0] > 0.5:
+                    state.chest_motion.clear()
                 state.vault_history.clear()
                 # 撑栏候选允许短暂漏检；恢复时按有效采样间隔检查超时。
                 state.visible_since = None
@@ -929,13 +966,16 @@ class PoseEventEngine:
     def _detect_chest_motion(
         self, observation: PoseObservation, state: _TrackState, now: float,
     ) -> float | None:
-        """胸口及以上双手活动候选；不要求往复，不证明实际损坏。"""
+        """双手抬离自然垂手位置后的反复操作；不要求双手同步或同幅度。"""
         history = state.chest_motion
         points = [_point(observation.keypoints, i, self._keypoint_confidence)
                   for i in (LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_WRIST, RIGHT_WRIST)]
         if any(p is None or not all(math.isfinite(v) for v in (p.x, p.y, p.confidence))
                for p in points):
-            return None  # 短暂漏点不清零；再次可见时仍检查 0.5 秒间隔。
+            state.chest_motion_interrupted = True
+            if history and now - history[-1][0] > 0.5:
+                history.clear()
+            return None
         ls, rs, lw, rw = points
         sx, sy = (ls.x + rs.x) / 2, (ls.y + rs.y) / 2
         dx, dy = rs.x - ls.x, rs.y - ls.y
@@ -947,39 +987,78 @@ class PoseEventEngine:
             return None
         # 肩宽的 1.5 倍作为躯干尺度，半身画面不再依赖双髋可见。
         scale = width * 1.5
+        # 髋线可见时使用实际腰线，否则用同一肩宽尺度估算。
+        waist_limit = 1.0
+        hips = _midpoint(observation.keypoints, LEFT_HIP, RIGHT_HIP,
+                         self._keypoint_confidence)
+        if hips is not None and all(math.isfinite(v) for v in (hips.x, hips.y, hips.confidence)):
+            hip_y = (-(hips.x - sx) * dy + (hips.y - sy) * dx) / (width * scale)
+            if hip_y > 0:
+                waist_limit = hip_y
         coordinates = []
         for wrist in (lw, rw):
             wx, wy = wrist.x - sx, wrist.y - sy
             x = (wx * dx + wy * dy) / (width * scale)
             y = (-wx * dy + wy * dx) / (width * scale)
-            # 胸口线以下不计；允许抬到头顶或向两侧伸展。
-            if y > 0.65:
+            # 腰线附近的自然摆臂不算操作。保留低位拉扯，但双腕须明确高于腰线。
+            if y > waist_limit - 0.12 + 1e-9:
                 history.clear()
                 return None
             coordinates.extend((x, y))
+        # 拍手的合掌阶段不作为操作证据，也不把合掌前后的运动拼接起来。
+        # 使用躯干尺度，避免按像素距离误伤远处或近处的人。
+        if math.hypot(coordinates[0] - coordinates[2],
+                      coordinates[1] - coordinates[3]) < 0.35:
+            history.clear()
+            return None
+        # 双臂向两侧伸展的姿势不按操作计数；抬臂时的定位抖动不能组成往复。
+        elbows = [_point(observation.keypoints, i, self._keypoint_confidence)
+                  for i in (LEFT_ELBOW, RIGHT_ELBOW)]
+        elbows = [p if p is not None and all(math.isfinite(v) for v in
+                  (p.x, p.y, p.confidence)) else None for p in elbows]
+        if (all(p is not None for p in elbows)
+            and abs(coordinates[0] - coordinates[2]) > 1.6
+            and _joint_angle(ls, elbows[0], lw) > 130
+            and _joint_angle(rs, elbows[1], rw) > 130):
+            history.clear()
+            return None
+        # 双前臂都朝向镜头、投影很短时，掌部遮挡容易使腕点在掌根间跳动。
+        # 有清晰肘点时才执行质量检查，不要求半身遮挡画面必须检出肘部。
+        if (all(p is not None for p in elbows)
+            and max(math.hypot(w.x - e.x, w.y - e.y) / scale
+                    for w, e in zip((lw, rw), elbows)) < 0.25):
+            history.clear()
+            return None
         if history and (
-            not 0 < now - history[-1][0] <= 0.5
+            not 0 < now - history[-1][0] <= 0.5 + 1e-9
             or any(math.hypot(coordinates[i] - history[-1][i + 1],
                               coordinates[i + 1] - history[-1][i + 2]) > 0.8
                    for i in (0, 2))
         ):
             history.clear()
-        history.append((now, *coordinates))
-        while history and now - history[0][0] > self._chest_motion_seconds + 0.8:
+        visible_interval = (
+            now - history[-1][0]
+            if history and not state.chest_motion_interrupted else 0.0
+        )
+        history.append((now, *coordinates, visible_interval))
+        state.chest_motion_interrupted = False
+        # 给正常速度的推拉留出完成往复的窗口，不降低有效观察时长门槛。
+        while history and now - history[0][0] > self._chest_motion_seconds + 1.6:
             history.popleft()
-        if len(history) < 5 or now - history[0][0] + 1e-9 < self._chest_motion_seconds:
+        samples = list(history)
+        visible_duration = sum(sample[5] for sample in samples[1:])
+        if len(samples) < 4 or visible_duration + 1e-9 < self._chest_motion_seconds:
             return None
         for offset in (1, 3):
-            # 任一手有足够活动即可；累计小位移，避免高帧率丢掉慢动作。
+            # 双手均在操作区时，允许一手扶持、另一手反复操作。
             for axis in (0, 1):
-                values = [sample[offset + axis] for sample in history]
-                anchor, moves = values[0], 0
-                for value in values[1:]:
-                    if abs(value - anchor) >= 0.02:
-                        moves += 1
-                        anchor = value
-                if moves >= 3 and max(values) - min(values) >= self._chest_motion_span:
-                    return now - history[0][0]
+                # 一次明显抬手/放下只有一个转向；至少两个有效转向才算反复操作。
+                # 转向必须走过足够距离，逐帧噪声和很小的回摆不计数。
+                swing = max(0.08, self._chest_motion_span * 0.6)
+                span, reversals = _motion_reversals(samples, offset + axis, swing)
+                if reversals < 2 or span < self._chest_motion_span:
+                    continue
+                return now - history[0][0]
         return None
 
     def _detect_climb_motion(self, state: _TrackState) -> tuple[bool, float]:

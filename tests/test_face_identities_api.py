@@ -51,10 +51,11 @@ async def test_face_identity_crud_template_and_immediate_cache_reload(tmp_path, 
     async with AsyncClient(app=app, base_url="http://test") as client:
         created = await client.post(
             "/api/v1/face-identities",
-            json={"display_name": "测试人员A", "notes": "验收", "enabled": True},
+            json={"display_name": "测试人员A", "notes": "验收", "enabled": True, "access_level": 2},
         )
         assert created.status_code == 201
         identity_id = created.json()["id"]
+        assert created.json()["access_level"] == 2
 
         uploaded = await client.post(
             f"/api/v1/face-identities/{identity_id}/templates",

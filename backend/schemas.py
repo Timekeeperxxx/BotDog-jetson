@@ -132,6 +132,7 @@ class LogFileTailPage(BaseModel):
 
 
 class EvidenceItem(BaseModel):
+    access_context: dict | None = None
     alert_label: Optional[str] = None
     timing: dict | None = None
     evidence_id: int

@@ -64,6 +64,7 @@ class FaceIdentity(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     display_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     notes: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    access_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
     updated_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
@@ -73,9 +74,13 @@ class FaceIdentity(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    map_grants: Mapped[list["MapAccessGrant"]] = relationship(
+        cascade="all, delete-orphan", lazy="selectin",
+    )
 
     __table_args__ = (
         CheckConstraint("enabled IN (0, 1)", name="ck_face_identities_enabled"),
+        CheckConstraint("access_level IS NULL OR access_level BETWEEN 1 AND 3", name="ck_face_access_level"),
     )
 
 
@@ -105,6 +110,36 @@ class FaceTemplate(Base):
         CheckConstraint("quality >= 0.0 AND quality <= 1.0", name="ck_face_templates_quality"),
     )
 
+
+
+class MapAccessZone(Base):
+    __tablename__ = "map_access_zones"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scene_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False, default="sensitive")
+    access_level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    vertices: Mapped[list] = mapped_column(JSON, nullable=False)
+    plane: Mapped[list] = mapped_column(JSON, nullable=False)
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    boundary_margin_m: Mapped[float] = mapped_column(Float, nullable=False, default=.15)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
+    grants: Mapped[list["MapAccessGrant"]] = relationship(cascade="all, delete-orphan", lazy="selectin")
+    __table_args__ = (CheckConstraint("access_level IS NULL OR access_level BETWEEN 1 AND 3", name="ck_map_zone_access_level"),)
+
+
+class MapAccessGrant(Base):
+    __tablename__ = "map_access_grants"
+    identity_id: Mapped[int] = mapped_column(Integer, ForeignKey("face_identities.id", ondelete="CASCADE"), primary_key=True)
+    zone_id: Mapped[int] = mapped_column(Integer, ForeignKey("map_access_zones.id", ondelete="CASCADE"), primary_key=True)
+
+
+class MapAccessCalibration(Base):
+    # Retained for database compatibility; robot-position access does not use it.
+    __tablename__ = "map_access_calibration"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False, default=utc_now_iso)
 
 
 class InspectionTask(Base):
@@ -210,6 +245,7 @@ class AnomalyEvidence(Base):
     message: Mapped[str | None] = mapped_column(Text)
 
     timing: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    access_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     confidence: Mapped[float | None] = mapped_column(Float)
 

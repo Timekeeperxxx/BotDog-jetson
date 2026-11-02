@@ -1,5 +1,5 @@
 import { Battery, ChevronLeft, ChevronRight, Crosshair, Loader2 } from 'lucide-react'
-import { useId, useState } from 'react'
+import { useId, type ReactNode } from 'react'
 import { NavWaypointPanel } from '../../components/pcd/NavWaypointPanel'
 import { NavFencePanel } from '../../components/pcd/NavFencePanel'
 import { PointCloudTopDownCanvas } from '../../components/pcd/PointCloudTopDownCanvas'
@@ -87,7 +87,14 @@ export type PointCloudLayer = {
   coordinateSpace?: 'map' | 'three'
 }
 
+export type NavRailTab = 'waypoints' | 'fences' | 'regions'
+
 type NavRightRailProps = {
+  activeTab: NavRailTab
+  accessZonesCount: number
+  accessZonesAvailable: boolean
+  accessZonesPanel: ReactNode
+  onTabChange: (tab: NavRailTab) => void
   open: boolean
   bounds: PcdBounds | null
   canOperate: boolean
@@ -118,6 +125,11 @@ type NavRightRailProps = {
 }
 
 export function NavRightRail({
+  activeTab,
+  accessZonesCount,
+  accessZonesAvailable,
+  accessZonesPanel,
+  onTabChange,
   open,
   bounds,
   canOperate,
@@ -146,11 +158,11 @@ export function NavRightRail({
   onDeleteFence,
   onToggle,
 }: NavRightRailProps) {
-  const [activeTab, setActiveTab] = useState<'waypoints' | 'fences'>('waypoints')
   const tabId = useId()
   const tabs = [
-    { id: 'waypoints', label: '导航点', count: waypoints.length },
-    { id: 'fences', label: '围栏', count: fences.length },
+    { id: 'waypoints', label: '导航点', count: waypoints.length, disabled: false },
+    { id: 'fences', label: '围栏', count: fences.length, disabled: false },
+    { id: 'regions', label: '区域', count: accessZonesCount, disabled: !accessZonesAvailable },
   ] as const
 
   return (
@@ -187,7 +199,7 @@ export function NavRightRail({
       />
       <section className="pcd-rail-lists">
         <div className="pcd-rail-tabs" role="tablist" aria-label="场景标记">
-          {tabs.map((tab, index) => (
+          {tabs.map(tab => (
             <button
               key={tab.id}
               type="button"
@@ -196,17 +208,20 @@ export function NavRightRail({
               aria-selected={activeTab === tab.id}
               aria-controls={`${tabId}-panel`}
               tabIndex={activeTab === tab.id ? 0 : -1}
-              onClick={() => setActiveTab(tab.id)}
+              disabled={tab.disabled}
+              onClick={() => onTabChange(tab.id)}
               onKeyDown={(event) => {
+                const enabledTabs = tabs.filter(item => !item.disabled)
+                const index = enabledTabs.findIndex(item => item.id === tab.id)
                 let next: number
-                if (event.key === 'ArrowRight') next = (index + 1) % tabs.length
-                else if (event.key === 'ArrowLeft') next = (index + tabs.length - 1) % tabs.length
+                if (event.key === 'ArrowRight') next = (index + 1) % enabledTabs.length
+                else if (event.key === 'ArrowLeft') next = (index + enabledTabs.length - 1) % enabledTabs.length
                 else if (event.key === 'Home') next = 0
-                else if (event.key === 'End') next = tabs.length - 1
+                else if (event.key === 'End') next = enabledTabs.length - 1
                 else return
                 event.preventDefault()
-                setActiveTab(tabs[next].id)
-                event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus()
+                onTabChange(enabledTabs[next].id)
+                event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)')[next]?.focus()
               }}
             >
               {tab.label}<span>{tab.count}</span>
@@ -229,7 +244,7 @@ export function NavRightRail({
               onGoTo={onGoToWaypoint}
               onDelete={onDeleteWaypoint}
             />
-          ) : (
+          ) : activeTab === 'fences' ? (
             <NavFencePanel
               fences={fences}
               visible={fencesVisible}
@@ -238,7 +253,7 @@ export function NavRightRail({
               onToggleEnabled={onToggleFenceEnabled}
               onDelete={onDeleteFence}
             />
-          )}
+          ) : accessZonesPanel}
         </div>
       </section>
       <section className="pcd-rail-footer">

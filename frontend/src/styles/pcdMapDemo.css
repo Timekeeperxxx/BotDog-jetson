@@ -1463,7 +1463,7 @@
   display: flex;
   flex: 0 0 auto;
   gap: 4px;
-  padding: 6px 48px 6px 8px;
+  padding: 6px 8px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.16);
 }
 
@@ -1490,6 +1490,11 @@
 
 .pcd-rail-tabs button:hover {
   color: #e0f2fe;
+}
+
+.pcd-rail-tabs button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .pcd-rail-tabs button:focus-visible,
