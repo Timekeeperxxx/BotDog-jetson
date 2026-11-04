@@ -79,4 +79,4 @@ async def test_empty_pose_clears_cached_person_and_overlay_precedes_evidence(tmp
     monkeypatch.setattr(worker, '_process_pose_events', evidence)
     await worker._detect_and_process_frame(b'frame', 1)
     assert worker._latest_pose_observations == []
-    assert calls == ['pose_location', 'complete', 'evidence']
+    assert calls == ['pose_location', 'package', 'complete', 'evidence']
