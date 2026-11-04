@@ -410,7 +410,7 @@ def test_chest_motion_confirms_under_two_seconds_and_repeats_after_thirty():
         hits.extend(_damage_events(engine, _chest_pose(i, translate=i * 2, scale=1 + i * .01), i * .2))
     assert len(hits) == 2
     assert hits[1].observed_monotonic - hits[0].observed_monotonic >= 30
-    assert .8 <= hits[0].duration_seconds < 2
+    assert 1.5 <= hits[0].duration_seconds < 2
 
 
 
@@ -633,13 +633,15 @@ def test_chest_motion_tolerates_brief_occlusion_but_resets_long_gaps():
         elif mode == "missing":
             assert not _damage_events(engine, _chest_pose(0, mode="missing"), .8)
         if mode != "gap":
-            # 保留已观察的0.6秒，但漏点到恢复之间的间隔不计入有效时长。
+            # 漏点时间不计入有效时长，恢复后重新收集足够的连续往复。
             assert not _damage_events(engine, _chest_pose(0), 1.0)
-            assert _damage_events(engine, _chest_pose(1), 1.2)
+            for i in range(7):
+                assert not _damage_events(engine, _chest_pose(i + 1), 1.2 + i * .2)
+            assert _damage_events(engine, _chest_pose(0), 2.6)
         else:
-            for i in range(4):
+            for i in range(8):
                 assert not _damage_events(engine, _chest_pose(i), 2.0 + i * .2)
-            assert _damage_events(engine, _chest_pose(4), 2.8)
+            assert _damage_events(engine, _chest_pose(8), 3.6)
 
 
 def test_chest_activity_rejects_monotonic_hand_raise_without_hips():
@@ -669,7 +671,7 @@ def test_chest_or_higher_accepts_either_operating_hand_and_axis_with_reversals()
             for height in (80, 20, -20):
                 engine = PoseEventEngine()
                 hits = []
-                for i in range(5):
+                for i in range(10):
                     points = list(_chest_pose(0).keypoints)
                     points[9] = PoseKeypoint(30, height, .95)
                     points[10] = PoseKeypoint(70, height, .95)

@@ -41,6 +41,7 @@ async def test_upper_body_action_alert_without_map_distance_or_observation_ready
     monkeypatch.setattr(worker, "_is_weapon_due", lambda *args, **kwargs: False)
     monkeypatch.setattr(worker, "_broadcast_pose_overlay", AsyncMock())
     monkeypatch.setattr(worker, "_process_detection", AsyncMock())
+    monkeypatch.setattr(worker, "_process_person_alerts", AsyncMock())
     monkeypatch.setattr(worker, "_report_face_service_fault", AsyncMock())
     monkeypatch.setattr(worker, "_process_pose_events", AsyncMock())
     # 如果旧投影通道再次接入，此测试会失败，而不是让默认空结果掩盖问题。
@@ -55,7 +56,7 @@ async def test_upper_body_action_alert_without_map_distance_or_observation_ready
     monkeypatch.setattr(
         "backend.fence_detection_service.get_fence_detection_service", lambda: fence,
     )
-    for index in range(7):
+    for index in range(10):
         now = 100.0 + index * 0.2
         monkeypatch.setattr(worker, "_infer_pose", AsyncMock(
             return_value=([_upper_body_motion(index)], now, 0.1),
@@ -80,7 +81,7 @@ async def test_behavior_switch_off_suppresses_actions_even_with_upper_body_motio
     worker._pose_event_engine = PoseEventEngine()
     monkeypatch.setattr(workers_ai.settings, "POSE_FRAME_SKIP", 1)
     monkeypatch.setattr(worker, "_is_weapon_due", lambda *args, **kwargs: False)
-    for name in ("_broadcast_pose_overlay", "_process_detection", "_report_face_service_fault", "_process_pose_events"):
+    for name in ("_broadcast_pose_overlay", "_process_detection", "_process_person_alerts", "_report_face_service_fault", "_process_pose_events"):
         monkeypatch.setattr(worker, name, AsyncMock())
     fence = SimpleNamespace(enabled=False, tracking_override=False)
     monkeypatch.setattr(

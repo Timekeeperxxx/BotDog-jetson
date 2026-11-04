@@ -327,6 +327,7 @@ class AIWorkerProcessingMixin:
         *,
         allow_motion_services: bool = True,
         allow_auto_track: bool | None = None,
+        person_alerts_processed: bool = False,
     ) -> None:
         """
         处理检测结果。
@@ -358,7 +359,8 @@ class AIWorkerProcessingMixin:
             if d.bbox is not None and d.label not in PACKAGE_LABELS
         ]
 
-        await self._process_person_alerts(detections, frame)
+        if not person_alerts_processed:
+            await self._process_person_alerts(detections, frame)
 
         if allow_motion_services and guard_mission is not None and guard_mission.enabled:
             guard_mission.update_effective_fps(effective_fps)

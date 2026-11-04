@@ -182,8 +182,8 @@ class Settings(BaseSettings):
     POSE_KEYPOINT_CONFIDENCE: float = 0.35
     POSE_MIN_VISIBLE_KEYPOINTS: int = 5
     POSE_FRAME_SKIP: int = 1
-    POSE_CHEST_MOTION_SECONDS: float = 0.8  # 双手腰部以上活动的最短有效观察时长，保留旧配置键名
-    POSE_CHEST_MOTION_SPAN: float = 0.15  # 双手可见时的活动幅度 / 估计躯干长度（1.5倍肩宽）
+    POSE_CHEST_MOTION_SECONDS: float = 1.5  # 双手腰部以上反复操作的最短有效观察时长，保留旧配置键名
+    POSE_CHEST_MOTION_SPAN: float = 0.25  # 双手可见时的活动幅度 / 估计躯干长度（1.5倍肩宽）
     POSE_STABLE_HITS: int = 3
     POSE_CROUCH_SECONDS: float = 3.0
     POSE_LOITER_SECONDS: float = 5.0

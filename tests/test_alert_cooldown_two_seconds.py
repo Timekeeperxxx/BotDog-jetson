@@ -8,6 +8,7 @@ from backend.pose_detection import PoseEventEngine, RawPose
 from backend.temperature_monitor import TemperatureMonitor
 from backend import temperature_monitor, workers_ai_processing
 from backend.workers_ai_processing import AIWorkerProcessingMixin
+from backend.workers_ai import DetectionResult
 
 
 def test_all_automatic_alert_defaults_are_thirty_seconds():
@@ -56,7 +57,8 @@ async def test_continuously_visible_person_realerts_after_thirty_seconds_per_tra
     worker._person_alert_frame = 0
     worker._reset_misses = 20
     worker._raise_alert = AsyncMock()
-    persons = [SimpleNamespace(label='person', track_id=i, face_status='unknown', identity_id=None) for i in (1, 2)]
+    persons = [DetectionResult(label='person', confidence=.9, track_id=i,
+                               bbox=(i * 100, 0, i * 100 + 50, 100), face_status='unknown', identity_id=None) for i in (1, 2)]
     for _ in range(4):
         await worker._process_person_alerts(persons, b'frame')
         assert worker._raise_alert.await_count == 0

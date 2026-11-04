@@ -30,7 +30,12 @@ async def test_location_precedes_slow_models_but_decisions_wait_for_current_iden
     async def overlay(poses, detections, **kwargs):
         stage = kwargs.get('stage', 'complete')
         calls.append(stage)
-        assert any(d.label == 'person' for d in detections)
+        if stage == 'package' and not main_person:
+            # Package updates carry fresh poses separately; the final packet merges persons.
+            assert detections == []
+            assert poses == [observation]
+        else:
+            assert any(d.label == 'person' for d in detections)
     async def pose(_):
         if main_person:
             assert calls == ['location']
@@ -56,10 +61,11 @@ async def test_location_precedes_slow_models_but_decisions_wait_for_current_iden
     monkeypatch.setattr(worker, '_infer_weapon', weapon)
     monkeypatch.setattr(worker, '_broadcast_pose_overlay', overlay)
     monkeypatch.setattr(worker, '_process_detection', decision)
-    for name in ('_maybe_process_weather', '_process_pose_events', '_process_weapon_detections', '_report_face_service_fault'):
+    for name in ('_maybe_process_weather', '_process_pose_events', '_process_weapon_detections', '_report_face_service_fault', '_process_person_alerts'):
         monkeypatch.setattr(worker, name, AsyncMock())
     await worker._detect_and_process_frame(b'frame', 2, frame_read_at=time.monotonic())
-    assert calls[-3:] == ['face', 'complete', 'decision']
+    assert calls[-2:] == ['complete', 'decision']
+    assert calls.index('face') < calls.index('package') < calls.index('complete')
 
 
 @pytest.mark.asyncio

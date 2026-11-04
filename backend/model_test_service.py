@@ -149,6 +149,10 @@ def _weather_checkpoint(configured_path: str) -> Path:
 
 
 def get_model_definitions() -> dict[str, ModelDefinition]:
+    face_backend = settings.FACE_DETECT_BACKEND.strip().lower()
+    if face_backend not in {"yunet", "scrfd_tensorrt"}:
+        raise ValueError(f"不支持的人脸检测后端：{face_backend}")
+    face_tensorrt = face_backend == "scrfd_tensorrt"
     helmet_engine = _engine_variant(settings.AI_MODEL_PATH, "helmet.engine")
     pose_engine = _engine_variant(settings.POSE_MODEL_PATH, "yolo11n-pose.engine")
     weapon_engine = _engine_variant(
@@ -181,10 +185,11 @@ def get_model_definitions() -> dict[str, ModelDefinition]:
         ModelDefinition(
             key="face",
             name="人脸检测",
-            description="使用 YuNet 绘制人脸框和 5 个关键点",
-            kind="yunet",
+            description=("使用 SCRFD 绘制人脸框和 5 个关键点" if face_tensorrt
+                         else "使用 YuNet 绘制人脸框和 5 个关键点"),
+            kind=face_backend,
             path=Path(settings.FACE_DETECT_MODEL_PATH).expanduser(),
-            runtime="ONNX / CPU",
+            runtime="TensorRT" if face_tensorrt else "ONNX / CPU",
             labels=("face",),
         ),
         ModelDefinition(
@@ -642,19 +647,39 @@ class YuNetRunner:
         self.detector.setInputSize((width, height))
         self.detector.setScoreThreshold(confidence)
         _, faces = self.detector.detect(frame)
-        result = frame.copy()
         if faces is None:
-            return result, 0
+            return frame.copy(), 0
+        return _draw_faces(frame, faces)
 
-        for face in faces:
-            x, y, box_width, box_height = np.rint(face[:4]).astype(int)
-            score = float(face[-1])
-            cv2.rectangle(result, (x, y), (x + box_width, y + box_height), COLORS[1], 2)
-            draw_label(result, f"face {score:.2f}", x, y, COLORS[1])
-            landmarks = np.rint(face[4:14].reshape(5, 2)).astype(int)
-            for point in landmarks:
-                cv2.circle(result, tuple(point), 2, COLORS[0], -1, cv2.LINE_AA)
-        return result, len(faces)
+
+class SCRFDTensorRTRunner:
+    def __init__(self, model_path: Path) -> None:
+        from .face_recognition.scrfd_tensorrt import SCRFDTensorRTDetector
+
+        self.detector = SCRFDTensorRTDetector(
+            model_path,
+            input_size=settings.FACE_DETECT_INPUT_SIZE,
+            nms_threshold=settings.FACE_DETECT_NMS_THRESHOLD,
+        )
+
+    def process(self, frame: np.ndarray, confidence: float) -> tuple[np.ndarray, int]:
+        faces = self.detector.detect(frame, score_threshold=confidence)
+        return _draw_faces(frame, faces)
+
+
+def _draw_faces(
+    frame: np.ndarray, faces: list[np.ndarray] | np.ndarray,
+) -> tuple[np.ndarray, int]:
+    result = frame.copy()
+    for face in faces:
+        x, y, box_width, box_height = np.rint(face[:4]).astype(int)
+        score = float(face[-1])
+        cv2.rectangle(result, (x, y), (x + box_width, y + box_height), COLORS[1], 2)
+        draw_label(result, f"face {score:.2f}", x, y, COLORS[1])
+        landmarks = np.rint(face[4:14].reshape(5, 2)).astype(int)
+        for point in landmarks:
+            cv2.circle(result, tuple(point), 2, COLORS[0], -1, cv2.LINE_AA)
+    return result, len(faces)
 
 
 class WeatherViTRunner:
@@ -788,6 +813,8 @@ def _build_runner(kind: str, model_path: str, labels: tuple[str, ...]) -> Runner
         return YoloPoseRunner(path)
     if kind == "yunet":
         return YuNetRunner(path)
+    if kind == "scrfd_tensorrt":
+        return SCRFDTensorRTRunner(path)
     if kind == "weather_vit":
         return WeatherViTRunner(path)
     if kind == "weather_tensorrt":

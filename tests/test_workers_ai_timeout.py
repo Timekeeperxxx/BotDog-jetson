@@ -489,10 +489,22 @@ def test_yolo_weapon_region_detection_maps_coordinates_and_suppresses_duplicates
         id=None,
     )
 
+    class _BoxRows:
+        def detach(self):
+            return self
+        def cpu(self):
+            return self
+        def tolist(self):
+            return [[1., 1., 3., 3., .82, 1.]]
+
+    class _FakeBoxes(list):
+        data = _BoxRows()
+        is_track = False
+
     class _FakeModel:
         def predict(self, *args: object, **kwargs: object) -> list[object]:
             del args, kwargs
-            return [SimpleNamespace(boxes=[fake_box])]
+            return [SimpleNamespace(boxes=_FakeBoxes([fake_box]))]
 
     detector._model = _FakeModel()
 

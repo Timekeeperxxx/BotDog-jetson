@@ -127,7 +127,7 @@ async def test_central_service_blocks_disabled_weapon_even_without_cooldown(monk
 async def test_pending_alert_rechecks_switch_after_database_await(monkeypatch):
     monkeypatch.setattr(settings, 'WEAPON_ENABLED', True)
     service = AlertService()
-    async def due(*args):
+    async def due(event_code, session=None, *, repeat_scope=None):
         monkeypatch.setattr(settings, 'WEAPON_ENABLED', False)
         return True
     service.automatic_event_due = due

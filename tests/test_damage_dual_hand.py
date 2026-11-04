@@ -32,11 +32,11 @@ def update(engine, observation, now, *, enabled=True):
 def test_dual_hands_above_waist_accept_repeated_different_motion(hips, wrist_y):
     engine = PoseEventEngine()
     hits = []
-    for i, now in enumerate((0, .3, .6, .9)):
+    for i, now in enumerate((0, .3, .6, .9, 1.2, 1.5, 1.8)):
         hits += update(engine, pose(30 + 12 * (i % 2), 70 - 2 * (i % 3),
                                     wrist_y=wrist_y, hips=hips), now)
     assert len(hits) == 1
-    assert hits[0].duration_seconds == pytest.approx(.9)
+    assert hits[0].duration_seconds == pytest.approx(1.8)
 
 
 @pytest.mark.parametrize('missing', [5, 6, 9, 10])
@@ -49,10 +49,9 @@ def test_one_visible_hand_or_missing_shoulder_cannot_trigger(missing):
 
 def test_three_samples_still_require_full_observation_duration():
     engine = PoseEventEngine()
-    for i, now in enumerate((0, .2, .4)):
-        assert not update(engine, pose(30 + 8 * i, 70 - i), now)
-    assert not update(engine, pose(38, 66), .8)  # 单次转向还不构成反复操作。
-    assert update(engine, pose(46, 66), 1.0)
+    for i in range(8):
+        assert not update(engine, pose(30 + 12 * (i % 2), 70), i * .2)
+    assert update(engine, pose(30, 70), 1.6)
 
 
 @pytest.mark.parametrize('hips,wrist_y', [(True, 115), (False, 110)])
@@ -85,7 +84,10 @@ def test_short_occlusion_preserves_progress_but_does_not_count_unseen_time(missi
         assert not update(engine, pose(30 + 12 * (i % 2)), i * .2)
     assert not update(engine, None if missing is None else pose(missing=missing), .8)
     assert not update(engine, pose(30), 1.0)
-    assert update(engine, pose(42), 1.2)
+    # 漏点前后的往复次数不拼接；恢复后重新观察分布足够久的反复操作。
+    for i in range(7):
+        assert not update(engine, pose(42 - 12 * (i % 2)), 1.2 + i * .2)
+    assert update(engine, pose(30), 2.6)
 
 
 def test_displacement_across_occlusion_does_not_become_action_evidence():
@@ -101,10 +103,9 @@ def test_long_gap_requires_fresh_dual_hand_motion():
     engine = PoseEventEngine()
     for i in range(4):
         assert not update(engine, pose(30 + 12 * (i % 2)), i * .2)
-    assert not update(engine, pose(30), 1.2)
-    assert not update(engine, pose(42), 1.6)
-    assert not update(engine, pose(30), 2.0)
-    assert update(engine, pose(42), 2.4)
+    for i in range(5):
+        assert not update(engine, pose(30 + 12 * (i % 2)), 1.2 + i * .4)
+    assert update(engine, pose(42), 3.2)
 
 
 def test_disabling_behavior_clears_partial_motion_before_quick_reenable():
@@ -112,9 +113,9 @@ def test_disabling_behavior_clears_partial_motion_before_quick_reenable():
     for i in range(4):
         assert not update(engine, pose(30 + 12 * (i % 2)), i * .2)
     assert not update(engine, pose(30), .7, enabled=False)
-    for i in range(4):
+    for i in range(8):
         assert not update(engine, pose(30 + 12 * (i % 2)), .8 + i * .2)
-    assert update(engine, pose(30), 1.6)
+    assert update(engine, pose(30), 2.4)
 
 
 def test_one_up_and_down_gesture_is_not_repeated_operation():

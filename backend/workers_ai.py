@@ -36,6 +36,8 @@ weapon_logger = get_logger("武器识别")
 weather_logger = get_logger("天气识别")
 ffmpeg_logger = get_logger("AI视频").bind(raw_ffmpeg=True)
 
+_WEATHER_MAX_DEFER_SECONDS = 1.0
+
 
 class AIWorkerError(RuntimeError):
     """AI Worker 运行时错误。"""
@@ -182,23 +184,25 @@ class _YoloDetector(_BaseDetector):
         if result is None or result.boxes is None or len(result.boxes) == 0:
             return []
         detections: list[DetectionResult] = []
-        for box in result.boxes:
-            cls_id = int(box.cls[0])
+        # Read all boxes once; per-box CUDA scalar reads repeatedly wait on GPU work.
+        rows = result.boxes.data.detach().cpu().tolist()
+        for row in rows:
+            cls_id = int(row[-1])
             cls_name = self._class_names.get(cls_id, str(cls_id))
             if cls_name not in self._target_classes:
                 continue
-            xyxy = box.xyxy[0].tolist()
+            xyxy = row[:4]
             detections.append(
                 DetectionResult(
                     label=cls_name,
-                    confidence=float(box.conf[0]),
+                    confidence=float(row[-2]),
                     bbox=(
                         int(xyxy[0]) + offset_x,
                         int(xyxy[1]) + offset_y,
                         int(xyxy[2]) + offset_x,
                         int(xyxy[3]) + offset_y,
                     ),
-                    track_id=int(box.id[0]) if box.id is not None else -1,
+                    track_id=int(row[-3]) if result.boxes.is_track else -1,
                 )
             )
         return detections
@@ -1240,28 +1244,6 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
             else:
                 self._last_weapon_ms = 0.0
 
-            package_events, package_bags = await self._maybe_infer_packages(
-                frame, frame_read_at if frame_read_at is not None else t_start,
-                person_detections=self._package_current_person_detections(
-                    main_person_detections, fresh_pose_observations,
-                ),
-            )
-            package_observation_completed = True
-            detections.extend(package_bags)
-            if self._package_updated:
-                # Only this frame's pose results; a package position update must
-                # not re-stamp cached poses as a fresh observation.
-                await self._broadcast_pose_overlay(
-                    fresh_pose_observations, detections, stage="package", force=True,
-                )
-
-            # 天气只需低频分类。若本帧已有姿态/武器 GPU 任务，顺延到下一空闲
-            # 周期，避免天气的 30~50 ms 再叠加到延迟尖峰上。
-            await self._maybe_process_weather(
-                frame,
-                defer=pose_due or weapon_due or self._last_package_ms > 0,
-            )
-
             preview_detections = list(detections)
             detections = self._merge_pose_person_fallback(
                 detections,
@@ -1269,6 +1251,60 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
             )
             persons = [item for item in detections if item.label == "person"]
             self._lightweight_tracker.update(persons, frame_index)
+
+            from .services_face_identities import get_face_identity_service
+
+            face_stage_started = time.monotonic()
+            face_error = None
+            try:
+                face_service = get_face_identity_service()
+                await self._await_inference("人脸初始化", face_service.ensure_initialized(self._session_factory))
+                await self._await_inference("人脸", face_service.annotate_frame(
+                    frame, detections, inference_cycle_index,
+                    self._frame_width, self._frame_height,
+                ))
+                health = face_service.status()
+                if not health["available"] or not health["enabled"]:
+                    face_error = health.get("error") or "人脸识别服务不可用或已禁用"
+                elif any(d.face_status == "unavailable" for d in persons):
+                    face_error = "人脸推理失败"
+            except Exception as exc:
+                face_error = str(exc)
+                # 识别故障不能中断人员告警链。
+                ai_logger.error("人脸识别服务故障：{}", exc)
+                for detection in persons:
+                    detection.face_status = "unavailable"
+                    detection.identity_id = None
+                    detection.display_name = None
+            await self._report_face_service_fault(face_error)
+            self._last_face_stage_ms = round((time.monotonic() - face_stage_started) * 1000, 1)
+            from .services_map_access import get_map_access_service
+            await get_map_access_service().annotate(
+                persons, frame_monotonic=frame_read_at if frame_read_at is not None else t_start,
+            )
+            # Current-frame identity and map permission must be ready before alerts.
+            # Person alerts do not depend on package/weather results, so do not wait
+            # for those branches or their evidence I/O. Motion services stay below.
+            person_events_started = time.monotonic()
+            await self._process_person_alerts(detections, frame)
+            person_events_ms = (time.monotonic() - person_events_started) * 1000
+
+            package_events, package_bags = await self._maybe_infer_packages(
+                frame, frame_read_at if frame_read_at is not None else t_start,
+                person_detections=self._package_current_person_detections(
+                    main_person_detections, fresh_pose_observations,
+                ),
+            )
+            package_observation_completed = True
+            # Preserve the original main/weapon, package, pose-fallback ordering.
+            insert_at = len(preview_detections)
+            detections[insert_at:insert_at] = package_bags
+            preview_detections.extend(package_bags)
+            if self._package_updated:
+                # Cached poses are display-only, never fresh package observations.
+                await self._broadcast_pose_overlay(
+                    fresh_pose_observations, preview_detections, stage="package", force=True,
+                )
 
             # 复用已经解码并完成跟踪的可见光帧，仅向多源服务传递时间戳、
             # 检测框和缓存云台姿态，不复制整帧图像。纯热成像模式则只登记
@@ -1320,36 +1356,6 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
             except Exception as exc:  # noqa: BLE001
                 ai_logger.warning("多源融合采样失败，本帧已跳过：{}", exc)
 
-            from .services_face_identities import get_face_identity_service
-
-            face_stage_started = time.monotonic()
-            face_error = None
-            try:
-                face_service = get_face_identity_service()
-                await self._await_inference("人脸初始化", face_service.ensure_initialized(self._session_factory))
-                await self._await_inference("人脸", face_service.annotate_frame(
-                    frame, detections, inference_cycle_index,
-                    self._frame_width, self._frame_height,
-                ))
-                health = face_service.status()
-                if not health["available"] or not health["enabled"]:
-                    face_error = health.get("error") or "人脸识别服务不可用或已禁用"
-                elif any(d.face_status == "unavailable" for d in persons):
-                    face_error = "人脸推理失败"
-            except Exception as exc:
-                face_error = str(exc)
-                # 识别故障不能中断人员告警链。
-                ai_logger.error("人脸识别服务故障：{}", exc)
-                for detection in persons:
-                    detection.face_status = "unavailable"
-                    detection.identity_id = None
-                    detection.display_name = None
-            await self._report_face_service_fault(face_error)
-            self._last_face_stage_ms = round((time.monotonic() - face_stage_started) * 1000, 1)
-            from .services_map_access import get_map_access_service
-            await get_map_access_service().annotate(
-                persons, frame_monotonic=frame_read_at if frame_read_at is not None else t_start,
-            )
             if not settings.WEAPON_ENABLED or weapon_generation != self._weapon_generation:
                 detections = [d for d in detections if d.label not in {"guns", "knife"}]
                 preview_detections = [d for d in preview_detections if d.label not in {"guns", "knife"}]
@@ -1388,9 +1394,19 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
                 t_detect_end,
                 allow_motion_services=not fence_enabled,
                 allow_auto_track=not fence_enabled or fence_detection.tracking_override,
+                person_alerts_processed=True,
             )
 
-            self._last_events_stage_ms = round((time.monotonic() - events_stage_started) * 1000, 1)
+            self._last_events_stage_ms = round(
+                person_events_ms + (time.monotonic() - events_stage_started) * 1000, 1,
+            )
+
+            # Low-frequency weather runs after alert decisions. Busy cycles may
+            # defer it briefly, but must not starve a due observation indefinitely.
+            await self._maybe_process_weather(
+                frame,
+                defer=pose_due or weapon_due or self._last_package_ms > 0,
+            )
 
             t_done = time.monotonic()
             self._last_postprocess_ms = round((t_done - t_detect_end) * 1000, 1)
@@ -1532,7 +1548,7 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
         if now < self._weather_service.next_sample_at or now - self._last_weather_inference_at < 0.5:
             self._last_weather_ms = 0.0
             return
-        if defer:
+        if defer and now - self._weather_service.next_sample_at < _WEATHER_MAX_DEFER_SECONDS:
             self._last_weather_ms = 0.0
             return
 

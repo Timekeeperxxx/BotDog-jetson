@@ -193,9 +193,11 @@ def _joint_angle(a: PoseKeypoint, b: PoseKeypoint, c: PoseKeypoint) -> float:
 
 def _motion_reversals(
     samples: list[tuple[float, ...]], column: int, swing: float,
-) -> tuple[float, int]:
-    """可见段内的位移跨度和显著转向数，不跨漏点拼接。"""
+) -> tuple[float, int, float]:
+    """可见段内的跨度、显著转向数及转向分布时长，不跨漏点拼接。"""
     direction, reversals, span = 0, 0, 0.0
+    first_reversal_at = None
+    reversal_duration = 0.0
     anchor = peak = low = high = 0.0
     connected = False
     for sample in samples:
@@ -203,6 +205,10 @@ def _motion_reversals(
         if sample[5] <= 0:
             connected = False
             direction = 0
+            span = 0.0
+            reversals = 0
+            first_reversal_at = None
+            reversal_duration = 0.0
         if not connected:
             anchor = peak = low = high = value
             connected = True
@@ -217,9 +223,12 @@ def _motion_reversals(
             peak = value
         elif direction * (peak - value) >= swing:
             reversals += 1
+            if first_reversal_at is None:
+                first_reversal_at = sample[0]
+            reversal_duration = sample[0] - first_reversal_at
             direction = -direction
             peak = value
-    return span, reversals
+    return span, reversals, reversal_duration
 
 
 def count_raised_wrists(
@@ -410,8 +419,8 @@ class PoseEventEngine:
         posture_window_frames: int | None = None,
         climb_rise_seconds: float = 1.6,
         climb_rise_ratio: float = 0.22,
-        chest_motion_seconds: float = 0.8,
-        chest_motion_span: float = 0.15,
+        chest_motion_seconds: float = 1.5,
+        chest_motion_span: float = 0.25,
         vault_window_seconds: float = 4.0,
         vault_leg_lift_ratio: float = 0.4,
     ) -> None:
@@ -1052,11 +1061,12 @@ class PoseEventEngine:
         for offset in (1, 3):
             # 双手均在操作区时，允许一手扶持、另一手反复操作。
             for axis in (0, 1):
-                # 一次明显抬手/放下只有一个转向；至少两个有效转向才算反复操作。
-                # 转向必须走过足够距离，逐帧噪声和很小的回摆不计数。
+                # 至少三次显著转向（两个完整往返），并分布在有效观察时长内；
+                # 不能用此前静止时间加上一次短促抖动凑出持续操作。
                 swing = max(0.08, self._chest_motion_span * 0.6)
-                span, reversals = _motion_reversals(samples, offset + axis, swing)
-                if reversals < 2 or span < self._chest_motion_span:
+                span, reversals, reversal_duration = _motion_reversals(samples, offset + axis, swing)
+                if (reversals < 3 or span < self._chest_motion_span
+                    or reversal_duration + 1e-9 < self._chest_motion_seconds * 0.75):
                     continue
                 return now - history[0][0]
         return None
