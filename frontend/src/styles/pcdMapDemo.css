@@ -2499,6 +2499,28 @@
 }
 
 @media (max-width: 980px) {
+  .pcd-demo-page {
+    padding-bottom: calc(148px + env(safe-area-inset-bottom, 0px));
+    scroll-padding-bottom: calc(148px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .pcd-right-rail .pcd-rail-footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 140;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+    height: auto;
+    padding: 8px max(12px, env(safe-area-inset-right, 0px)) calc(8px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px));
+    border-top: 1px solid #e35d5d;
+    background: #071013fa;
+  }
+
+  .pcd-right-rail .pcd-rail-footer button { min-height: 48px; }
+
   #nav-patrol-root,
   .pcd-demo-page {
     overflow: auto;
@@ -2547,9 +2569,12 @@
     display: block;
   }
 
-  .pcd-right-rail.is-collapsed > .pcd-rail-lists,
-  .pcd-right-rail.is-collapsed > .pcd-rail-footer {
+  .pcd-right-rail.is-collapsed > .pcd-rail-lists {
     display: flex;
+  }
+
+  .pcd-right-rail.is-collapsed > .pcd-rail-footer {
+    display: grid;
   }
 
   .pcd-main-stage {
@@ -2569,6 +2594,7 @@
 @media (max-width: 760px) {
   .pcd-demo-page {
     padding: 12px;
+    padding-bottom: calc(148px + env(safe-area-inset-bottom, 0px));
     min-height: calc(100dvh - 52px);
   }
 
@@ -2631,11 +2657,11 @@
     position: fixed;
     left: 12px;
     right: 12px;
-    bottom: 12px;
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
     min-width: 0;
     width: auto;
     max-width: none;
-    max-height: min(70dvh, 560px);
+    max-height: min(calc(100dvh - 104px - env(safe-area-inset-bottom, 0px)), 560px);
   }
 }
 

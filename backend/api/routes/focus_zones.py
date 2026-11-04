@@ -1,12 +1,13 @@
 """重点区 CRUD 路由。"""
 
 from fastapi import APIRouter, Depends, HTTPException
+from ...auth.dependencies import require_viewer, require_admin
 from pydantic import BaseModel
 
 from ...database import get_db
 from ...schemas import utc_now_iso
 
-router = APIRouter(tags=["focus_zones"])
+router = APIRouter(tags=["focus_zones"], dependencies=[Depends(require_viewer)])
 
 
 class FocusZoneRequest(BaseModel):
@@ -45,7 +46,7 @@ async def list_focus_zones(db=Depends(get_db)) -> list[FocusZoneResponse]:
     ]
 
 
-@router.post("/api/v1/focus-zones", response_model=FocusZoneResponse, status_code=201)
+@router.post("/api/v1/focus-zones", response_model=FocusZoneResponse, status_code=201, dependencies=[Depends(require_admin)])
 async def create_focus_zone(
     body: FocusZoneRequest,
     db=Depends(get_db),
@@ -88,7 +89,7 @@ async def create_focus_zone(
     )
 
 
-@router.put("/api/v1/focus-zones/{zone_id}", response_model=FocusZoneResponse)
+@router.put("/api/v1/focus-zones/{zone_id}", response_model=FocusZoneResponse, dependencies=[Depends(require_admin)])
 async def update_focus_zone(
     zone_id: int,
     body: FocusZoneRequest,
@@ -133,7 +134,7 @@ async def update_focus_zone(
     )
 
 
-@router.delete("/api/v1/focus-zones/{zone_id}")
+@router.delete("/api/v1/focus-zones/{zone_id}", dependencies=[Depends(require_admin)])
 async def delete_focus_zone(
     zone_id: int,
     db=Depends(get_db),

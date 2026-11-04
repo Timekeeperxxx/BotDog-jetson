@@ -14,7 +14,7 @@ import time
 from typing import Any, AsyncIterator
 import uuid
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -423,23 +423,30 @@ def create_app() -> FastAPI:
 
         return response
 
-    app.mount(
-        "/api/v1/static",
-        StaticFiles(directory=str(Path(settings.SNAPSHOT_DIR)), check_dir=False),
-        name="static",
-    )
+    from .auth.dependencies import require_media_viewer
 
-    app.mount(
-        "/api/v1/media/recordings",
-        StaticFiles(directory=str(Path(settings.RECORDING_DIR)), check_dir=False),
-        name="media_recordings",
-    )
+    snapshot_files = StaticFiles(directory=str(Path(settings.SNAPSHOT_DIR)), check_dir=False)
+    recording_files = StaticFiles(directory=str(Path(settings.RECORDING_DIR)), check_dir=False)
+
+    @app.get("/api/v1/static/{file_path:path}", dependencies=[Depends(require_media_viewer)], name="static")
+    @app.head("/api/v1/static/{file_path:path}", dependencies=[Depends(require_media_viewer)], include_in_schema=False)
+    async def serve_snapshot(file_path: str, request: Request):
+        response = await snapshot_files.get_response(file_path, request.scope)
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
+
+    @app.get("/api/v1/media/recordings/{file_path:path}", dependencies=[Depends(require_media_viewer)], name="media_recordings")
+    @app.head("/api/v1/media/recordings/{file_path:path}", dependencies=[Depends(require_media_viewer)], include_in_schema=False)
+    async def serve_recording(file_path: str, request: Request):
+        response = await recording_files.get_response(file_path, request.scope)
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     register_routes(app)
 
     # ── SPA 前端托管（生产模式）──────────────────────────────────────────────
     # 将 npm run build 产物挂载到根路径，实现地面端单端口访问（:8000 同时提供页面和 API）
-    _frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+    _frontend_dist = (Path(__file__).resolve().parent.parent / "frontend" / "dist").resolve()
     if _frontend_dist.is_dir():
         from fastapi.responses import FileResponse as _FileResponse
 
@@ -456,11 +463,15 @@ def create_app() -> FastAPI:
         # 注意：必须在 register_routes() 之后注册，避免覆盖 API 路由
         @app.get("/{full_path:path}")
         async def serve_spa(full_path: str):
+            if full_path.split("/", 1)[0] in {"api", "ws"} or "\x00" in full_path:
+                raise HTTPException(status_code=404, detail="Not Found")
             # 根目录直接返回 index.html
             if not full_path:
                 return _FileResponse(str(_frontend_dist / "index.html"))
             # 尝试精确匹配文件（favicon.ico 等根目录静态文件）
-            _file = _frontend_dist / full_path
+            _file = (_frontend_dist / full_path).resolve()
+            if not _file.is_relative_to(_frontend_dist):
+                raise HTTPException(status_code=404, detail="Not Found")
             if _file.is_file():
                 return _FileResponse(str(_file))
             # SPA fallback：React Router 路由

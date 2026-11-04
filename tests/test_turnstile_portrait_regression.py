@@ -22,7 +22,7 @@ def poses(row, *, dx=0, dy=0, scale=1):
 
 
 def engine():
-    return PoseEventEngine(loiter_seconds=1000, crouch_seconds=1000)
+    return PoseEventEngine(loiter_seconds=1000, crouch_seconds=1000, event_cooldown_seconds=2)
 
 
 def test_portrait_detects_each_demonstration_and_preserves_cooldown():

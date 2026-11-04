@@ -1,11 +1,12 @@
 """音频控制路由。"""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from ...auth.dependencies import require_viewer, require_operator
 
-router = APIRouter(prefix="/api/v1/audio", tags=["audio"])
+router = APIRouter(prefix="/api/v1/audio", tags=["audio"], dependencies=[Depends(require_viewer)])
 
 
-@router.post("/play")
+@router.post("/play", dependencies=[Depends(require_operator)])
 async def audio_play():
     """手动触发驱离音频循环播放。"""
     from ...guard_mission_service import get_guard_mission_service
@@ -17,7 +18,7 @@ async def audio_play():
     return {"success": True, "playing": True}
 
 
-@router.post("/stop")
+@router.post("/stop", dependencies=[Depends(require_operator)])
 async def audio_stop():
     """手动停止驱离音频。"""
     from ...guard_mission_service import get_guard_mission_service

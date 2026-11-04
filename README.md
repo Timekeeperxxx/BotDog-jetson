@@ -1,7 +1,7 @@
 # BotDog 机器狗控制系统
 
 ![Version](https://img.shields.io/badge/version-6.2-blue)
-![Python](https://img.shields.io/badge/python-3.12+-blue)
+![Python](https://img.shields.io/badge/python-3.10-blue)
 ![Platform](https://img.shields.io/badge/platform-ARM64-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -43,7 +43,7 @@ BotDog 是一个完整的**四足机器狗远程控制系统**，运行在 ARM64
 
 ### 技术栈
 
-**后端**：Python 3.12 / FastAPI / SQLAlchemy / WebSocket / Unitree SDK2
+**后端**：Python 3.10 / FastAPI / SQLAlchemy / WebSocket / Unitree SDK2
 
 **AI**：YOLO / TensorRT / Ultralytics / OpenCV / RTSP 拉流推理
 
@@ -85,8 +85,8 @@ ros2 run tf2_ros tf2_echo map base_link
 ### 1. 环境要求（ARM64 主机）
 
 ```bash
-python3 --version   # 3.12+
-node --version      # 18+
+python3 --version   # Jetson 已验证 3.10.x
+node --version      # 24.x（与 .node-version 和 CI 一致）
 ffmpeg -version     # 任意版本
 ```
 
@@ -244,6 +244,10 @@ BotDog/
 ```bash
 sudo bash scripts/install-services.sh
 
+# 外部视频/导航日志轮转（首次需要安装 logrotate）
+sudo apt install logrotate
+sudo bash scripts/install-logrotate.sh
+
 # 后台重启后端
 sudo systemctl restart botdog-backend
 
@@ -258,6 +262,46 @@ journalctl -u botdog-backend -f
 说明：
 `scripts/start_backend.sh` 是环境准备脚本，`run_backend.py` 是 Python 应用入口。
 真机正式运行建议统一走 `systemd -> start_backend.sh -> run_backend.py`，避免手工重复启动后端实例。
+
+## 回归与部署记录
+
+CPU 回归环境使用 Python 3.10、Node.js 24，版本分别写在 `.python-version` 和 `.node-version`。
+GitHub Actions 在 push、pull request 和手工触发时执行后端测试、前端测试与生产构建。
+测试报告、环境清单和前端产物保留 14 天。
+
+```bash
+# 无硬件回归；不安装或调用 Unitree/CUDA SDK
+python3.10 -m venv .venv-ci
+.venv-ci/bin/python -m pip install -r requirements-ci.txt
+BOTDOG_TEST_PYTHON="$PWD/.venv-ci/bin/python" bash scripts/check-backend.sh
+cd frontend && npm ci && npm test -- --run && npm run build
+```
+
+跨仓库导航源码契约标记为 `navigation_workspace`；只有 BotDog 源码的 CI 会明确跳过这些检查。
+在拥有 Navigation 源码的设备上额外执行（仅读源码并使用模拟 ROS 命令）：
+
+```bash
+BOTDOG_TEST_NAV_WS=/home/jetson/Projects/Navigation bash scripts/check-backend.sh -m navigation_workspace
+```
+
+每次部署构建通过后，在项目根目录用实际运行环境记录版本：
+
+```bash
+.venv/bin/python scripts/record-deployment.py --output artifacts/deployments/latest.json
+```
+
+清单包含 Git commit、未提交源码的整体指纹、模型 SHA-256、前端产物、Python/AI 依赖、L4T 与 TensorRT 包版本；不会导出 `.env` 内容。
+代码存在本地修改时，仅凭 commit 不能复现部署，应同时保存清单和变更补丁。
+
+外部日志每 5 分钟检查，超过 20 MiB 轮转并压缩，最多保留 7 份、14 天。
+每轮维护后，规则所选活跃文件与编号归档的总量限制为 1 GiB；检查间隔内允许短暂超出。
+`copytruncate` 保留进程已打开的文件句柄，复制与截断间有少量日志丢失窗口，不能作为零丢失审计存储。
+原有重复离线错误由视频待机/退避逻辑合并，Python 日志继续使用 Loguru 自己的轮转。
+
+```bash
+systemctl status botdog-logrotate.timer
+journalctl -u botdog-logrotate.service --since today
+```
 
 ---
 

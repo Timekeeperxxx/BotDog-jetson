@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { AlertOctagon, HardDrive, MemoryStick, Network, ServerCrash } from 'lucide-react'
 import { executeSystemAction } from '../adminApi'
 import type { DeviceDangerAction, DeviceOverviewData, ModuleHealthState, SystemDangerActionKey } from '../adminTypes'
-import { mapHealthStatus, mapNavStatus } from '../adminTypes'
+import { mapHealthStatus } from '../adminTypes'
 import { AdminCard, ConfirmDialog, EmptyState, StatusBadge, TableCell, TableHead, ToolbarButton } from '../AdminUi'
 
 const dangerActions: DeviceDangerAction[] = [
@@ -53,23 +53,28 @@ export function AdminDevicePage({
   const serviceRows = useMemo(() => [
     {
       name: '后端服务',
-      status: mapHealthStatus(data.health?.status) as ModuleHealthState,
-      detail: data.health ? `status=${data.health.status}` : '未获取到 /api/v1/system/health',
+      status: (data.health ? 'normal' : 'waiting') as ModuleHealthState,
+      detail: data.health ? '后端接口在线' : '未获取到 /api/v1/system/health',
+    },
+    {
+      name: '业务就绪',
+      status: mapHealthStatus(data.health?.readiness_status) as ModuleHealthState,
+      detail: data.health?.ready === true ? '已启用的控制、视频和导航功能均已就绪' : '等待设备接入或有效数据，暂不具备完整巡检条件',
     },
     {
       name: '机器人控制',
-      status: (data.health?.mavlink_connected ? 'normal' : 'degraded') as ModuleHealthState,
-      detail: data.health?.mavlink_connected ? '控制链路在线' : '链路未确认或离线',
+      status: mapHealthStatus(data.health?.components?.control?.status) as ModuleHealthState,
+      detail: data.health?.components?.control?.message || '尚未取得实时控制状态',
     },
     {
       name: 'ROS 导航桥',
-      status: mapNavStatus(data.navState?.localization_status.status) as ModuleHealthState,
-      detail: data.navState?.localization_status.message || '未获取到导航状态',
+      status: mapHealthStatus(data.health?.components?.navigation?.status) as ModuleHealthState,
+      detail: data.health?.components?.navigation?.message || '尚未取得实时导航状态',
     },
     {
       name: 'AI Worker',
-      status: (data.aiStatus ? 'normal' : 'waiting') as ModuleHealthState,
-      detail: data.aiStatus ? `已收到 AI_STATUS，frames=${data.aiStatus.frames_processed}` : '尚未收到 AI 状态事件',
+      status: mapHealthStatus(data.health?.components?.video_ai?.status) as ModuleHealthState,
+      detail: data.health?.components?.video_ai?.message || '尚未取得实时视频状态',
     },
     {
       name: '自动跟踪',

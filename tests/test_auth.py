@@ -1,24 +1,11 @@
 import asyncio
 import pytest
-from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-import tempfile
-import os
 
 from backend.config import settings
-db_path = tempfile.mktemp(suffix=".db")
-settings.DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
-settings.AUTH_ENABLED = True
-settings.AUTH_ADMIN_USERNAME = "admin"
-settings.AUTH_ADMIN_PASSWORD = "ValidPassword123!"
+from runtime_fixtures import app  # noqa: F401 -- shared pytest fixture
 
-from backend.api.routes.auth import router as auth_router
-from backend.auth.dependencies import require_admin, require_authenticated, require_operator
-from backend.auth.schemas import AuthUserInternal
-from backend.auth.service import create_access_token
-from backend.database import get_db
-from backend.main import create_app
 
 
 @pytest.fixture(scope="module")
@@ -29,19 +16,10 @@ def event_loop():
 
 
 @pytest.fixture(scope="module")
-def app():
-    _app = create_app()
-    return _app
-
-
-@pytest.fixture(scope="module")
 def client(app):
     with TestClient(app) as c:
         yield c
-    try:
-        os.remove(db_path)
-    except OSError:
-        pass
+
 
 
 def test_login_success(client):
@@ -106,30 +84,28 @@ def test_auth_status_returns_current_user_fields(client):
     assert "token_version" not in body["current_user"]
 
 
-def test_auth_disabled_allows_dev_admin(monkeypatch, app):
+def test_auth_disabled_allows_dev_admin(monkeypatch, client):
     monkeypatch.setattr(settings, "AUTH_ENABLED", False)
-    with TestClient(app) as local_client:
-        response = local_client.get("/api/v1/auth/me")
-        assert response.status_code == 200
-        assert response.json() == {
+    response = client.get("/api/v1/auth/me")
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": 0,
+        "username": "dev",
+        "role": "admin",
+        "must_change_password": False,
+    }
+
+
+def test_me_allows_dev_user_when_auth_disabled(monkeypatch, client):
+    monkeypatch.setattr(settings, "AUTH_ENABLED", False)
+    response = client.get("/api/v1/auth/status")
+    assert response.status_code == 200
+    assert response.json() == {
+        "auth_enabled": False,
+        "current_user": {
             "id": 0,
             "username": "dev",
             "role": "admin",
             "must_change_password": False,
-        }
-
-
-def test_me_allows_dev_user_when_auth_disabled(monkeypatch, app):
-    monkeypatch.setattr(settings, "AUTH_ENABLED", False)
-    with TestClient(app) as local_client:
-        response = local_client.get("/api/v1/auth/status")
-        assert response.status_code == 200
-        assert response.json() == {
-            "auth_enabled": False,
-            "current_user": {
-                "id": 0,
-                "username": "dev",
-                "role": "admin",
-                "must_change_password": False,
-            },
-        }
+        },
+    }

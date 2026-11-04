@@ -966,8 +966,17 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
     # SCAN 的局部重规划；走廊被彻底堵死时机器人会原地无限等待。这里作为
     # 应用层兜底：阻断持续超过阈值就向前端推送 ALERT_RAISED 告警。
     _OBSTACLE_STUCK_STATUSES = frozenset(
-        {"blocked", "replan_requested", "waiting_replan", "clearing", "sensor_lost"}
+        {"blocked", "replan_requested", "waiting_replan", "clearing", "sensor_lost", "waiting_tf", "deviated"}
     )
+
+    def _obstacle_is_blocking(self, status: str, payload: dict[str, Any]) -> bool:
+        return status in self._OBSTACLE_STUCK_STATUSES or payload.get("action") == "stop"
+
+    @staticmethod
+    def _obstacle_is_recovered(status: str, payload: dict[str, Any]) -> bool:
+        # Older publishers omit action. Unknown/idle/disabled states do not
+        # establish safety, and a contradictory stop must never clear a block.
+        return status in {"clear", "caution"} and payload.get("action", "pass") in ("pass", "slow")
 
     def _handle_obstacle_status_message(self, msg: Any) -> None:
         raw_data = str(getattr(msg, "data", "") or "").strip()
@@ -992,7 +1001,9 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         if callable(status_updater):
             status_updater(status, payload)
 
-        if status not in self._OBSTACLE_STUCK_STATUSES:
+        if not self._obstacle_is_blocking(status, payload):
+            if not self._obstacle_is_recovered(status, payload):
+                return
             if self._obstacle_alert_sent:
                 blocked_seconds = round(
                     now - (self._obstacle_blocked_since or now), 1
@@ -1020,11 +1031,17 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             and blocked_duration >= settings.NAV_OBSTACLE_ALERT_SECONDS
         ):
             self._obstacle_alert_sent = True
-            if status == "sensor_lost":
+            if status in {"sensor_lost", "waiting_tf"}:
                 event_code = "NAV_SENSOR_LOST"
                 message = (
                     f"导航传感器数据持续超时 {round(blocked_duration, 1)} 秒，"
                     "机器人已停车，请检查雷达与定位链路"
+                )
+            elif status == "deviated":
+                event_code = "NAV_PATH_BLOCKED"
+                message = (
+                    f"机器人偏离可检查路径持续 {round(blocked_duration, 1)} 秒，"
+                    "已停车，请检查定位与路径"
                 )
             else:
                 event_code = "NAV_PATH_BLOCKED"
@@ -1057,8 +1074,8 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         """
         if not settings.NAV_OBSTACLE_AUTO_REGOAL_ENABLED:
             return
-        if status == "sensor_lost":
-            return  # 传感器断流时重发目标毫无意义
+        if status not in {"blocked", "replan_requested", "waiting_replan", "clearing"}:
+            return  # 定位/传感器异常或未知停车原因不能靠重发目标恢复
         if blocked_duration < settings.NAV_OBSTACLE_REGOAL_SECONDS:
             return
         with self._goal_submission_lock:
@@ -1728,7 +1745,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         current_status = get_nav_state().get("navigation_status") or {}
         current = str(current_status.get("status") or "").strip().lower()
 
-        if obstacle_status in self._OBSTACLE_STUCK_STATUSES:
+        if self._obstacle_is_blocking(obstacle_status, payload):
             if not self._has_active_navigation_context():
                 return
             if current != "blocked":
@@ -1739,8 +1756,12 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             if not message:
                 message = (
                     "导航传感器数据中断，机器人已停车"
-                    if obstacle_status == "sensor_lost"
-                    else "局部路径受阻，机器人已停车并等待重规划"
+                    if obstacle_status in {"sensor_lost", "waiting_tf"}
+                    else (
+                        "机器人偏离路径，已停车并等待定位/路径恢复"
+                        if obstacle_status == "deviated"
+                        else "局部路径受阻，机器人已停车并等待重规划"
+                    )
                 )
             if (
                 current == "blocked"
@@ -1755,7 +1776,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
                     "ros_status": obstacle_status,
                     "error_code": (
                         "NAV_SENSOR_LOST"
-                        if obstacle_status == "sensor_lost"
+                        if obstacle_status in {"sensor_lost", "waiting_tf"}
                         else "NAV_PATH_BLOCKED"
                     ),
                     "source": settings.ROS_NAV_OBSTACLE_STATUS_TOPIC,
@@ -1767,7 +1788,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             )
             return
 
-        if current != "blocked":
+        if current != "blocked" or not self._obstacle_is_recovered(obstacle_status, payload):
             return
         previous = str(
             getattr(self, "_navigation_status_before_blocked", None) or ""

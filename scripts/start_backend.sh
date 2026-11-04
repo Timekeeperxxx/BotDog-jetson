@@ -19,7 +19,7 @@ fi
 
 if [ ! -f "$VENV/bin/activate" ]; then
   echo "ERROR: Virtual environment not found at $VENV"
-  echo "Run: ~/.pyenv/versions/3.12.9/bin/python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+  echo "Run: python3.10 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt"
   exit 1
 fi
 

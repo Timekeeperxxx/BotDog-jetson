@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import pytest
+from navigation_workspace import navigation_workspace
 from fastapi import HTTPException
 
 from backend.api.routes import nav as nav_routes
@@ -425,51 +426,38 @@ def test_stop_mapping_creates_origin_waypoint_from_initial_pose(monkeypatch, tmp
     assert origin["yaw"] == 0.35
 
 
-def test_stop_mapping_waits_longer_than_script_cleanup_before_force_kill(monkeypatch, tmp_path):
+def test_stop_mapping_waits_for_save_completion_without_time_limit_or_force_kill(monkeypatch, tmp_path):
     script = tmp_path / "start_mapping.sh"
     script.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-
-    kills: list[tuple[int, signal.Signals]] = []
-    process = TimeoutTwiceProcess()
-
-    class InlineThread:
-        def __init__(self, target=None, args=(), kwargs=None, daemon=None):
-            self._target = target
-            self._args = args
-            self._kwargs = kwargs or {}
-
-        def start(self):
-            if self._target is not None:
-                self._target(*self._args, **self._kwargs)
-
+    kills = []
+    waits = []
+    process = DummyProcess()
     monkeypatch.setattr(mapping_service_module, "MAPS_ROOT", tmp_path / "MAPS")
     monkeypatch.setattr(mapping_service_module, "START_MAPPING_SCRIPT", script)
 
     def fake_popen(command, *args, **kwargs):
-        mapping_service_module.mapping_ready_flag_path(Path(command[2])).write_text("ready\n", encoding="utf-8")
+        directory = Path(command[2])
+        mapping_service_module.mapping_ready_flag_path(directory).write_text("ready\n")
+        def save_and_exit(timeout=None):
+            waits.append(timeout)
+            write_test_pcd(directory / "map.pcd")
+            write_test_pcd(directory / "ground.pcd")
+            process.returncode = 0
+            return 0
+        process.wait = save_and_exit
         return process
 
     monkeypatch.setattr(mapping_service_module.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(mapping_service_module.os, "kill", lambda pid, sig: kills.append((pid, sig)))
-    monkeypatch.setattr(mapping_service_module.os, "getpgid", lambda pid: pid)
     monkeypatch.setattr(mapping_service_module.os, "killpg", lambda pgid, sig: kills.append((pgid, sig)))
     monkeypatch.setattr(mapping_service_module, "stop_navigation_processes", lambda: {"pids": []})
     monkeypatch.setattr(mapping_service_module, "stop_cmd_vel_script", lambda: {"pid": None})
-
     service = mapping_service_module.MappingService()
     service.start("实验室一楼")
-    service.stop()
-
-    assert process.wait_calls == [
-        mapping_service_module.MAPPING_STOP_WAIT_TIMEOUT_SECONDS,
-        10,
-        mapping_service_module.MAPPING_STOP_FORCE_KILL_WAIT_SECONDS,
-    ]
-    assert kills == [
-        (4321, signal.SIGINT),
-        (4321, signal.SIGTERM),
-        (4321, signal.SIGKILL),
-    ]
+    result = service.stop()
+    assert waits == [None]
+    assert kills == [(4321, signal.SIGINT)]
+    assert result["saved"] is True
 
 
 def test_mapping_status_stays_saving_and_rejects_new_start_until_save_finishes(monkeypatch, tmp_path):
@@ -802,14 +790,15 @@ def test_mapping_startup_error_returns_current_map_radar_failure(monkeypatch, tm
     assert mapping_service_module._mapping_startup_error(tmp_path / "other") is None
 
 
+@pytest.mark.navigation_workspace
 def test_start_mapping_wrapper_waits_for_unified_runtime_readiness():
     botdog_root = Path(__file__).resolve().parents[1]
     wrapper = (botdog_root / "scripts" / "start_mapping.sh").read_text(encoding="utf-8")
     adapter = (
-        botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "start_mapping.sh"
+        navigation_workspace() / "adapters" / "legacy_scripts" / "start_mapping.sh"
     ).read_text(encoding="utf-8")
     launch = (
-        botdog_root.parent / "Navigation" / "src" / "nav_bringup" / "launch" / "mapping.launch.py"
+        navigation_workspace() / "src" / "nav_bringup" / "launch" / "mapping.launch.py"
     ).read_text(encoding="utf-8")
 
     assert 'source "$SCRIPT_DIR/navigation_adapter_common.sh"' in wrapper
@@ -839,9 +828,10 @@ def test_start_mapping_wrapper_waits_for_unified_runtime_readiness():
     assert "\n        terrain_saver,\n" in launch
 
 
+@pytest.mark.navigation_workspace
 def test_start_mapping_adapter_uses_current_workspace_and_absolute_map_dir():
     botdog_root = Path(__file__).resolve().parents[1]
-    navigation_root = botdog_root.parent / "Navigation"
+    navigation_root = navigation_workspace()
     adapter = (navigation_root / "adapters" / "legacy_scripts" / "start_mapping.sh").read_text(encoding="utf-8")
     common = (navigation_root / "adapters" / "legacy_scripts" / "common.sh").read_text(encoding="utf-8")
     launch = (navigation_root / "src" / "nav_bringup" / "launch" / "mapping.launch.py").read_text(encoding="utf-8")
@@ -854,9 +844,10 @@ def test_start_mapping_adapter_uses_current_workspace_and_absolute_map_dir():
     assert '"lio.map.save_map_dir": map_dir' in launch
 
 
+@pytest.mark.navigation_workspace
 def test_start_mapping_adapter_freezes_and_stops_lio_before_saving_terrain():
     botdog_root = Path(__file__).resolve().parents[1]
-    navigation_root = botdog_root.parent / "Navigation"
+    navigation_root = navigation_workspace()
     adapter = (navigation_root / "adapters" / "legacy_scripts" / "start_mapping.sh").read_text(encoding="utf-8")
     common = (navigation_root / "adapters" / "legacy_scripts" / "common.sh").read_text(encoding="utf-8")
 
@@ -892,9 +883,10 @@ def test_start_mapping_adapter_freezes_and_stops_lio_before_saving_terrain():
     assert "退出时跳过重复写盘" in terrain_saver
 
 
+@pytest.mark.navigation_workspace
 def test_start_mapping_adapter_gracefully_saves_map_on_sigint(tmp_path):
     botdog_root = Path(__file__).resolve().parents[1]
-    adapter = botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "start_mapping.sh"
+    adapter = navigation_workspace() / "adapters" / "legacy_scripts" / "start_mapping.sh"
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     map_dir = tmp_path / "maps" / "Scene1_test"

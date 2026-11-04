@@ -332,10 +332,27 @@ setsid env \
   wait_for_cam1_video() {
     local retry_delay probe_detail next_delay consecutive_failures
     local now_uptime cooldown_elapsed recovery_detail verify_detail reboot_detail
+    local network_detail network_state recovery_access
+    network_state="unknown"
     retry_delay="$CAM1_RETRY_INITIAL_DELAY"
     consecutive_failures=0
 
     while true; do
+      if ! network_detail=$(python3 "$ROOT_DIR/scripts/rtsp-healthcheck.py" \
+        --url "$CAMERA_RTSP_URL" --network-only --timeout 2 2>&1); then
+        if [ "$network_state" != "$network_detail" ]; then
+          log_cam1 "Camera network unavailable; standby, recovery disabled: ${network_detail}"
+        fi
+        network_state="$network_detail"
+        consecutive_failures=0
+        retry_delay="$CAM1_RETRY_INITIAL_DELAY"
+        sleep "$CAM1_RETRY_MAX_DELAY"
+        continue
+      fi
+      if [ "$network_state" != "up" ]; then
+        log_cam1 "Camera network ready; probing video"
+        network_state="up"
+      fi
       if probe_detail=$(python3 "$ROOT_DIR/scripts/rtsp-healthcheck.py" \
         --url "$CAMERA_RTSP_URL" \
         --timeout "$CAM1_PROBE_TIMEOUT" 2>&1); then
@@ -354,6 +371,10 @@ setsid env \
         if [ "$cam1_recovery_last_uptime" -eq 0 ] || \
           [ "$cooldown_elapsed" -ge "$CAM1_RECOVERY_COOLDOWN" ]; then
           cam1_recovery_last_uptime="$now_uptime"
+          if ! recovery_access=$(python3 "$ROOT_DIR/scripts/rtsp-healthcheck.py" \
+            --url "$CAMERA_RTSP_URL" --recovery-port "$CAM1_RECOVERY_TELNET_PORT" --timeout 2 2>&1); then
+            log_cam1 "Camera maintenance unreachable; skipping service recovery and reboot: ${recovery_access}"
+          else
           log_cam1 "RTSP failed ${consecutive_failures} consecutive checks; starting two-stage camera recovery"
           if recovery_detail=$(python3 "$ROOT_DIR/scripts/z2mini-recover.py" \
             --host "$CAM1_HOST" \
@@ -387,6 +408,7 @@ setsid env \
               continue
             fi
             log_cam1 "WARN: Z2-Mini reboot request failed: ${reboot_detail}"
+          fi
           fi
         fi
       fi
@@ -594,6 +616,8 @@ if [ "$CAM_REMOTE_ENABLED" = "1" ]; then
     ROOT_DIR="$ROOT_DIR" \
     CAM_REMOTE_SOURCE="$CAM_REMOTE_SOURCE" \
     CAMERA_RETRY_DELAY="$CAMERA_RETRY_DELAY" \
+    CAM1_RETRY_MAX_DELAY="$CAM1_RETRY_MAX_DELAY" \
+    CAM1_PROBE_TIMEOUT="$CAM1_PROBE_TIMEOUT" \
     FFMPEG_LOGLEVEL="$FFMPEG_LOGLEVEL" \
     CAM_REMOTE_WIDTH="$CAM_REMOTE_WIDTH" \
     CAM_REMOTE_HEIGHT="$CAM_REMOTE_HEIGHT" \
@@ -654,7 +678,25 @@ if [ "$CAM_REMOTE_ENABLED" = "1" ]; then
         >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log" 2>&1
     }
 
+    retry_delay="$CAMERA_RETRY_DELAY"
+    source_waiting=0
     while true; do
+      if ! source_detail=$(python3 "$ROOT_DIR/scripts/rtsp-healthcheck.py" \
+        --url "$CAM_REMOTE_SOURCE" --timeout "$CAM1_PROBE_TIMEOUT" 2>&1); then
+        if [ "$source_waiting" -eq 0 ]; then
+          echo "[$(date "+%F %T")] cam_remote standby: ${source_detail}" >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log"
+        fi
+        source_waiting=1
+        sleep "$retry_delay"
+        retry_delay=$(( retry_delay * 2 ))
+        if [ "$retry_delay" -gt "$CAM1_RETRY_MAX_DELAY" ]; then retry_delay="$CAM1_RETRY_MAX_DELAY"; fi
+        continue
+      fi
+      if [ "$source_waiting" -eq 1 ]; then
+        echo "[$(date "+%F %T")] cam_remote source restored" >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log"
+        retry_delay="$CAMERA_RETRY_DELAY"
+        source_waiting=0
+      fi
       echo "[$(date "+%F %T")] Starting cam_remote (encoder=${CAM_REMOTE_ENCODER}, ${CAM_REMOTE_WIDTH}x${CAM_REMOTE_HEIGHT}@${CAM_REMOTE_FPS}, ${CAM_REMOTE_BITRATE})..." >> "$ROOT_DIR/logs/ffmpeg_cam_remote.log"
       if [ "$CAM_REMOTE_ENCODER" = "gst-nvenc" ]; then
         run_cam_remote_gst_nvenc || run_cam_remote_ffmpeg || true

@@ -4,7 +4,8 @@
  */
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { getWsUrl, getApiUrl } from '../config/api';
+import { getWsUrl } from '../config/api';
+import { requestEmergencyStop } from '../api/controlApi';
 
 // ==================== 类型定义 ====================
 export interface TelemetryData {
@@ -251,16 +252,11 @@ export function useBotDogWebSocket() {
   // 触发急停：调用后端真实接口，systemStatus 由后端 WebSocket 更新，不在前端本地伪造
   const triggerEmergencyStop = useCallback(async () => {
     try {
-      const res = await fetch(getApiUrl('/api/v1/control/e-stop'), {
-        method: 'POST',
-      });
-      if (res.ok) {
-        addLog('紧急停止已触发', 'error', 'SYSTEM');
-      } else {
-        addLog('紧急停止请求失败', 'error', 'SYSTEM');
-      }
+      addLog('正在请求急停并等待底盘停车确认', 'warning', 'SYSTEM');
+      const result = await requestEmergencyStop();
+      addLog(result.message, result.success ? 'warning' : 'error', 'SYSTEM');
     } catch {
-      addLog('紧急停止请求失败', 'error', 'SYSTEM');
+      addLog('急停请求未取得确认，请立即检查设备；请勿认为机器人已停车', 'error', 'SYSTEM');
     }
   }, [addLog]);
 

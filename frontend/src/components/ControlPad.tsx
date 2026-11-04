@@ -20,7 +20,7 @@ import {
   AlertCircle,
   Keyboard,
 } from 'lucide-react';
-import { useRobotControl, type RobotCommand, type RobotCommandOptions } from '../hooks/useRobotControl';
+import type { RobotCommand, RobotCommandOptions, UseRobotControlReturn } from '../hooks/useRobotControl';
 import { hasAuthSession, hasRole, useAuthState } from '../stores/authStore';
 import {
   DEFAULT_LINEAR_SPEED,
@@ -34,6 +34,7 @@ import {
 } from '../utils/speedControl';
 
 interface ControlPadProps {
+  control: UseRobotControlReturn;
   isDisabled?: boolean;
   bottomCenterSlot?: React.ReactNode;
 }
@@ -60,11 +61,11 @@ const BUTTONS: ButtonConfig[] = [
   { cmd: 'sit',          label: '下蹲',   icon: <ChevronsDown size={14} /> },
 ];
 
-export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadProps) {
+export function ControlPad({ control, isDisabled = false, bottomCenterSlot }: ControlPadProps) {
   useAuthState();
   const canOperate = hasAuthSession() && hasRole('operator');
   const { startCommand, stopCommand, isControlling, lastResult, currentCmd, resultMessage } =
-    useRobotControl();
+    control;
   const [controlEnabled, setControlEnabled] = useState(false);
   const [linearSpeed, setLinearSpeed] = useState(DEFAULT_LINEAR_SPEED);
   const [turnSpeed, setTurnSpeed] = useState(DEFAULT_TURN_SPEED);
@@ -199,9 +200,9 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
       : 'text-yellow-400';
 
   return (
-    <div className="select-none">
+    <div className="console-control-pad select-none">
       {/* 标题栏 */}
-      <div className="flex items-center justify-between mb-1.5">
+      <div className="console-control-heading flex items-center justify-between mb-1.5">
         <span className="text-[9px] font-black uppercase tracking-widest text-white/70">
           移动控制
         </span>
@@ -216,8 +217,8 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
               : !canOperate
                 ? '登录后可开启手动控制'
                 : controlEnabled
-                  ? '关闭鼠标和键盘控制'
-                  : '开启鼠标和键盘控制'
+                  ? '关闭触屏、鼠标和键盘控制'
+                  : '开启触屏、鼠标和键盘控制'
           }
           className={`flex h-5 items-center gap-1 rounded border px-1.5 text-[8px] font-black tracking-tight transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
             controlEnabled
@@ -237,7 +238,7 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
       </div>
 
       {/* 3×3 九宫格 */}
-      <div className="grid grid-cols-3 gap-1">
+      <div className="console-control-grid grid grid-cols-3 gap-1">
         {BUTTONS.map(({ cmd, label, icon }, idx) => {
           // 空位占位
           if (cmd === null) {
@@ -255,6 +256,8 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
               onPointerDown={handlePointerDown(cmd)}
               onPointerUp={handlePointerUp}
               onPointerLeave={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              onLostPointerCapture={handlePointerUp}
               onContextMenu={(e) => e.preventDefault()}
               className={`
                 flex flex-col items-center justify-center gap-0.5
@@ -299,7 +302,7 @@ export function ControlPad({ isDisabled = false, bottomCenterSlot }: ControlPadP
                 : isDisabled
                   ? '急停状态，手动控制已锁定'
                   : controlEnabled
-                    ? 'W/S/Q/E 控制，方向键调速'
+                    ? '长按按钮或 W/S/Q/E 控制，松手停车'
                     : '请先开启控制，防止误触'}
             </span>
           )}

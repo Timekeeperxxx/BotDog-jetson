@@ -20,6 +20,9 @@ class SystemHealthResponse(BaseModel):
     status: str = Field(..., description="整体健康状态：healthy/degraded/offline")
     mavlink_connected: bool = Field(..., description="MAVLink 底层链路是否连通")
     uptime: float = Field(..., description="服务运行秒数")
+    ready: bool = Field(..., description="当前是否满足已启用功能的业务就绪条件")
+    readiness_status: str = Field(..., description="ready/standby/degraded")
+    components: dict[str, dict] = Field(..., description="实时控制、视频和导航状态")
 
 
 class SystemActionRequest(BaseModel):
@@ -203,7 +206,11 @@ class EStopResponse(BaseModel):
     """
     急停指令响应。
     """
-    success: bool = Field(..., description="急停是否成功触发")
+    success: bool = Field(..., description="急停锁定及各停车步骤是否全部确认")
+    e_stop_latched: bool = Field(..., description="软件急停锁定是否已生效")
+    stop_confirmed: bool = Field(..., description="底盘 SDK 是否已确认停止")
+    control_ack: ControlAckDTO | None = Field(..., description="实际底盘应答；未取得时为 null")
+    errors: list[str] = Field(..., description="未成功确认的停车步骤")
     timestamp: str = Field(..., description="触发时间")
     message: str = Field(..., description="响应消息")
 

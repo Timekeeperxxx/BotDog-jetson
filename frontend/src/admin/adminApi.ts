@@ -10,8 +10,8 @@ import type {
   SystemInfoGroup,
 } from './adminTypes'
 
-export function getSystemHealth() {
-  return apiFetch<HealthResponse>('/api/v1/system/health')
+export function getSystemHealth(signal?: AbortSignal) {
+  return apiFetch<HealthResponse>('/api/v1/system/health', { signal })
 }
 
 export function getSystemInfo() {

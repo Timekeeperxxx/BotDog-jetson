@@ -23,6 +23,7 @@ MANIFEST
 
 # Virtual Environment
 .venv/
+.venv-ci/
 venv/
 ENV/
 env/
@@ -45,6 +46,8 @@ node_modules/
 .coverage
 htmlcov/
 .tox/
+backend-tests.xml
+/artifacts/deployments/
 .hypothesis/
 
 # Database

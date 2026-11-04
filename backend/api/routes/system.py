@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
+from ...services_readiness import collect_readiness
 
 from ...app_runtime_state import APP_START_MONO
 from ...auth.dependencies import require_admin, require_operator, require_viewer
@@ -28,7 +30,6 @@ from ...schemas import (
     utc_now_iso,
 )
 from ...startup_summary import coerce_startup_summary
-from ...state_machine import SystemState
 from ...state_machine_state import get_state_machine
 from ...services_system import (
     ensure_system_action_available,
@@ -144,36 +145,42 @@ def _disk_check(path: Path, *, min_free_gb: float = 1.0) -> dict:
 
 @router.get("/api/v1/system/health", response_model=SystemHealthResponse)
 async def system_health() -> SystemHealthResponse:
-    """
-    返回系统健康状态。
-
-    阶段 1 更新：
-    - status 根据 state_machine 状态映射（healthy/degraded/offline）
-    - mavlink_connected 从 state_machine 读取（如果已初始化）
-    - uptime 为进程启动以来的秒数
-    """
-
+    """Live readiness plus transport health; startup summaries are not consulted."""
     state_machine = get_state_machine()
     uptime = time.monotonic() - APP_START_MONO
+    mavlink_connected = state_machine is not None and state_machine.is_connected
 
-    if state_machine is None:
-        status = "offline"
-        mavlink_connected = False
-    else:
-        state = state_machine.state
-        if state == SystemState.DISCONNECTED:
-            status = "degraded" if uptime > 10 else "offline"
-        elif state == SystemState.E_STOP_TRIGGERED:
-            status = "degraded"
-        else:
-            status = "healthy"
-        mavlink_connected = state_machine.is_connected
-
+    readiness = _current_readiness()
     return SystemHealthResponse(
-        status=status,
+        status="healthy" if readiness["ready"] else ("offline" if state_machine is None else "degraded"),
         mavlink_connected=mavlink_connected,
         uptime=round(uptime, 3),
+        ready=readiness["ready"], readiness_status=readiness["status"], components=readiness["components"],
     )
+
+
+def _current_readiness() -> dict:
+    from ... import main
+    return collect_readiness(main._ai_worker)
+
+
+@router.get("/health", include_in_schema=False)
+@router.get("/healthz", include_in_schema=False)
+async def process_liveness() -> dict:
+    return {"status": "alive", "uptime": round(time.monotonic() - APP_START_MONO, 3)}
+
+
+@router.get("/readyz", include_in_schema=False)
+async def operational_readiness() -> JSONResponse:
+    snapshot = _current_readiness()
+    public = {key: snapshot[key] for key in ("ready", "status", "checked_at", "reasons")}
+    return JSONResponse(public, status_code=200 if snapshot["ready"] else 503)
+
+
+@router.get("/api/v1/system/readiness", dependencies=[Depends(require_viewer)])
+async def system_readiness() -> JSONResponse:
+    snapshot = _current_readiness()
+    return JSONResponse(snapshot, status_code=200 if snapshot["ready"] else 503)
 
 
 @router.get("/api/v1/system/resources")
@@ -188,7 +195,7 @@ async def system_resources(
         raise HTTPException(status_code=503, detail=f"读取主机资源失败: {exc}") from exc
 
 
-@router.get("/api/v1/system/startup", response_model=SystemStartupResponse)
+@router.get("/api/v1/system/startup", response_model=SystemStartupResponse, dependencies=[Depends(require_viewer)])
 async def system_startup(request: Request) -> SystemStartupResponse:
     """返回启动摘要，便于运维和排障时直接查看模块启动结果。"""
     summary = coerce_startup_summary(getattr(request.app.state, "startup_summary", None))
@@ -205,7 +212,7 @@ async def system_startup(request: Request) -> SystemStartupResponse:
     )
 
 
-@router.get("/api/v1/system/safety", response_model=SystemSafetyResponse)
+@router.get("/api/v1/system/safety", response_model=SystemSafetyResponse, dependencies=[Depends(require_viewer)])
 async def system_safety() -> SystemSafetyResponse:
     """返回当前运动安全状态，仅用于展示和调试。"""
     state_machine = get_state_machine()

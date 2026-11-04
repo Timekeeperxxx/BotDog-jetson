@@ -27,6 +27,7 @@ from .logging_config import get_logger
 from .pose_detection import PoseEventEngine, PoseObservation, UltralyticsPoseDetector
 from .workers_ai_processing import AIWorkerProcessingMixin
 from .workers_ai_packages import PackageWorkerMixin
+from .video_probe import probe_rtsp_video
 
 model_logger = get_logger("AI模型")
 video_logger = get_logger("AI视频")
@@ -398,6 +399,9 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
         self._event_send_timeout_s = max(0.005, float(settings.AI_EVENT_SEND_TIMEOUT_SECONDS))
         self._last_frame_started_at = 0.0
         self._last_frame_completed_at = 0.0
+        self._last_video_frame_at: float | None = None
+        self._source_network_available: bool | None = None
+        self._source_detail = "等待视频源检查"
         self._last_frame_timeout_reason: str | None = None
         self._pending_inferences: dict[asyncio.Task, str] = {}
         self._latest_frame_index = 0
@@ -691,10 +695,18 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
         )
         retry_delay = max(0.5, settings.AI_FFMPEG_RETRY_MIN_SECONDS)
         max_retry_delay = max(retry_delay, settings.AI_FFMPEG_RETRY_MAX_SECONDS)
-        reset_threshold = 10.0
 
         while not stop_event.is_set():
             await self._update_current_task_id()
+            active = self._is_mission_active()
+            weather_due = self._weather_service.available and time.monotonic() >= self._weather_service.next_sample_at
+            if active or weather_due:
+                if not await self._check_video_source():
+                    retry_delay = min(retry_delay * 2, max_retry_delay)
+                    self._rotate_rtsp_url_after_failure()
+                    self._log_retry_scheduled(retry_delay)
+                    await self._wait_before_reconnect(stop_event, retry_delay)
+                    continue
             if not self._is_mission_active():
                 self._reset_detection_state()
                 if self._weather_service.available and time.monotonic() >= self._weather_service.next_sample_at:
@@ -703,7 +715,7 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
                 await asyncio.sleep(0.5)
                 continue
 
-            loop_start = asyncio.get_event_loop().time()
+            frame_before = self._last_video_frame_at
             try:
                 # 独立预热，不把 TensorRT/NMS 首次初始化塞进实时帧的 15 秒预算。
                 await self._warmup_models()
@@ -735,17 +747,66 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
                 retry_delay = max(0.5, settings.AI_FFMPEG_RETRY_MIN_SECONDS)
                 continue
 
-            ran_seconds = asyncio.get_event_loop().time() - loop_start
-            if ran_seconds >= reset_threshold:
-                retry_delay = 1.0
+            if self._last_video_frame_at != frame_before:
+                retry_delay = max(0.5, settings.AI_FFMPEG_RETRY_MIN_SECONDS)
             else:
                 retry_delay = min(retry_delay * 2, max_retry_delay)
 
             self._rotate_rtsp_url_after_failure()
             self._log_retry_scheduled(retry_delay)
-            await asyncio.sleep(retry_delay)
+            await self._wait_before_reconnect(stop_event, retry_delay)
 
         ai_logger.info("AI Worker 已停止")
+
+    @staticmethod
+    async def _wait_before_reconnect(stop_event: asyncio.Event, delay: float) -> None:
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=delay)
+        except asyncio.TimeoutError:
+            return
+
+    async def _check_video_source(self) -> bool:
+        probe = await asyncio.to_thread(probe_rtsp_video, self._current_rtsp_url, timeout_seconds=3.0)
+        self._source_network_available = probe.network_available
+        self._source_detail = probe.detail
+        if probe.ready:
+            return True
+        was_unavailable = self._ffmpeg_stream_unavailable
+        self._ffmpeg_stream_unavailable = True
+        self._ffmpeg_last_exit_reason = probe.detail
+        self._ffmpeg_unavailable_reason = probe.detail
+        self._startup_status = "waiting"
+        self._startup_detail = f"视频未就绪，等待恢复：{probe.detail}"
+        if not was_unavailable:
+            await self._notify_auto_track_video_lost(probe.detail)
+        await self._maybe_broadcast_status()
+        return False
+
+    def get_runtime_status(self) -> dict:
+        required = self._is_mission_active()
+        now = time.monotonic()
+        age = None if self._last_video_frame_at is None else now - self._last_video_frame_at
+        inference_age = None if self._last_frame_completed_at <= 0 else now - self._last_frame_completed_at
+        fresh = age is not None and 0 <= age <= self._ffmpeg_frame_timeout_s
+        inference_fresh = inference_age is not None and 0 <= inference_age <= self._frame_process_timeout_s
+        ready = False
+        if isinstance(self._detector, _NullDetector):
+            required = True
+            state, detail = "failed", "主检测模型不可用，无法完成 AI 分析"
+        elif not required:
+            state, detail = "standby", "视频分析待机，当前未要求持续拉流"
+        elif not fresh or self._ffmpeg_stream_unavailable:
+            state = "waiting" if self._last_video_frame_at is None else "degraded"
+            detail = self._source_detail if self._ffmpeg_stream_unavailable or age is None else f"视频帧未持续更新，距上帧 {age:.1f}s"
+        elif not inference_fresh:
+            state = "waiting" if inference_age is None else "degraded"
+            detail = "等待首帧 AI 分析完成" if inference_age is None else f"AI 分析未持续完成，距上次完成 {inference_age:.1f}s"
+        else:
+            ready = True
+            state, detail = "ready", "视频帧与 AI 分析结果持续更新"
+        return {"required": required, "ready": ready, "status": state, "message": detail,
+                "last_frame_age_s": age, "last_inference_age_s": inference_age,
+                "network_available": self._source_network_available}
 
     async def _sample_weather_round_idle(self) -> None:
         """Take a scheduled weather round without starting robot control."""
@@ -761,6 +822,7 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
                     process.stdout.readexactly(self._frame_size),
                     timeout=self._ffmpeg_frame_timeout_s,
                 )
+                self._last_video_frame_at = time.monotonic()
                 await self._maybe_process_weather(frame)
         except (AIWorkerError, asyncio.TimeoutError, asyncio.IncompleteReadError, OSError) as exc:
             self._weather_service.cancel_refresh(f"天气刷新未取得视频帧：{exc}")
@@ -796,6 +858,7 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
                         timeout=self._ffmpeg_frame_timeout_s,
                     )
                     read_at = time.monotonic()
+                    self._last_video_frame_at = read_at
                     read_gap = read_at - last_read_at
                     last_read_at = read_at
                     if settings.AI_STREAM_READER == "gstreamer" and read_gap > self._max_frame_age_s:
@@ -827,6 +890,8 @@ class AIWorker(PackageWorkerMixin, AIWorkerProcessingMixin):
                 )
                 await self._terminate_ffmpeg_process(process, reason="frame_read_timeout")
             except asyncio.IncompleteReadError:
+                self._ffmpeg_stream_unavailable = True
+                self._ffmpeg_unavailable_reason = "stdout_closed"
                 if self._ffmpeg_last_exit_reason == "unknown":
                     self._ffmpeg_last_exit_reason = "stdout_closed"
 

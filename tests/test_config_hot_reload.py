@@ -1,39 +1,19 @@
-import os
-import tempfile
-
 import pytest
 from fastapi.testclient import TestClient
 
 from backend.config import settings
 
-db_path = tempfile.mktemp(suffix=".db")
-settings.DATABASE_URL = f"sqlite+aiosqlite:///{db_path}"
-settings.AUTH_ENABLED = True
-settings.AUTH_ADMIN_USERNAME = "admin"
-settings.AUTH_ADMIN_PASSWORD = "ValidPassword123!"
-settings.CONTROL_ADAPTER_TYPE = "simulation"
-settings.ROS_NAV_ENABLED = False
-settings.SIMULATION_WORKER_ENABLED = False
-settings.AI_ENABLED = False
+from runtime_fixtures import app  # noqa: F401 -- shared pytest fixture
 
 from backend.api.routes.config import _apply_runtime_update  # noqa: E402
-from backend.main import create_app  # noqa: E402
 from backend.yellow_zone_detector import YellowZoneDetector  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def app():
-    return create_app()
 
 
 @pytest.fixture(scope="module")
 def client(app):
     with TestClient(app) as c:
         yield c
-    try:
-        os.remove(db_path)
-    except OSError:
-        pass
+
 
 
 def _login(client: TestClient) -> str:
@@ -221,7 +201,9 @@ def test_weapon_switch_calls_worker_and_is_immediately_applied(monkeypatch, clie
     monkeypatch.setattr(settings, "WEAPON_ENABLED", True)
     async def toggle(enabled):
         settings.WEAPON_ENABLED = enabled
-    worker = SimpleNamespace(set_weapon_detection_enabled=AsyncMock(side_effect=toggle))
+    worker = SimpleNamespace(set_weapon_detection_enabled=AsyncMock(side_effect=toggle),
+                             package_detection_enabled=False,
+                             _package_status_payload=lambda: {"state": "disabled"})
     monkeypatch.setattr(main, "_ai_worker", worker)
     token = _login(client)
     headers = {"Authorization": f"Bearer {token}"}

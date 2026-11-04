@@ -51,6 +51,10 @@ export async function getCurrentUser(): Promise<AuthUser> {
   return apiFetch<AuthUser>('/api/v1/auth/me')
 }
 
+export async function logout(): Promise<void> {
+  await apiFetch('/api/v1/auth/logout', { method: 'POST' })
+}
+
 export async function getAuthStatus(): Promise<AuthStatusResult> {
   return apiFetch<AuthStatusResult>('/api/v1/auth/status')
 }

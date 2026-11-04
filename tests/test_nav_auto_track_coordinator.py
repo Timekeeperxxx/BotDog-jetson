@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -62,7 +63,7 @@ def test_coordinator_pauses_and_resumes_navigation(monkeypatch) -> None:
     arbiter = ControlArbiter()
     set_control_arbiter(arbiter)
 
-    update_robot_pose({"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.0, "timestamp": 9999999999.0})
+    update_robot_pose({"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.0, "timestamp": time.time()})
     update_navigation_status(
         {
             "status": "navigating",
@@ -101,7 +102,7 @@ def test_coordinator_does_not_resume_after_user_intervention(monkeypatch) -> Non
     arbiter = ControlArbiter()
     set_control_arbiter(arbiter)
 
-    update_robot_pose({"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.0, "timestamp": 9999999999.0})
+    update_robot_pose({"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.0, "timestamp": time.time()})
     update_navigation_status(
         {
             "status": "navigating",
@@ -154,7 +155,7 @@ async def test_coordinator_keeps_interrupted_navigation_when_tf_temporarily_unav
     assert status["interrupted_task_id"] == "task_001"
     assert status["resume_retry_scheduled"] is True
 
-    update_robot_pose({"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.0, "timestamp": 9999999999.0})
+    update_robot_pose({"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.0, "timestamp": time.time()})
     retry_result = await coordinator.resume_navigation_after_tracking(
         reason="TARGET_LOST:robot_pose_unavailable",
         apply_delay=False,

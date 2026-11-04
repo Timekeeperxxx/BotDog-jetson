@@ -1,11 +1,12 @@
 """测试告警路由。"""
 
 from fastapi import APIRouter, Depends
+from ...auth.dependencies import require_admin
 
 from ...database import get_db
 from ...logging_config import logger
 
-router = APIRouter(tags=["test_alert"])
+router = APIRouter(tags=["test_alert"], dependencies=[Depends(require_admin)])
 
 
 @router.post("/api/v1/test/alert")

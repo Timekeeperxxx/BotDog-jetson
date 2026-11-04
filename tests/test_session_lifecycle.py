@@ -10,6 +10,7 @@ from backend.database import Base
 from backend.models import InspectionTask
 from backend.services_tasks import create_task, stop_task
 from backend import workers_ai_processing
+from backend.workers_ai import DetectionResult
 from backend.workers_ai_processing import AIWorkerProcessingMixin
 
 
@@ -55,7 +56,8 @@ async def test_task_switch_clears_dedup_even_without_idle_gap(monkeypatch):
     assert worker._current_task_id == 12
     assert worker._person_alert_last_seen == {}
     assert worker._person_pose_hits == {}
-    person = SimpleNamespace(label='person', track_id=1, face_status='unknown', identity_id=None)
+    person = DetectionResult(label='person', confidence=0.9, track_id=1,
+                             bbox=(10, 10, 100, 200), face_status='unknown', identity_id=None)
     for _ in range(5):
         await worker._process_person_alerts([person], b'frame')
     worker._last_task_check_time = 0

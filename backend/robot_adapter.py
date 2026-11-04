@@ -18,6 +18,8 @@ from .logging_config import get_logger
 control_logger = get_logger("机器人控制")
 logger = control_logger
 
+UNITREE_STOP_TIMEOUT_S = 6.0
+
 
 # 合法的动作名集合
 VALID_COMMANDS = frozenset({
@@ -163,7 +165,7 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         right        → Move(0, 0, -vyaw)
         strafe_left  → Move(0, +vy, 0)       # 正值 = 向左平移
         strafe_right → Move(0, -vy, 0)
-        stop         → StopMove()（停止运动，不改变当前姿态）
+        stop         → Move(0, 0, 0)（软停止，等待 SDK 确认）；退出/断连 → StopMove()
         stand        → StandUp()（从蹲下起立）/ RecoveryStand()（倒地紧急恢复，作兜底）
         sit          → StandDown()
     """
@@ -210,11 +212,13 @@ class UnitreeB2Adapter(BaseRobotAdapter):
         self._last_nonzero_velocity_at = None
         self._last_worker_error = None
         # 当前姿态状态："stand"=站立/运动中，"sit"=蹲坐，"unknown"=未知
-        # stop 命令只在 stand 状态下调用 BalanceStand()，sit 状态跳过，防止 watchdog 把蹲下的狗强制站起来
+        # 停止使用零速度，不主动改变当前姿态。
         self._current_posture: str = "unknown"
 
         # 启动单独的工作线程处理阻塞的 SDK 调用，防止耗尽 FastAPI 的线程池
         self._cmd_queue = queue.Queue(maxsize=1)
+        self._command_lock = threading.Lock()
+        self._stop_request = None
         self._close_lock = threading.Lock()
         self._closed = False
         self._worker_thread = threading.Thread(target=self._command_worker, daemon=True)
@@ -264,12 +268,13 @@ class UnitreeB2Adapter(BaseRobotAdapter):
 
     def is_ready(self) -> bool:
         """宇树 B2 适配器就绪状态。"""
-        return self._initialized
+        return self._initialized and (
+            self._sidecar_process is None or self._sidecar_process.is_alive()
+        )
 
     def close(self) -> None:
         """Stop motion in the SDK worker, then release the adapter."""
         try:
-            import queue
             import threading
 
             close_lock = getattr(self, "_close_lock", None)
@@ -280,25 +285,17 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             with close_lock:
                 if getattr(self, "_closed", False):
                     return
-                self._closed = True
-                self._initialized = False
-
-                try:
-                    while not self._cmd_queue.empty():
-                        self._cmd_queue.get_nowait()
-                except queue.Empty:
-                    pass
-
                 worker = getattr(self, "_worker_thread", None)
-                if worker is not None and worker.is_alive():
-                    stopped = threading.Event()
-                    try:
+                stopped = threading.Event()
+                with self._command_lock:
+                    self._closed = True
+                    self._initialized = False
+                    self._discard_pending_commands("适配器正在关闭")
+                    if worker is not None and worker.is_alive():
                         self._cmd_queue.put_nowait(("_STOP_AND_QUIT_", stopped))
-                    except queue.Full:
-                        control_logger.critical("UnitreeB2Adapter 关闭命令入队失败")
-                    else:
-                        if not stopped.wait(timeout=5.0):
-                            control_logger.critical("UnitreeB2Adapter 最终 StopMove 等待超时")
+                if worker is not None and worker.is_alive():
+                    if not stopped.wait(timeout=5.0):
+                        control_logger.critical("UnitreeB2Adapter 最终 StopMove 等待超时")
                     worker.join(timeout=0.5)
 
                 worker_alive = worker is not None and worker.is_alive()
@@ -316,7 +313,7 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                     self._sidecar_conn = None
                 process = getattr(self, "_sidecar_process", None)
                 if process is not None:
-                    process.join(timeout=1.0)
+                    process.join(timeout=UNITREE_STOP_TIMEOUT_S)
                     if process.is_alive():
                         process.terminate()
                         process.join(timeout=1.0)
@@ -327,7 +324,6 @@ class UnitreeB2Adapter(BaseRobotAdapter):
 
     def _command_worker(self):
         """后台专用的工作线程：消费队列并调用阻断的 SDK。"""
-        import queue
         while True:
             try:
                 cmd = self._cmd_queue.get()
@@ -341,7 +337,9 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                     stopped = cmd[1]
                     try:
                         if getattr(self, "_sidecar_conn", None) is not None:
-                            self._execute_sidecar_command(("_STOP_AND_QUIT_",))
+                            reply = self._execute_sidecar_command(("_STOP_AND_QUIT_",))
+                            if not reply["ok"]:
+                                raise RuntimeError(f"最终 StopMove 失败：{reply}")
                             control_logger.info("UnitreeB2Adapter 独立进程关闭前已执行最终 StopMove")
                         else:
                             client = self._sport_client
@@ -355,6 +353,14 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                     finally:
                         stopped.set()
                     break
+                if isinstance(cmd, tuple) and cmd[0] == "_STOP_":
+                    self._execute_stop_request(cmd)
+                    continue
+                with self._command_lock:
+                    if self._stop_request is not None:
+                        # This item left the queue just before stop was latched.
+                        self._cancel_queued_command(cmd, "命令已被停止请求取消")
+                        continue
                 if not self._initialized or self._sport_client is None:
                     continue
 
@@ -506,18 +512,101 @@ class UnitreeB2Adapter(BaseRobotAdapter):
                 self._last_worker_error = str(e)
                 logger.error(f"[UnitreeB2 Worker] 执行异常: {e}")
 
+    def _cancel_queued_command(self, command, reason: str) -> None:
+        """Wake callers whose queued work is superseded by stop or close."""
+        if isinstance(command, tuple) and command[0] in {"_PREPARE_NAVIGATION_", "_STOP_"}:
+            _, completed, result = command
+            result.update({"success": False, "error": reason})
+            if command[0] == "_STOP_":
+                self._stop_request = None
+            completed.set()
+        if command in ("stand", "sit") or (
+            isinstance(command, tuple) and command[0] == "_PREPARE_NAVIGATION_"
+        ):
+            self._busy_with_posture = False
+
+    def _discard_pending_commands(self, reason: str) -> None:
+        """Called with _command_lock held; the worker only removes items."""
+        import queue
+
+        while True:
+            try:
+                command = self._cmd_queue.get_nowait()
+            except queue.Empty:
+                return
+            self._cancel_queued_command(command, reason)
+
+    def _execute_stop_request(self, command) -> None:
+        _, completed, result = command
+        try:
+            if self._sidecar_conn is not None:
+                reply = self._execute_sidecar_command("stop")
+                if not reply["ok"]:
+                    raise RuntimeError(f"SDK 停止失败：{reply}")
+                ret = reply["return"]
+            else:
+                ret = self._sport_client.Move(0.0, 0.0, 0.0)
+                if ret != 0:
+                    raise RuntimeError(f"SDK 停止失败：return={ret}")
+            self._last_velocity = (0.0, 0.0, 0.0)
+            self._last_velocity_at = __import__("time").monotonic()
+            self._last_move_return = ret
+            result.update({"success": True, "return": ret})
+        except Exception as exc:  # noqa: BLE001
+            self._last_worker_error = str(exc)
+            self._initialized = False
+            result.update({"success": False, "error": str(exc)})
+            control_logger.error("停止执行失败，控制适配器已标记为不可用：{}", exc)
+            if self._sidecar_conn is not None:
+                # Terminal cleanup is a further stop attempt, not a success
+                # fallback: the failed runtime stop is still returned as error.
+                self._sidecar_conn.close()
+        finally:
+            with self._command_lock:
+                self._stop_request = None
+                self._busy_with_posture = False
+                completed.set()
+
+    async def stop(self) -> None:
+        """Latch a priority stop and wait for the SDK result, even during posture work."""
+        import threading
+
+        with self._command_lock:
+            if not self.is_ready() or self._sport_client is None:
+                raise RuntimeError("UnitreeB2 适配器未就绪，无法确认停止")
+            if self._stop_request is None:
+                completed, result = threading.Event(), {}
+                self._discard_pending_commands("命令已被停止请求取消")
+                self._stop_request = (completed, result)
+                self._cmd_queue.put_nowait(("_STOP_", completed, result))
+            else:
+                completed, result = self._stop_request
+
+        if not await asyncio.to_thread(completed.wait, UNITREE_STOP_TIMEOUT_S):
+            # Keep the stop latched: later motion must not overwrite it.
+            raise RuntimeError("等待 SDK 停止确认超时，停止请求仍保留")
+        if not result["success"]:
+            raise RuntimeError(result["error"])
+
     def _execute_sidecar_command(self, command) -> dict:
         connection = self._sidecar_conn
         process = self._sidecar_process
         if connection is None or process is None or not process.is_alive():
             raise RuntimeError("Unitree B2 独立控制进程未运行")
-        connection.send(command)
-        if not connection.poll(2.5):
-            raise RuntimeError(f"Unitree B2 独立控制进程响应超时：{command!r}")
-        reply = connection.recv()
-        if not isinstance(reply, dict):
-            raise RuntimeError(f"Unitree B2 独立控制进程响应无效：{reply!r}")
-        return reply
+        try:
+            connection.send(command)
+            if not connection.poll(2.5):
+                raise RuntimeError(f"Unitree B2 独立控制进程响应超时：{command!r}")
+            reply = connection.recv()
+            if not isinstance(reply, dict):
+                raise RuntimeError(f"Unitree B2 独立控制进程响应无效：{reply!r}")
+            return reply
+        except (EOFError, OSError, RuntimeError):
+            # Without request IDs, a late reply after timeout cannot safely be
+            # attributed to the next command. Disconnect so the child stops.
+            self._initialized = False
+            connection.close()
+            raise
 
     def _record_sidecar_result(self, command, reply: dict) -> None:
         if not reply.get("ok"):
@@ -543,30 +632,22 @@ class UnitreeB2Adapter(BaseRobotAdapter):
 
     async def prepare_navigation_motion(self) -> dict:
         """Arm B2 walking mode in the SDK worker before accepting a nav goal."""
-        if not self._initialized or self._sport_client is None:
-            raise RuntimeError("UnitreeB2 适配器未就绪")
-        if self._motion_mode_enabled:
-            return self._last_motion_prepare_result or {"success": True}
-        if self._busy_with_posture:
-            raise RuntimeError("UnitreeB2 正在执行其他姿态命令")
-
-        import queue
         import threading
 
-        self._busy_with_posture = True
-        try:
-            while not self._cmd_queue.empty():
-                self._cmd_queue.get_nowait()
-        except queue.Empty:
-            pass
-
-        completed = threading.Event()
-        result: dict = {}
-        try:
+        with self._command_lock:
+            if not self.is_ready() or self._sport_client is None:
+                raise RuntimeError("UnitreeB2 适配器未就绪")
+            if self._stop_request is not None:
+                raise RuntimeError("停止请求尚未完成，拒绝导航准备")
+            if self._motion_mode_enabled:
+                return self._last_motion_prepare_result or {"success": True}
+            if self._busy_with_posture:
+                raise RuntimeError("UnitreeB2 正在执行其他姿态命令")
+            self._discard_pending_commands("命令已被导航准备替代")
+            self._busy_with_posture = True
+            completed = threading.Event()
+            result: dict = {}
             self._cmd_queue.put_nowait(("_PREPARE_NAVIGATION_", completed, result))
-        except queue.Full as exc:
-            self._busy_with_posture = False
-            raise RuntimeError("UnitreeB2 导航运动模式准备队列已满") from exc
 
         finished = await asyncio.to_thread(completed.wait, 6.0)
         if not finished:
@@ -579,116 +660,50 @@ class UnitreeB2Adapter(BaseRobotAdapter):
             )
         return result
 
+    def _enqueue_latest_command(self, command) -> None:
+        with self._command_lock:
+            if not self.is_ready() or self._sport_client is None:
+                raise RuntimeError("UnitreeB2 适配器未就绪")
+            if self._stop_request is not None:
+                raise RuntimeError("停止请求尚未完成，拒绝新动作")
+            if self._busy_with_posture:
+                logger.debug("[UnitreeB2] 正在执行姿态命令，忽略命令: {}", command)
+                return
+            self._discard_pending_commands("命令已被更新的动作替代")
+            if command in ("stand", "sit"):
+                self._busy_with_posture = True
+            self._cmd_queue.put_nowait(command)
+
     async def send_command(self, cmd: str, *, vx: Optional[float] = None, vyaw: Optional[float] = None) -> None:
-        """
-        通过 SportClient 发送控制命令。
-
-        Args:
-            cmd: 动作名（forward/backward/left/right/stop/stand/sit）
-            vx:   可选速度覆盖（m/s）。传入时覆盖适配器默认 self._vx。
-            vyaw: 可选速度覆盖（rad/s）。传入时覆盖适配器默认 self._vyaw。
-        """
-        if not self._initialized or self._sport_client is None:
-            logger.warning(f"[UnitreeB2] 适配器未就绪，忽略命令: {cmd}")
+        """Queue the latest command; stop always uses the acknowledged priority path."""
+        if cmd == "stop":
+            await self.stop()
             return
-
-        import queue
-
-        if cmd in ("stand", "sit"):
-            # ── 姿态命令：特殊处理 ─────────────────────────────────────
-            # 若正在执行另一个姿态命令，忽略
-            if self._busy_with_posture:
-                logger.debug(f"[UnitreeB2] 正在执行姿态命令，忽略: {cmd}")
-                return
-            # 提前占位标志，消灭 race window
-            self._busy_with_posture = True
-            # 清空队列中积压的运动命令，确保姿态命令能顺利入队
-            try:
-                while not self._cmd_queue.empty():
-                    self._cmd_queue.get_nowait()
-            except queue.Empty:
-                pass
-            # 阻塞入队（maxsize=1，已清空，一定成功）
-            try:
-                self._cmd_queue.put_nowait(cmd)
-                logger.info(f"[UnitreeB2] 姿态命令已入队: {cmd}")
-            except queue.Full:
-                # 意外：重置标志防止死锁
-                self._busy_with_posture = False
-                logger.warning(f"[UnitreeB2] 姿态命令入队失败，队列仍满: {cmd}")
-        else:
-            # ── 运动/停止命令：若姿态命令执行中则忽略 ──────────────────
-            if self._busy_with_posture:
-                logger.debug(f"[UnitreeB2] 正在执行姿态命令，忽略运动命令: {cmd}")
-                return
-            try:
-                # 清空积压，始终只执行最新命令
-                while not self._cmd_queue.empty():
-                    self._cmd_queue.get_nowait()
-            except queue.Empty:
-                pass
-            try:
-                # 若传入了速度覆盖，将命令转换为 velocity 元组格式入队
-                if vx is not None or vyaw is not None:
-                    _vx   = vx   if vx   is not None else self._vx
-                    _vyaw = vyaw if vyaw is not None else self._vyaw
-                    if cmd == "forward":
-                        entry = ("velocity", _vx, 0.0, 0.0)
-                    elif cmd == "backward":
-                        entry = ("velocity", -_vx, 0.0, 0.0)
-                    elif cmd == "left":
-                        entry = ("velocity", 0.0, 0.0, _vyaw)
-                    elif cmd == "right":
-                        entry = ("velocity", 0.0, 0.0, -_vyaw)
-                    else:
-                        entry = cmd  # stop 等命令不受速度覆盖影响
-                    self._cmd_queue.put_nowait(entry)
-                    logger.debug(f"[UnitreeB2] 速度覆盖命令入队: {entry}")
-                else:
-                    self._cmd_queue.put_nowait(cmd)
-                    logger.debug(f"[UnitreeB2] 已放入后台队列: {cmd}")
-            except queue.Full:
-                logger.warning(f"[UnitreeB2] 队列已满，丢弃命令: {cmd}")
+        entry = cmd
+        if vx is not None or vyaw is not None:
+            speed = vx if vx is not None else self._vx
+            yaw = vyaw if vyaw is not None else self._vyaw
+            if cmd == "forward":
+                entry = ("velocity", speed, 0.0, 0.0)
+            elif cmd == "backward":
+                entry = ("velocity", -speed, 0.0, 0.0)
+            elif cmd == "left":
+                entry = ("velocity", 0.0, 0.0, yaw)
+            elif cmd == "right":
+                entry = ("velocity", 0.0, 0.0, -yaw)
+        self._enqueue_latest_command(entry)
 
     async def send_velocity(self, vx: float, vy: float, vyaw: float) -> None:
-        """
-        发送连续速度控制命令。
-
-        Args:
-            vx: 前进/后退速度（m/s），范围 -0.6 ~ 0.6
-            vy: 横向平移速度（m/s），范围 -0.4 ~ 0.4
-            vyaw: 偏航转速（rad/s），范围 -0.8 ~ 0.8
-        """
-        if not self._initialized or self._sport_client is None:
-            logger.warning(f"[UnitreeB2] 适配器未就绪，忽略速度命令: vx={vx}, vy={vy}, vyaw={vyaw}")
+        """Zero velocity has the same priority and confirmation as explicit stop."""
+        if vx == 0.0 and vy == 0.0 and vyaw == 0.0:
+            await self.stop()
             return
-
-        # 检查是否正在执行姿态命令
-        if self._busy_with_posture:
-            logger.debug(f"[UnitreeB2] 正在执行姿态命令，忽略速度命令")
-            return
-
-        import queue
-
-        # 限制速度范围
-        vx = max(-0.6, min(0.6, vx))
-        vy = max(-0.4, min(0.4, vy))
-        vyaw = max(-0.8, min(0.8, vyaw))
-
-        try:
-            # 清空积压，始终只执行最新命令
-            while not self._cmd_queue.empty():
-                self._cmd_queue.get_nowait()
-        except queue.Empty:
-            pass
-
-        # 创建一个特殊的命令格式来传递速度参数
-        try:
-            # 使用元组格式传递速度参数
-            self._cmd_queue.put_nowait(("velocity", vx, vy, vyaw))
-            logger.debug(f"[UnitreeB2] 速度命令已放入后台队列: vx={vx:.2f}, vy={vy:.2f}, vyaw={vyaw:.2f}")
-        except queue.Full:
-            logger.warning(f"[UnitreeB2] 队列已满，丢弃速度命令")
+        self._enqueue_latest_command((
+            "velocity",
+            max(-0.6, min(0.6, vx)),
+            max(-0.4, min(0.4, vy)),
+            max(-0.8, min(0.8, vyaw)),
+        ))
 
 
 

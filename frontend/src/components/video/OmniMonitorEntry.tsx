@@ -9,7 +9,7 @@ export function OmniMonitorEntry({ onOpen }: OmniMonitorEntryProps) {
     <button
       type="button"
       onClick={onOpen}
-      className="group absolute z-30 flex flex-col items-center justify-center bg-black/80 border-2 border-white/25 hover:border-white/60 rounded-xl shadow-[0_4px_30px_rgba(0,0,0,0.8)] transition-all"
+      className="console-omni-entry group absolute z-30 flex flex-col items-center justify-center bg-black/80 border-2 border-white/25 hover:border-white/60 rounded-xl shadow-[0_4px_30px_rgba(0,0,0,0.8)] transition-all"
       style={{ bottom: '108px', right: '16px', width: '120px', height: '120px' }}
       title="开启全方位监控（4 路画面）"
     >

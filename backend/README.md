@@ -6,7 +6,7 @@ BotDog 机器人控制系统的后端服务，运行于 **ARM64 主机**，负�
 
 | 组件 | 版本/说明 |
 |------|-----------|
-| Python | 3.12+ |
+| Python | 3.10.x（Jetson 已验证；CI 同版本） |
 | FastAPI | Web 框架 + API 路由 |
 | uvicorn | ASGI 服务器 |
 | SQLAlchemy 2.0 | 异步 ORM |

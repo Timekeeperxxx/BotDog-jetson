@@ -28,6 +28,7 @@ import { ConsolePage } from './components/pages/ConsolePage';
 import { GuardPage } from './components/pages/GuardPage';
 import { ConfigModal } from './components/modals/ConfigModal';
 import type { VideoProfile } from './components/video/types';
+import './styles/consoleMobile.css';
 
 function buildLocalWhepUrl(path: string): string {
   return `http://${window.location.hostname}:8889/${path}/whep`;
@@ -164,8 +165,7 @@ export default function IndustrialConsoleComplete() {
   const currentWhep = whepConfig[whepStatus.status] || whepConfig.disconnected;
 
   return (
-    <div className="flex h-screen w-full bg-[#050506] text-white font-sans overflow-hidden antialiased selection:bg-white selection:text-black">
-      <AuthStatusBar variant="overlay" />
+    <div className="botdog-console-shell flex h-screen w-full bg-[#050506] text-white font-sans overflow-hidden antialiased selection:bg-white selection:text-black">
       <Sidebar
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -178,7 +178,7 @@ export default function IndustrialConsoleComplete() {
       />
 
       {/* 主视图 */}
-      <main className="flex-1 flex flex-col min-w-0 relative">
+      <main className="console-workspace flex-1 flex flex-col min-w-0 relative">
         <h1 className="sr-only">BotDog 智能巡检控制台</h1>
         <TopHeader
           isUiFullscreen={isUiFullscreen}
@@ -261,6 +261,7 @@ export default function IndustrialConsoleComplete() {
           <EvidencePanel evidence={evidence} latestEvidenceId={alerts[0]?.evidence_id} />
         )}
       </main>
+      <AuthStatusBar variant="overlay" />
 
       {/* 配置面板模态框 */}
       <ConfigModal isOpen={showConfigPanel} onClose={() => setShowConfigPanel(false)} />

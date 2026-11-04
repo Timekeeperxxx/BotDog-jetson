@@ -8,6 +8,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+from backend import video_probe
 
 
 def _load_healthcheck_module() -> ModuleType:
@@ -21,7 +22,8 @@ def _load_healthcheck_module() -> ModuleType:
 
 
 @pytest.fixture
-def healthcheck() -> ModuleType:
+def healthcheck(monkeypatch) -> ModuleType:
+    monkeypatch.setattr(video_probe, "inspect_source_network", lambda url: video_probe.NetworkResult(True, "fake link"))
     return _load_healthcheck_module()
 
 
@@ -35,7 +37,7 @@ def test_probe_accepts_video_stream(healthcheck: ModuleType, monkeypatch: pytest
     def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess([], 0, stdout=json.dumps(payload), stderr="")
 
-    monkeypatch.setattr(healthcheck.subprocess, "run", fake_run)
+    monkeypatch.setattr(video_probe.subprocess, "run", fake_run)
 
     result = healthcheck.probe_rtsp_video("rtsp://camera/", timeout_seconds=8)
 
@@ -47,7 +49,7 @@ def test_probe_rejects_port_without_video(healthcheck: ModuleType, monkeypatch: 
     def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess([], 0, stdout='{"streams": []}', stderr="")
 
-    monkeypatch.setattr(healthcheck.subprocess, "run", fake_run)
+    monkeypatch.setattr(video_probe.subprocess, "run", fake_run)
 
     result = healthcheck.probe_rtsp_video("rtsp://camera/", timeout_seconds=8)
 
@@ -59,7 +61,7 @@ def test_probe_reports_timeout(healthcheck: ModuleType, monkeypatch: pytest.Monk
     def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(cmd="ffprobe", timeout=8)
 
-    monkeypatch.setattr(healthcheck.subprocess, "run", fake_run)
+    monkeypatch.setattr(video_probe.subprocess, "run", fake_run)
 
     result = healthcheck.probe_rtsp_video("rtsp://camera/", timeout_seconds=8)
 

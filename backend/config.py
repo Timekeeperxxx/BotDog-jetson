@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     AI_TORCH_NUM_THREADS: int = 2
     AI_OPENCV_NUM_THREADS: int = 2
     AI_FFMPEG_RETRY_MIN_SECONDS: float = 1.0
-    AI_FFMPEG_RETRY_MAX_SECONDS: float = 3.0
+    AI_FFMPEG_RETRY_MAX_SECONDS: float = 30.0
     # FFmpeg 正常软件解码 640x360 RTSP 时常驻内存远低于此值；超过上限说明
     # 解码/滤镜输出发生异常积压，主动重拉流，避免挤占导航所需内存。
     AI_FFMPEG_MAX_RSS_MB: int = 512

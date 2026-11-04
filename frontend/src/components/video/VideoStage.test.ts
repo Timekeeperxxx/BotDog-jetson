@@ -12,6 +12,7 @@ describe('VideoStage AI overlay preference', () => {
     expect(getInitialAiOverlayVisibility(storage)).toEqual({
       helmet: true,
       weapon: true,
+      package: true,
       pose: true,
       face: true,
       tracking: true,
@@ -27,6 +28,7 @@ describe('VideoStage AI overlay preference', () => {
     expect(getInitialAiOverlayVisibility(storage)).toEqual({
       helmet: true,
       weapon: false,
+      package: true,
       pose: false,
       face: true,
       tracking: false,
@@ -41,6 +43,7 @@ describe('VideoStage AI overlay preference', () => {
     expect(getInitialAiOverlayVisibility(storage)).toEqual({
       helmet: false,
       weapon: false,
+      package: false,
       pose: false,
       face: false,
       tracking: false,
@@ -50,5 +53,18 @@ describe('VideoStage AI overlay preference', () => {
   it('reports whether any layer remains visible', () => {
     expect(hasVisibleAiOverlayLayer({ helmet: false, weapon: false, pose: false, face: false, tracking: false })).toBe(false)
     expect(hasVisibleAiOverlayLayer({ helmet: false, weapon: true, pose: false, face: false, tracking: false })).toBe(true)
+  })
+
+  it('keeps an existing hide-all preference when adding the package layer', () => {
+    const saved = JSON.stringify({ helmet: false, weapon: false, pose: false, face: false, tracking: false })
+    const visibility = getInitialAiOverlayVisibility({ getItem: (key) => key === AI_OVERLAY_LAYERS_STORAGE_KEY ? saved : null })
+    expect(visibility).toEqual({ helmet: false, weapon: false, package: false, pose: false, face: false, tracking: false })
+    expect(hasVisibleAiOverlayLayer(visibility)).toBe(false)
+  })
+
+  it('preserves an explicit package preference and recognizes a package-only overlay', () => {
+    const saved = { helmet: false, weapon: false, package: true, pose: false, face: false, tracking: false }
+    expect(getInitialAiOverlayVisibility({ getItem: () => JSON.stringify(saved) })).toEqual(saved)
+    expect(hasVisibleAiOverlayLayer(saved)).toBe(true)
   })
 })

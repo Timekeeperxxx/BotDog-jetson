@@ -3,11 +3,12 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from ...auth.dependencies import require_viewer, require_admin
 from pydantic import BaseModel
 
 from ...database import get_db
 
-router = APIRouter(prefix="/api/v1/network-interfaces", tags=["network_interfaces"])
+router = APIRouter(prefix="/api/v1/network-interfaces", tags=["network_interfaces"], dependencies=[Depends(require_viewer)])
 
 
 class NetworkInterfaceRequest(BaseModel):
@@ -45,7 +46,7 @@ async def list_network_interfaces(db=Depends(get_db)) -> dict:
     return {"interfaces": ifaces, "total": len(ifaces)}
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[Depends(require_admin)])
 async def create_network_interface(
     body: NetworkInterfaceRequest,
     db=Depends(get_db),
@@ -61,7 +62,7 @@ async def create_network_interface(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/{iface_id}")
+@router.put("/{iface_id}", dependencies=[Depends(require_admin)])
 async def update_network_interface(
     iface_id: int,
     body: NetworkInterfaceRequest,
@@ -77,7 +78,7 @@ async def update_network_interface(
     return {"success": True, "interface": result}
 
 
-@router.delete("/{iface_id}")
+@router.delete("/{iface_id}", dependencies=[Depends(require_admin)])
 async def delete_network_interface(
     iface_id: int,
     db=Depends(get_db),

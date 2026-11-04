@@ -17,6 +17,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getApiUrl } from '../config/api';
+import { fetchWithAuth } from '../api/apiFetch';
+import { requestRobotStop } from '../api/controlApi';
 
 // 支持的动作名
 export type RobotCommand =
@@ -57,9 +59,9 @@ const SEND_INTERVAL_MS = 500;
 
 // 控制 API URL
 const CONTROL_URL = getApiUrl('/api/v1/control/command');
-const STOP_URL = getApiUrl('/api/v1/control/stop');
 
 export interface UseRobotControlReturn {
+  stopStatus: 'idle' | 'waiting' | 'confirmed' | 'failed' | 'unconfirmed';
   /** 开始持续发送命令（长按时调用） */
   startCommand: (cmd: RobotCommand, options?: RobotCommandOptions) => void;
   /** 停止发送，立即发 stop（松手时调用） */
@@ -78,6 +80,7 @@ export function useRobotControl(): UseRobotControlReturn {
   const [isControlling, setIsControlling] = useState(false);
   const [lastResult, setLastResult] = useState<ControlAck | null>(null);
   const [currentCmd, setCurrentCmd] = useState<RobotCommand | null>(null);
+  const [stopStatus, setStopStatus] = useState<UseRobotControlReturn['stopStatus']>('idle');
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isControllingRef = useRef(false);
@@ -108,7 +111,11 @@ export function useRobotControl(): UseRobotControlReturn {
     }
   };
 
-  const resultMessage = lastResult ? getResultMessage(lastResult.result) : null;
+  const resultMessage = stopStatus === 'waiting'
+    ? '正在等待机器人停车确认…'
+    : stopStatus === 'unconfirmed'
+      ? '未取得停车确认，请检查设备；停止请求可能仍在处理中'
+      : lastResult ? getResultMessage(lastResult.result) : null;
 
   // ── 清理 interval ──────────────────────────────────────────────────────────
 
@@ -156,21 +163,15 @@ export function useRobotControl(): UseRobotControlReturn {
   const sendStopCommand = useCallback(async () => {
     if (stopSendingRef.current) return;
     stopSendingRef.current = true;
+    setStopStatus('waiting');
+    setLastResult(null);
 
     try {
-      const res = await fetch(STOP_URL, {
-        method: 'POST',
-        signal: AbortSignal.timeout(2000),
-      });
-
-      if (res.ok) {
-        const ack: ControlAck = await res.json();
-        setLastResult(ack);
-      } else {
-        setLastResult({ ack_cmd: 'stop', result: 'REJECTED_ADAPTER_ERROR', latency_ms: 0 });
-      }
+      const ack = await requestRobotStop();
+      setLastResult(ack);
+      setStopStatus(ack.result === 'ACCEPTED' ? 'confirmed' : 'failed');
     } catch {
-      setLastResult({ ack_cmd: 'stop', result: 'REJECTED_ADAPTER_ERROR', latency_ms: 0 });
+      setStopStatus('unconfirmed');
     } finally {
       stopSendingRef.current = false;
     }
@@ -179,6 +180,8 @@ export function useRobotControl(): UseRobotControlReturn {
   // ── startCommand：长按开始持续发送 ────────────────────────────────────────
 
   const startCommand = useCallback((cmd: RobotCommand, options: RobotCommandOptions = {}) => {
+    if (stopSendingRef.current) return;
+    setStopStatus('idle');
     clearInterval_();
 
     isControllingRef.current = true;
@@ -213,8 +216,9 @@ export function useRobotControl(): UseRobotControlReturn {
 
     const handleBeforeUnload = () => {
       if (isControllingRef.current) {
-        // sendBeacon 保证页面卸载时请求能发出
-        navigator.sendBeacon(STOP_URL);
+        // sendBeacon cannot carry the required Bearer header.
+        void fetchWithAuth('/api/v1/control/stop', { method: 'POST', keepalive: true })
+          .catch((error) => console.error('页面离开时未取得停车确认', error));
       }
     };
 
@@ -233,6 +237,7 @@ export function useRobotControl(): UseRobotControlReturn {
   }, [stopCommand, sendStopCommand, clearInterval_]);
 
   return {
+    stopStatus,
     startCommand,
     stopCommand,
     isControlling,

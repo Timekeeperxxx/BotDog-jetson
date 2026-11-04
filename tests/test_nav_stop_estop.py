@@ -389,6 +389,8 @@ def test_control_emergency_stop_clamps_both_navigation_and_direct_adapter(monkey
     class DummyControlService:
         async def force_stop(self):
             calls.append("force_stop")
+            from backend.schemas import ControlAckDTO
+            return ControlAckDTO(ack_cmd="stop", result="ACCEPTED", latency_ms=1)
 
     async def fake_audit_log(*args, **kwargs):
         calls.append("audit")

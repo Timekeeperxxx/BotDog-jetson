@@ -187,6 +187,9 @@ async def test_unitree_velocity_override_keeps_forward_backward_yaw_zero():
     adapter._sport_client = object()
     adapter._busy_with_posture = False
     adapter._cmd_queue = queue.Queue(maxsize=1)
+    adapter._command_lock = threading.Lock()
+    adapter._stop_request = None
+    adapter._sidecar_process = None
     adapter._vx = 0.3
     adapter._vy = 0.25
     adapter._vyaw = 0.5
@@ -215,6 +218,9 @@ def test_unitree_close_stops_motion_in_worker_before_releasing_client():
     adapter._sport_client = client
     adapter._busy_with_posture = False
     adapter._cmd_queue = queue.Queue(maxsize=1)
+    adapter._command_lock = threading.Lock()
+    adapter._stop_request = None
+    adapter._sidecar_process = None
     adapter._worker_thread = threading.Thread(target=adapter._command_worker, daemon=True)
     adapter._worker_thread.start()
 

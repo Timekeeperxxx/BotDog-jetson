@@ -69,9 +69,15 @@ class StateMachine:
         return self._state
 
     @property
+    def heartbeat_age_s(self) -> float | None:
+        """Age of the actual heartbeat, including while E-stop remains latched."""
+        return None if self._last_heartbeat_time == 0 else time.time() - self._last_heartbeat_time
+
+    @property
     def is_connected(self) -> bool:
         """判断 MAVLink 链路是否连通。"""
-        return self._state != SystemState.DISCONNECTED
+        age = self.heartbeat_age_s
+        return age is not None and 0 <= age <= self._heartbeat_timeout
 
     @property
     def can_accept_control(self) -> bool:

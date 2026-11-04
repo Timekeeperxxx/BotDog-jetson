@@ -3,16 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ControlPad } from './ControlPad'
 
 const robotControl = vi.hoisted(() => ({
+  stopStatus: 'idle' as const,
   currentCmd: null as 'forward' | null,
   isControlling: false,
   lastResult: null,
   resultMessage: null,
   startCommand: vi.fn(),
   stopCommand: vi.fn(),
-}))
-
-vi.mock('../hooks/useRobotControl', () => ({
-  useRobotControl: () => robotControl,
 }))
 
 vi.mock('../stores/authStore', () => ({
@@ -30,7 +27,7 @@ describe('ControlPad safety lock', () => {
   })
 
   it('blocks pointer and keyboard commands until control is explicitly enabled', () => {
-    render(<ControlPad />)
+    render(<ControlPad control={robotControl} />)
 
     const forwardButton = screen.getByRole('button', { name: '前进' }) as HTMLButtonElement
     forwardButton.setPointerCapture = vi.fn()
@@ -48,12 +45,12 @@ describe('ControlPad safety lock', () => {
   })
 
   it('stops an active command when control is closed', () => {
-    const { rerender } = render(<ControlPad />)
+    const { rerender } = render(<ControlPad control={robotControl} />)
     fireEvent.click(screen.getByRole('button', { name: '开启控制' }))
 
     robotControl.currentCmd = 'forward'
     robotControl.isControlling = true
-    rerender(<ControlPad />)
+    rerender(<ControlPad control={robotControl} />)
 
     fireEvent.click(screen.getByRole('button', { name: '关闭控制' }))
     expect(robotControl.stopCommand).toHaveBeenCalledTimes(1)

@@ -10,6 +10,7 @@ import { CameraVideo } from './CameraVideo';
 import { OmniMonitorEntry } from './OmniMonitorEntry';
 import { OmniMonitorOverlay } from './OmniMonitorOverlay';
 import { VideoHud } from './VideoHud';
+import { AutoTrackPanel } from '../AutoTrackPanel';
 import type { VideoStageProps } from './types';
 import {
   AI_OVERLAY_LAYERS_STORAGE_KEY,
@@ -103,8 +104,8 @@ export function VideoStage({
   const stageResolutionChip = resolutionChip || (videoResolution.height ? `${videoResolution.height}p` : '--');
 
   return (
-    <div className="flex-1 flex min-h-0 relative">
-      <div className={`flex-1 bg-black relative overflow-hidden transition-all duration-300 ${isUiFullscreen ? 'fixed inset-0 z-[100]' : 'border-r border-white/20'}`}>
+    <div className={`console-video-stage flex-1 flex min-h-0 ${isUiFullscreen ? 'is-fullscreen fixed inset-0 z-[100]' : 'relative'}`}>
+      <div className={`console-video-viewport flex-1 bg-black relative overflow-hidden transition-all duration-300 ${isUiFullscreen ? '' : 'border-r border-white/20'}`}>
         <CameraVideo videoRef={videoRef} />
         <PoseActionWarning actions={trackOverlay?.active_actions} />
         {trackOverlay && mainOverlayEnabled && (
@@ -115,7 +116,7 @@ export function VideoStage({
           />
         )}
         {whepStatus.status !== 'connected' && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/88 z-5">
+          <div className="console-video-error absolute inset-0 flex flex-col items-center justify-center bg-slate-900/88 z-5">
             <div className="text-5xl mb-4 opacity-50">
               {whepStatus.status === 'connecting' ? (
                 <div className="w-12 h-12 rounded-full border-4 border-slate-200/20 border-t-slate-200 mx-auto" style={{ animation: 'videoSpin 1s linear infinite' }} />
@@ -127,7 +128,7 @@ export function VideoStage({
             </div>
             <div className="text-lg font-bold text-slate-200 mb-2">视频流 {whepStatus.status === 'connecting' ? '连接中...' : whepStatus.error || '未连接'}</div>
             {whepStatus.error && (
-              <div className="text-sm text-red-500 mb-4 px-4 py-2 bg-red-500/10 rounded">{whepStatus.error}</div>
+              <div className="console-video-error-detail text-sm text-red-500 mb-4 px-4 py-2 bg-red-500/10 rounded">{whepStatus.error}</div>
             )}
             <div className="text-xs text-slate-500">{isConnected ? '等待WHEP连接...' : '等待后端连接...'}</div>
             <button onClick={connectWhep} className="mt-4 px-4 py-2 text-[10px] font-black uppercase tracking-widest border border-white/20 text-white/80 hover:text-white hover:border-white/60 transition-all">重新连接</button>
@@ -136,7 +137,7 @@ export function VideoStage({
 
         <OmniMonitorEntry onOpen={() => setIsOmniOpen(true)} />
 
-        <div className="absolute inset-0 pointer-events-none p-6">
+        <div className="console-video-crosshair absolute inset-0 pointer-events-none p-6">
           <div className="h-full flex flex-col justify-between items-center relative">
             <div className="w-full flex justify-between">
               <div className="w-6 h-6 border-t-2 border-l-2 border-white/40" />
@@ -153,7 +154,8 @@ export function VideoStage({
           </div>
         </div>
 
-        <VideoHud
+        <div className="console-video-hud">
+          <VideoHud
           resolutionChip={stageResolutionChip}
           currentWhep={currentWhep}
           whepStatus={whepStatus}
@@ -168,16 +170,23 @@ export function VideoStage({
           connectWs={connectWs}
           connectWhep={connectWhep}
           isMissionRunning={isMissionRunning}
-        />
+          />
+        </div>
+        <div className="console-video-mobile-status">
+          <span>{stageResolutionChip}</span>
+          <span>{isConnected ? '链路在线' : '链路离线'}</span>
+          <span>{videoLatencyMs !== null ? `${videoLatencyMs} ms` : '延迟 --'}</span>
+        </div>
 
         <CameraControlPanel
           open={isCameraControlOpen}
           onClose={() => setIsCameraControlOpen(false)}
         />
+      </div>
 
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-4xl px-6 z-30 pointer-events-auto">
-          <div className="bg-black border-2 border-white/30 p-3 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,1)] flex items-center justify-between px-8">
-            <div className="flex items-center space-x-5 text-white">
+        <div className="console-video-toolbar absolute bottom-8 left-1/2 -translate-x-1/2 w-full max-w-4xl px-6 z-30 pointer-events-auto">
+          <div className="console-video-toolbar-content bg-black border-2 border-white/30 p-3 rounded-xl shadow-[0_20px_50px_rgba(0,0,0,1)] flex items-center justify-between px-8">
+            <div className="console-video-actions flex items-center space-x-5 text-white">
               <button onClick={toggleFullscreen} className="p-2 hover:bg-white hover:text-black rounded-lg transition-all" title={isUiFullscreen ? '退出全屏' : '全屏'}>
                 {isUiFullscreen ? <Minimize2 size={22} /> : <Maximize2 size={22} />}
               </button>
@@ -300,7 +309,7 @@ export function VideoStage({
                 )}
               </div>
             </div>
-            <div className="flex items-center space-x-3">
+            <div className="console-video-mission flex items-center space-x-3">
               <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded border ${
                 isMissionRunning
                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
@@ -322,7 +331,11 @@ export function VideoStage({
             </div>
           </div>
         </div>
-      </div>
+
+      <details className="console-mobile-tracking">
+        <summary>自动跟踪</summary>
+        <AutoTrackPanel {...autoTrack} isMissionRunning={isMissionRunning} />
+      </details>
 
       <OmniMonitorOverlay
         open={isOmniOpen}

@@ -14,7 +14,8 @@
 import { useState } from 'react'
 import { LogOut, User } from 'lucide-react'
 import { clearAuthState, useAuthState } from '../stores/authStore'
-import { getApiUrl } from '../config/api'
+import { requestRobotStop } from '../api/controlApi'
+import { logout } from '../api/auth'
 import { ChangePasswordModal } from '../admin/modals/ChangePasswordModal'
 
 const ROLE_LABEL: Record<string, string> = {
@@ -30,12 +31,10 @@ interface Props {
 
 async function tryStopRobot(): Promise<void> {
   try {
-    await fetch(getApiUrl('/api/v1/control/stop'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ x: 0, y: 0, z: 0, r: 0 }),
-    })
-  } catch {
+    const ack = await requestRobotStop()
+    if (ack.result !== 'ACCEPTED') console.warn('退出前未确认停车', ack.result)
+  } catch (error) {
+    console.warn('退出前未取得停车确认', error)
     // 退出不依赖 stop 成功，Watchdog 作为兜底
   }
 }
@@ -43,6 +42,7 @@ async function tryStopRobot(): Promise<void> {
 export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
   const auth = useAuthState()
   const [loggingOut, setLoggingOut] = useState(false)
+  const [logoutError, setLogoutError] = useState<string | null>(null)
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
 
   if (!auth.accessToken && !auth.authBypass) return null
@@ -54,6 +54,13 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
     setLoggingOut(true)
     // 退出前发 stop，失败不阻塞
     await tryStopRobot()
+    try {
+      await logout()
+    } catch {
+      setLogoutError('退出失败，请检查连接后重试')
+      setLoggingOut(false)
+      return
+    }
     clearAuthState('已主动退出登录')
     if (onLogout) {
       onLogout()
@@ -94,6 +101,7 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
           <LogOut size={10} />
           {loggingOut ? '退出中' : '退出'}
         </button>
+        {logoutError && <span role="alert" className="text-red-300">{logoutError}</span>}
         {modalOpen && <ChangePasswordModal force={forceChangePassword} onClose={() => setChangePasswordOpen(false)} />}
       </div>
     )
@@ -123,6 +131,7 @@ export function AuthStatusBar({ onLogout, variant = 'bar' }: Props) {
         <LogOut size={12} />
         {loggingOut ? '退出中' : '退出登录'}
       </button>
+      {logoutError && <span role="alert" className="text-xs text-red-300">{logoutError}</span>}
       {modalOpen && <ChangePasswordModal force={forceChangePassword} onClose={() => setChangePasswordOpen(false)} />}
     </div>
   )

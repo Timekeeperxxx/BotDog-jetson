@@ -83,7 +83,9 @@ def test_existing_database_adds_timing_without_losing_records(monkeypatch):
     asyncio.run(check())
 
 
-def test_all_alerts_get_delivery_timing_except_blocked_and_cleared():
+def test_all_alerts_get_delivery_timing_except_blocked_and_cleared(monkeypatch):
+    from backend.config import settings
+    monkeypatch.setattr(settings, 'WEAPON_ENABLED', True)
     from backend.models import AnomalyEvidence
     async def check():
         engine = create_async_engine('sqlite+aiosqlite:///:memory:')

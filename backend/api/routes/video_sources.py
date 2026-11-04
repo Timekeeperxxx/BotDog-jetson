@@ -3,11 +3,12 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from ...auth.dependencies import require_viewer, require_admin
 from pydantic import BaseModel
 
 from ...database import get_db
 
-router = APIRouter(prefix="/api/v1/video-sources", tags=["video_sources"])
+router = APIRouter(prefix="/api/v1/video-sources", tags=["video_sources"], dependencies=[Depends(require_viewer)])
 
 
 class VideoSourceRequest(BaseModel):
@@ -61,7 +62,7 @@ async def list_active_video_sources(db=Depends(get_db)) -> dict:
     return {"sources": sources, "total": len(sources)}
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[Depends(require_admin)])
 async def create_video_source(
     body: VideoSourceRequest,
     db=Depends(get_db),
@@ -77,7 +78,7 @@ async def create_video_source(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/{source_id}")
+@router.put("/{source_id}", dependencies=[Depends(require_admin)])
 async def update_video_source(
     source_id: int,
     body: VideoSourceRequest,
@@ -93,7 +94,7 @@ async def update_video_source(
     return {"success": True, "source": result}
 
 
-@router.delete("/{source_id}")
+@router.delete("/{source_id}", dependencies=[Depends(require_admin)])
 async def delete_video_source(
     source_id: int,
     db=Depends(get_db),

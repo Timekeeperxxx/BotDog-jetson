@@ -25,6 +25,9 @@ export interface HealthResponse {
   status: 'healthy' | 'degraded' | 'offline'
   mavlink_connected: boolean
   uptime: number
+  ready?: boolean
+  readiness_status?: 'ready' | 'standby' | 'degraded'
+  components?: Record<string, { ready: boolean; required: boolean; status: string; message: string }>
 }
 
 export interface SystemInfoItem {
@@ -189,6 +192,8 @@ export interface EvidenceFilters {
 export function mapHealthStatus(status?: string | null): ModuleHealthState {
   if (status === 'healthy' || status === 'connected' || status === 'ready') return 'normal'
   if (status === 'degraded') return 'degraded'
+  if (status === 'blocked') return 'degraded'
+  if (status === 'standby' || status === 'waiting' || status === 'disabled') return 'waiting'
   if (status === 'offline' || status === 'failed' || status === 'error') return 'failed'
   if (status === 'waiting' || status === 'connecting' || status === 'initializing') return 'waiting'
   return 'todo'

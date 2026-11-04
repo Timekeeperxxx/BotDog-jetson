@@ -6,8 +6,10 @@ import { LogPanel } from '../logs/LogPanel';
 import type { AlertEvent, AIStatus } from '../../types/event';
 import type { LogEntry, SystemStatus } from '../../hooks/useBotDogWebSocket';
 import type { WhepState } from '../../hooks/useWhepVideo';
+import type { UseRobotControlReturn } from '../../hooks/useRobotControl';
 
 export interface ConsoleRightPanelProps {
+  control: UseRobotControlReturn;
   logs: LogEntry[];
   isLogExpanded: boolean;
   onToggleLogExpanded: () => void;
@@ -30,6 +32,7 @@ export interface ConsoleRightPanelProps {
 }
 
 export function ConsoleRightPanel({
+  control,
   logs,
   isLogExpanded,
   onToggleLogExpanded,
@@ -51,7 +54,7 @@ export function ConsoleRightPanel({
   connectWhep,
 }: ConsoleRightPanelProps) {
   return (
-    <aside className="h-full min-h-0 w-64 shrink-0 overflow-hidden bg-black flex flex-col shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
+    <aside className="console-right-panel h-full min-h-0 w-64 shrink-0 overflow-hidden bg-black flex flex-col shadow-[-10px_0_30px_rgba(0,0,0,0.5)]">
       <LogPanel
         logs={logs}
         isExpanded={isLogExpanded}
@@ -59,9 +62,10 @@ export function ConsoleRightPanel({
         sidebarLogEndRef={sidebarLogEndRef}
       />
 
-      <div className="border-t border-white/20 bg-zinc-950 shrink-0">
+      <div className="console-control-section border-t border-white/20 bg-zinc-950 shrink-0">
         <div className="px-3 py-2">
           <ControlPad
+            control={control}
             key={systemStatus?.status === 'E_STOP_TRIGGERED' ? 'estop-locked' : 'control-ready'}
             isDisabled={systemStatus?.status === 'E_STOP_TRIGGERED'}
             bottomCenterSlot={
@@ -84,7 +88,7 @@ export function ConsoleRightPanel({
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <div className="console-alert-section flex-1 min-h-0 flex flex-col overflow-hidden">
         <div className="p-4 border-b border-white/20 flex items-center justify-between bg-black shrink-0">
           <div className="flex items-center space-x-3 font-black text-white">
             <Camera size={16} />

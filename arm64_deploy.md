@@ -26,7 +26,7 @@
 建议部署顺序：
 
 1. 基础环境准备
-2. Python 3.12 安装
+2. Python 3.10 安装
 3. 后端启动
 4. 前端启动
 5. 模拟模式跑通
@@ -79,62 +79,30 @@ sudo apt install -y \
 
 ---
 
-## 4. Python 3.12 安装
+## 4. Python 3.10 环境
 
-项目要求 Python 3.12+。
-如果系统默认只有 3.10，不建议替换系统 Python，而是额外安装 Python 3.12 与系统版本并存。
+Jetson 当前已验证 Python 3.10.12。部署和 CI 使用 3.10.x，不需要为了运行本项目替换系统 Python 或源码安装 3.12。
 
-### 4.1 优先检查系统仓库是否有 3.12
-
-```bash
-sudo apt update
-apt-cache policy python3.12
-```
-
-如果有候选版本，直接安装：
+### 4.1 检查并安装系统虚拟环境支持
 
 ```bash
-sudo apt install -y python3.12 python3.12-venv python3.12-dev
-python3.12 --version
+python3.10 --version
+sudo apt install -y python3.10-venv python3.10-dev logrotate
 ```
 
-### 4.2 如果系统仓库没有，源码安装
+### 4.2 区分 CPU 回归环境与 Jetson 运行环境
+
+CPU 回归使用 `requirements-ci.txt`，不需要真实机器人、ROS、CUDA 或 TensorRT。
+Jetson AI 运行环境沿用与当前 JetPack 匹配的 GPU 包；实际 L4T、TensorRT 和 AI 包版本记录在部署清单中。
+
+### 4.3 pip 命令
 
 ```bash
-cd /tmp
-wget https://www.python.org/ftp/python/3.12.8/Python-3.12.8.tgz
-tar -xzf Python-3.12.8.tgz
-cd Python-3.12.8
-./configure --prefix=/usr/local --with-ensurepip=install
-make -j2
-sudo make altinstall
-python3.12 --version
+python3.10 -m ensurepip --upgrade
+python3.10 -m pip --version
 ```
 
-> 注意：一定要使用 `make altinstall`，不要替换系统默认 `python3`。
-
-### 4.3 pip 缺失时的处理
-
-如果出现：
-
-```bash
-bash: pip: command not found
-```
-
-请用下面方式处理：
-
-```bash
-python3.12 -m ensurepip --upgrade
-python3.12 -m pip --version
-```
-
-后续尽量使用：
-
-```bash
-python -m pip install ...
-```
-
-不要依赖裸 `pip` 命令。
+安装依赖时始终使用目标虚拟环境的 `python -m pip`。
 
 ---
 
@@ -142,7 +110,7 @@ python -m pip install ...
 
 ```bash
 cd ~/Code/Project/BOTDOG/BotDog
-python3.12 -m venv .venv
+python3.10 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip setuptools wheel
 python -m pip install -r requirements.txt
@@ -243,11 +211,10 @@ vite: not found
 cd ~/Code/Project/BOTDOG/BotDog/frontend
 node -v
 npm -v
-rm -rf node_modules package-lock.json
-npm install
+npm ci
 ```
 
-项目建议 Node.js 18+，更稳是 20。
+项目与 CI 使用 Node.js 24.x，版本记录在 `.node-version`。
 
 ### 7.2 配置前端环境变量
 
@@ -315,7 +282,7 @@ python -B -m pytest
 
 达到以下条件，才算具备“可以开始真机联调”的前提：
 
-- Python 3.12 环境已稳定
+- Python 3.10 环境已稳定
 - 后端正常运行
 - 前端正常运行
 - 数据库初始化正常
@@ -859,7 +826,7 @@ python backend/scripts/validate_environment.py
 ### 可以认为已经达到的
 
 - 前后端基本运行正常
-- Python 3.12 环境已就绪
+- Python 3.10 环境已就绪
 - 数据库能初始化
 - 模拟模式可运行
 - CycloneDDS Python 绑定可安装
@@ -897,8 +864,8 @@ python backend/scripts/validate_environment.py
 处理：
 
 ```bash
-python3.12 -m ensurepip --upgrade
-python3.12 -m pip --version
+python3.10 -m ensurepip --upgrade
+python3.10 -m pip --version
 ```
 
 ### 23.2 `ModuleNotFoundError: No module named 'backend'`
@@ -1008,7 +975,7 @@ cmake --build . --target install -j$(nproc)
 
 ### 阶段 A：基础环境
 
-1. 安装 Python 3.12
+1. 安装 Python 3.10
 2. 建虚拟环境
 3. 安装后端依赖
 4. 初始化数据库
@@ -1143,3 +1110,18 @@ bash scripts/run-pipeline.sh
 3. 完成 `stand/stop` 首次真机测试
 4. 下载 YOLO 模型并验证 AI Worker
 5. 安装 MediaMTX 并跑通视频链路
+
+
+## 回归、日志维护与部署清单
+
+完整命令见 [README 回归与部署记录](README.md#回归与部署记录)。每次更新应执行后端模拟回归、前端测试和构建，保存补丁及部署清单，再检查 `/healthz` 与 `/readyz`。
+`/healthz` 返回进程存活；设备未接入时 `/readyz` 返回 503 是正确的未就绪结果。
+
+```bash
+sudo bash scripts/install-logrotate.sh
+systemctl status botdog-logrotate.timer
+.venv/bin/python scripts/record-deployment.py --output artifacts/deployments/latest.json
+```
+
+日志轮转与容量清理以项目用户运行，不需要停止后端、导航或视频服务。
+清单可识别 commit 未变化时的本地源码改动和模型替换；不包含 `.env` 原文、令牌或密码。

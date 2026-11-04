@@ -1,0 +1,7 @@
+# CPU-only regression environment; Jetson CUDA/TensorRT packages stay on the device.
+-r requirements_basic.txt
+numpy==1.26.4
+opencv-python==4.10.0.84
+Pillow==12.3.0
+bcrypt==5.0.0
+python-multipart==0.0.32

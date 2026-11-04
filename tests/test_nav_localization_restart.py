@@ -11,6 +11,7 @@ import types
 from pathlib import Path
 
 import pytest
+from navigation_workspace import navigation_workspace
 from fastapi import HTTPException
 
 from backend import services_nav_localization
@@ -1084,11 +1085,12 @@ def _navigation_adapter_sources() -> tuple[str, str, str]:
     wrapper = (botdog_root / "scripts" / "restart_navigation_localization.sh").read_text(encoding="utf-8")
     wrapper_common = (botdog_root / "scripts" / "navigation_adapter_common.sh").read_text(encoding="utf-8")
     adapter = (
-        project_root / "Navigation" / "adapters" / "legacy_scripts" / "restart_navigation_localization.sh"
+        navigation_workspace() / "adapters" / "legacy_scripts" / "restart_navigation_localization.sh"
     ).read_text(encoding="utf-8")
     return wrapper, wrapper_common, adapter
 
 
+@pytest.mark.navigation_workspace
 def test_restart_script_prefers_exact_scene_pcd_files():
     wrapper, wrapper_common, adapter = _navigation_adapter_sources()
 
@@ -1108,10 +1110,11 @@ def test_restart_script_prefers_exact_scene_pcd_files():
     assert 'NAV_READY_TIMEOUT_SECONDS="${NAV_READY_TIMEOUT_SECONDS:-120}"' in adapter
 
 
+@pytest.mark.navigation_workspace
 def test_restart_navigation_script_resets_backend_python_and_qt_env():
     botdog_root = Path(__file__).resolve().parents[1]
     common = (
-        botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "common.sh"
+        navigation_workspace() / "adapters" / "legacy_scripts" / "common.sh"
     ).read_text(encoding="utf-8")
 
     assert "reset_navigation_overlay_env" in common
@@ -1123,15 +1126,15 @@ def test_restart_navigation_script_resets_backend_python_and_qt_env():
     assert 'RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"' in common
 
 
+@pytest.mark.navigation_workspace
 def test_restart_navigation_script_uses_single_instance_and_unified_nodes():
     _, _, adapter = _navigation_adapter_sources()
     botdog_root = Path(__file__).resolve().parents[1]
     common = (
-        botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "common.sh"
+        navigation_workspace() / "adapters" / "legacy_scripts" / "common.sh"
     ).read_text(encoding="utf-8")
     stop_adapter = (
-        botdog_root.parent
-        / "Navigation"
+        navigation_workspace()
         / "adapters"
         / "legacy_scripts"
         / "stop_navigation.sh"
@@ -1163,11 +1166,12 @@ def test_restart_navigation_script_uses_single_instance_and_unified_nodes():
     assert "stop_navigation_runtime_residuals 5" in stop_adapter
 
 
+@pytest.mark.navigation_workspace
 def test_restart_navigation_script_scopes_ready_and_guards_pcd_memory():
     _, wrapper_common, adapter = _navigation_adapter_sources()
     botdog_root = Path(__file__).resolve().parents[1]
     common = (
-        botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "common.sh"
+        navigation_workspace() / "adapters" / "legacy_scripts" / "common.sh"
     ).read_text(encoding="utf-8")
 
     assert "RUN_LOG_MARKER" in adapter
@@ -1187,6 +1191,7 @@ def test_restart_navigation_script_scopes_ready_and_guards_pcd_memory():
     assert 'NAV_ENABLE_DYNAMIC_AVOIDANCE="${NAV_ENABLE_DYNAMIC_AVOIDANCE:-true}"' in wrapper_common
 
 
+@pytest.mark.navigation_workspace
 @pytest.mark.parametrize(
     ("available_kib", "expected_code", "expected_message"),
     [
@@ -1202,7 +1207,7 @@ def test_navigation_pcd_memory_budget_uses_current_available_memory(
 ):
     botdog_root = Path(__file__).resolve().parents[1]
     common_path = (
-        botdog_root.parent / "Navigation" / "adapters" / "legacy_scripts" / "common.sh"
+        navigation_workspace() / "adapters" / "legacy_scripts" / "common.sh"
     )
     pcd_template = """# .PCD v0.7 - Point Cloud Data file format
 VERSION 0.7
@@ -1259,12 +1264,12 @@ DATA binary
     assert expected_message in result.stdout + result.stderr
 
 
-def test_navigation_uses_cpp_pcd_publisher_with_bounded_input_limits():
+@pytest.mark.navigation_workspace
+def test_navigation_preflights_pcd_memory_and_bounds_serialized_messages():
     botdog_root = Path(__file__).resolve().parents[1]
-    bringup = botdog_root.parent / "Navigation" / "src" / "nav_bringup"
+    bringup = navigation_workspace() / "src" / "nav_bringup"
     publisher = (bringup / "src" / "nav_pcd_map_publisher.cpp").read_text(encoding="utf-8")
     launch = (bringup / "launch" / "planning.launch.py").read_text(encoding="utf-8")
-    config = (bringup / "config" / "global_planner.yaml").read_text(encoding="utf-8")
 
     assert 'executable="nav_pcd_map_publisher"' in launch
     assert "PointCloud voxel_downsample" in publisher
@@ -1275,46 +1280,48 @@ def test_navigation_uses_cpp_pcd_publisher_with_bounded_input_limits():
     bridge = publisher.index("bridge_planground_gaps(downsampled_cloud")
     serialize = publisher.index("build_message(downsampled_cloud")
     assert downsample < bridge < serialize
-    # The simplified Navigation baseline deliberately bounds the raw PCD read
-    # before downsampling.  Keep both limits explicit so a malformed or
-    # unexpectedly large map cannot exhaust the Jetson before the streaming
-    # publisher has a chance to release the current layer.
-    assert "max_input_bytes: 67108864" in config
-    assert "max_input_points: 4000000" in config
+    # Current Navigation budgets input against available RAM before launch,
+    # instead of rejecting every scene above the former fixed 64 MiB limit.
+    _, _, adapter = _navigation_adapter_sources()
+    assert adapter.index('validate_navigation_pcd_memory_budget "$MAP_PCD" "$GROUND_PCD" "$PLANGROUND_PCD"') < adapter.index('setsid ros2 launch nav_bringup navigation.launch.py')
+    assert "point_count > std::numeric_limits<uint32_t>::max() / kPointStep" in publisher
 
 
-def test_global_planner_resolution_matches_simplified_navigation_baseline():
+@pytest.mark.navigation_workspace
+def test_global_planner_sampling_and_connection_scales_remain_consistent():
     botdog_root = Path(__file__).resolve().parents[1]
     planning_launch = (
-        botdog_root.parent
-        / "Navigation"
+        navigation_workspace()
         / "src"
         / "nav_bringup"
         / "launch"
         / "planning.launch.py"
     ).read_text(encoding="utf-8")
     planner_config = (
-        botdog_root.parent
-        / "Navigation"
+        navigation_workspace()
         / "src"
         / "nav_bringup"
         / "config"
         / "global_planner.yaml"
     ).read_text(encoding="utf-8")
 
-    # planning.launch.py overrides the YAML publisher value and keeps the live
-    # ground support cloud at 0.10 m.  The simplified hybrid planner uses its
-    # own 0.15 m copy and a 0.20 m neighbour radius.
+    import yaml
+    config = yaml.safe_load(planner_config)
+    publisher = config["pcl_publisher"]["ros__parameters"]
+    planner = config["global_planner"]["ros__parameters"]
+    # Dense live support stays at 0.10 m; coarser search samples must remain
+    # reachable at the configured neighbour radii, with tightly bounded gaps.
     assert 'DeclareLaunchArgument("ground_down_sample", default_value="0.1")' in planning_launch
-    assert "hybrid_downsample_leaf_size: 0.15" in planner_config
-    assert "a_star_expanding_radius: 0.2" in planner_config
-    assert "planground_search_radius: 0.2" in planner_config
-    assert "hybrid_max_ground_bridge_length: 20.0" in planner_config
+    assert publisher["ground_down_sample"] == 0.1
+    assert 0 < publisher["ground_down_sample"] <= planner["hybrid_downsample_leaf_size"] <= planner["a_star_expanding_radius"]
+    assert 0 < publisher["planground_down_sample"] <= planner["planground_downsample_leaf_size"] <= planner["planground_search_radius"]
+    assert 0 < planner["hybrid_max_ground_bridge_length"] <= publisher["planground_bridge_max_gap"] < 0.5
 
 
-def test_hybrid_astar_maps_cost_indices_and_preserves_connected_fallback():
+@pytest.mark.navigation_workspace
+def test_hybrid_astar_maps_cost_indices_and_validates_connected_reference_edges():
     botdog_root = Path(__file__).resolve().parents[1]
-    planner_source = botdog_root.parent / "Navigation" / "src" / "nav_planner"
+    planner_source = navigation_workspace() / "src" / "nav_planner"
     astar = (planner_source / "src" / "a_star_on_pc.cpp").read_text(encoding="utf-8")
     hybrid = (planner_source / "src" / "hybrid_a_star.cpp").read_text(encoding="utf-8")
 
@@ -1323,14 +1330,18 @@ def test_hybrid_astar_maps_cost_indices_and_preserves_connected_fallback():
     assert "getNodeWeight(perception_ground_index)" in astar
     assert "get_min_dGraphValue(current_expanding_index)" not in astar
     assert "if (start_neighbors.empty())" in hybrid
-    assert "has_planground_reference" in hybrid
-    assert "planground_reference_path" in hybrid
-    assert "if (path.empty())" in hybrid
-    assert "using connected planground fallback" in hybrid
-    assert "path_detour_limit_" in hybrid
-    assert "path = planground_reference_path" in hybrid
+    reference = hybrid.index("reference_path_available = planOnPlangroundOnly(")
+    validate_nodes = hybrid.index("bool reference_valid = std::all_of(", reference)
+    validate_edges = hybrid.index("if (reference_valid && edge_validator_)", validate_nodes)
+    validate_start = hybrid.index("if (reference_valid && reference_path.front() != hybrid_start_idx)", validate_edges)
+    accept = hybrid.index("path = std::move(reference_path)", validate_start)
+    assert reference < validate_nodes < validate_edges < validate_start < accept
+    assert "is_from_planground_[index]" in hybrid[validate_nodes:validate_edges]
+    assert "reference_valid = false;" in hybrid[validate_edges:validate_start]
+    assert "edge_validator_(" in hybrid[validate_start:accept]
 
 
+@pytest.mark.navigation_workspace
 def test_restart_navigation_script_exposes_initialpose_stage_before_runtime_tf():
     _, _, adapter = _navigation_adapter_sources()
 
@@ -1346,6 +1357,7 @@ def test_restart_navigation_script_exposes_initialpose_stage_before_runtime_tf()
     assert '\\"stage\\":\\"running\\"' in runtime_section
 
 
+@pytest.mark.navigation_workspace
 def test_restart_navigation_script_does_not_leak_lock_to_ros_children():
     _, _, adapter = _navigation_adapter_sources()
 
@@ -1355,6 +1367,7 @@ def test_restart_navigation_script_does_not_leak_lock_to_ros_children():
     assert 'stop_pid_file "$PID_FILE" "导航定位链路" 10' in adapter
 
 
+@pytest.mark.navigation_workspace
 def test_restart_navigation_script_omits_empty_optional_go2_launch_args():
     _, _, adapter = _navigation_adapter_sources()
 

@@ -1,6 +1,7 @@
 """真实控制路由。"""
 
 import asyncio
+import math
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -53,6 +54,10 @@ async def control_command(
     - E_STOP 状态下所有命令被拒绝（返回 REJECTED_E_STOP）
     - Watchdog 超时后自动执行 stop
     """
+    # Validate before clamping or claiming control: min/max can turn NaN into a limit.
+    if any(value is not None and not math.isfinite(value) for value in (body.vx, body.vyaw)):
+        raise HTTPException(status_code=422, detail="vx、vyaw 必须是有限数值，不能为 NaN 或 Infinity")
+
     svc = get_control_service()
     if svc is None:
         raise HTTPException(status_code=503, detail="控制服务未就绪")
@@ -128,42 +133,80 @@ async def emergency_stop(
 
     from ...control_arbiter import get_control_arbiter
     from ...control_service import get_control_service
+
     state_machine.trigger_emergency_stop()
-    set_cmd_vel_estop(True, "control_e_stop")
+    errors: list[str] = []
+    try:
+        set_cmd_vel_estop(True, "control_e_stop")
+    except Exception as exc:
+        errors.append(f"导航速度锁定失败：{type(exc).__name__}: {exc}")
     arbiter = get_control_arbiter()
     if arbiter is not None:
         arbiter.activate_e_stop()
+    else:
+        errors.append("控制权仲裁器未就绪")
     bridge = get_ros_nav_bridge()
-    if bridge is not None:
+    service = get_control_service()
+
+    def stop_navigation_channels() -> list[str]:
+        failures = []
+        if bridge is not None:
+            for method, args, kwargs in [
+                ("publish_navigation_task_start", (False,), {}),
+                ("publish_navigation_start", (False,), {}),
+                ("publish_navigation_stop", (), {}),
+                ("publish_zero_cmd_vel", (), {"publish_count": 20, "interval_s": 0.02}),
+            ]:
+                try:
+                    getattr(bridge, method)(*args, **kwargs)
+                except Exception as exc:
+                    failures.append(f"导航停止信号 {method} 失败：{type(exc).__name__}: {exc}")
         try:
-            try:
-                bridge.publish_navigation_task_start(False)
-            except RuntimeError:
-                pass
-            bridge.publish_navigation_start(False)
-            bridge.publish_navigation_stop()
-            bridge.publish_zero_cmd_vel(publish_count=20, interval_s=0.02)
-        except RuntimeError:
-            pass
+            stop_cmd_vel_script()
+        except Exception as exc:
+            failures.append(f"停止导航速度桥失败：{type(exc).__name__}: {exc}")
+        return failures
 
-    await asyncio.to_thread(stop_cmd_vel_script)
+    async def stop_robot() -> tuple[ControlAckDTO | None, list[str]]:
+        if service is None:
+            return None, ["机器人控制服务未就绪，底盘停车未确认"]
+        try:
+            ack = await service.force_stop()
+        except Exception as exc:
+            return None, [f"底盘停车异常：{type(exc).__name__}: {exc}"]
+        if ack.result != "ACCEPTED":
+            return ack, [f"底盘停车未确认：{ack.result}"]
+        return ack, []
 
-    control_service = get_control_service()
-    if control_service is not None:
-        await control_service.force_stop()
+    # A slow/failing ROS publisher or script cleanup must not delay the SDK stop.
+    navigation_errors, (ack, robot_errors) = await asyncio.gather(
+        asyncio.to_thread(stop_navigation_channels), stop_robot(),
+    )
+    errors.extend(navigation_errors)
+    errors.extend(robot_errors)
+    stop_confirmed = ack is not None and ack.result == "ACCEPTED"
+    success = stop_confirmed and not errors
+    if not stop_confirmed:
+        message = "急停已锁定，但底盘停车未确认，请立即检查设备"
+    elif errors:
+        message = "急停已锁定，底盘停车已确认；部分导航停止步骤失败"
+    else:
+        message = "急停已锁定，底盘停车已确认"
 
     await safe_write_audit_log(
         db,
         level="WARN",
         module="BACKEND",
-        message="用户=anonymous 角色=anonymous 操作=control.e_stop 目标=system 结果=success",
+        message=(
+            "用户=anonymous 角色=anonymous 操作=control.e_stop 目标=system "
+            f"结果={'success' if success else 'incomplete'} stop_confirmed={stop_confirmed} errors={errors}"
+        ),
+    )
+    return EStopResponse(
+        success=success, e_stop_latched=True, stop_confirmed=stop_confirmed,
+        control_ack=ack, errors=errors, timestamp=utc_now_iso(), message=message,
     )
 
-    return EStopResponse(
-        success=True,
-        timestamp=utc_now_iso(),
-        message="紧急制动已触发",
-    )
 
 
 @router.post("/e-stop/reset", response_model=EStopResetResponse)

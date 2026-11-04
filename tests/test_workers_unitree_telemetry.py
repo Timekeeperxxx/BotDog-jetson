@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,8 +11,6 @@ from backend.workers_unitree_telemetry import UnitreeTelemetryWorker
 
 @pytest.mark.asyncio
 async def test_unitree_telemetry_closes_both_dds_subscribers(monkeypatch):
-    from unitree_sdk2py.core import channel
-
     subscriptions = []
 
     class FakeSubscriber:
@@ -25,8 +25,10 @@ async def test_unitree_telemetry_closes_both_dds_subscribers(monkeypatch):
         def Close(self):
             self.closed = True
 
-    monkeypatch.setattr(channel, "ChannelFactoryInitialize", lambda *_args: True)
-    monkeypatch.setattr(channel, "ChannelSubscriber", FakeSubscriber)
+    monkeypatch.setitem(sys.modules, "unitree_sdk2py.core.channel", SimpleNamespace(
+        ChannelFactoryInitialize=lambda *_args: True, ChannelSubscriber=FakeSubscriber))
+    monkeypatch.setitem(sys.modules, "unitree_sdk2py.idl.unitree_go.msg.dds_", SimpleNamespace(
+        LowState_=object, SportModeState_=object))
 
     worker = UnitreeTelemetryWorker(
         queue_manager=object(),

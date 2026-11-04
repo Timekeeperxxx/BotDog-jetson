@@ -1,6 +1,7 @@
 """WebSocket 路由。"""
 
-from fastapi import APIRouter, WebSocket
+from fastapi import APIRouter, Depends, WebSocket
+from ...auth.dependencies import require_websocket_viewer
 
 from ...ws_broadcaster import websocket_telemetry_handler
 from ...ws_runtime_state import (
@@ -10,7 +11,7 @@ from ...ws_runtime_state import (
     get_state_machine,
 )
 
-router = APIRouter(tags=["websocket"])
+router = APIRouter(tags=["websocket"], dependencies=[Depends(require_websocket_viewer)])
 
 
 @router.websocket("/ws/telemetry")

@@ -1,13 +1,14 @@
 """控制诊断路由。"""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from ...auth.dependencies import require_operator
 
 from ...control_service import get_control_service
 from ...control_arbiter import get_control_arbiter
 from ...navigation_velocity_udp import get_navigation_velocity_udp_status
 from ...workers_unitree_telemetry import get_unitree_telemetry_diagnostics
 
-router = APIRouter(tags=["control"])
+router = APIRouter(tags=["control"], dependencies=[Depends(require_operator)])
 
 
 @router.get("/api/v1/control/debug")

@@ -614,6 +614,8 @@ export function PcdMapDemoPage() {
   const handleSoftStop = useCallback(async () => {
     if (!canOperate) return
     if (softStopSending || localizationStopSending) return
+    setKeyboardControlEnabled(false)
+    stopCommand()
     setSoftStopSending(true)
     try {
       const result = await triggerNavSoftStop()
@@ -635,10 +637,12 @@ export function PcdMapDemoPage() {
     } finally {
       setSoftStopSending(false)
     }
-  }, [addLog, canOperate, localizationStopSending, setInitialState, softStopSending])
+  }, [addLog, canOperate, localizationStopSending, setInitialState, softStopSending, stopCommand])
 
   const handleStopNavigationLocalization = useCallback(async () => {
     if (!canOperate || softStopSending || localizationStopSending) return
+    setKeyboardControlEnabled(false)
+    stopCommand()
     const confirmed = window.confirm(
       '将先把速度归零，再停止导航、雷达重定位和 TF 发布。重新使用前需要点击“重启导航定位”。确认继续吗？',
     )
@@ -675,7 +679,7 @@ export function PcdMapDemoPage() {
     } finally {
       setLocalizationStopSending(false)
     }
-  }, [addLog, canOperate, localizationStopSending, setInitialState, softStopSending])
+  }, [addLog, canOperate, localizationStopSending, setInitialState, softStopSending, stopCommand])
 
   const handleRestartNavigationLocalization = useCallback(async () => {
     if (!canOperate) return

@@ -1,6 +1,8 @@
 """巡检任务会话路由。"""
 
 from fastapi import APIRouter, Depends, HTTPException
+from ...auth.dependencies import require_viewer, require_operator
+from ...auth.schemas import AuthUserInternal
 from sqlalchemy import select
 
 from ...database import get_db
@@ -16,7 +18,7 @@ from ...services_logs import write_log
 from ...services_tasks import create_task, stop_task
 from ...state_machine_state import get_state_machine
 
-router = APIRouter(prefix="/api/v1/session", tags=["session"])
+router = APIRouter(prefix="/api/v1/session", tags=["session"], dependencies=[Depends(require_viewer)])
 
 
 @router.get("/current", response_model=SessionStartResponse | None)
@@ -30,9 +32,10 @@ async def session_current(db=Depends(get_db)):
     return result.scalar_one_or_none()
 
 
-@router.post("/start", response_model=SessionStartResponse)
+@router.post("/start", response_model=SessionStartResponse, dependencies=[Depends(require_operator)])
 async def session_start(
     body: SessionStartRequest,
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ) -> SessionStartResponse:
     """
@@ -45,7 +48,7 @@ async def session_start(
         level="INFO",
         module="BACKEND",
         message=(
-            f"用户=anonymous 角色=anonymous 操作=session.start "
+            f"用户={user.username} 角色={user.role} 操作=session.start "
             f"目标={task.task_id} 结果=success 任务名={task.task_name}"
         ),
         task_id=task.task_id,
@@ -66,9 +69,10 @@ async def session_start(
     )
 
 
-@router.post("/stop", response_model=SessionStopResponse)
+@router.post("/stop", response_model=SessionStopResponse, dependencies=[Depends(require_operator)])
 async def session_stop(
     body: SessionStopRequest,
+    user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
 ) -> SessionStopResponse:
     """
@@ -87,7 +91,7 @@ async def session_stop(
         level="INFO",
         module="BACKEND",
         message=(
-            f"用户=anonymous 角色=anonymous 操作=session.stop "
+            f"用户={user.username} 角色={user.role} 操作=session.stop "
             f"目标={task.task_id} 结果=success 任务名={task.task_name}"
         ),
         task_id=task.task_id,

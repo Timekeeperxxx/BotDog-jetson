@@ -838,6 +838,7 @@ class AIWorkerProcessingMixin:
                 "msg_type": "AI_STATUS",
                 "timestamp": utc_now_iso(),
                 "payload": {
+                    "video": self.get_runtime_status(),
                     "frames_processed": self._frames_processed,
                     "detections_count": self._detections_count,
                     "mode": self._get_mode(),

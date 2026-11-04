@@ -95,6 +95,16 @@ class ControlService:
         """
         start_ts = time.monotonic()
         control_logger = get_logger("机器人控制")
+        # Internal callers bypass the HTTP boundary, so reject before min/max here too.
+        if any(value is not None and not math.isfinite(value) for value in (vx, vyaw)):
+            control_logger.warning("拒绝非有限控制速度：command={}，vx={}，vyaw={}", cmd, vx, vyaw)
+            return ControlAckDTO(
+                ack_cmd=cmd,
+                result=RESULT_REJECTED_INVALID_CMD,
+                latency_ms=_elapsed_ms(start_ts),
+                safety_reason="速度必须是有限数值",
+                safety_reasons=["速度必须是有限数值"],
+            )
         vx = _clamp_optional(vx, UNITREE_B2_MAX_VX)
         vyaw = _clamp_optional(vyaw, UNITREE_B2_MAX_VYAW)
 

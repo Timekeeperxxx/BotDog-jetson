@@ -74,8 +74,22 @@ describe('incremental person overlays', () => {
   });
 
   it('keeps skeleton freshness tied to pose updates rather than raw position messages', () => {
-    const first = mergePoseOverlay(null, recognized(), 100);
+    // A completed packet can contain cached skeletons; a pose stage establishes freshness.
+    const first = mergePoseOverlay(null, { ...recognized(), stage: 'pose_location' }, 100);
     const incoming = early('location');
     expect(mergePoseOverlay(first, incoming, 200).pose_received_at_ms).toBe(100);
+    expect(mergePoseOverlay(first, { ...incoming, stage: 'pose_location' }, 300).pose_received_at_ms).toBe(300);
+  });
+
+  it('does not invent a fresh pose observation from a completed packet', () => {
+    expect(mergePoseOverlay(null, recognized(), 100).pose_received_at_ms).toBeUndefined();
+    expect(mergePoseOverlay(null, { ...recognized(), pose_updated: true }, 200).pose_received_at_ms).toBe(200);
+  });
+
+  it('does not refresh the pose timestamp when completed or package packets reuse it', () => {
+    const first = mergePoseOverlay(null, { ...recognized(), stage: 'pose_location' }, 100);
+    for (const stage of ['complete', 'package'] as const) {
+      expect(mergePoseOverlay(first, { ...recognized(), stage }, 500).pose_received_at_ms).toBe(100);
+    }
   });
 });

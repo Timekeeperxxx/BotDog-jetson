@@ -1,0 +1,14 @@
+[Unit]
+Description=Rotate BotDog external logs and enforce retention budget
+
+[Service]
+Type=oneshot
+User=@BOTDOG_USER@
+Group=@BOTDOG_GROUP@
+StateDirectory=botdog-logrotate
+StateDirectoryMode=0700
+ExecStart=/usr/sbin/logrotate --state /var/lib/botdog-logrotate/status /etc/botdog/logrotate.conf
+ExecStartPost=/usr/bin/python3 @BOTDOG_PROJECT_DIR@/scripts/prune-log-archives.py --config /etc/botdog/logrotate.conf
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=10min

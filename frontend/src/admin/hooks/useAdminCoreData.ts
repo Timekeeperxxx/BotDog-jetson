@@ -12,6 +12,7 @@ export function useAdminCoreData() {
   const [navState, setNavState] = useState<NavStateResponse | null>(null)
   const [adminLoading, setAdminLoading] = useState(false)
   const [adminError, setAdminError] = useState<string | null>(null)
+  const [healthError, setHealthError] = useState<string | null>(null)
 
   const refreshAdminCore = useCallback(async () => {
     setAdminLoading(true)
@@ -40,6 +41,30 @@ export function useAdminCoreData() {
     void refreshAdminCore()
   }, [refreshAdminCore])
 
+  useEffect(() => {
+    let active = true
+    let timer: ReturnType<typeof setTimeout>
+    let controller: AbortController | null = null
+    const poll = async () => {
+      controller = new AbortController()
+      const timeout = setTimeout(() => controller?.abort(), 3000)
+      try {
+        const next = await getSystemHealth(controller.signal)
+        if (active) { setHealth(next); setHealthError(null) }
+      } catch (error) {
+        if (active) {
+          setHealth(null)
+          setHealthError(error instanceof Error ? `实时健康状态读取失败：${error.message}` : '实时健康状态读取失败')
+        }
+      } finally {
+        clearTimeout(timeout)
+        if (active) timer = setTimeout(() => void poll(), 5000)
+      }
+    }
+    timer = setTimeout(() => void poll(), 5000)
+    return () => { active = false; clearTimeout(timer); controller?.abort() }
+  }, [])
+
   return {
     health,
     systemInfo,
@@ -47,7 +72,7 @@ export function useAdminCoreData() {
     logs,
     navState,
     adminLoading,
-    adminError,
+    adminError: adminError ?? healthError,
     refreshAdminCore,
   }
 }

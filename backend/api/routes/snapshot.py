@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from ...auth.dependencies import require_operator
 
 from sqlalchemy import select
 
@@ -16,7 +17,7 @@ from ...config import settings
 from ...database import get_db
 from ...models import InspectionTask
 
-router = APIRouter(prefix="/api/v1/snapshot", tags=["snapshot"])
+router = APIRouter(prefix="/api/v1/snapshot", tags=["snapshot"], dependencies=[Depends(require_operator)])
 
 
 async def _grab_one_frame() -> bytes:

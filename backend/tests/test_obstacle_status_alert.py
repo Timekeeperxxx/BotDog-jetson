@@ -4,6 +4,8 @@ import json
 import threading
 from types import SimpleNamespace
 
+import pytest
+
 from backend import services_ros_nav as module_under_test
 from backend.services_nav_state import (
     get_nav_state,
@@ -17,6 +19,8 @@ class Harness:
     """只绑定告警相关方法，避免在测试机上启动 ROS 节点。"""
 
     _OBSTACLE_STUCK_STATUSES = RosNavBridge._OBSTACLE_STUCK_STATUSES
+    _obstacle_is_blocking = RosNavBridge._obstacle_is_blocking
+    _obstacle_is_recovered = staticmethod(RosNavBridge._obstacle_is_recovered)
     _handle_obstacle_status_message = (
         RosNavBridge._handle_obstacle_status_message
     )
@@ -371,7 +375,12 @@ def test_malformed_payload_is_ignored(monkeypatch) -> None:
     assert harness._obstacle_blocked_since is None
 
 
-def test_obstacle_status_is_broadcast_as_blocked_and_restored(monkeypatch) -> None:
+@pytest.mark.parametrize("status,message,error", [
+    ("replan_requested", "轨迹离开同层 ground 可通行区域，已请求重规划", "NAV_PATH_BLOCKED"),
+    ("deviated", "机器人偏离路径，停车等待恢复", "NAV_PATH_BLOCKED"),
+    ("waiting_tf", "无法获取机器人位姿，停车等待定位", "NAV_SENSOR_LOST"),
+])
+def test_obstacle_status_is_broadcast_as_blocked_and_restored(monkeypatch, status, message, error) -> None:
     set_navigation_idle()
     update_navigation_status(
         {
@@ -402,15 +411,15 @@ def test_obstacle_status_is_broadcast_as_blocked_and_restored(monkeypatch) -> No
 
     bridge._handle_obstacle_status_message(
         _msg(
-            "replan_requested",
-            message="轨迹离开同层 ground 可通行区域，已请求重规划",
+            status,
+            message=message,
         )
     )
 
     blocked = get_nav_state()["navigation_status"]
     assert blocked["status"] == "blocked"
-    assert blocked["error_code"] == "NAV_PATH_BLOCKED"
-    assert "同层 ground" in blocked["message"]
+    assert blocked["error_code"] == error
+    assert blocked["message"] == message
 
     bridge._handle_obstacle_status_message(_msg("clear"))
 

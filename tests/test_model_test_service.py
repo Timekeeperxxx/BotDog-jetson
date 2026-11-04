@@ -120,7 +120,7 @@ def test_pose_preview_distinguishes_vaulting_and_climbing(event_type, label):
 def test_pose_preview_keeps_vault_label_when_loitering_also_occurs(monkeypatch):
     from types import SimpleNamespace
     from collections import Counter
-    import torch
+    from unittest.mock import Mock
     from backend.pose_detection import PoseObservation, PoseEvent, Posture
 
     frame = np.zeros((32, 48, 3), dtype=np.uint8)
@@ -128,9 +128,15 @@ def test_pose_preview_keeps_vault_label_when_loitering_also_occurs(monkeypatch):
     observation = PoseObservation(1, (0, 0, 20, 30), .9, points, Posture.STANDING, .7, True, 20)
     events = [PoseEvent(kind, 1, .7, (0, 0, 20, 30), Posture.STANDING, .2)
               for kind in ('POSE_VAULTING_SUSPECTED', 'POSE_LOITERING')]
+    def tensor(values):
+        result = Mock()
+        result.detach.return_value = result
+        result.cpu.return_value = result
+        result.tolist.return_value = values
+        return result
     result = SimpleNamespace(
-        boxes=SimpleNamespace(xyxy=torch.tensor([[0, 0, 20, 30]]), conf=torch.tensor([.9])),
-        keypoints=SimpleNamespace(data=torch.tensor([[[0, 0, .9]] * 17])),
+        boxes=SimpleNamespace(xyxy=tensor([[0, 0, 20, 30]]), conf=tensor([.9])),
+        keypoints=SimpleNamespace(data=tensor([[[0, 0, .9]] * 17])),
         plot=lambda **_: frame,
     )
     runner = model_test_service.PoseStatusTensorRTRunner.__new__(model_test_service.PoseStatusTensorRTRunner)

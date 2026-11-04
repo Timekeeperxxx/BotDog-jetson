@@ -50,7 +50,7 @@ def _is_pose_stale(pose: dict[str, Any] | None, now: float | None = None) -> boo
         pose_time = float(timestamp)
     except Exception:
         return True
-    return ((now or time.time()) - pose_time) > ROBOT_POSE_STALE_SECONDS
+    return not (0 <= (now or time.time()) - pose_time <= ROBOT_POSE_STALE_SECONDS)
 
 
 def _stale_localization_status(now: float) -> dict[str, Any]:
@@ -229,6 +229,18 @@ def get_nav_state() -> dict[str, Any]:
             "global_path": copy.deepcopy(_latest_global_path),
             "task_route": copy.deepcopy(_latest_task_route),
             "execution_path": copy.deepcopy(_latest_execution_path),
+        }
+
+
+def get_nav_freshness() -> dict[str, Any]:
+    """Read only pose freshness, without copying potentially large point/path data."""
+    with _lock:
+        fresh = _latest_robot_pose is not None and not _is_pose_stale(_latest_robot_pose)
+        return {
+            "ready": fresh,
+            "required": True,
+            "status": "ready" if fresh else "waiting",
+            "message": "导航定位数据持续更新" if fresh else "等待有效导航定位数据，当前不可导航",
         }
 
 

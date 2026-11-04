@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { apiFetch } from '../../api/apiFetch'
 import { CameraControlPanel } from './CameraControlPanel'
@@ -15,9 +16,10 @@ describe('camera panel keyboard scope', () => {
   beforeEach(() => { auth.operator=true; vi.mocked(apiFetch).mockReset().mockResolvedValue(status) })
 
   it('accepts arrow keys when open and stops when the panel closes', async () => {
+    const user = userEvent.setup()
     const {rerender} = render(<CameraControlPanel open onClose={vi.fn()} />)
     await waitFor(() => expect(screen.getByTitle('向上点动')).toBeEnabled())
-    fireEvent.keyDown(window,{key:'ArrowUp'})
+    await user.keyboard('{ArrowUp>}')
     await waitFor(() => expect(jogs()).toHaveLength(1))
     expect(JSON.parse(String(jogs()[0][1]?.body))).toEqual({pitch_velocity_dps:12,yaw_velocity_dps:0})
     rerender(<CameraControlPanel open={false} onClose={vi.fn()} />)

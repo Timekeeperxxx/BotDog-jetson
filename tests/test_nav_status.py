@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import json
 import time
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -16,6 +17,11 @@ from backend.services_ros_nav import RosNavBridge
 @pytest.fixture(autouse=True)
 def reset_navigation_state():
     set_navigation_idle("导航空闲")
+
+
+@pytest.fixture
+def fake_ros_time(monkeypatch):
+    monkeypatch.setitem(sys.modules, "rclpy.time", SimpleNamespace(Time=lambda: object()))
 
 
 def _make_bridge(monkeypatch, broadcast_calls: list[tuple[str, dict[str, object]]]) -> RosNavBridge:
@@ -543,7 +549,7 @@ def test_moving_status_after_explicit_stop_does_not_restore_navigation_control(
     assert request_calls == []
 
 
-def test_tf_pose_uses_receive_time_for_freshness(monkeypatch):
+def test_tf_pose_uses_receive_time_for_freshness(monkeypatch, fake_ros_time):
     ros_now = time.time()
     bridge = RosNavBridge.__new__(RosNavBridge)
     bridge._tf_buffer = SimpleNamespace(
@@ -605,7 +611,7 @@ def test_tf_messages_are_written_to_the_dedicated_buffer():
     ]
 
 
-def test_tf_pose_accepts_latest_transform_available_in_local_buffer(monkeypatch):
+def test_tf_pose_accepts_latest_transform_available_in_local_buffer(monkeypatch, fake_ros_time):
     bridge = RosNavBridge.__new__(RosNavBridge)
     bridge._tf_buffer = SimpleNamespace(
         lookup_transform=lambda _target, _source, _time: SimpleNamespace(

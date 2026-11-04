@@ -44,9 +44,9 @@ export function TopHeader({
   if (isUiFullscreen) return null;
 
   return (
-    <header className="h-12 bg-black backdrop-blur-md border-b border-white/20 flex items-center justify-between px-6 z-40">
-      <div className="flex items-center space-x-6">
-        <div className="flex items-center space-x-3">
+    <header className="console-header h-12 bg-black backdrop-blur-md border-b border-white/20 flex items-center justify-between px-6 z-40">
+      <div className="console-brand flex items-center space-x-6">
+        <div className="console-brand-name flex items-center space-x-3">
           <span className="text-[11px] font-black text-white uppercase tracking-widest">BotDog</span>
           <div className="h-4 w-px bg-white/30" />
           <span className="text-[10px] font-mono text-slate-300 font-bold tracking-tight">V5.0-核心终端</span>
@@ -60,18 +60,18 @@ export function TopHeader({
           </div>
         )}
       </div>
-      <div className="flex items-center space-x-10">
+      <div className="console-header-status flex items-center space-x-10">
         <div className="hidden lg:flex items-center space-x-8 pr-8 border-r border-white/20 font-bold">
           <DataPointHeader label="速度" value={telemetry?.position.groundspeed != null ? telemetry.position.groundspeed.toFixed(1) : '--'} unit="m/s" />
           <DataPointHeader label="航向" value={telemetry ? (telemetry.attitude.yaw || 0).toFixed(0) : '--'} unit="°" />
           <DataPointHeader label="延迟" value={videoLatencyMs !== null ? `${videoLatencyMs}` : '--'} unit="ms" />
         </div>
-        <div className="flex items-center space-x-6">
+        <div className="console-header-telemetry flex items-center space-x-6">
           <TopStatus icon={<Wifi size={16} />} value={isConnected ? '在线' : '离线'} label="链路" />
           <TopStatus icon={<Battery size={16} />} value={telemetry?.battery_pct != null ? `${telemetry.battery_pct.toFixed(0)}%` : '--'} label="电量" />
           <TopStatus icon={<Thermometer size={16} />} value={telemetry?.core_temp_c != null ? `${telemetry.core_temp_c.toFixed(0)}°C` : '--'} label="温度" />
         </div>
-        <div className="text-[11px] font-mono font-black text-white pl-6 border-l border-white/20">
+        <div className="console-header-clock text-[11px] font-mono font-black text-white pl-6 border-l border-white/20">
           {new Date().toLocaleTimeString('zh-CN', { hour12: false })}
         </div>
       </div>

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, WebSocket, WebSocketException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.requests import HTTPConnection
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
-from ..database import get_db
+from ..database import get_db, get_session_factory
 from ..logging_config import get_logger
 from ..models import User
 from .schemas import AuthUserInternal
@@ -15,13 +16,14 @@ from .service import decode_access_token, role_satisfies
 
 auth_logger = get_logger("鉴权")
 bearer_scheme = HTTPBearer(auto_error=False)
+BROWSER_SESSION_COOKIE = "botdog_browser_session"
 _auth_disabled_warning_emitted = False
 
 def get_dev_user() -> AuthUserInternal:
     return AuthUserInternal(id=0, username="dev", role="admin", token_version=0)
 
 
-def _raise_unauthorized(request: Request, detail: str) -> None:
+def _raise_unauthorized(request: HTTPConnection, detail: str) -> None:
     client_host = request.client.host if request.client else "unknown"
     auth_logger.warning(
         "鉴权失败：path={} source={} reason={}",
@@ -29,6 +31,8 @@ def _raise_unauthorized(request: Request, detail: str) -> None:
         client_host,
         detail,
     )
+    if request.scope["type"] == "websocket":
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason=detail)
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail=detail,
@@ -40,6 +44,15 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> AuthUserInternal:
+    token = credentials.credentials if credentials is not None else None
+    return await _authenticate_access_token(request, token, db)
+
+
+async def _authenticate_access_token(
+    request: HTTPConnection,
+    token: str | None,
+    db: AsyncSession,
+) -> AuthUserInternal:
     global _auth_disabled_warning_emitted
     if not settings.AUTH_ENABLED:
         if not _auth_disabled_warning_emitted:
@@ -47,11 +60,11 @@ async def get_current_user(
             _auth_disabled_warning_emitted = True
         return get_dev_user()
 
-    if credentials is None:
+    if token is None:
         _raise_unauthorized(request, "缺少访问令牌")
 
     try:
-        token_data = decode_access_token(credentials.credentials)
+        token_data = decode_access_token(token)
     except ValueError as exc:
         _raise_unauthorized(request, str(exc))
 
@@ -79,6 +92,42 @@ async def get_current_user(
         role=user.role,
         token_version=user.token_version,
     )
+
+
+async def require_media_viewer(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> AuthUserInternal:
+    # Native <img>/<video> requests cannot attach the API's Bearer header.
+    # Cookies are accepted only here and for WebSockets, never for API writes.
+    token = credentials.credentials if credentials is not None else None
+    if "authorization" not in request.headers:
+        token = request.cookies.get(BROWSER_SESSION_COOKIE)
+    user = await _authenticate_access_token(request, token, db)
+    if not role_satisfies(user.role, "viewer"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
+    return user
+
+
+async def require_websocket_viewer(websocket: WebSocket) -> AuthUserInternal:
+    credentials = await bearer_scheme(websocket)
+    token = credentials.credentials if credentials is not None else None
+    if "authorization" not in websocket.headers and settings.AUTH_ENABLED:
+        # Cookie-based WebSocket handshakes must originate from this app or
+        # an explicitly configured origin; '*' does not grant cookie access.
+        scheme = "https" if websocket.url.scheme == "wss" else "http"
+        origin = websocket.headers.get("origin")
+        same_origin = f"{scheme}://{websocket.headers['host']}"
+        if origin != same_origin and origin not in settings.CORS_ALLOW_ORIGINS:
+            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="不允许的连接来源")
+        token = websocket.cookies.get(BROWSER_SESSION_COOKIE)
+    # Release the DB session before the long-lived connection starts streaming.
+    async with get_session_factory()() as db:
+        user = await _authenticate_access_token(websocket, token, db)
+    if not role_satisfies(user.role, "viewer"):
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION, reason="权限不足")
+    return user
 
 
 async def require_authenticated(

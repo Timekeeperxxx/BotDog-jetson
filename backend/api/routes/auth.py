@@ -1,12 +1,13 @@
 """认证路由。"""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from ...models import User
 from ...config import settings
 from ...auth.security import verify_password
-from ...auth.dependencies import require_authenticated
+from ...auth.dependencies import BROWSER_SESSION_COOKIE, bearer_scheme, require_authenticated
 from ...auth.schemas import (
     AuthStatusResponse,
     AuthUserInternal,
@@ -20,9 +21,24 @@ from ...database import get_db
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
+def _set_browser_session(response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        BROWSER_SESSION_COOKIE,
+        token,
+        max_age=settings.JWT_EXPIRE_MINUTES * 60,
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="strict",
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store"
+
+
 @router.post("/login", response_model=LoginResponse)
 async def auth_login(
     body: LoginRequest,
+    request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> LoginResponse:
     from datetime import datetime, timezone
@@ -71,6 +87,7 @@ async def auth_login(
         token_version=user.token_version,
     )
     token = create_access_token(auth_user)
+    _set_browser_session(response, request, token)
 
     await safe_write_audit_log(
         db,
@@ -105,7 +122,10 @@ async def _load_auth_user(db: AsyncSession, user_id: int) -> AuthUserResponse | 
 
 @router.get("/me", response_model=AuthUserResponse)
 async def auth_me(
+    request: Request,
+    response: Response,
     user: AuthUserInternal = Depends(require_authenticated),
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> AuthUserResponse:
     if not settings.AUTH_ENABLED:
@@ -113,7 +133,16 @@ async def auth_me(
     current_user = await _load_auth_user(db, user.id)
     if current_user is None:
         raise HTTPException(status_code=401, detail="用户不存在")
+    # Existing Bearer sessions obtain the cookie when the page bootstraps.
+    _set_browser_session(response, request, credentials.credentials)
     return current_user
+
+
+@router.post("/logout", status_code=204)
+async def auth_logout(response: Response) -> None:
+    """Clear the browser-only credential, including when its JWT has expired."""
+    response.delete_cookie(BROWSER_SESSION_COOKIE, path="/", httponly=True, samesite="strict")
+    response.headers["Cache-Control"] = "no-store"
 
 
 @router.get("/status", response_model=AuthStatusResponse)

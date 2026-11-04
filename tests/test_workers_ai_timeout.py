@@ -132,6 +132,10 @@ class _FakeProcess:
 
 
 def _worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AIWorker:
+    # Worker scheduling tests replace GPU/runtime setup as well as inference.
+    monkeypatch.setattr("backend.inference_cpu.configure_inference_cpu",
+                        lambda torch_threads, opencv_threads: {"torch_threads": torch_threads,
+                                                               "opencv_threads": opencv_threads})
     monkeypatch.setattr(workers_ai.settings, "WEAPON_ENABLED", True)
     monkeypatch.setattr(workers_ai.settings, "AI_SIMULATE_DETECTION", True)
     monkeypatch.setattr(workers_ai.settings, "AI_FRAME_PROCESS_TIMEOUT_SECONDS", 1.0)
@@ -156,6 +160,9 @@ def _worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AIWorker:
         snapshot_dir=tmp_path,
     )
     worker._frame_process_timeout_s = 0.01
+    async def fake_source_ready():
+        return True
+    monkeypatch.setattr(worker, "_check_video_source", fake_source_ready)
     return worker
 
 
@@ -524,8 +531,6 @@ def test_yolo_weapon_region_detection_maps_coordinates_and_suppresses_duplicates
 def test_yolo_weapon_class_aliases_keep_canonical_alert_labels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import ultralytics
-
     fake_model = SimpleNamespace(
         names={
             0: "Blunt_Weapon",
@@ -533,11 +538,8 @@ def test_yolo_weapon_class_aliases_keep_canonical_alert_labels(
             4: "Melee_Weapon",
         }
     )
-    monkeypatch.setattr(
-        ultralytics,
-        "YOLO",
-        lambda *args, **kwargs: fake_model,
-    )
+    import sys
+    monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=lambda *args, **kwargs: fake_model))
 
     detector = _YoloDetector(
         model_path="weapon-v13.engine",
