@@ -1161,15 +1161,15 @@ class UltralyticsPoseDetector:
             return []
 
         keypoint_rows = result.keypoints.data.detach().cpu().tolist()
-        box_rows = result.boxes.xyxy.detach().cpu().tolist()
-        confidence_rows = result.boxes.conf.detach().cpu().tolist()
+        # Coordinates and confidence share the same tensor. Transfer it once,
+        # rather than synchronizing CUDA separately for xyxy and conf.
+        box_rows = result.boxes.data.detach().cpu().tolist()
         poses: list[RawPose] = []
-        for bbox_values, detection_confidence, keypoint_values in zip(
+        for box_values, keypoint_values in zip(
             box_rows,
-            confidence_rows,
             keypoint_rows,
         ):
-            bbox = tuple(int(round(value)) for value in bbox_values)
+            bbox = tuple(int(round(value)) for value in box_values[:4])
             if len(bbox) != 4:
                 continue
             keypoints = tuple(
@@ -1183,7 +1183,7 @@ class UltralyticsPoseDetector:
             poses.append(
                 RawPose(
                     bbox=(bbox[0], bbox[1], bbox[2], bbox[3]),
-                    confidence=float(detection_confidence),
+                    confidence=float(box_values[-2]),
                     keypoints=keypoints,
                 )
             )

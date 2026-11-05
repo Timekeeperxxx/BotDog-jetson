@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 from threading import Lock
 from typing import Any, Mapping
@@ -25,17 +26,24 @@ def _letterbox_blob(image: np.ndarray, input_size: int) -> tuple[np.ndarray, flo
     resized = cv2.resize(image, (resized_width, resized_height))
     padded = np.zeros((input_size, input_size, 3), dtype=np.uint8)
     padded[:resized_height, :resized_width] = resized
-    rgb = padded[:, :, ::-1].astype(np.float32)
-    blob = (rgb - 127.5) / 128.0
-    return np.ascontiguousarray(blob.transpose(2, 0, 1)[None]), scale
+    # OpenCV builds contiguous NCHW directly, avoiding several full-image NumPy
+    # temporaries. 1/128 and 127.5 preserve the original float32 normalization.
+    blob = cv2.dnn.blobFromImage(
+        padded, 1.0 / 128.0, (input_size, input_size),
+        (127.5, 127.5, 127.5), swapRB=True, crop=False,
+    )
+    return blob, scale
 
 
+@lru_cache(maxsize=32)
 def _anchor_centers(input_size: int, stride: int) -> np.ndarray:
     height = input_size // stride
     width = input_size // stride
     centers = np.stack(np.mgrid[:height, :width][::-1], axis=-1).astype(np.float32)
     centers = (centers * stride).reshape((-1, 2))
-    return np.stack([centers, centers], axis=1).reshape((-1, 2))
+    centers = np.stack([centers, centers], axis=1).reshape((-1, 2))
+    centers.setflags(write=False)
+    return centers
 
 
 def _nms(boxes: np.ndarray, scores: np.ndarray, threshold: float) -> list[int]:
@@ -241,6 +249,12 @@ class SCRFDTensorRTDetector:
         for name, tensor in self._output_tensors.items():
             if not self._context.set_tensor_address(name, tensor.data_ptr()):
                 raise RuntimeError(f"SCRFD TensorRT 输出地址绑定失败: {name}")
+        # Keep the nine output buffers pinned and reuse them. All copies below
+        # share one stream wait instead of a blocking .cpu() for every head.
+        self._host_output_tensors = {
+            name: torch.empty(tensor.shape, dtype=torch.float32, pin_memory=True)
+            for name, tensor in self._output_tensors.items()
+        }
 
     def _torch_dtype(self, dtype: Any) -> Any:
         mapping = {
@@ -262,17 +276,22 @@ class SCRFDTensorRTDetector:
             stream = self._torch.cuda.current_stream(device=self._device)
             if not self._context.execute_async_v3(stream_handle=stream.cuda_stream):
                 raise RuntimeError("SCRFD TensorRT 推理执行失败")
+            for name, host in self._host_output_tensors.items():
+                host.copy_(self._output_tensors[name], non_blocking=True)
+            stream.synchronize()
             predictions: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
             for stride, names in self._prediction_names.items():
                 predictions[stride] = tuple(
-                    self._output_tensors[name].float().cpu().numpy() for name in names
+                    self._host_output_tensors[name].numpy() for name in names
                 )  # type: ignore[assignment]
 
-        return decode_scrfd_predictions(
-            predictions,
-            input_size=self._input_size,
-            image_shape=image.shape[:2],
-            scale=scale,
-            score_threshold=score_threshold,
-            nms_threshold=self._nms_threshold,
-        )
+            # Decoding must finish while locked: the host buffers are reused by
+            # the next caller. Returned face rows own their data as before.
+            return decode_scrfd_predictions(
+                predictions,
+                input_size=self._input_size,
+                image_shape=image.shape[:2],
+                scale=scale,
+                score_threshold=score_threshold,
+                nms_threshold=self._nms_threshold,
+            )
