@@ -12,9 +12,11 @@ type Props = {
   canExecuteTask: boolean
   canStopTask: boolean
   executingTaskId: string | null
+  taskLoopEnabled: Readonly<Record<string, boolean>>
   onSelectTask: (taskId: string) => void
   onEditTask: (taskId: string) => void
-  onExecuteTask: (taskId: string) => void
+  onExecuteTask: (taskId: string, loop: boolean) => void
+  onTaskLoopChange: (taskId: string, enabled: boolean) => void
   onStopTask: (taskId: string) => void
   onDeleteTask: (taskId: string) => void
   onStartCreate: () => void
@@ -29,14 +31,17 @@ export function TaskDrawerPanel({
   canExecuteTask,
   canStopTask,
   executingTaskId,
+  taskLoopEnabled,
   onSelectTask,
   onEditTask,
   onExecuteTask,
+  onTaskLoopChange,
   onStopTask,
   onDeleteTask,
   onStartCreate,
 }: Props) {
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? null
+  const canStartTask = canExecuteTask && executingTaskId === null
 
   return (
     <aside className="pcd-panel pcd-task-panel pcd-task-list-mode">
@@ -60,10 +65,13 @@ export function TaskDrawerPanel({
         ) : (
           tasks.map((task) => {
             const isActive = task.id === selectedTaskId
-            const isRunning = navigationStatus?.status === 'navigating' && navigationStatus.task_id === task.id
+            const taskStatus = navigationStatus?.task_id === task.id ? navigationStatus.status : null
+            const isPlanning = taskStatus === 'planning'
+            const isRunning = taskStatus === 'navigating' || isPlanning
             const isStarting = executingTaskId === task.id
+            const loopEnabled = taskLoopEnabled[task.id] === true
             const statusClassName = isRunning || isStarting ? 'pcd-task-status-running' : 'pcd-task-status-pending'
-            const statusLabel = isStarting ? '启动中' : isRunning ? '执行中' : '未执行'
+            const statusLabel = isStarting ? '启动中' : isPlanning ? '规划中' : isRunning ? '执行中' : '未执行'
             return (
               <article
                 key={task.id}
@@ -91,14 +99,31 @@ export function TaskDrawerPanel({
                   <span>状态：<strong className={statusClassName}>{statusLabel}</strong></span>
                 </div>
 
+                <button
+                  type="button"
+                  className="pcd-task-loop-switch"
+                  role="switch"
+                  aria-label={task.name + ' 循环执行'}
+                  aria-checked={loopEnabled}
+                  disabled={!canStartTask}
+                  title="下次点击执行时生效"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onTaskLoopChange(task.id, !loopEnabled)
+                  }}
+                >
+                  <span className="pcd-task-loop-track" aria-hidden="true" />
+                  <span>循环执行</span>
+                </button>
+
                 <div className="pcd-task-card-actions">
                   <button
                     className="pcd-tool-button"
                     onClick={(event) => {
                       event.stopPropagation()
-                      onExecuteTask(task.id)
+                      onExecuteTask(task.id, loopEnabled)
                     }}
-                    disabled={!canExecuteTask || executingTaskId !== null}
+                    disabled={!canStartTask}
                     title={!canExecuteTask ? '当前账号没有任务执行权限' : isStarting ? '任务正在启动' : '执行此任务'}
                   >
                     <Play size={14} />

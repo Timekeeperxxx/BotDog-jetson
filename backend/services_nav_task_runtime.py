@@ -84,7 +84,7 @@ def _materialize_step(_scene_id: str, step: dict[str, Any]) -> dict[str, Any]:
     raise NavTaskError(f"不支持的任务步骤类型: {step_type or '<empty>'}")
 
 
-def materialize_nav_task_runtime(task_id: str) -> dict[str, Any]:
+def materialize_nav_task_runtime(task_id: str, *, loop: bool = False) -> dict[str, Any]:
     task = get_nav_task(task_id)
     scene_id = str(task.get("mapId") or task.get("sceneId") or "").strip()
     if not scene_id:
@@ -105,6 +105,7 @@ def materialize_nav_task_runtime(task_id: str) -> dict[str, Any]:
     runtime = {
         "task_id": str(task["id"]),
         "task_name": str(task["name"]),
+        "loop": loop,
         "scene_id": scene_id,
         "frame_id": settings.PCD_FRAME_ID,
         "created_at": str(task.get("createdAt") or _utc_now_iso()),

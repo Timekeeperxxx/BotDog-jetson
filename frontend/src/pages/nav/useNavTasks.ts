@@ -218,7 +218,7 @@ export function useNavTasks({
     addLog(`已删除任务 ${task.name}`)
   }, [addLog, tasks])
 
-  const handleExecuteTask = useCallback(async (taskId: string) => {
+  const handleExecuteTask = useCallback(async (taskId: string, loop: boolean) => {
     if (!canOperate) {
       addLog('当前无操作权限，无法执行任务', 'error')
       return
@@ -244,7 +244,7 @@ export function useNavTasks({
       return
     }
     setExecutingTaskId(task.id)
-    addLog(`正在启动导航任务 ${task.name}…`)
+    addLog(`正在启动${loop ? '循环' : ''}导航任务 ${task.name}…`)
     try {
       if (task.mapId !== selectedSceneId) {
         addLog(`正在切换到任务场景 ${task.mapName}…`)
@@ -254,7 +254,7 @@ export function useNavTasks({
         }
       }
       setInitialState({ taskRoute: null, globalPath: null, executionPath: null })
-      const result = await executeNavTask(task.id)
+      const result = await executeNavTask(task.id, loop)
       setNavigatingWaypointId(null)
       setInitialState({
         navigationStatus: {
@@ -275,7 +275,7 @@ export function useNavTasks({
         ? `、${result.task_start.topic}=true`
         : ''
       addLog(
-        `已执行导航任务 ${task.name}，已发布 ${result.topic}=true${taskStartText}，${autoTrackText}`,
+        `已启动${loop ? '循环' : ''}导航任务 ${task.name}，已发布 ${result.topic}=true${taskStartText}，${autoTrackText}`,
       )
     } catch (error) {
       addLog(error instanceof Error ? error.message : '执行导航任务失败', 'error')

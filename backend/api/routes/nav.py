@@ -257,6 +257,7 @@ async def nav_execute_task(
     task_id: str,
     user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
+    loop: bool = False,
 ):
     from ...services_nav_state import update_navigation_status
     from ...services_nav_tasks import NavTaskError, get_nav_task
@@ -269,7 +270,7 @@ async def nav_execute_task(
 
     try:
         task = get_nav_task(task_id)
-        runtime_result = materialize_nav_task_runtime(task_id)
+        runtime_result = materialize_nav_task_runtime(task_id, loop=loop)
         _ensure_localization_ready_for_navigation()
         _ensure_navigation_runtime_ready()
         from ...services_nav_localization_process import resume_navigation_soft_stop
@@ -313,7 +314,7 @@ async def nav_execute_task(
         message=(
             f"用户={user.username} 角色={user.role} 操作=nav.task.execute "
             f"目标={task_id} 结果=success topic={nav_start_result['topic']} "
-            f"task_start_topic={task_start_result['topic']} "
+            f"task_start_topic={task_start_result['topic']} loop={loop} "
             f"cmd_vel_pid={cmd_vel_result.get('pid')} "
             f"auto_track_requested={auto_track_result.get('requested')} "
             f"auto_track_enabled={auto_track_result.get('enabled')}"

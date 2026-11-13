@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { PcdFileListPanel } from '../../components/pcd/PcdFileListPanel'
 import { TaskCreatorDrawer } from '../../components/pcd/TaskCreatorDrawer'
 import { TaskDrawerPanel } from '../../components/pcd/TaskDrawerPanel'
@@ -37,7 +38,7 @@ type NavDrawerClusterProps = {
   onDraftChange: (patch: Partial<TaskDraft>) => void
   onDraftStepChange: (index: number, patch: Partial<TaskDraftStep>) => void
   onEditTask: (taskId: string) => void
-  onExecuteTask: (taskId: string) => void
+  onExecuteTask: (taskId: string, loop: boolean) => void
   onRefreshScenes: () => void
   onRemoveDraftWaypoint: (index: number) => void
   onSelectScene: (sceneId: string) => void
@@ -85,6 +86,8 @@ export function NavDrawerCluster({
   onStopTask,
   onCancelCreate,
 }: NavDrawerClusterProps) {
+  const [taskLoopEnabled, setTaskLoopEnabled] = useState<Record<string, boolean>>({})
+
   return (
     <div className="pcd-drawer-cluster">
       <div className="pcd-drawer-rail">
@@ -114,9 +117,13 @@ export function NavDrawerCluster({
             canExecuteTask={canExecuteTask}
             canStopTask={canStopTask}
             executingTaskId={executingTaskId}
+            taskLoopEnabled={taskLoopEnabled}
             onSelectTask={onSelectTask}
             onEditTask={onEditTask}
             onExecuteTask={onExecuteTask}
+            onTaskLoopChange={(taskId, enabled) => {
+              setTaskLoopEnabled((current) => ({ ...current, [taskId]: enabled }))
+            }}
             onStopTask={onStopTask}
             onDeleteTask={onDeleteTask}
             onStartCreate={onStartCreate}

@@ -71,7 +71,8 @@ def test_nav_task_schema_accepts_auto_track_control_step():
     assert task.steps[1].enabled is False
 
 
-def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
+@pytest.mark.parametrize("options, expected_loop", [({}, False), ({"loop": True}, True)])
+def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path, options, expected_loop):
     scene_root = tmp_path / "MAPS"
     task_root = tmp_path / "tasks"
     waypoint_root = tmp_path / "waypoints"
@@ -181,6 +182,7 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
             "task_001",
             user=AuthUserInternal(id=1, username="admin", role="operator", token_version=1),
             db=object(),
+            **options,
         )
     )
 
@@ -194,6 +196,7 @@ def test_nav_execute_task_materializes_runtime_json(monkeypatch, tmp_path):
 
     runtime = read_json(Path(result["runtime_file"]), {})
     assert runtime["task_id"] == "task_001"
+    assert runtime["loop"] is expected_loop
     assert runtime["scene_id"] == scene_id
     assert runtime["steps"] == [
         {

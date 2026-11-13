@@ -1037,7 +1037,7 @@ export function PcdMapDemoPage() {
             onDraftChange={handleTaskDraftChange}
             onDraftStepChange={handleDraftStepChange}
             onEditTask={handleStartEditTask}
-            onExecuteTask={(taskId) => void handleExecuteTask(taskId)}
+            onExecuteTask={(taskId, loop) => void handleExecuteTask(taskId, loop)}
             onRefreshScenes={refreshScenes}
             onRemoveDraftWaypoint={handleRemoveDraftWaypoint}
             onSelectScene={selectScene}

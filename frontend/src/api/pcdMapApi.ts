@@ -154,7 +154,7 @@ export function deleteNavTask(taskId: string): Promise<{ success: boolean; task_
   )
 }
 
-export function executeNavTask(taskId: string): Promise<{
+export function executeNavTask(taskId: string, loop = false): Promise<{
   success: boolean
   task_id: string
   topic: string
@@ -188,7 +188,7 @@ export function executeNavTask(taskId: string): Promise<{
   runtime_task?: Record<string, unknown> | null
 }> {
   return requestJson(
-    getApiUrl(`/api/v1/nav/tasks/${encodeURIComponent(taskId)}/execute`),
+    getApiUrl(`/api/v1/nav/tasks/${encodeURIComponent(taskId)}/execute${loop ? '?loop=true' : ''}`),
     { method: 'POST' },
   )
 }

@@ -139,6 +139,7 @@ def normalize_nav_status(
     raw_status = str(payload.get("status") or "").strip().lower()
     status_map = {
         "accepted": "navigating",
+        "planning": "planning",
         "moving": "navigating",
         "reached": "reached",
         "failed": "error",
