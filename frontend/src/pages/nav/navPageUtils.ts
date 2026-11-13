@@ -265,8 +265,8 @@ export function getNavigationStatusNotice(
   }
 }
 
-export function trimGlobalPathByRobotPose(globalPath: GlobalPath | null, robotPose: RobotPose | null): GlobalPath | null {
-  if (!globalPath || !robotPose) return globalPath
+export function trimGlobalPathByRobotPose(globalPath: GlobalPath, robotPose: RobotPose | null): GlobalPath {
+  if (!robotPose) return globalPath
   if (globalPath.frame_id !== 'map' || robotPose.frame_id !== 'map') return globalPath
   if (globalPath.points.length < 2) return globalPath
 
@@ -665,10 +665,22 @@ export function countNavigateSteps(task: Pick<TaskDefinition, 'steps'>) {
 }
 
 export function getDisplayedGlobalPath(globalPath: GlobalPath | null, robotPose: RobotPose | null, taskRoute: TaskRoute | null): GlobalPath | null {
-  if (!taskRoute) return trimGlobalPathByRobotPose(globalPath, robotPose)
-  return {
+  if (!taskRoute) return globalPath && trimGlobalPathByRobotPose(globalPath, robotPose)
+  if (taskRoute.status !== 'ready' && taskRoute.status !== 'running') return null
+
+  const [currentSegment, ...futureSegments] = taskRoute.segments.slice(taskRoute.current_index)
+  if (!currentSegment) return null
+
+  const currentPath = {
     frame_id: taskRoute.frame_id,
     timestamp: taskRoute.timestamp ?? 0,
-    points: taskRoute.segments.flatMap(segment => segment.points),
+    points: currentSegment.points,
+  }
+  const remainingCurrentPath = taskRoute.status === 'running'
+    ? trimGlobalPathByRobotPose(currentPath, robotPose)
+    : currentPath
+  return {
+    ...remainingCurrentPath,
+    points: [...remainingCurrentPath.points, ...futureSegments.flatMap(segment => segment.points)],
   }
 }
