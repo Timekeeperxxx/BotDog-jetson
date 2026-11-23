@@ -27,7 +27,8 @@ beforeEach(() => {
   requests.length = 0
   setAuthState({ accessToken: 'simulated-token', id: 1, username: 'operator', role: 'operator', must_change_password: false })
   vi.stubGlobal('fetch', vi.fn(async (url, init) => {
-    const cmd = String(url).endsWith('/stop') ? 'stop' : JSON.parse(init.body).cmd
+    const pathname = new URL(String(url), 'http://localhost').pathname
+    const cmd = pathname.endsWith('/stop') ? 'stop' : JSON.parse(init.body).cmd
     requests.push(cmd)
     return response('ACCEPTED', cmd)
   }))

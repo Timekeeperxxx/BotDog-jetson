@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 import json
 import math
 import threading
@@ -505,7 +506,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
     def publish_goal_xyz_yaw(self, waypoint: dict[str, Any]) -> dict[str, Any]:
         with self._goal_submission_lock:
             planning_state = self._begin_planning_goal_submission()
-            previous_resume_pending = self._resume_after_soft_stop
+            previous_resume_pending = getattr(self, "_resume_after_soft_stop", False)
             # An explicit new GoTo may resume execution after a ROS-side stop
             # even when the backend clamp was already clear. Arm before publish
             # so a fast path_ready cannot race past the resume handshake.
@@ -753,11 +754,12 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._resume_after_soft_stop = True
 
     def _try_resume_navigation_execution(self) -> None:
-        with self._publisher_lock:
-            if (not self._resume_after_soft_stop or
-                    not self._navigation_control_expected or
-                    self._planning_status_awaiting_new_generation or
-                    self._latest_planning_status != "path_ready"):
+        lock = getattr(self, "_publisher_lock", None)
+        with (lock if lock is not None else nullcontext()):
+            if (not getattr(self, "_resume_after_soft_stop", False) or
+                    not getattr(self, "_navigation_control_expected", False) or
+                    getattr(self, "_planning_status_awaiting_new_generation", False) or
+                    getattr(self, "_latest_planning_status", None) != "path_ready"):
                 return
             from .services_nav_localization_process import get_cmd_vel_estop_status
             if get_cmd_vel_estop_status()["active"]:
