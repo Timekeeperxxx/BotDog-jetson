@@ -23,6 +23,7 @@ import { getApiUrl } from './config/api';
 import { Sidebar, type SidebarTab } from './components/layout/Sidebar';
 import { TopHeader } from './components/layout/TopHeader';
 import { AuthStatusBar } from './components/AuthStatusBar';
+import { GasAlertBanner } from './components/alerts/GasAlertBanner';
 import { EvidencePanel } from './components/evidence/EvidencePanel';
 import { ConsolePage } from './components/pages/ConsolePage';
 import { GuardPage } from './components/pages/GuardPage';
@@ -187,6 +188,8 @@ export default function IndustrialConsoleComplete() {
           isConnected={isConnected}
           videoLatencyMs={videoLatencyMs}
         />
+
+        <GasAlertBanner />
 
         {activeTab === 'console' ? (
           <ConsolePage

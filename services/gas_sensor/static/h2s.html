@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#080b10" />
+    <title>环境气体浓度检测 · Camera Model Lab</title>
+    <link rel="stylesheet" href="/static/styles.css?v=20260827-6" />
+    <link rel="stylesheet" href="/static/h2s.css?v=20260828-3" />
+    <script src="/static/h2s.js?v=20261116-poll-recovery" defer></script>
+  </head>
+  <body class="gas-page">
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
+    <header class="topbar">
+      <a class="brand" href="/gases" aria-label="气体检测">
+        <span class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </span>
+        <span>
+          <strong>Camera Model Lab</strong>
+          <small>本地安全检测工作台</small>
+        </span>
+      </a>
+      <nav class="topbar-nav" aria-label="功能导航">
+        <a class="active" href="/gases" aria-current="page">气体检测</a>
+      </nav>
+      <div class="system-state">
+        <span class="status-dot online"></span>
+        <span id="monitorStatus">实时监测中</span>
+        <span class="divider"></span>
+        <span id="gasOnlineStatus">正在连接六项监测数据</span>
+      </div>
+    </header>
+
+    <main class="gas-workspace">
+      <section class="gas-hero">
+        <div>
+          <p class="eyebrow">ENVIRONMENT SAFETY</p>
+          <h1>环境气体浓度检测</h1>
+          <p>通过 CH340 串口实时读取粉尘、PH₃、CO₂ 与 O₂ 模组数据</p>
+        </div>
+        <div class="hero-actions">
+          <span class="demo-badge" id="dataSourceBadge"><i></i>正在连接设备</span>
+          <button class="secondary-button" id="exportButton" type="button" title="导出当前读数记录">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 17v3h14v-3"/></svg>
+            导出记录
+          </button>
+          <button class="primary-button" id="pauseMonitorButton" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path id="pauseIconPath" d="M8 5v14M16 5v14"/></svg>
+            <span>暂停监测</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="selected-point-bar panel" aria-label="当前数据源">
+        <div class="source-item gas-source">
+          <span class="point-pin" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 21s6-5.3 6-11a6 6 0 10-12 0c0 5.7 6 11 6 11zM12 7.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5z"/></svg>
+          </span>
+          <span><small>气体数据源</small><strong>GT-01 · 地址 2/3/4</strong></span>
+        </div>
+        <div class="source-item dust-source">
+          <span class="point-pin" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M5 17h14M7 13h10M9 9h6M12 3v3M6 5l2 2m10-2l-2 2"/></svg>
+          </span>
+          <span><small>粉尘数据源</small><strong>GT-01 · 地址 1</strong></span>
+        </div>
+        <div class="source-item climate-source">
+          <span class="point-pin" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M8 4v9a4 4 0 108 0V4a4 4 0 00-8 0zm4 3v8M18 6c1.2 1.5 2 3.1 2 4.5a2 2 0 01-4 0C16 9.1 16.8 7.5 18 6z"/></svg>
+          </span>
+          <span><small>温湿度数据源</small><strong>PH₃ 模组环境寄存器</strong></span>
+        </div>
+        <span class="point-status" id="sourceConnection"><i></i>正在识别 USB 串口</span>
+      </section>
+
+      <section class="gas-summary" aria-label="气体浓度概览">
+        <article class="panel gas-metric ph3-metric" data-formula="PH₃">
+          <div class="gas-metric-head">
+            <span class="gas-formula">PH₃</span>
+            <span class="live-reading"><i></i><b id="ph3Status">连接中</b></span>
+          </div>
+          <p>磷化氢</p>
+          <div class="gas-reading"><strong id="ph3Reading">—</strong><span>ppm</span></div>
+          <div class="reference-row"><span>正常空气参考</span><strong>&lt;0.001 ppm · 未检出</strong></div>
+          <div class="normal-track"><i id="ph3Track"></i></div>
+        </article>
+
+        <article class="panel gas-metric co2-metric" data-formula="CO₂">
+          <div class="gas-metric-head">
+            <span class="gas-formula">CO₂</span>
+            <span class="metric-state"><i></i><b id="co2Status">连接中</b></span>
+          </div>
+          <p>二氧化碳</p>
+          <div class="gas-reading"><strong id="co2Reading">—</strong><span>ppm</span></div>
+          <div class="reference-row"><span>室外空气参考</span><strong>420 – 450 ppm</strong></div>
+          <div class="normal-track"><i id="co2Track"></i></div>
+        </article>
+
+        <article class="panel gas-metric o2-metric" data-formula="O₂">
+          <div class="gas-metric-head">
+            <span class="gas-formula">O₂</span>
+            <span class="metric-state"><i></i><b id="o2Status">连接中</b></span>
+          </div>
+          <p>氧气</p>
+          <div class="gas-reading"><strong id="o2Reading">—</strong><span>% vol</span></div>
+          <div class="reference-row"><span>干燥空气参考</span><strong>20.95%</strong></div>
+          <div class="normal-track"><i id="o2Track"></i></div>
+        </article>
+
+        <article class="panel overall-status">
+          <div class="overall-head"><span>环境状态</span><small>ALL GASES</small></div>
+          <div class="overall-result">
+            <span class="status-symbol" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 12.5l3.2 3.2L17.5 8"/></svg></span>
+            <span><strong id="overallTitle">正在连接传感器</strong><small id="overallDetail">等待三路 Modbus 数据</small></span>
+          </div>
+          <div class="overall-footer"><span>最后采样</span><strong id="lastUpdated">等待设备</strong></div>
+        </article>
+      </section>
+
+      <section class="gas-main-grid">
+        <article class="panel trend-panel">
+          <div class="gas-panel-heading">
+            <div>
+              <p class="eyebrow">CONCENTRATION TREND</p>
+              <h2>仪器读数趋势</h2>
+              <span>GT-01 · 原料入口 · PH₃ / CO₂ / O₂ 扩展探头</span>
+            </div>
+            <div class="range-tabs" role="group" aria-label="趋势时间范围">
+              <button class="active" type="button" data-range="30">30 分钟</button>
+              <button type="button" data-range="60">1 小时</button>
+              <button type="button" data-range="240">4 小时</button>
+            </div>
+          </div>
+          <div class="multi-trend" id="multiTrend" aria-live="polite"></div>
+          <div class="chart-caption">
+            <span><i></i>自动刷新中</span>
+            <span>各气体按独立量程显示 · 采样间隔 2 秒</span>
+          </div>
+        </article>
+
+        <aside class="panel reference-panel">
+          <div class="gas-panel-heading">
+            <div><p class="eyebrow">AIR REFERENCE</p><h2>正常空气参考</h2><span>静态参考值，不参与实测读数</span></div>
+          </div>
+          <div class="air-orbit" aria-label="正常空气组成示意">
+            <div class="air-orbit-inner"><strong>20.95%</strong><span>O₂</span><small>氧气体积比</small></div>
+          </div>
+          <div class="reference-list">
+            <div class="ph3-ref"><i></i><span><strong>PH₃</strong><small>低于仪器检出限</small></span><b>&lt;0.001 ppm</b></div>
+            <div class="co2-ref"><i></i><span><strong>CO₂</strong><small>当前室外大气参考</small></span><b>~429 ppm</b></div>
+            <div class="o2-ref"><i></i><span><strong>O₂</strong><small>干燥空气体积比</small></span><b>20.95%</b></div>
+          </div>
+          <p class="reference-note">ppm 表示百万分之一，1 ppm = 0.0001%。参考值仅用于对照；卡片与趋势中的浓度来自当前串口设备。</p>
+        </aside>
+      </section>
+
+      <section class="environment-section dust-section" aria-labelledby="dustHeading">
+        <div class="section-divider environment-divider">
+          <div><p class="eyebrow">DUST MONITORING</p><h2 id="dustHeading">粉尘浓度检测</h2><span>GT-01 地址 1 · 原始 µg/m³ 转换为 mg/m³</span></div>
+          <span class="environment-badge"><i></i>地址 1 串口采集中</span>
+        </div>
+        <div class="specialized-monitor-grid">
+          <article class="panel environment-metric dust-metric">
+            <div class="environment-metric-head"><span>粉尘浓度</span><small>DUST</small></div>
+            <div class="environment-reading"><strong id="dustReading">—</strong><span>mg/m³</span></div>
+            <div class="environment-state"><i></i><span id="dustStatus">连接中</span><small>GT-01 地址 1 粉尘通道</small></div>
+          </article>
+          <article class="panel environment-trend-panel">
+            <div class="gas-panel-heading environment-trend-heading">
+              <div><p class="eyebrow">DUST TREND</p><h2>粉尘浓度趋势</h2><span>GT-01 DUST · 地址 1</span></div>
+              <span class="environment-live"><i></i>串口采集中</span>
+            </div>
+            <div class="multi-trend specialized-trend" id="dustTrend" aria-live="polite"></div>
+            <div class="chart-caption environment-caption"><span><i></i>GT-01 DUST 自动刷新中</span><span>采样间隔 2 秒</span></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="environment-section climate-section" aria-labelledby="climateHeading">
+        <div class="section-divider climate-divider">
+          <div><p class="eyebrow">TEMPERATURE &amp; HUMIDITY</p><h2 id="climateHeading">温湿度检测</h2><span>来自 PH₃ 模组的环境温湿度寄存器</span></div>
+          <span class="climate-badge"><i></i>读取 PH₃ 模组环境寄存器</span>
+        </div>
+        <div class="climate-summary">
+          <article class="panel environment-metric temperature-metric">
+            <div class="environment-metric-head"><span>仓内温度</span><small>TEMPERATURE</small></div>
+            <div class="environment-reading"><strong id="temperatureReading">—</strong><span>°C</span></div>
+            <div class="environment-state"><i></i><span>模组上报</span><small>GT-01 环境温度寄存器</small></div>
+          </article>
+          <article class="panel environment-metric humidity-metric">
+            <div class="environment-metric-head"><span>相对湿度</span><small>HUMIDITY</small></div>
+            <div class="environment-reading"><strong id="humidityReading">—</strong><span>% RH</span></div>
+            <div class="environment-state"><i></i><span>模组上报</span><small>GT-01 环境湿度寄存器</small></div>
+          </article>
+        </div>
+        <article class="panel environment-trend-panel climate-trend-panel">
+          <div class="gas-panel-heading environment-trend-heading climate-trend-heading">
+            <div><p class="eyebrow">CLIMATE TREND</p><h2>温湿度趋势</h2><span>GT-01 ENV · 温度 / 相对湿度</span></div>
+            <span class="climate-live"><i></i>串口采集中</span>
+          </div>
+          <div class="multi-trend climate-trend" id="climateTrend" aria-live="polite"></div>
+          <div class="chart-caption climate-caption"><span><i></i>GT-01 ENV 自动刷新中</span><span>温度与湿度按独立量程显示 · 采样间隔 2 秒</span></div>
+        </article>
+      </section>
+
+      <section class="panel device-panel">
+        <div class="gas-panel-heading device-heading">
+          <div><p class="eyebrow">DEVICE STATUS</p><h2>设备与采集状态</h2><span>GT-01 提供粉尘、三种气体与模组环境数据</span></div>
+          <span class="network-state"><i></i>4 地址 · 6 项数据</span>
+        </div>
+        <div class="device-grid">
+          <article class="device-card">
+            <span class="device-icon"><svg viewBox="0 0 24 24"><path d="M7 3h10v18H7zM9.5 7h5M10 17h4M4 8h3m10 0h3"/></svg></span>
+            <span><small>气体检测设备</small><strong>GT-01</strong><b>PH₃ · CO₂ · O₂</b></span>
+          </article>
+          <article class="device-card">
+            <span class="device-icon"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0116 0M7 15a5 5 0 0110 0M10 18a2 2 0 014 0"/></svg></span>
+            <span><small>粉尘检测设备</small><strong>GT-01 DUST</strong><b>地址 1 · µg/m³</b></span>
+          </article>
+          <article class="device-card">
+            <span class="device-icon"><svg viewBox="0 0 24 24"><path d="M12 21s6-5.3 6-11a6 6 0 10-12 0c0 5.7 6 11 6 11zM12 8a2 2 0 110 4 2 2 0 010-4z"/></svg></span>
+            <span><small>温湿度检测设备</small><strong>GT-01 ENV</strong><b>PH₃ 模组环境寄存器</b></span>
+          </article>
+          <article class="device-card">
+            <span class="device-icon"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5zM8 2v6m8-6v6M8 12h8m-8 3h5"/></svg></span>
+            <span><small>安装与链路</small><strong>CH340 / Modbus-RTU</strong><b>9600 8N1 · 2 秒间隔</b></span>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel records-panel">
+        <div class="gas-panel-heading records-heading">
+          <div><p class="eyebrow">RECENT READINGS</p><h2>仪器采样记录</h2><span>GT-01 最新三气体同步读数</span></div>
+          <span class="auto-refresh"><i></i>自动更新</span>
+        </div>
+        <div class="records-table-wrap">
+          <table>
+            <thead><tr><th>时间</th><th>仪器</th><th>安装位置</th><th>PH₃</th><th>CO₂</th><th>O₂</th><th>状态</th></tr></thead>
+            <tbody id="recordsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel records-panel dust-records-panel">
+        <div class="gas-panel-heading records-heading dust-records-heading">
+          <div><p class="eyebrow">DUST READINGS</p><h2>粉尘采样记录</h2><span>GT-01 地址 1 最新粉尘浓度读数</span></div>
+          <span class="auto-refresh dust-refresh"><i></i>串口更新</span>
+        </div>
+        <div class="records-table-wrap">
+          <table>
+            <thead><tr><th>时间</th><th>设备</th><th>安装位置</th><th>粉尘浓度</th><th>状态</th></tr></thead>
+            <tbody id="dustRecordsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel records-panel climate-records-panel">
+        <div class="gas-panel-heading records-heading climate-records-heading">
+          <div><p class="eyebrow">CLIMATE READINGS</p><h2>温湿度采样记录</h2><span>GT-01 ENV 最新温度与相对湿度读数</span></div>
+          <span class="auto-refresh climate-refresh"><i></i>串口更新</span>
+        </div>
+        <div class="records-table-wrap">
+          <table>
+            <thead><tr><th>时间</th><th>设备</th><th>安装位置</th><th>温度</th><th>相对湿度</th><th>状态</th></tr></thead>
+            <tbody id="climateRecordsBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>

@@ -523,6 +523,7 @@ def register_routes(app: FastAPI) -> None:
     from .api.routes import gimbal as _gimbal_routes
     from .api.routes import face_identities as _face_identity_routes
     from .api.routes import fence_detection as _fence_detection_routes
+    from .api.routes import gases as _gas_routes
     from .api.routes import multisensor as _multisensor_routes
     from .api.routes import weather as _weather_routes
     from .api.routes import model_tester as _model_tester_routes
@@ -551,6 +552,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(_gimbal_routes.router)
     app.include_router(_face_identity_routes.router)
     app.include_router(_fence_detection_routes.router)
+    app.include_router(_gas_routes.router)
     app.include_router(_multisensor_routes.router)
     app.include_router(_weather_routes.router)
     app.include_router(_model_tester_routes.router)

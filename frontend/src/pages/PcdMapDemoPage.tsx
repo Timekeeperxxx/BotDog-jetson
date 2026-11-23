@@ -1,3 +1,4 @@
+import { GasAlertBanner } from '../components/alerts/GasAlertBanner'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createWaypoint,
@@ -974,6 +975,8 @@ export function PcdMapDemoPage() {
         onRestartLocalization={() => void handleRestartNavigationLocalization()}
         onToggleWaypointMode={handleToggleWaypointMode}
       />
+
+      <GasAlertBanner />
 
       <div className={`pcd-workspace ${rightRailOpen ? '' : 'is-right-rail-collapsed'}`}>
         <section className="pcd-main-stage">

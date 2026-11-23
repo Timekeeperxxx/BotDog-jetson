@@ -1,0 +1,3 @@
+# Reserve the same USB2 hub port (2.1) used by the source GT-01 installation.
+# CH340 IDs alone are shared by other serial sensors.
+ACTION!="remove", SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ENV{ID_PATH}=="platform-3610000.*-usb-0:2.1:1.0", SYMLINK+="gas-sensor", GROUP="dialout", MODE="0660", ENV{ID_MM_DEVICE_IGNORE}="1"

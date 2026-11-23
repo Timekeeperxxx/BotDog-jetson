@@ -1,0 +1,17 @@
+[Unit]
+Description=BotDog GT-01 gas and dust sensor
+After=network.target
+
+[Service]
+User=jetson
+Group=jetson
+SupplementaryGroups=dialout
+WorkingDirectory=/home/jetson/Projects/BotDog/services/gas_sensor
+Environment=CAMERA_MODEL_LAB_GAS_PORT=/dev/gas-sensor
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/jetson/Projects/BotDog/.venv/bin/python -m uvicorn server.app:app --host 0.0.0.0 --port 8787
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
