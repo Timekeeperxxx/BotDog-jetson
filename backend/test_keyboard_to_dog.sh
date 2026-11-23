@@ -9,16 +9,14 @@ VENV="$ROOT_DIR/.venv"
 UNITREE_IFACE="${UNITREE_NETWORK_IFACE:-enP3p49s0}"
 UNITREE_IP="${UNITREE_LOCAL_IP:-192.168.123.222}"
 
-# 确保 B2 网卡 IP 已配置
+# 检查 B2 网卡 IP 是否已配置
 if ! ip addr show "$UNITREE_IFACE" 2>/dev/null | grep -q "$UNITREE_IP"; then
-  echo "[INFO] 为 $UNITREE_IFACE 配置 IP $UNITREE_IP/24..."
-  echo '123123' | sudo -S ip addr add "${UNITREE_IP}/24" dev "$UNITREE_IFACE" 2>/dev/null || true
+  echo "[WARN] $UNITREE_IFACE 缺少 IP $UNITREE_IP/24，请用 sudo ip addr add $UNITREE_IP/24 dev $UNITREE_IFACE 配置" >&2
 fi
 
-# 确保 DDS multicast 路由走 B2 所在网卡
+# 检查 DDS 多播路由是否走 B2 所在网卡
 if ! ip route show | grep -q "224.0.0.0/4.*dev $UNITREE_IFACE"; then
-  echo "[INFO] 添加 DDS multicast 路由 → $UNITREE_IFACE ..."
-  echo '123123' | sudo -S ip route add 224.0.0.0/4 dev "$UNITREE_IFACE" 2>/dev/null || true
+  echo "[WARN] $UNITREE_IFACE 缺少 DDS 多播路由，请用 sudo ip route add 224.0.0.0/4 dev $UNITREE_IFACE 配置" >&2
 fi
 
 # 修复 ARM64 下 pip cyclonedds==0.10.2 自带 C 库无法创建 Topic 的 Bug
