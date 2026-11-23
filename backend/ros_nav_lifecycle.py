@@ -151,6 +151,7 @@ class RosNavLifecycleMixin:
             self._tf_static_subscription = None
             self._nav_start_publisher = None
             self._nav_task_start_publisher = None
+            self._task_manual_control_publisher = None
             self._cmd_vel_publisher = None
             self._goal_xyz_publisher = None
             self._goal_yaw_publisher = None

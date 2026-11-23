@@ -12,11 +12,10 @@
  * // 按下按钮时
  * onPointerDown={() => startCommand('forward')}
  * // 松手时
- * onPointerUp={stopCommand}
+ * onPointerUp={releaseCommand}
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getApiUrl } from '../config/api';
 import { fetchWithAuth } from '../api/apiFetch';
 import { requestRobotStop } from '../api/controlApi';
 
@@ -58,13 +57,15 @@ export interface RobotCommandOptions {
 const SEND_INTERVAL_MS = 500;
 
 // 控制 API URL
-const CONTROL_URL = getApiUrl('/api/v1/control/command');
+const CONTROL_PATH = '/api/v1/control/command';
 
 export interface UseRobotControlReturn {
   stopStatus: 'idle' | 'waiting' | 'confirmed' | 'failed' | 'unconfirmed';
   /** 开始持续发送命令（长按时调用） */
   startCommand: (cmd: RobotCommand, options?: RobotCommandOptions) => void;
-  /** 停止发送，立即发 stop（松手时调用） */
+  /** 结束当前方向输入，停车确认后允许继续巡检 */
+  releaseCommand: () => void;
+  /** 主动停车，取消自动续跑 */
   stopCommand: () => void;
   /** 当前是否正在控制中 */
   isControlling: boolean;
@@ -138,7 +139,7 @@ export function useRobotControl(): UseRobotControlReturn {
         ...(options.vx !== undefined ? { vx: options.vx } : {}),
         ...(options.vyaw !== undefined ? { vyaw: options.vyaw } : {}),
       };
-      const res = await fetch(CONTROL_URL, {
+      const res = await fetchWithAuth(CONTROL_PATH, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -160,14 +161,14 @@ export function useRobotControl(): UseRobotControlReturn {
 
   // ── 发送 stop 命令（独立锁，绝不被 normalSendingRef 阻塞）────────────────
 
-  const sendStopCommand = useCallback(async () => {
+  const sendStopCommand = useCallback(async (release = false) => {
     if (stopSendingRef.current) return;
     stopSendingRef.current = true;
     setStopStatus('waiting');
     setLastResult(null);
 
     try {
-      const ack = await requestRobotStop();
+      const ack = await requestRobotStop(release);
       setLastResult(ack);
       setStopStatus(ack.result === 'ACCEPTED' ? 'confirmed' : 'failed');
     } catch {
@@ -195,15 +196,19 @@ export function useRobotControl(): UseRobotControlReturn {
     }, SEND_INTERVAL_MS);
   }, [sendNormalCommand, clearInterval_]);
 
-  // ── stopCommand：松手立即 stop（interval 同步清理，stop 不受普通命令锁影响）
+  // 松开方向键和显式停车共享停车确认，但只有前者允许自动续跑。
 
-  const stopCommand = useCallback(() => {
+  const endCommand = useCallback((release: boolean) => {
+    if (release && !isControllingRef.current) return;
     clearInterval_();
     isControllingRef.current = false;
     setIsControlling(false);
     setCurrentCmd(null);
-    sendStopCommand();
+    sendStopCommand(release);
   }, [sendStopCommand, clearInterval_]);
+
+  const stopCommand = useCallback(() => endCommand(false), [endCommand]);
+  const releaseCommand = useCallback(() => endCommand(true), [endCommand]);
 
   // ── 安全底座：失焦 / 页面卸载 / 组件卸载时自动 stop ──────────────────────
 
@@ -239,6 +244,7 @@ export function useRobotControl(): UseRobotControlReturn {
   return {
     stopStatus,
     startCommand,
+    releaseCommand,
     stopCommand,
     isControlling,
     lastResult,

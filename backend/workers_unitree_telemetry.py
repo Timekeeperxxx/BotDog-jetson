@@ -16,6 +16,7 @@ import time
 from typing import Optional, TYPE_CHECKING
 
 from .logging_config import logger
+from .manual_patrol_resume import decode_unitree_remote, get_manual_patrol_resume
 from .mavlink_dto import (
     AttitudeDTO,
     BatteryDTO,
@@ -93,6 +94,7 @@ class UnitreeTelemetryWorker:
         """启动遥测 Worker。"""
         subscriber = None
         low_state_subscriber = None
+        remote_sample = None
         try:
             from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
             from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_, SportModeState_
@@ -162,6 +164,8 @@ class UnitreeTelemetryWorker:
 
             def on_low_state_message(msg: LowState_) -> None:
                 """DDS 回调：接收低层状态中的 BMS 电池数据。"""
+                nonlocal remote_sample
+                remote_sample = (time.monotonic(), bytes(msg.wireless_remote))
                 try:
                     global _latest_low_state_diagnostic
                     battery = _extract_battery_from_low_state(msg)
@@ -200,6 +204,11 @@ class UnitreeTelemetryWorker:
             while not stop_event.is_set():
                 try:
                     await asyncio.sleep(0.05)  # 20Hz
+
+                    manual_patrol = get_manual_patrol_resume()
+                    if manual_patrol is not None and remote_sample is not None:
+                        stamp, packet = remote_sample
+                        manual_patrol.observe_remote(stamp, decode_unitree_remote(packet))
 
                     state = self._latest_state
                     if state is None:

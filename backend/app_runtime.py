@@ -10,6 +10,7 @@ from .alert_service import AlertService, set_alert_service
 from .auto_track_service import AutoTrackService, set_auto_track_service
 from .config import settings
 from .control_arbiter import ControlArbiter, set_control_arbiter
+from .manual_patrol_resume import ManualPatrolResume, set_manual_patrol_resume
 from .guard_mission_service import GuardMissionService, set_guard_mission_service
 from .logging_config import get_logger
 from .multisensor_fusion import MultiSensorFusionService, set_multisensor_fusion_service
@@ -261,7 +262,11 @@ async def initialize_runtime_services(
     _arbiter = ControlArbiter()
     set_control_arbiter(_arbiter)
     set_navigation_velocity_udp_service(None)
+    set_manual_patrol_resume(None)
     if settings.CONTROL_ADAPTER_TYPE == "unitree_b2":
+        manual_patrol = ManualPatrolResume(_arbiter)
+        set_manual_patrol_resume(manual_patrol)
+        tasks.append(asyncio.create_task(manual_patrol.run(stop_event)))
         navigation_velocity_udp = NavigationVelocityUdpService(
             control_service=control_service,
             control_arbiter=_arbiter,

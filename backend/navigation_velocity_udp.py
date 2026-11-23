@@ -14,6 +14,7 @@ from typing import Any
 from .control_arbiter import ControlArbiter
 from .control_service import ControlService
 from .logging_config import get_logger
+from .manual_patrol_resume import get_manual_patrol_resume
 from .navigation_velocity_protocol import (
     NAVIGATION_VELOCITY_PACKET,
     NAVIGATION_VELOCITY_TIMEOUT_S,
@@ -183,7 +184,9 @@ class NavigationVelocityUdpService:
             self._rejected_count += 1
             return DATAGRAM_REJECTED_VALUE
 
-        if self._control_arbiter.owner != ControlOwner.NAVIGATION:
+        manual_patrol = get_manual_patrol_resume()
+        if (self._control_arbiter.owner != ControlOwner.NAVIGATION
+                or (manual_patrol is not None and manual_patrol.holds_navigation)):
             self._rejected_count += 1
             return DATAGRAM_REJECTED_OWNER
 

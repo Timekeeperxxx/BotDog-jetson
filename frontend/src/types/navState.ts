@@ -25,7 +25,7 @@ export type TaskRoute = {
   task_id: string
   run_id: string
   frame_id: string
-  status: 'planning' | 'ready' | 'running' | 'completed' | 'failed' | 'canceled'
+  status: 'planning' | 'ready' | 'running' | 'paused' | 'completed' | 'failed' | 'canceled'
   current_index: number
   segments: { points: GlobalPathPoint[]; waypoint: GlobalPathPoint & { name: string; yaw: number } }[]
   timestamp?: number

@@ -16,8 +16,9 @@ export interface EmergencyStopResponse {
   message: string
 }
 
-export async function requestRobotStop(): Promise<ControlAck> {
-  const ack = await apiFetch<ControlAck>('/api/v1/control/stop', {
+export async function requestRobotStop(release = false): Promise<ControlAck> {
+  const path = release ? '/api/v1/control/stop?release=true' : '/api/v1/control/stop'
+  const ack = await apiFetch<ControlAck>(path, {
     method: 'POST', signal: AbortSignal.timeout(STOP_REQUEST_TIMEOUT_MS),
   })
   if (ack.ack_cmd !== 'stop' || typeof ack.result !== 'string') {

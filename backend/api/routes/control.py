@@ -16,6 +16,7 @@ from ...control_service import (
 )
 from ...database import get_db
 from ...nav_bridge_state import get_ros_nav_bridge
+from ...manual_patrol_resume import WEB_MOVEMENT, get_manual_patrol_resume
 from ...schemas import ControlAckDTO, EStopResetResponse, EStopResponse, utc_now_iso
 from ...services_nav_localization import set_cmd_vel_estop, stop_cmd_vel_script
 from ...state_machine_state import get_state_machine
@@ -67,7 +68,15 @@ async def control_command(
 
     arbiter = get_control_arbiter()
     if arbiter is not None:
+        if body.cmd != "stop" and arbiter.owner == ControlOwner.REMOTE_CONTROLLER:
+            raise HTTPException(status_code=409, detail="实体遥控器正在接管")
         arbiter.request_control(ControlOwner.WEB_MANUAL)
+    manual_patrol = get_manual_patrol_resume()
+    if manual_patrol is not None:
+        if body.cmd in WEB_MOVEMENT:
+            manual_patrol.web_motion()
+        else:
+            manual_patrol.web_stop_requested(release=False)
 
     ack = await svc.handle_command(
         body.cmd,
@@ -89,8 +98,9 @@ async def control_command(
 async def control_stop(
     user: AuthUserInternal = Depends(require_operator),
     db=Depends(get_db),
+    release: bool = False,
 ) -> ControlAckDTO:
-    """快捷停止接口（等同于发送 cmd='stop'），供前端紧急停止使用。"""
+    """停车并确认。仅方向键正常松开时允许巡检自动续跑。"""
     svc = get_control_service()
     if svc is None:
         raise HTTPException(status_code=503, detail="控制服务未就绪")
@@ -101,7 +111,11 @@ async def control_stop(
     arbiter = get_control_arbiter()
     if arbiter is not None:
         arbiter.request_control(ControlOwner.WEB_MANUAL)
+    manual_patrol = get_manual_patrol_resume()
+    generation = manual_patrol.web_stop_requested(release=release) if manual_patrol else None
     ack = await svc.force_stop()
+    if generation is not None:
+        manual_patrol.web_stop_confirmed(generation, accepted=ack.result == "ACCEPTED")
     if ack.result != "ACCEPTED":
         await safe_write_audit_log(
             db,
@@ -135,6 +149,9 @@ async def emergency_stop(
     from ...control_service import get_control_service
 
     state_machine.trigger_emergency_stop()
+    manual_patrol = get_manual_patrol_resume()
+    if manual_patrol is not None:
+        manual_patrol.cancel()
     errors: list[str] = []
     try:
         set_cmd_vel_estop(True, "control_e_stop")

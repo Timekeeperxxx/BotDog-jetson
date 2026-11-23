@@ -232,6 +232,13 @@ def get_nav_state() -> dict[str, Any]:
         }
 
 
+def get_task_route_phase() -> tuple[str, str] | None:
+    with _lock:
+        if _latest_task_route is None:
+            return None
+        return _latest_task_route["run_id"], _latest_task_route["status"]
+
+
 def get_nav_freshness() -> dict[str, Any]:
     """Read only pose freshness, without copying potentially large point/path data."""
     with _lock:

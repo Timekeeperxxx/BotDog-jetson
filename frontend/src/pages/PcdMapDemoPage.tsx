@@ -127,6 +127,7 @@ export function PcdMapDemoPage() {
   const { robotPose, globalPath, taskRoute, executionPath, localizationStatus, navigationStatus, setInitialState } = navWs
   const {
     startCommand,
+    releaseCommand,
     stopCommand,
     isControlling,
     currentCmd,
@@ -140,6 +141,7 @@ export function PcdMapDemoPage() {
     isControlling,
     currentCmd,
     startCommand,
+    releaseCommand,
     stopCommand,
   })
 

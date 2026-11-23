@@ -105,6 +105,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._tf_static_subscription: Any | None = None
         self._nav_start_publisher: Any | None = None
         self._nav_task_start_publisher: Any | None = None
+        self._task_manual_control_publisher: Any | None = None
         self._cmd_vel_publisher: Any | None = None
         self._goal_xyz_publisher: Any | None = None
         self._goal_yaw_publisher: Any | None = None
@@ -125,6 +126,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         self._planning_status_accept_generation_reset = True
         self._planning_status_awaiting_new_generation = False
         self._planning_generation_floor: int | None = None
+        self._resume_after_soft_stop = False
         self._planning_status_publisher_gid: bytes | None = None
         self._retired_planning_status_publisher_gids: set[bytes] = set()
         # /nav/obstacle_status 持续阻断跟踪：阻断状态首次出现的时间与是否已告警。
@@ -340,7 +342,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
     def _setup_publishers(self) -> None:
         try:
             from geometry_msgs.msg import PointStamped, Twist
-            from std_msgs.msg import Bool, Float64
+            from std_msgs.msg import Bool, Float64, String
         except Exception as exc:
             raise RuntimeError(f"导航发布消息类型不可用: {exc}") from exc
 
@@ -353,6 +355,9 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
             Bool,
             settings.ROS_NAV_TASK_START_TOPIC,
             10,
+        )
+        self._task_manual_control_publisher = self._node.create_publisher(
+            String, "/nav/task_manual_control", 10,
         )
         self._cmd_vel_publisher = self._node.create_publisher(
             Twist,
@@ -478,6 +483,16 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         result["subscriber_count"] = subscriber_count
         return result
 
+    def publish_task_manual_control(self, run_id: str, *, paused: bool) -> bool:
+        from std_msgs.msg import String
+
+        with self._publisher_lock:
+            publisher = self._task_manual_control_publisher
+            if publisher is None or not publisher.get_subscription_count():
+                return False
+            publisher.publish(String(data=json.dumps({"run_id": run_id, "paused": paused})))
+        return True
+
     def publish_zero_cmd_vel(self, publish_count: int = 10, interval_s: float = 0.03) -> dict[str, Any]:
         return publish_zero_cmd_vel_message(
             node=self._node,
@@ -490,16 +505,24 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
     def publish_goal_xyz_yaw(self, waypoint: dict[str, Any]) -> dict[str, Any]:
         with self._goal_submission_lock:
             planning_state = self._begin_planning_goal_submission()
+            previous_resume_pending = self._resume_after_soft_stop
+            # An explicit new GoTo may resume execution after a ROS-side stop
+            # even when the backend clamp was already clear. Arm before publish
+            # so a fast path_ready cannot race past the resume handshake.
+            self._resume_after_soft_stop = True
             try:
                 result = self._publish_goal_xyz_yaw_inner(waypoint)
             except Exception:
+                self._resume_after_soft_stop = previous_resume_pending
                 self._rollback_planning_goal_submission(planning_state)
                 raise
             if not result.get("success"):
+                self._resume_after_soft_stop = previous_resume_pending
                 self._rollback_planning_goal_submission(planning_state)
             if result.get("success"):
-                # A goal event itself starts/replaces single-point navigation.
-                # `/nav_start` is reserved for inspection-task execution.
+                # A goal starts/replaces single-point navigation. /nav_start
+                # only releases its execution gate after this generation is
+                # ready; the old inspection task uses /nav_task_start.
                 self._last_goal_waypoint = dict(waypoint)
                 self._regoal_attempts = 0
                 self._last_regoal_at = 0.0
@@ -511,6 +534,7 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
                 )
                 self._navigation_status_before_blocked = None
                 self._replace_paths_and_status_for_new_goal(waypoint, result)
+                self._try_resume_navigation_execution()
             return result
 
     def _begin_planning_goal_submission(self) -> tuple[Any, ...]:
@@ -727,6 +751,19 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
 
     def arm_soft_stop_resume(self) -> None:
         self._resume_after_soft_stop = True
+
+    def _try_resume_navigation_execution(self) -> None:
+        with self._publisher_lock:
+            if (not self._resume_after_soft_stop or
+                    not self._navigation_control_expected or
+                    self._planning_status_awaiting_new_generation or
+                    self._latest_planning_status != "path_ready"):
+                return
+            from .services_nav_localization_process import get_cmd_vel_estop_status
+            if get_cmd_vel_estop_status()["active"]:
+                return
+            self.publish_navigation_start(True)
+            self._resume_after_soft_stop = False
 
     def publish_navigation_stop(self) -> dict[str, Any]:
         """Latch the ROS navigation execution chain off via /nav_stop=true."""
@@ -1576,13 +1613,10 @@ class RosNavBridge(RosNavCloudBridgeMixin, RosNavLifecycleMixin):
         ):
             return
 
-        if getattr(self, "_resume_after_soft_stop", False):
-            # A failed plan keeps execution stopped; the next explicit goal may retry.
-            if planner_status == "path_ready" and self._navigation_control_expected:
-                from .services_nav_localization_process import get_cmd_vel_estop_status
-                if not get_cmd_vel_estop_status()["active"]:
-                    self._resume_after_soft_stop = False
-                    self.publish_navigation_start(True)
+        # Either this callback or goal publication may finish first. The same
+        # generation-checked handshake handles both orders and never clears an
+        # active emergency clamp or resumes an old target on health recovery.
+        self._try_resume_navigation_execution()
 
         current_status = get_nav_state().get("navigation_status") or {}
         current = str(current_status.get("status") or "").strip().lower()

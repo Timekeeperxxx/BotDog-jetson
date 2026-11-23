@@ -6,6 +6,7 @@ import { CameraControlPanel } from './CameraControlPanel';
 import { WeaponDetectionControl } from './WeaponDetectionControl';
 import { PackageDetectionControl } from './PackageDetectionControl';
 import { FenceActionControl } from './FenceActionControl';
+import { HelmetVoiceButton } from './HelmetVoiceButton';
 import { CameraVideo } from './CameraVideo';
 import { OmniMonitorEntry } from './OmniMonitorEntry';
 import { OmniMonitorOverlay } from './OmniMonitorOverlay';
@@ -207,6 +208,7 @@ export function VideoStage({
                   )}
                 </button>
               )}
+              <HelmetVoiceButton overlay={trackOverlay} videoConnected={whepStatus.status === 'connected'} />
               <button
                 onClick={() => onVideoProfileChange(videoProfile === 'remote' ? 'main' : 'remote')}
                 className={`min-w-[88px] px-2 py-2 rounded-lg transition-all flex items-center justify-center gap-2 ${

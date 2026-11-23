@@ -6,6 +6,7 @@ import type { RobotCommand, RobotCommandOptions } from './useRobotControl'
 
 type Controls = {
   startCommand: ReturnType<typeof vi.fn>
+  releaseCommand: ReturnType<typeof vi.fn>
   stopCommand: ReturnType<typeof vi.fn>
 }
 
@@ -15,6 +16,10 @@ function KeyboardHarness({ controls }: { controls: Controls }) {
   const startCommand = (cmd: RobotCommand, options?: RobotCommandOptions) => {
     controls.startCommand(cmd, options)
     setCurrentCmd(cmd)
+  }
+  const releaseCommand = () => {
+    controls.releaseCommand()
+    setCurrentCmd(null)
   }
   const stopCommand = () => {
     controls.stopCommand()
@@ -27,6 +32,7 @@ function KeyboardHarness({ controls }: { controls: Controls }) {
     isControlling: currentCmd !== null,
     currentCmd,
     startCommand,
+    releaseCommand,
     stopCommand,
   })
 
@@ -51,6 +57,7 @@ describe('useKeyboardRobotControl', () => {
   it('starts mapped commands with the adjusted keyboard speed', () => {
     const controls: Controls = {
       startCommand: vi.fn(),
+      releaseCommand: vi.fn(),
       stopCommand: vi.fn(),
     }
 
@@ -62,12 +69,14 @@ describe('useKeyboardRobotControl', () => {
 
     expect(screen.getByTestId('linear-speed')).toHaveTextContent('0.4')
     expect(controls.startCommand).toHaveBeenCalledWith('forward', { vx: 0.4 })
-    expect(controls.stopCommand).toHaveBeenCalledTimes(1)
+    expect(controls.releaseCommand).toHaveBeenCalledTimes(1)
+    expect(controls.stopCommand).not.toHaveBeenCalled()
   })
 
   it('resets speed and stops active control when disabled', async () => {
     const controls: Controls = {
       startCommand: vi.fn(),
+      releaseCommand: vi.fn(),
       stopCommand: vi.fn(),
     }
 

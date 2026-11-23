@@ -64,7 +64,7 @@ const BUTTONS: ButtonConfig[] = [
 export function ControlPad({ control, isDisabled = false, bottomCenterSlot }: ControlPadProps) {
   useAuthState();
   const canOperate = hasAuthSession() && hasRole('operator');
-  const { startCommand, stopCommand, isControlling, lastResult, currentCmd, resultMessage } =
+  const { startCommand, releaseCommand, stopCommand, isControlling, lastResult, currentCmd, resultMessage } =
     control;
   const [controlEnabled, setControlEnabled] = useState(false);
   const [linearSpeed, setLinearSpeed] = useState(DEFAULT_LINEAR_SPEED);
@@ -115,6 +115,10 @@ export function ControlPad({ control, isDisabled = false, bottomCenterSlot }: Co
   };
 
   const handlePointerUp = () => {
+    releaseCommand();
+  };
+
+  const handlePointerCancel = () => {
     if (isControlling) stopCommand();
   };
 
@@ -179,7 +183,7 @@ export function ControlPad({ control, isDisabled = false, bottomCenterSlot }: Co
 
       if (cmd && currentCmd === cmd) {
         e.preventDefault();
-        stopCommand();
+        releaseCommand();
       }
     };
 
@@ -190,7 +194,7 @@ export function ControlPad({ control, isDisabled = false, bottomCenterSlot }: Co
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [adjustKeyboardSpeed, controlsLocked, isControlling, currentCmd, startControlCommand, stopCommand]);
+  }, [adjustKeyboardSpeed, controlsLocked, isControlling, currentCmd, startControlCommand, releaseCommand, stopCommand]);
 
   const resultColor =
     lastResult?.result === 'ACCEPTED'
@@ -255,9 +259,8 @@ export function ControlPad({ control, isDisabled = false, bottomCenterSlot }: Co
               disabled={controlsLocked}
               onPointerDown={handlePointerDown(cmd)}
               onPointerUp={handlePointerUp}
-              onPointerLeave={handlePointerUp}
-              onPointerCancel={handlePointerUp}
-              onLostPointerCapture={handlePointerUp}
+              onPointerCancel={handlePointerCancel}
+              onLostPointerCapture={handlePointerCancel}
               onContextMenu={(e) => e.preventDefault()}
               className={`
                 flex flex-col items-center justify-center gap-0.5

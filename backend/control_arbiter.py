@@ -112,11 +112,9 @@ class ControlArbiter:
 
     def release_manual_override(self) -> None:
         """
-        显式释放人工覆盖（WEB_MANUAL / REMOTE_CONTROLLER），
-        供前端"恢复自动跟踪"按钮使用。
+        释放网页人工覆盖。实体遥控器只由摇杆状态释放。
         """
         self._active_requesters.discard(ControlOwner.WEB_MANUAL)
-        self._active_requesters.discard(ControlOwner.REMOTE_CONTROLLER)
         prev_owner = self._owner
         self._recalculate_owner()
         if self._owner != prev_owner:
@@ -139,6 +137,9 @@ class ControlArbiter:
         自动驱离是否允许下发控制命令。
         """
         return self._owner == ControlOwner.GUARD_MISSION
+
+    def has_request(self, requester: ControlOwner) -> bool:
+        return requester in self._active_requesters
 
     def can_navigation_send(self) -> bool:
         """

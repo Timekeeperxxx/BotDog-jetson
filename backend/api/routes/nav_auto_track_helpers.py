@@ -19,10 +19,16 @@ def cancel_pending_auto_track_resume(reason: str) -> None:
 
 def request_navigation_control() -> None:
     from ...control_arbiter import get_control_arbiter
+    from ...manual_patrol_resume import get_manual_patrol_resume
+    from ...tracking_types import ControlOwner
 
     arbiter = get_control_arbiter()
+    if arbiter is not None and arbiter.has_request(ControlOwner.REMOTE_CONTROLLER):
+        raise RuntimeError("实体遥控器仍在接管，暂无法启动导航")
+    manual_patrol = get_manual_patrol_resume()
+    if manual_patrol is not None:
+        manual_patrol.cancel()
     if arbiter is not None:
-        # An explicit navigation request ends a previous web/remote override.
         arbiter.release_manual_override()
 
     coordinator = _get_nav_auto_track_coordinator()
@@ -35,6 +41,11 @@ def request_navigation_control() -> None:
 
 
 def release_navigation_control() -> None:
+    from ...manual_patrol_resume import get_manual_patrol_resume
+
+    manual_patrol = get_manual_patrol_resume()
+    if manual_patrol is not None:
+        manual_patrol.cancel()
     coordinator = _get_nav_auto_track_coordinator()
     if coordinator is not None:
         coordinator.release_navigation_control()

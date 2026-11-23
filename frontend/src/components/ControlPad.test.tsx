@@ -9,6 +9,7 @@ const robotControl = vi.hoisted(() => ({
   lastResult: null,
   resultMessage: null,
   startCommand: vi.fn(),
+  releaseCommand: vi.fn(),
   stopCommand: vi.fn(),
 }))
 

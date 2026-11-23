@@ -140,6 +140,7 @@ def normalize_nav_status(
     status_map = {
         "accepted": "navigating",
         "planning": "planning",
+        "manual_paused": "paused",
         "moving": "navigating",
         "reached": "reached",
         "failed": "error",
@@ -231,7 +232,7 @@ def validate_task_route(payload: Any) -> dict[str, Any]:
     if any(not isinstance(payload.get(key), str) or not payload[key] for key in ("task_id", "run_id")):
         raise ValueError("task_route requires task_id and run_id")
     if payload.get("frame_id") != "map" or payload.get("status") not in {
-        "planning", "ready", "running", "completed", "failed", "canceled"
+        "planning", "ready", "running", "paused", "completed", "failed", "canceled"
     }:
         raise ValueError("invalid task_route frame or status")
     segments = payload.get("segments")

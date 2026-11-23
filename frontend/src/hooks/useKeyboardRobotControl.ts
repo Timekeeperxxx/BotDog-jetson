@@ -17,6 +17,7 @@ type UseKeyboardRobotControlOptions = {
   isControlling: boolean
   currentCmd: RobotCommand | null
   startCommand: (cmd: RobotCommand, options?: RobotCommandOptions) => void
+  releaseCommand: () => void
   stopCommand: () => void
 }
 
@@ -26,6 +27,7 @@ export function useKeyboardRobotControl({
   isControlling,
   currentCmd,
   startCommand,
+  releaseCommand,
   stopCommand,
 }: UseKeyboardRobotControlOptions) {
   const [linearSpeed, setLinearSpeed] = useState(DEFAULT_LINEAR_SPEED)
@@ -115,7 +117,7 @@ export function useKeyboardRobotControl({
 
       if (cmd && currentCmd === cmd) {
         event.preventDefault()
-        stopCommand()
+        releaseCommand()
       }
     }
 
@@ -126,7 +128,7 @@ export function useKeyboardRobotControl({
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [adjustSpeed, canOperate, enabled, currentCmd, startKeyboardCommand, stopCommand])
+  }, [adjustSpeed, canOperate, enabled, currentCmd, startKeyboardCommand, releaseCommand])
 
   return {
     linearSpeed,
